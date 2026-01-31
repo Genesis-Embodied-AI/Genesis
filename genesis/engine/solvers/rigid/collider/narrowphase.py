@@ -605,12 +605,13 @@ def func_convex_convex_contact(
         axis_1 = ti.Vector.zero(gs.ti_float, 3)
         qrot = ti.Vector.zero(gs.ti_float, 4)
 
+        use_gjk = (
+            collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK
+            or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
+        )
+
         i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
         for i_detection in range(5):
-            prefer_gjk = (
-                collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK
-                or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
-            )
 
             if multi_contact and is_col_0:
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
@@ -646,7 +647,7 @@ def func_convex_convex_contact(
                     ### MPR, MJ_MPR
                     if ti.static(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
-                    ):
+                    ) and not use_gjk:
                         # Try using MPR before anything else
                         is_mpr_updated = False
                         normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
@@ -687,16 +688,16 @@ def func_convex_convex_contact(
                         # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
                         # large, and either no collision direction was cached or the geometries have large overlap. This
                         # contact information provided by MPR may be unreliable in these cases.
-                        if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                        if i_detection == 0 and ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             if penetration > tolerance:
-                                prefer_gjk = not is_mpr_guess_direction_available or (
+                                use_gjk = not is_mpr_guess_direction_available or (
                                     collider_info.mc_tolerance[None] * penetration
                                     >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                                 )
 
                     ### GJK, MJ_GJK
                     if ti.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                        if prefer_gjk:
+                        if use_gjk:
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     links_state,
