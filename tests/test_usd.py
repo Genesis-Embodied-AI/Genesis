@@ -473,8 +473,10 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
     usd_scene = build_usd_scene(all_primitives_usd, scale=scale)
-    # TODO: Now parsed primitives have the same geometry for both visual and collision meshes
-    # which is different from the how we parsed in MJCF.
+    # FIXME: Now parsed primitives have the same geometry for both visual and collision meshes
+    # which is different from how we parsed in MJCF.
+    # Additionally, in MuJoCo, primitives' masses are computed directly from their analytical
+    # parameters rather than using the actual mesh volume. This should be considered in USD and URDF parsing.
     compare_scene(mjcf_scene, usd_scene, tol=tol, strict=False)
 
 
