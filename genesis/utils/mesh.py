@@ -40,6 +40,18 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
 
+def color_f32_to_u8(color) -> np.ndarray:
+    return np.round(np.asarray(color, dtype=np.float32) * 255.0).astype(np.uint8)
+
+
+def color_u8_to_f32(color) -> np.ndarray:
+    return np.asarray(color, dtype=np.uint8).astype(np.float32) / 255.0
+
+
+def glossiness_to_roughness(glossiness: float) -> float:
+    return (2 / (glossiness + 2)) ** (1.0 / 4.0)
+
+
 class MeshInfo:
     def __init__(self):
         self.surface = None
@@ -717,7 +729,7 @@ def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_sphere_impl(subdivisions=subdivisions)
     vertices = vertices * radius
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -738,7 +750,7 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_cylinder_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -763,7 +775,7 @@ def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
         normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
         attrs[name] = normals
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -884,7 +896,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
         vertices = vertices * extents + pos
 
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
