@@ -28,8 +28,10 @@ except ImportError as e:
     HAS_USD_SUPPORT = False
     HAS_OMNIVERSE_KIT_SUPPORT = False
 
-USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
-USD_NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
+
+# Conversion from .usd to .glb significantly affects precision
+USD_COLOR_TOL = 1e-07
+USD_NORMALS_TOL = 1e-02
 
 
 def to_array(s: str) -> np.ndarray:
@@ -37,7 +39,7 @@ def to_array(s: str) -> np.ndarray:
     return np.array([float(x) for x in s.split()])
 
 
-def compare_links(compared_links, usd_links, tol, strict=True):
+def compare_links(compared_links, usd_links, tol):
     """Compare links between two scenes."""
     # Check number of links
     assert len(compared_links) == len(usd_links)
@@ -87,8 +89,7 @@ def compare_links(compared_links, usd_links, tol, strict=True):
         assert_allclose(compared_link.inertial_quat, usd_link.inertial_quat, tol=tol, err_msg=err_msg)
 
         # Skip mass and inertia checks for fixed links - they're not used in simulation
-        if strict and not compared_link.is_fixed:
-            # Both scenes now use the same material density (1000 kg/m³), so values should match closely
+        if not compared_link.is_fixed:
             assert_allclose(compared_link.inertial_mass, usd_link.inertial_mass, atol=tol, err_msg=err_msg)
             assert_allclose(compared_link.inertial_i, usd_link.inertial_i, atol=tol, err_msg=err_msg)
 
@@ -162,7 +163,7 @@ def compare_geoms(compared_geoms, usd_geoms, tol):
         assert_allclose(compared_geom.get_AABB(), usd_geom.get_AABB(), tol=tol, err_msg=err_msg)
 
 
-def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
+def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol):
     """Compare visual geoms between two scenes."""
     assert len(compared_vgeoms) == len(usd_vgeoms)
 
@@ -171,31 +172,28 @@ def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
     usd_vgeoms_sorted = sorted(usd_vgeoms, key=lambda g: g.vmesh.metadata["name"].split("/")[-1])
 
     for compared_vgeom, usd_vgeom in zip(compared_vgeoms_sorted, usd_vgeoms_sorted):
-        if strict:
-            compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-                compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
-            )
-            usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
-                usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
-            )
-            compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
-            usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
+        compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+            compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
+        )
+        usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+            usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
+        )
+        compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
+        usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
 
-            compared_vgeom_mesh = compared_vgeom.vmesh.copy()
-            usd_vgeom_mesh = usd_vgeom.vmesh.copy()
-            mesh_name = usd_vgeom_mesh.metadata["name"]
-            compared_vgeom_mesh.apply_transform(compared_vgeom_T)
-            usd_vgeom_mesh.apply_transform(usd_vgeom_T)
-            check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name, tol, USD_NORMALS_TOL)
-        else:
-            assert_allclose(compared_vgeom.get_AABB(), usd_vgeom.get_AABB(), tol=tol)
+        compared_vgeom_mesh = compared_vgeom.vmesh.copy()
+        usd_vgeom_mesh = usd_vgeom.vmesh.copy()
+        mesh_name = usd_vgeom_mesh.metadata["name"]
+        compared_vgeom_mesh.apply_transform(compared_vgeom_T)
+        usd_vgeom_mesh.apply_transform(usd_vgeom_T)
+        check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name, tol, USD_NORMALS_TOL)
 
         compared_vgeom_surface = compared_vgeom_mesh.surface
         usd_vgeom_surface = usd_vgeom_mesh.surface
         check_gs_surfaces(compared_vgeom_surface, usd_vgeom_surface, mesh_name)
 
 
-def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float, strict: bool = True):
+def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
     """Compare structure and data between compared scene and USD scene."""
     compared_entities = compared_scene.entities
     usd_entities = usd_scene.entities
@@ -210,7 +208,7 @@ def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float, str
 
     compared_links = [link for entity in compared_entities for link in entity.links]
     usd_links = [link for entity in usd_entities for link in entity.links]
-    compare_links(compared_links, usd_links, tol=tol, strict=strict)
+    compare_links(compared_links, usd_links, tol=tol)
 
 
 def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
@@ -289,8 +287,14 @@ def build_mesh_scene(mesh_file: str, scale: float):
         scale=scale,
         euler=(-90, 0, 0),
         group_by_material=False,
+        convexify=False,
     )
-    mesh_scene.add_entity(mesh_morph, material=gs.materials.Rigid(rho=1000.0))
+    mesh_scene.add_entity(
+        mesh_morph,
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
     mesh_scene.build()
     return mesh_scene
 
@@ -465,7 +469,7 @@ def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
     return usd_file
 
 
-@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_primitives_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
@@ -473,11 +477,7 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
     usd_scene = build_usd_scene(all_primitives_usd, scale=scale)
-    # FIXME: Now parsed primitives have the same geometry for both visual and collision meshes
-    # which is different from how we parsed in MJCF.
-    # Additionally, in MuJoCo, primitives' masses are computed directly from their analytical
-    # parameters rather than using the actual mesh volume. This should be considered in USD and URDF parsing.
-    compare_scene(mjcf_scene, usd_scene, tol=tol, strict=False)
+    compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
 # ==================== Joint Tests ====================
@@ -741,10 +741,11 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree):
     free_joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
 
     stage.Save()
+
     return usd_file
 
 
-@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_joints_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
@@ -764,7 +765,6 @@ def test_joints_mjcf_vs_usd(xml_path, all_joints_usd, scale, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_visual_parse(model_name, tol):
@@ -780,7 +780,6 @@ def test_usd_visual_parse(model_name, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_parse_nodegraph(usd_file):
@@ -798,7 +797,6 @@ def test_usd_parse_nodegraph(usd_file):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
