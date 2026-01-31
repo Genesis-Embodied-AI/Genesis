@@ -197,22 +197,22 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
             is_running = False
 
         scene.viewer.register_keybinds(
-            Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
-            Keybind(Key.DOWN, KeyAction.HOLD, name="move_backward", callback=move, args=((dpos, 0, 0),)),
-            Keybind(Key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
-            Keybind(Key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
-            Keybind(Key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
-            Keybind(Key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
-            Keybind(Key.J, KeyAction.HOLD, name="yaw_left", callback=rotate, args=("z", drot)),
-            Keybind(Key.K, KeyAction.HOLD, name="yaw_right", callback=rotate, args=("z", -drot)),
-            Keybind(Key.I, KeyAction.HOLD, name="pitch_up", callback=rotate, args=("y", drot)),
-            Keybind(Key.O, KeyAction.HOLD, name="pitch_down", callback=rotate, args=("y", -drot)),
-            Keybind(Key.L, KeyAction.HOLD, name="roll_left", callback=rotate, args=("x", drot)),
-            Keybind(Key.SEMICOLON, KeyAction.HOLD, name="roll_right", callback=rotate, args=("x", -drot)),
-            Keybind(Key.U, KeyAction.HOLD, name="reset_scene", callback=reset_scene),
-            Keybind(Key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
-            Keybind(Key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
-            Keybind(Key.ESCAPE, KeyAction.PRESS, name="quit", callback=stop),
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-dpos, 0, 0),)),
+            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
+            Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
+            Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
+            Keybind("yaw_left", Key.J, KeyAction.HOLD, callback=rotate, args=("z", drot)),
+            Keybind("yaw_right", Key.K, KeyAction.HOLD, callback=rotate, args=("z", -drot)),
+            Keybind("pitch_up", Key.I, KeyAction.HOLD, callback=rotate, args=("y", drot)),
+            Keybind("pitch_down", Key.O, KeyAction.HOLD, callback=rotate, args=("y", -drot)),
+            Keybind("roll_left", Key.L, KeyAction.HOLD, callback=rotate, args=("x", drot)),
+            Keybind("roll_right", Key.SEMICOLON, KeyAction.HOLD, callback=rotate, args=("x", -drot)),
+            Keybind("reset_scene", Key.U, KeyAction.HOLD, callback=reset_scene),
+            Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
+            Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
+            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
         )
 
     # Load trajectory if in playback mode

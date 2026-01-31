@@ -131,24 +131,31 @@ if __name__ == "__main__":
         pos = -1.0 if close else 1.0
         robot.control_dofs_force(np.array([pos, pos]), fingers_dof)
 
+    is_running = True
+
+    def stop():
+        global is_running
+        is_running = False
+
     # Register robot teleoperation keybindings
     scene.viewer.register_keybinds(
-        Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=move, args=((-dpos, 0, 0),)),
-        Keybind(Key.DOWN, KeyAction.HOLD, name="move_back", callback=move, args=((dpos, 0, 0),)),
-        Keybind(Key.LEFT, KeyAction.HOLD, name="move_left", callback=move, args=((0, -dpos, 0),)),
-        Keybind(Key.RIGHT, KeyAction.HOLD, name="move_right", callback=move, args=((0, dpos, 0),)),
-        Keybind(Key.N, KeyAction.HOLD, name="move_up", callback=move, args=((0, 0, dpos),)),
-        Keybind(Key.M, KeyAction.HOLD, name="move_down", callback=move, args=((0, 0, -dpos),)),
-        Keybind(Key.J, KeyAction.HOLD, name="rotate_ccw", callback=rotate, args=(drot,)),
-        Keybind(Key.K, KeyAction.HOLD, name="rotate_cw", callback=rotate, args=(-drot,)),
-        Keybind(Key.U, KeyAction.HOLD, name="reset_scene", callback=reset_robot),
-        Keybind(Key.SPACE, KeyAction.PRESS, name="close_gripper", callback=toggle_gripper, args=(True,)),
-        Keybind(Key.SPACE, KeyAction.RELEASE, name="open_gripper", callback=toggle_gripper, args=(False,)),
+        Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-dpos, 0, 0),)),
+        Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
+        Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
+        Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
+        Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
+        Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
+        Keybind("rotate_ccw", Key.J, KeyAction.HOLD, callback=rotate, args=(drot,)),
+        Keybind("rotate_cw", Key.K, KeyAction.HOLD, callback=rotate, args=(-drot,)),
+        Keybind("reset_scene", Key.U, KeyAction.HOLD, callback=reset_robot),
+        Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
+        Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
+        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
     )
 
     ########################## run simulation ##########################
     try:
-        while True:
+        while is_running:
             # Update target entity visualization
             target.set_qpos(np.concatenate([target_pos, target_quat[0]]))
 

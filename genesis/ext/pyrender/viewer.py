@@ -15,7 +15,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, get_keycode_string
+from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings
 
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
@@ -350,7 +350,7 @@ class Viewer(pyglet.window.Window):
         self._disable_help_text = disable_help_text
         if not self._disable_help_text:
             self._collapse_instructions = True
-            instr_key_str = get_keycode_string(HELP_TEXT_KEY)
+            instr_key_str = str(Key(HELP_TEXT_KEY))
             self._instr_texts: tuple[list[str], list[str]] = (
                 [f"> [{instr_key_str}]: show keyboard instructions"],
                 [f"< [{instr_key_str}]: hide keyboard instructions"],
@@ -359,9 +359,7 @@ class Viewer(pyglet.window.Window):
             self._message_text = None
             self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
             self._message_opac = 1.0 + self._ticks_till_fade
-            self.register_keybinds(
-                Keybind(key_code=HELP_TEXT_KEY, name=HELP_TEXT_KEYBIND_NAME, callback=self._toggle_instructions)
-            )
+            self.register_keybinds(Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions))
 
         # Setup viewer plugins
         self.plugins: list[ViewerPlugin] = plugins if plugins is not None else []
@@ -518,8 +516,8 @@ class Viewer(pyglet.window.Window):
     def remap_keybind(
         self,
         keybind_name: str,
-        new_key_code: int,
-        new_modifiers: int | None = None,
+        new_key_code: Key,
+        new_key_mods: int | None = None,
         new_key_action: KeyAction = KeyAction.PRESS,
     ) -> None:
         """
@@ -531,7 +529,7 @@ class Viewer(pyglet.window.Window):
             The name of the keybind to remap.
         new_key_code : int
             The new key code from pyglet.
-        new_modifiers : int | None, optional
+        new_key_mods : int | None, optional
             The new modifier keys pressed.
         new_key_action : KeyAction, optional
             The new type of key action (press, hold, release).
@@ -539,7 +537,7 @@ class Viewer(pyglet.window.Window):
         self._keybindings.rebind(
             keybind_name,
             new_key_code,
-            new_modifiers,
+            new_key_mods,
             new_key_action,
         )
         self._update_instr_texts()
@@ -1309,7 +1307,8 @@ class Viewer(pyglet.window.Window):
             return
 
         self._key_instr_texts = self._instr_texts[0] + [
-            f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
+            # f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
+            f"{'[' + str(kb.key):>{7}}]: " + kb.name.replace("_", " ")
             for kb in self._keybindings.keybinds
             if kb.name != HELP_TEXT_KEYBIND_NAME and kb.key_action != KeyAction.RELEASE
         ]
