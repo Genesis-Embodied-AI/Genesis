@@ -28,6 +28,7 @@ USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
+USE_BATCHED_LS = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
