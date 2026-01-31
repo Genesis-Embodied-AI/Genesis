@@ -28,7 +28,8 @@ USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
-USE_BATCHED_LS = 1
+# When True, refinement uses local variables instead of global memory for candidates
+USE_BATCHED_LS_LOCAL = os.environ.get("GS_SOLVER_BATCHED_LS_LOCAL", "0") == "1"
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -2038,7 +2039,7 @@ def update_bracket(
 
 
 @ti.func
-def update_bracket_no_eval(
+def update_bracket_no_eval_global(
     p_alpha,
     p_cost,
     p_deriv_0,
@@ -2046,7 +2047,7 @@ def update_bracket_no_eval(
     i_b,
     constraint_state: array_class.ConstraintState,
 ):
-    """Same as update_bracket but does NOT evaluate the Newton step. Returns the next alpha to be evaluated externally."""
+    """Same as update_bracket but does NOT evaluate the Newton step. Reads candidates from global memory."""
     flag = 0
 
     for i in range(3):
@@ -2074,6 +2075,48 @@ def update_bracket_no_eval(
                 constraint_state.candidates[4 * i + 3, i_b],
             )
             flag = 2
+
+    p_next_alpha = p_alpha
+    if flag > 0:
+        p_next_alpha = p_alpha - p_deriv_0 / p_deriv_1
+
+    return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha
+
+
+@ti.func
+def update_bracket_no_eval_local(
+    p_alpha,
+    p_cost,
+    p_deriv_0,
+    p_deriv_1,
+    c0_alpha, c0_cost, c0_d0, c0_d1,
+    c1_alpha, c1_cost, c1_d0, c1_d1,
+    c2_alpha, c2_cost, c2_d0, c2_d1,
+):
+    """Same as update_bracket but takes candidate values as local args. No global memory access."""
+    flag = 0
+
+    # Candidate 0
+    if p_deriv_0 < 0 and c0_d0 < 0 and p_deriv_0 < c0_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
+        flag = 1
+    elif p_deriv_0 > 0 and c0_d0 > 0 and p_deriv_0 > c0_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
+        flag = 2
+    # Candidate 1
+    if p_deriv_0 < 0 and c1_d0 < 0 and p_deriv_0 < c1_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
+        flag = 1
+    elif p_deriv_0 > 0 and c1_d0 > 0 and p_deriv_0 > c1_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
+        flag = 2
+    # Candidate 2
+    if p_deriv_0 < 0 and c2_d0 < 0 and p_deriv_0 < c2_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
+        flag = 1
+    elif p_deriv_0 > 0 and c2_d0 > 0 and p_deriv_0 > c2_d0:
+        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
+        flag = 2
 
     p_next_alpha = p_alpha
     if flag > 0:
@@ -2184,73 +2227,102 @@ def func_linesearch_batched(
                             i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
                         )
 
-                        # Store as candidates for update_bracket_no_eval
-                        i = 0
-                        constraint_state.candidates[4 * i + 0, i_b] = alpha_0
-                        constraint_state.candidates[4 * i + 1, i_b] = c0
-                        constraint_state.candidates[4 * i + 2, i_b] = c0_d0
-                        constraint_state.candidates[4 * i + 3, i_b] = c0_d1
-                        i = 1
-                        constraint_state.candidates[4 * i + 0, i_b] = alpha_1
-                        constraint_state.candidates[4 * i + 1, i_b] = c1
-                        constraint_state.candidates[4 * i + 2, i_b] = c1_d0
-                        constraint_state.candidates[4 * i + 3, i_b] = c1_d1
-                        i = 2
-                        constraint_state.candidates[4 * i + 0, i_b] = alpha_2
-                        constraint_state.candidates[4 * i + 1, i_b] = c2
-                        constraint_state.candidates[4 * i + 2, i_b] = c2_d0
-                        constraint_state.candidates[4 * i + 3, i_b] = c2_d1
-
-                        # Check convergence on all 3
-                        best_i = -1
-                        best_cost = gs.ti_float(0.0)
-                        for ii in range(3):
-                            if ti.abs(constraint_state.candidates[4 * ii + 2, i_b]) < gtol and (
-                                best_i < 0 or constraint_state.candidates[4 * ii + 1, i_b] < best_cost
-                            ):
-                                best_cost = constraint_state.candidates[4 * ii + 1, i_b]
-                                best_i = ii
-
                         # Pre-declare variables used after the if/else so Taichi sees them in scope
                         p1_next_alpha = alpha_0
                         p2_next_alpha = alpha_1
 
-                        if best_i >= 0:
-                            res_alpha = constraint_state.candidates[4 * best_i + 0, i_b]
-                            done = True
-                        else:
-                            # update_bracket_no_eval for p1
-                            (
-                                b1,
-                                p1_alpha,
-                                p1_cost,
-                                p1_deriv_0,
-                                p1_deriv_1,
-                                p1_next_alpha,
-                            ) = update_bracket_no_eval(
-                                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b, constraint_state
-                            )
-                            # update_bracket_no_eval for p2
-                            (
-                                b2,
-                                p2_alpha,
-                                p2_cost,
-                                p2_deriv_0,
-                                p2_deriv_1,
-                                p2_next_alpha,
-                            ) = update_bracket_no_eval(
-                                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b, constraint_state
-                            )
+                        if ti.static(USE_BATCHED_LS_LOCAL):
+                            # --- Local variable path: no global memory for candidates ---
+                            best_alpha = gs.ti_float(0.0)
+                            best_cost = gs.ti_float(0.0)
+                            best_found = False
+                            if ti.abs(c0_d0) < gtol:
+                                best_alpha = alpha_0
+                                best_cost = c0
+                                best_found = True
+                            if ti.abs(c1_d0) < gtol and (not best_found or c1 < best_cost):
+                                best_alpha = alpha_1
+                                best_cost = c1
+                                best_found = True
+                            if ti.abs(c2_d0) < gtol and (not best_found or c2 < best_cost):
+                                best_alpha = alpha_2
+                                best_cost = c2
+                                best_found = True
 
-                            if b1 == 0 and b2 == 0:
-                                # Use pmid (candidate 2)
-                                pmid_cost = c2
-                                if pmid_cost < p0_cost:
-                                    constraint_state.ls_result[i_b] = 0
-                                else:
-                                    constraint_state.ls_result[i_b] = 7
-                                res_alpha = alpha_2
+                            if best_found:
+                                res_alpha = best_alpha
                                 done = True
+                            else:
+                                (
+                                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next_alpha,
+                                ) = update_bracket_no_eval_local(
+                                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1,
+                                    alpha_0, c0, c0_d0, c0_d1,
+                                    alpha_1, c1, c1_d0, c1_d1,
+                                    alpha_2, c2, c2_d0, c2_d1,
+                                )
+                                (
+                                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next_alpha,
+                                ) = update_bracket_no_eval_local(
+                                    p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1,
+                                    alpha_0, c0, c0_d0, c0_d1,
+                                    alpha_1, c1, c1_d0, c1_d1,
+                                    alpha_2, c2, c2_d0, c2_d1,
+                                )
+
+                                if b1 == 0 and b2 == 0:
+                                    if c2 < p0_cost:
+                                        constraint_state.ls_result[i_b] = 0
+                                    else:
+                                        constraint_state.ls_result[i_b] = 7
+                                    res_alpha = alpha_2
+                                    done = True
+                        else:
+                            # --- Global memory path: write candidates to constraint_state ---
+                            constraint_state.candidates[0, i_b] = alpha_0
+                            constraint_state.candidates[1, i_b] = c0
+                            constraint_state.candidates[2, i_b] = c0_d0
+                            constraint_state.candidates[3, i_b] = c0_d1
+                            constraint_state.candidates[4, i_b] = alpha_1
+                            constraint_state.candidates[5, i_b] = c1
+                            constraint_state.candidates[6, i_b] = c1_d0
+                            constraint_state.candidates[7, i_b] = c1_d1
+                            constraint_state.candidates[8, i_b] = alpha_2
+                            constraint_state.candidates[9, i_b] = c2
+                            constraint_state.candidates[10, i_b] = c2_d0
+                            constraint_state.candidates[11, i_b] = c2_d1
+
+                            best_i = -1
+                            best_cost_g = gs.ti_float(0.0)
+                            for ii in range(3):
+                                if ti.abs(constraint_state.candidates[4 * ii + 2, i_b]) < gtol and (
+                                    best_i < 0 or constraint_state.candidates[4 * ii + 1, i_b] < best_cost_g
+                                ):
+                                    best_cost_g = constraint_state.candidates[4 * ii + 1, i_b]
+                                    best_i = ii
+
+                            if best_i >= 0:
+                                res_alpha = constraint_state.candidates[4 * best_i + 0, i_b]
+                                done = True
+                            else:
+                                (
+                                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next_alpha,
+                                ) = update_bracket_no_eval_global(
+                                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b, constraint_state,
+                                )
+                                (
+                                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next_alpha,
+                                ) = update_bracket_no_eval_global(
+                                    p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b, constraint_state,
+                                )
+
+                                if b1 == 0 and b2 == 0:
+                                    if c2 < p0_cost:
+                                        constraint_state.ls_result[i_b] = 0
+                                    else:
+                                        constraint_state.ls_result[i_b] = 7
+                                    res_alpha = alpha_2
+                                    done = True
 
                         if done:
                             break
