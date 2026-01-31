@@ -26,6 +26,9 @@ USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 # Check environment variable for macro kernel usage (only applies when USE_DECOMPOSED_SOLVER is True)
 USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 
+# Check environment variable for parallel-probe linesearch
+USE_PARALLEL_PROBE_LINESEARCH = os.environ.get("GS_SOLVER_PARALLEL_PROBE_LS", "0") == "1"
+# USE_PARALLEL_PROBE_LINESEARCH = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -206,7 +209,19 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        if use_decomposed_kernels:
+        if USE_PARALLEL_PROBE_LINESEARCH:
+            from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
+                func_solve_parallel_probe_macrokernels,
+            )
+
+            func_solve_parallel_probe_macrokernels(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        elif use_decomposed_kernels:
             # Import here to avoid circular dependency and overhead when not needed
             if USE_DECOMPOSED_MACRO:
                 from genesis.engine.solvers.rigid.constraint_solver_breakdown import (

@@ -210,6 +210,18 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     candidates: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
+    # Parallel-probe linesearch state
+    ls_par_phase: V_ANNOTATION
+    ls_par_direction: V_ANNOTATION
+    ls_par_p2update: V_ANNOTATION
+    ls_par_p0_cost: V_ANNOTATION
+    ls_par_res_alpha: V_ANNOTATION
+    ls_par_p1: V_ANNOTATION
+    ls_par_p2: V_ANNOTATION
+    ls_par_cand_alpha: V_ANNOTATION
+    ls_par_cand_cost: V_ANNOTATION
+    ls_par_cand_deriv0: V_ANNOTATION
+    ls_par_cand_deriv1: V_ANNOTATION
     # Optional CG fields
     cg_prev_grad: V_ANNOTATION
     cg_prev_Mgrad: V_ANNOTATION
@@ -273,6 +285,18 @@ def get_constraint_state(constraint_solver, solver):
         gtol=V(dtype=gs.ti_float, shape=(_B,)),
         ls_it=V(dtype=gs.ti_int, shape=(_B,)),
         ls_result=V(dtype=gs.ti_int, shape=(_B,)),
+        # Parallel-probe linesearch state
+        ls_par_phase=V(dtype=gs.ti_int, shape=(_B,)),
+        ls_par_direction=V(dtype=gs.ti_int, shape=(_B,)),
+        ls_par_p2update=V(dtype=gs.ti_int, shape=(_B,)),
+        ls_par_p0_cost=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_par_res_alpha=V(dtype=gs.ti_float, shape=(_B,)),
+        ls_par_p1=V(dtype=gs.ti_float, shape=(4, _B)),
+        ls_par_p2=V(dtype=gs.ti_float, shape=(4, _B)),
+        ls_par_cand_alpha=V(dtype=gs.ti_float, shape=(3, _B)),
+        ls_par_cand_cost=V(dtype=gs.ti_float, shape=(3, _B)),
+        ls_par_cand_deriv0=V(dtype=gs.ti_float, shape=(3, _B)),
+        ls_par_cand_deriv1=V(dtype=gs.ti_float, shape=(3, _B)),
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
