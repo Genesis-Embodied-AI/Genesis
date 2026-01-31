@@ -645,9 +645,12 @@ def func_convex_convex_contact(
                     is_col = penetration > 0.0
                 else:
                     ### MPR, MJ_MPR
-                    if ti.static(
-                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
-                    ) and not use_gjk:
+                    if (
+                        ti.static(
+                            collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
+                        )
+                        and not use_gjk
+                    ):
                         # Try using MPR before anything else
                         is_mpr_updated = False
                         normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
@@ -688,7 +691,9 @@ def func_convex_convex_contact(
                         # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
                         # large, and either no collision direction was cached or the geometries have large overlap. This
                         # contact information provided by MPR may be unreliable in these cases.
-                        if i_detection == 0 and ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                        if i_detection == 0 and ti.static(
+                            collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR
+                        ):
                             if penetration > tolerance:
                                 use_gjk = not is_mpr_guess_direction_available or (
                                     collider_info.mc_tolerance[None] * penetration
