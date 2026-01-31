@@ -30,10 +30,46 @@ class JointControlGUI:
         self.reset_motors_position()
 
     def create_widgets(self):
+        container = tk.Frame(self.master)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(container, borderwidth=0, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollable_frame = tk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def on_canvas_configure(event):
+            canvas.itemconfig(window_id, width=event.width)
+
+        scrollable_frame.bind("<Configure>", on_frame_configure)
+        canvas.bind("<Configure>", on_canvas_configure)
+
+        def on_mousewheel(event):
+            if event.delta:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def on_linux_scroll(event):
+            if event.num == 4:
+                canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                canvas.yview_scroll(1, "units")
+
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        canvas.bind_all("<Button-4>", on_linux_scroll)
+        canvas.bind_all("<Button-5>", on_linux_scroll)
+
         for i_m, name in enumerate(self.motors_name):
             self.update_joint_position(i_m, self.motors_default_position[i_m])
             min_limit, max_limit = map(float, self.motors_position_limit[i_m])
-            frame = tk.Frame(self.master)
+            frame = tk.Frame(scrollable_frame)
             frame.pack(pady=5, padx=10, fill=tk.X)
 
             tk.Label(frame, text=f"{name}", font=("Arial", 12), width=20).pack(side=tk.LEFT)
@@ -62,7 +98,7 @@ class JointControlGUI:
 
             slider.bind("<Motion>", update_label())
 
-        tk.Button(self.master, text="Reset", font=("Arial", 12), command=self.reset_motors_position).pack(pady=20)
+        tk.Button(scrollable_frame, text="Reset", font=("Arial", 12), command=self.reset_motors_position).pack(pady=20)
 
     def update_joint_position(self, idx, val):
         self.motors_position[idx] = float(val)
