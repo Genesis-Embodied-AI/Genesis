@@ -76,6 +76,8 @@ def test_default_viewer_plugin():
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
 
+    assert len(pyrender_viewer._keybindings) > 0, "Expected default keybindings to be registered."
+
     # Press key toggle world frame
     pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
     scene.step()
