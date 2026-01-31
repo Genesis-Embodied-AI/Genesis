@@ -22,12 +22,13 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 # Check environment variable for decomposed solver usage
 USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
-# USE_DECOMPOSED_SOLVER = 1
+# # USE_DECOMPOSED_SOLVER = 1
 # Check environment variable for macro kernel usage (only applies when USE_DECOMPOSED_SOLVER is True)
 USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
+USE_BATCHED_LS = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -1660,9 +1661,9 @@ def func_ls_point_fn_3alphas(
                 a0_qf_0 = ln0 * f * (-0.5 * rf - Jaref_c) + lp0 * f * (-0.5 * rf + Jaref_c)
                 a0_qf_1 = ln0 * (-f * jv_c) + lp0 * (f * jv_c)
                 a0_qf_2 = 0.0
-            t0_0 += a0_qf_0
-            t0_1 += a0_qf_1
-            t0_2 += a0_qf_2
+            t0_0 = t0_0 + a0_qf_0
+            t0_1 = t0_1 + a0_qf_1
+            t0_2 = t0_2 + a0_qf_2
 
             # Alpha 1
             ln1 = x1 <= -rf
@@ -1672,9 +1673,9 @@ def func_ls_point_fn_3alphas(
                 a1_qf_0 = ln1 * f * (-0.5 * rf - Jaref_c) + lp1 * f * (-0.5 * rf + Jaref_c)
                 a1_qf_1 = ln1 * (-f * jv_c) + lp1 * (f * jv_c)
                 a1_qf_2 = 0.0
-            t1_0 += a1_qf_0
-            t1_1 += a1_qf_1
-            t1_2 += a1_qf_2
+            t1_0 = t1_0 + a1_qf_0
+            t1_1 = t1_1 + a1_qf_1
+            t1_2 = t1_2 + a1_qf_2
 
             # Alpha 2
             ln2 = x2 <= -rf
@@ -1942,7 +1943,7 @@ def func_linesearch(
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p1_alpha
                         # Is the p2_cost < p1_cost a typo? should be p2_cost < p0_cost?
-                        elif p2_cost <= p1_cost and p2_cost < p1_cost:
+                        elif p2_cost <= p1_cost and p2_cost < p0_cost:
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p2_alpha
                         else:
@@ -2264,7 +2265,7 @@ def func_linesearch_batched(
                         if p1_cost <= p2_cost and p1_cost < p0_cost:
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p1_alpha
-                        elif p2_cost <= p1_cost and p2_cost < p1_cost:
+                        elif p2_cost <= p1_cost and p2_cost < p0_cost:
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p2_alpha
                         else:
