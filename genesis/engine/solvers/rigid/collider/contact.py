@@ -8,8 +8,8 @@ and managing contact data including reset/clear operations.
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 
 
 @ti.func
@@ -284,6 +284,7 @@ def func_compute_tolerance(
 
 
 @ti.func
+@ti.func
 def func_contact_orthogonals(
     i_ga,
     i_gb,
@@ -297,6 +298,42 @@ def func_contact_orthogonals(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
+    """
+    Compute two orthogonal axes in the contact plane for multi-contact perturbation.
+
+    These axes are used to perturb geometry orientations around the contact normal
+    to find additional contact points during multi-contact detection.
+
+    Thread-safety note: This function does NOT need a thread-local version because:
+    1. It never reads geoms_state.pos or geoms_state.quat (geometry poses)
+    2. It only reads links_state.i_quat (link inertia quaternions), which are NOT
+       perturbed during multi-contact detection (only geometry poses are perturbed)
+    3. It only reads geoms_init_AABB (static/read-only bounding box data)
+    4. Therefore, multiple threads can safely call this with the same i_ga, i_gb, i_b
+       without race conditions, even when those threads are processing different
+       collision pairs within the same environment.
+
+    The function computes orthogonal axes based on either:
+    - MuJoCo compatibility mode: World-aligned axes projected onto contact plane
+    - Default mode: Principal inertia axes of the smaller geometry
+
+    Args:
+        i_ga: First geometry index (safe to use directly - see note above)
+        i_gb: Second geometry index (safe to use directly - see note above)
+        normal: Contact normal in world space
+        i_b: Batch/environment index
+        links_state: Link state (for inertia axes) - read-only for this operation
+        links_info: Link information
+        geoms_state: Geometry state (parameter kept for API compatibility, not used)
+        geoms_info: Geometry information
+        geoms_init_AABB: Initial axis-aligned bounding boxes (static data)
+        rigid_global_info: Global simulation parameters (EPS)
+        static_rigid_sim_config: Static simulation configuration
+
+    Returns:
+        axis_0: First orthogonal axis in contact plane
+        axis_1: Second orthogonal axis in contact plane (perpendicular to axis_0)
+    """
     EPS = rigid_global_info.EPS[None]
 
     axis_0 = ti.Vector.zero(gs.ti_float, 3)
