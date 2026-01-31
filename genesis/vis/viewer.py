@@ -13,7 +13,8 @@ from genesis.ext import pyrender
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
 from genesis.utils.tools import Rate
-from genesis.vis.keybindings import KeyAction, Keybind
+from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod
+from genesis.vis.viewer_plugins import DefaultControlsPlugin
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions
@@ -45,8 +46,6 @@ class Viewer(RBC):
         self._disable_help_text = options.disable_help_text
         self._viewer_plugins: list["ViewerPlugin"] = []
         if not options.disable_default_keybinds:
-            from genesis.vis.viewer_plugins import DefaultControlsPlugin
-
             self._viewer_plugins.append(DefaultControlsPlugin())
 
         # Validate viewer options
@@ -282,8 +281,8 @@ class Viewer(RBC):
     def remap_keybind(
         self,
         keybind_name: str,
-        new_key_code: int,
-        new_modifiers: int | None = None,
+        new_key: Key,
+        new_key_mods: tuple[KeyMod] | None = None,
         new_key_action: KeyAction = KeyAction.PRESS,
     ) -> None:
         """
@@ -294,17 +293,17 @@ class Viewer(RBC):
         ----------
         keybind_name : str
             The name of the keybind to remap.
-        new_key_code : int
+        new_key : int
             The new key code from pyglet.
-        new_modifiers : int | None, optional
+        new_key_mods : tuple[KeyMod] | None, optional
             The new modifier keys pressed.
         new_key_action : KeyAction, optional
             The new type of key action (press, hold, release).
         """
         self._pyrender_viewer.remap_keybind(
             keybind_name,
-            new_key_code,
-            new_modifiers,
+            new_key,
+            new_key_mods,
             new_key_action,
         )
 

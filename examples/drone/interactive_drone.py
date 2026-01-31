@@ -73,21 +73,21 @@ def main():
     scene.build()
 
     # Register keybindings
-    def direction_keybinds(key_code, name: str, direction: tuple[float, float, float, float]):
+    def direction_keybinds(key: Key, name: str, direction: tuple[float, float, float, float]):
         """Helper to create press/release keybinds for a direction"""
         dir_arr = np.array(direction)
         return [
             Keybind(
-                key_code=key_code,
+                key_name=f"{name}_press",
+                key=key,
                 key_action=KeyAction.PRESS,
-                name=f"{name}_press",
                 callback=controller.add_direction,
                 args=(dir_arr,),
             ),
             Keybind(
-                key_code=key_code,
+                key_name=f"{name}_release",
+                key=key,
                 key_action=KeyAction.RELEASE,
-                name=f"{name}_release",
                 callback=controller.add_direction,
                 args=(-dir_arr,),
             ),
@@ -98,8 +98,8 @@ def main():
         *direction_keybinds(Key.DOWN, "move_backward", (-1.0, -1.0, 1.0, 1.0)),
         *direction_keybinds(Key.LEFT, "move_left", (-1.0, 1.0, -1.0, 1.0)),
         *direction_keybinds(Key.RIGHT, "move_right", (1.0, -1.0, 1.0, -1.0)),
-        Keybind(Key.SPACE, KeyAction.HOLD, name="accelerate", callback=controller.accelerate),
-        Keybind(Key.LSHIFT, KeyAction.HOLD, name="decelerate", callback=controller.decelerate),
+        Keybind("accelerate", Key.SPACE, KeyAction.HOLD, callback=controller.accelerate),
+        Keybind("decelerate", Key.LSHIFT, KeyAction.HOLD, callback=controller.decelerate),
     )
 
     # Print control instructions

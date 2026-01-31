@@ -149,19 +149,19 @@ def main():
 
     # Register keybindings
     scene.viewer.register_keybinds(
-        Keybind(Key.UP, KeyAction.HOLD, name="move_forward", callback=translate, args=(0, False)),
-        Keybind(Key.DOWN, KeyAction.HOLD, name="move_backward", callback=translate, args=(0, True)),
-        Keybind(Key.RIGHT, KeyAction.HOLD, name="move_right", callback=translate, args=(1, True)),
-        Keybind(Key.LEFT, KeyAction.HOLD, name="move_left", callback=translate, args=(1, False)),
-        Keybind(Key.J, KeyAction.HOLD, name="move_down", callback=translate, args=(2, True)),
-        Keybind(Key.K, KeyAction.HOLD, name="move_up", callback=translate, args=(2, False)),
-        Keybind(Key.N, KeyAction.HOLD, name="roll_ccw", callback=rotate, args=(0, False)),
-        Keybind(Key.M, KeyAction.HOLD, name="roll_cw", callback=rotate, args=(0, True)),
-        Keybind(Key.COMMA, KeyAction.HOLD, name="pitch_up", callback=rotate, args=(1, False)),
-        Keybind(Key.PERIOD, KeyAction.HOLD, name="pitch_down", callback=rotate, args=(1, True)),
-        Keybind(Key.O, KeyAction.HOLD, name="yaw_ccw", callback=rotate, args=(2, False)),
-        Keybind(Key.P, KeyAction.HOLD, name="yaw_cw", callback=rotate, args=(2, True)),
-        Keybind(Key.BACKSLASH, KeyAction.HOLD, name="reset", callback=reset_pose),
+        Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
+        Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, True)),
+        Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, True)),
+        Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
+        Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
+        Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
+        Keybind("roll_ccw", Key.N, KeyAction.HOLD, callback=rotate, args=(0, False)),
+        Keybind("roll_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(0, True)),
+        Keybind("pitch_up", Key.COMMA, KeyAction.HOLD, callback=rotate, args=(1, False)),
+        Keybind("pitch_down", Key.PERIOD, KeyAction.HOLD, callback=rotate, args=(1, True)),
+        Keybind("yaw_ccw", Key.O, KeyAction.HOLD, callback=rotate, args=(2, False)),
+        Keybind("yaw_cw", Key.P, KeyAction.HOLD, callback=rotate, args=(2, True)),
+        Keybind("reset", Key.BACKSLASH, KeyAction.HOLD, callback=reset_pose),
     )
 
     # Print controls
