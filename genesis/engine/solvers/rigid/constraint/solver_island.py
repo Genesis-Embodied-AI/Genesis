@@ -806,7 +806,7 @@ class ConstraintSolverIsland:
                             if p1_cost <= p2_cost and p1_cost < p0_cost:
                                 self.ls_result[i_b] = 4
                                 res_alpha = p1_alpha
-                            elif p2_cost <= p1_cost and p2_cost < p1_cost:
+                            elif p2_cost <= p1_cost and p2_cost < p0_cost:
                                 self.ls_result[i_b] = 4
                                 res_alpha = p2_alpha
                             else:
