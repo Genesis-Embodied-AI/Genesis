@@ -338,11 +338,11 @@ class Keybindings:
         del self._name_to_hash[name]
 
     def remove(self, name: str) -> None:
-        for kb in list(self._keybinds_map.values()):
-            if kb.name == name:
-                del self._keybinds_map[kb.key_hash()]
-                return
-        raise ValueError(f"No keybind found with name '{name}'.")
+        if name not in self._name_to_hash:
+            raise ValueError(f"No keybind found with name '{name}'.")
+        key_hash = self._name_to_hash[name]
+        del self._keybinds_map[key_hash]
+        del self._name_to_hash[name]
 
     def rebind(
         self,
