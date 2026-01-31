@@ -12,7 +12,7 @@ import numpy as np
 import genesis as gs
 
 
-def create_sph_scene(show_viewer, particle_size=0.01):
+def create_sph_scene(show_viewer, particle_size=0.01, pressure_solver="WCSPH"):
     """Create a basic SPH scene with regular sampler."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -23,6 +23,7 @@ def create_sph_scene(show_viewer, particle_size=0.01):
             lower_bound=(-0.5, -0.5, 0.0),
             upper_bound=(0.5, 0.5, 1),
             particle_size=particle_size,
+            pressure_solver=pressure_solver,
         ),
         show_viewer=show_viewer,
     )
@@ -99,7 +100,8 @@ def get_sph_density_pressure(scene, n_particles):
 
 
 @pytest.mark.required
-def test_sph_initial_density_regular_sampler(sph_scene, tol):
+@pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
+def test_sph_initial_density_regular_sampler(show_viewer, pressure_solver, tol):
     """
     Test that SPH with regular sampler produces reasonable initial density distribution.
 
@@ -113,7 +115,7 @@ def test_sph_initial_density_regular_sampler(sph_scene, tol):
     2. Density standard deviation is bounded (< 10% of rest density)
     3. No particles have extreme density values (> 1.5 * rho0 or < 0.3 * rho0)
     """
-    scene, liquid = sph_scene
+    scene, _ = create_sph_scene(show_viewer, pressure_solver=pressure_solver)
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
     rho0 = sph_solver.particles_info[0].rho
@@ -147,7 +149,8 @@ def test_sph_initial_density_regular_sampler(sph_scene, tol):
 
 
 @pytest.mark.required
-def test_sph_initial_pressure_regular_sampler(sph_scene, tol):
+@pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
+def test_sph_initial_pressure_regular_sampler(show_viewer, pressure_solver, tol):
     """
     Test that SPH with regular sampler produces near-zero initial pressure.
 
@@ -159,7 +162,7 @@ def test_sph_initial_pressure_regular_sampler(sph_scene, tol):
     This is critical for stability: non-zero initial pressure would cause
     spurious forces that destabilize the simulation.
     """
-    scene, liquid = sph_scene
+    scene, _ = create_sph_scene(show_viewer, pressure_solver=pressure_solver)
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
     rho0 = sph_solver.particles_info[0].rho
@@ -187,7 +190,8 @@ def test_sph_initial_pressure_regular_sampler(sph_scene, tol):
 
 
 @pytest.mark.required
-def test_sph_simulation_stability_regular_sampler(sph_scene, tol):
+@pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
+def test_sph_simulation_stability_regular_sampler(show_viewer, pressure_solver, tol):
     """
     Test that SPH simulation with regular sampler remains stable over multiple steps.
 
@@ -198,7 +202,7 @@ def test_sph_simulation_stability_regular_sampler(sph_scene, tol):
 
     This test runs a few simulation steps and verifies stability.
     """
-    scene, liquid = sph_scene
+    scene, liquid = create_sph_scene(show_viewer, pressure_solver=pressure_solver)
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
 
@@ -239,15 +243,20 @@ def test_sph_simulation_stability_regular_sampler(sph_scene, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("pressure_solver", ["WCSPH", "DFSPH"])
 @pytest.mark.parametrize("particle_size", [0.01, 0.02])
-def test_sph_density_consistency_different_particle_sizes(show_viewer, particle_size, tol):
+def test_sph_density_consistency_different_particle_sizes(show_viewer, pressure_solver, particle_size, tol):
     """
     Test that initial density behavior is consistent across different particle sizes.
 
     The relative density distribution (normalized by rho0) should be similar
     regardless of particle size, as the SPH kernel is scaled accordingly.
     """
-    scene, _ = create_sph_scene(show_viewer, particle_size=particle_size)
+    scene, _ = create_sph_scene(
+        show_viewer,
+        particle_size=particle_size,
+        pressure_solver=pressure_solver,
+    )
 
     sph_solver = scene.sph_solver
     n_particles = sph_solver.n_particles
@@ -275,3 +284,30 @@ def test_sph_density_consistency_different_particle_sizes(show_viewer, particle_
     assert np.allclose(pressures, 0.0, atol=1e-6), (
         f"Initial pressure is not zero for particle_size={particle_size}. Mean: {pressures.mean():.6f}"
     )
+
+
+# =============================================================================
+# DFSPH (Divergence-Free SPH) Pressure Solver Tests
+# =============================================================================
+
+
+# TODO: Add more tests for validating the underlying physical behavior of DFSPH.
+@pytest.mark.required
+def test_dfsph_simulation_builds_and_runs(show_viewer):
+    """
+    Test that DFSPH pressure solver builds and runs without errors.
+
+    This is a basic smoke test to verify that the DFSPH solver is properly
+    initialized and can execute simulation steps without crashing.
+    """
+    scene, liquid = create_sph_scene(show_viewer, pressure_solver="DFSPH")
+
+    assert scene.sph_solver is not None
+    assert scene.sph_solver.n_particles > 0
+
+    # Run a few simulation steps
+    for _ in range(3):
+        scene.step()
+
+    pos = liquid.get_particles_pos()
+    assert pos.shape[0] == scene.sph_solver.n_particles

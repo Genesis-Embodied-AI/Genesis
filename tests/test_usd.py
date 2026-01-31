@@ -1,25 +1,35 @@
 """
-Test USD parsing and comparison with MJCF scenes.
+Test USD parsing and comparison with compared scenes.
 
 This module tests that USD files can be parsed correctly and that scenes
-loaded from USD files match equivalent scenes loaded from MJCF files.
+loaded from USD files match equivalent scenes loaded from compared files.
 """
+
+import os
+import time
 
 import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
 import genesis as gs
+import genesis.utils.geom as gu
 
-from .utils import assert_allclose
+from .utils import assert_allclose, get_hf_dataset
+from .test_mesh import check_gs_meshes, check_gs_surfaces
 
 # Check for USD support
 try:
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+    from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
 
     HAS_USD_SUPPORT = True
-except ImportError:
+except ImportError as e:
     HAS_USD_SUPPORT = False
+    HAS_OMNIVERSE_KIT_SUPPORT = False
+
+USD_COLOR_TOL = 1e-07  # Parsing from .usd loses a little precision in color
+USD_NORMALS_TOL = 1e-02  # Conversion from .usd to .glb loses a little precision in normals
 
 
 def to_array(s: str) -> np.ndarray:
@@ -29,7 +39,7 @@ def to_array(s: str) -> np.ndarray:
     return np.array([float(x) for x in s.split()])
 
 
-def compare_links(mjcf_links, usd_links, tol):
+def compare_links(compared_links, usd_links, tol):
     """
     Generic function to compare links between two scenes.
     Compares as much link data as possible including positions, orientations,
@@ -37,80 +47,67 @@ def compare_links(mjcf_links, usd_links, tol):
 
     Parameters
     ----------
-    mjcf_links : list
-        List of links from MJCF scene
+    compared_links : list
+        List of links from compared scene
     usd_links : list
         List of links from USD scene
     tol : float, optional
         Tolerance for numerical comparisons.
     """
     # Check number of links
-    assert len(mjcf_links) == len(usd_links)
+    assert len(compared_links) == len(usd_links)
 
     # Create dictionaries keyed by link name for comparison
-    mjcf_links_by_name = {link.name: link for link in mjcf_links}
+    compared_links_by_name = {link.name: link for link in compared_links}
     usd_links_by_name = {link.name: link for link in usd_links}
 
     # Create index to name mappings for parent comparison
-    mjcf_idx_to_name = {i: link.name for i, link in enumerate(mjcf_links)}
+    compared_idx_to_name = {i: link.name for i, link in enumerate(compared_links)}
     usd_idx_to_name = {i: link.name for i, link in enumerate(usd_links)}
 
     # Check that we have matching link names
-    mjcf_link_names = set(mjcf_links_by_name.keys())
+    compared_link_names = set(compared_links_by_name.keys())
     usd_link_names = set(usd_links_by_name.keys())
-    assert mjcf_link_names == usd_link_names
+    assert compared_link_names == usd_link_names
 
     # Compare all link properties by name
-    for link_name in sorted(mjcf_link_names):
-        mjcf_link = mjcf_links_by_name[link_name]
+    for link_name in sorted(compared_link_names):
+        compared_link = compared_links_by_name[link_name]
         usd_link = usd_links_by_name[link_name]
 
-        # Compare position
-        assert_allclose(mjcf_link.pos, usd_link.pos, tol=tol)
-
-        # Compare quaternion
-        assert_allclose(mjcf_link.quat, usd_link.quat, tol=tol)
-
-        # Compare is_fixed
-        assert mjcf_link.is_fixed == usd_link.is_fixed
-
-        # Compare number of geoms
-        assert len(mjcf_link.geoms) == len(usd_link.geoms)
-
-        # Compare number of joints
-        assert mjcf_link.n_joints == usd_link.n_joints
-
-        # Compare number of visual geoms
-        assert len(mjcf_link.vgeoms) == len(usd_link.vgeoms)
+        # Compare link properties
+        assert_allclose(compared_link.pos, usd_link.pos, tol=tol)
+        assert_allclose(compared_link.quat, usd_link.quat, tol=tol)
+        assert compared_link.is_fixed == usd_link.is_fixed
+        assert len(compared_link.geoms) == len(usd_link.geoms)
+        assert compared_link.n_joints == usd_link.n_joints
+        assert len(compared_link.vgeoms) == len(usd_link.vgeoms)
 
         # Compare parent link by name (mapping indices to names)
-        mjcf_parent_idx = mjcf_link.parent_idx
+        compared_parent_idx = compared_link.parent_idx
         usd_parent_idx = usd_link.parent_idx
-
-        if mjcf_parent_idx == -1:
-            mjcf_parent_name = None
+        if compared_parent_idx == -1:
+            compared_parent_name = None
         else:
-            mjcf_parent_name = mjcf_idx_to_name.get(mjcf_parent_idx, f"<unknown idx {mjcf_parent_idx}>")
-
+            compared_parent_name = compared_idx_to_name.get(compared_parent_idx, f"<unknown idx {compared_parent_idx}>")
         if usd_parent_idx == -1:
             usd_parent_name = None
         else:
             usd_parent_name = usd_idx_to_name.get(usd_parent_idx, f"<unknown idx {usd_parent_idx}>")
-
-        assert mjcf_parent_name == usd_parent_name
+        assert compared_parent_name == usd_parent_name
 
         # Compare inertial properties if available
-        assert_allclose(mjcf_link.inertial_pos, usd_link.inertial_pos, tol=tol)
-        assert_allclose(mjcf_link.inertial_quat, usd_link.inertial_quat, tol=tol)
+        assert_allclose(compared_link.inertial_pos, usd_link.inertial_pos, tol=tol)
+        assert_allclose(compared_link.inertial_quat, usd_link.inertial_quat, tol=tol)
 
         # Skip mass and inertia checks for fixed links - they're not used in simulation
-        if not mjcf_link.is_fixed:
+        if not compared_link.is_fixed:
             # Both scenes now use the same material density (1000 kg/m³), so values should match closely
-            assert_allclose(mjcf_link.inertial_mass, usd_link.inertial_mass, atol=tol)
-            assert_allclose(mjcf_link.inertial_i, usd_link.inertial_i, atol=tol)
+            assert_allclose(compared_link.inertial_mass, usd_link.inertial_mass, atol=tol)
+            assert_allclose(compared_link.inertial_i, usd_link.inertial_i, atol=tol)
 
 
-def compare_joints(mjcf_joints, usd_joints, tol):
+def compare_joints(compared_joints, usd_joints, tol):
     """
     Generic function to compare joints between two scenes.
     Compares as much joint data as possible including positions, orientations,
@@ -118,148 +115,258 @@ def compare_joints(mjcf_joints, usd_joints, tol):
 
     Parameters
     ----------
-    mjcf_joints : list
-        List of joints from MJCF scene
+    compared_joints : list
+        List of joints from compared scene
     usd_joints : list
         List of joints from USD scene
     tol : float, optional
         Tolerance for numerical comparisons.
     """
     # Check number of joints
-    assert len(mjcf_joints) == len(usd_joints)
+    assert len(compared_joints) == len(usd_joints)
 
     # Create dictionaries keyed by joint name for comparison
-    mjcf_joints_by_name = {joint.name: joint for joint in mjcf_joints}
+    compared_joints_by_name = {joint.name: joint for joint in compared_joints}
     usd_joints_by_name = {joint.name: joint for joint in usd_joints}
 
     # Check that we have matching joint names
-    mjcf_joint_names = set(mjcf_joints_by_name.keys())
+    compared_joint_names = set(compared_joints_by_name.keys())
     usd_joint_names = set(usd_joints_by_name.keys())
-    assert mjcf_joint_names == usd_joint_names
+    assert compared_joint_names == usd_joint_names
 
     # Compare all joint properties by name
-    for joint_name in sorted(mjcf_joint_names):
-        mjcf_joint = mjcf_joints_by_name[joint_name]
+    for joint_name in sorted(compared_joint_names):
+        compared_joint = compared_joints_by_name[joint_name]
         usd_joint = usd_joints_by_name[joint_name]
 
-        # Compare joint type
-        assert mjcf_joint.type == usd_joint.type
-
-        # Compare position
-        assert_allclose(mjcf_joint.pos, usd_joint.pos, tol=tol)
-
-        # Compare quaternion
-        assert_allclose(mjcf_joint.quat, usd_joint.quat, tol=tol)
-
-        # Compare number of qs and dofs
-        assert mjcf_joint.n_qs == usd_joint.n_qs
-
-        assert mjcf_joint.n_dofs == usd_joint.n_dofs
+        # Compare joint properties
+        assert compared_joint.type == usd_joint.type
+        assert_allclose(compared_joint.pos, usd_joint.pos, tol=tol)
+        assert_allclose(compared_joint.quat, usd_joint.quat, tol=tol)
+        assert compared_joint.n_qs == usd_joint.n_qs
+        assert compared_joint.n_dofs == usd_joint.n_dofs
 
         # Compare initial qpos
-        assert_allclose(mjcf_joint.init_qpos, usd_joint.init_qpos, tol=tol)
+        assert_allclose(compared_joint.init_qpos, usd_joint.init_qpos, tol=tol)
 
         # Skip mass/inertia-dependent property checks for fixed joints - they're not used in simulation
-        if mjcf_joint.type != gs.JOINT_TYPE.FIXED:
+        if compared_joint.type != gs.JOINT_TYPE.FIXED:
             # Compare dof limits
-            assert_allclose(mjcf_joint.dofs_limit, usd_joint.dofs_limit, tol=tol)
+            assert_allclose(compared_joint.dofs_limit, usd_joint.dofs_limit, tol=tol)
 
             # Compare dof motion properties
-            assert_allclose(mjcf_joint.dofs_motion_ang, usd_joint.dofs_motion_ang, tol=tol)
-            assert_allclose(mjcf_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol)
-            assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
-            assert_allclose(mjcf_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol)
-            assert_allclose(mjcf_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
-            assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
-            assert_allclose(mjcf_joint.dofs_damping, usd_joint.dofs_damping, tol=tol)
-            assert_allclose(mjcf_joint.dofs_armature, usd_joint.dofs_armature, tol=tol)
+            assert_allclose(compared_joint.dofs_motion_ang, usd_joint.dofs_motion_ang, tol=tol)
+            assert_allclose(compared_joint.dofs_motion_vel, usd_joint.dofs_motion_vel, tol=tol)
+            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
+            assert_allclose(compared_joint.dofs_stiffness, usd_joint.dofs_stiffness, tol=tol)
+            assert_allclose(compared_joint.dofs_frictionloss, usd_joint.dofs_frictionloss, tol=tol)
+            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
+            assert_allclose(compared_joint.dofs_damping, usd_joint.dofs_damping, tol=tol)
+            assert_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature, tol=tol)
 
             # Compare dof control properties
-            assert_allclose(mjcf_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
-            assert_allclose(mjcf_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
-            assert_allclose(mjcf_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
+            assert_allclose(compared_joint.dofs_kp, usd_joint.dofs_kp, tol=tol)
+            assert_allclose(compared_joint.dofs_kv, usd_joint.dofs_kv, tol=tol)
+            assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol)
 
 
-def compare_geoms(mjcf_geoms, usd_geoms, tol):
+def compare_geoms(compared_geoms, usd_geoms, tol):
     """
     Generic function to compare geoms between two scenes.
-    Compares as much geom data as possible including positions, orientations,
-    sizes, etc.
+    Compares as much geom data as possible including positions, orientations, sizes, etc.
     """
-    assert len(mjcf_geoms) == len(usd_geoms), f"Number of geoms mismatch: MJCF={len(mjcf_geoms)}, USD={len(usd_geoms)}"
+    assert len(compared_geoms) == len(usd_geoms)
 
     # Sort geoms by link name for consistent comparison
-    mjcf_geoms_sorted = sorted(mjcf_geoms, key=lambda g: (g.link.name, g._idx))
-    usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g._idx))
+    compared_geoms_sorted = sorted(compared_geoms, key=lambda g: (g.link.name, g.idx))
+    usd_geoms_sorted = sorted(usd_geoms, key=lambda g: (g.link.name, g.idx))
 
-    for mjcf_geom, usd_geom in zip(mjcf_geoms_sorted, usd_geoms_sorted):
-        assert mjcf_geom.type == usd_geom.type
+    for compared_geom, usd_geom in zip(compared_geoms_sorted, usd_geoms_sorted):
+        assert compared_geom.type == usd_geom.type
+        assert_allclose(compared_geom.init_pos, usd_geom.init_pos, tol=tol)
+        assert_allclose(compared_geom.init_quat, usd_geom.init_quat, tol=tol)
+        assert_allclose(compared_geom.get_AABB(), usd_geom.get_AABB(), tol=tol)
 
 
-def compare_scene(mjcf_scene: gs.Scene, usd_scene: gs.Scene, tol):
-    """Compare structure and data between MJCF and USD scenes."""
-    mjcf_entities = mjcf_scene.entities
+def compare_vgeoms(compared_vgeoms, usd_vgeoms, tol, strict=True):
+    assert len(compared_vgeoms) == len(usd_vgeoms)
+
+    # Sort geoms by link name for consistent comparison
+    compared_vgeoms_sorted = sorted(compared_vgeoms, key=lambda g: g.vmesh.metadata["name"])
+    usd_vgeoms_sorted = sorted(usd_vgeoms, key=lambda g: g.vmesh.metadata["name"].split("/")[-1])
+
+    for compared_vgeom, usd_vgeom in zip(compared_vgeoms_sorted, usd_vgeoms_sorted):
+        if strict:
+            compared_vgeom_pos, compared_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+                compared_vgeom.init_pos, compared_vgeom.init_quat, compared_vgeom.link.pos, compared_vgeom.link.quat
+            )
+            usd_vgeom_pos, usd_vgeom_quat = gu.transform_pos_quat_by_trans_quat(
+                usd_vgeom.init_pos, usd_vgeom.init_quat, usd_vgeom.link.pos, usd_vgeom.link.quat
+            )
+            compared_vgeom_T = gu.trans_quat_to_T(compared_vgeom_pos, compared_vgeom_quat)
+            usd_vgeom_T = gu.trans_quat_to_T(usd_vgeom_pos, usd_vgeom_quat)
+
+            compared_vgeom_mesh = compared_vgeom.vmesh.copy()
+            usd_vgeom_mesh = usd_vgeom.vmesh.copy()
+            mesh_name = usd_vgeom_mesh.metadata["name"]
+            compared_vgeom_mesh.apply_transform(compared_vgeom_T)
+            usd_vgeom_mesh.apply_transform(usd_vgeom_T)
+            check_gs_meshes(compared_vgeom_mesh, usd_vgeom_mesh, mesh_name, tol, USD_NORMALS_TOL)
+        else:
+            assert_allclose(compared_vgeom.get_AABB(), usd_vgeom.get_AABB(), tol=tol)
+
+        compared_vgeom_surface = compared_vgeom_mesh.surface
+        usd_vgeom_surface = usd_vgeom_mesh.surface
+        check_gs_surfaces(compared_vgeom_surface, usd_vgeom_surface, mesh_name)
+
+
+def compare_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
+    """Compare structure and data between compared scene and USD scene."""
+    compared_entities = compared_scene.entities
     usd_entities = usd_scene.entities
 
-    mjcf_links = []
-    for entity in mjcf_entities:
-        mjcf_links.extend(entity.links)
+    compared_links = [link for entity in compared_entities for link in entity.links]
+    usd_links = [link for entity in usd_entities for link in entity.links]
+    compare_links(compared_links, usd_links, tol=tol)
 
-    usd_links = []
-    for entity in usd_entities:
-        usd_links.extend(entity.links)
+    compared_geoms = [geom for entity in compared_entities for geom in entity.geoms]
+    usd_geoms = [geom for entity in usd_entities for geom in entity.geoms]
+    compare_geoms(compared_geoms, usd_geoms, tol=tol)
 
-    compare_links(mjcf_links, usd_links, tol=tol)
-
-    mjcf_geoms = []
-    for entity in mjcf_entities:
-        mjcf_geoms.extend(entity.geoms)
-
-    usd_geoms = []
-    for entity in usd_entities:
-        usd_geoms.extend(entity.geoms)
-
-    compare_geoms(mjcf_geoms, usd_geoms, tol=tol)
-
-    mjcf_joints = []
-    for entity in mjcf_entities:
-        mjcf_joints.extend(entity.joints)
-
-    usd_joints = []
-    for entity in usd_entities:
-        usd_joints.extend(entity.joints)
-
-    compare_joints(mjcf_joints, usd_joints, tol=tol)
+    compared_joints = [joint for entity in compared_entities for joint in entity.joints]
+    usd_joints = [joint for entity in usd_entities for joint in entity.joints]
+    compare_joints(compared_joints, usd_joints, tol=tol)
 
 
-def build_mjcf_and_usd_scenes(xml_path: str, usd_file: str):
+def compare_mesh_scene(compared_scene: gs.Scene, usd_scene: gs.Scene, tol: float):
     """
-    Build both MJCF and USD scenes from their respective file paths.
+    Compare mesh data between mesh scene and USD scene.
+    Meshes are loaded with transformations baked. Therefore, we only compare mesh data.
+    """
+    compared_entities = compared_scene.entities
+    usd_entities = usd_scene.entities
+    compared_vgeoms = [vgeom for entity in compared_entities for vgeom in entity.vgeoms]
+    usd_vgeoms = [vgeom for entity in usd_entities for vgeom in entity.vgeoms]
+    compare_vgeoms(compared_vgeoms, usd_vgeoms, tol=tol)
+
+
+def build_mjcf_scene(xml_path: str, scale: float):
+    """
+    Build a MJCF scene from its file path.
 
     Parameters
     ----------
     xml_path : str
         Path to the MJCF/XML file
-    usd_file : str
-        Path to the USD file
+    scale : float
+        Scale factor to apply to the scene
     Returns
     -------
-    tuple[gs.Scene, gs.Scene]
-        A tuple containing (mjcf_scene, usd_scene)
+    mjcf_scene : gs.Scene
+        The MJCF scene
     """
     # Create MJCF scene
     mjcf_scene = gs.Scene()
-    mjcf_morph = gs.morphs.MJCF(file=xml_path)
-    mjcf_scene.add_entity(mjcf_morph)
+
+    mjcf_scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            scale=scale,
+            convexify=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+
     mjcf_scene.build()
 
-    # Create USD scene
-    usd_scene = gs.Scene()
-    usd_morph = gs.morphs.USD(file=usd_file)
-    usd_scene.add_stage(usd_morph, vis_mode="collision")
-    usd_scene.build()
+    return mjcf_scene
 
-    return mjcf_scene, usd_scene
+
+def build_usd_scene(
+    usd_file: str,
+    scale: float,
+    vis_mode: str = "collision",
+    is_stage: bool = True,
+    fixed: bool = False,
+):
+    """
+    Build a USD scene from its file path.
+
+    Parameters
+    ----------
+    usd_file : str
+        Path to the USD file
+    scale : float
+        Scale factor to apply to the scene
+    vis_mode : str
+        The visualization mode of the scene
+    is_stage : bool
+        Whether to add the USD file as a stage or as an entity
+    fixed : bool
+        Whether the object should be fixed
+    Returns
+    -------
+    usd_scene : gs.Scene
+        The USD scene
+    """
+    # Create USD scene
+    scene = gs.Scene()
+
+    kwargs = dict(
+        morph=gs.morphs.USD(
+            usd_ctx=UsdContext(
+                usd_file,
+                use_bake_cache=False,
+            ),
+            scale=scale,
+            fixed=fixed,
+            convexify=False,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+        vis_mode=vis_mode,
+    )
+
+    if is_stage:
+        scene.add_stage(**kwargs)
+    else:
+        scene.add_entity(**kwargs)
+
+    # Note that it is necessary to build the scene because spatial inertia of some geometries may not be specified.
+    # In such a case, it will be estimated from the geometry during build (RigidLink._build to be specific).
+    scene.build()
+
+    return scene
+
+
+def build_mesh_scene(mesh_file: str, scale: float):
+    """
+    Build a mesh scene from its file path.
+
+    Parameters
+    ----------
+    mesh_file : str
+        Path to the mesh file
+    scale : float
+        Scale factor to apply to the scene
+    Returns
+    -------
+    mesh_scene : gs.Scene
+        The mesh scene
+    """
+    mesh_scene = gs.Scene()
+    mesh_morph = gs.morphs.Mesh(
+        file=mesh_file,
+        scale=scale,
+        euler=(-90, 0, 0),
+        group_by_material=False,
+    )
+    mesh_scene.add_entity(mesh_morph, material=gs.materials.Rigid(rho=1000.0))
+    mesh_scene.build()
+    return mesh_scene
 
 
 @pytest.fixture
@@ -359,15 +466,18 @@ def box_plane_usd(asset_tmp_path, box_plane_mjcf: ET.ElementTree):
     rigid_body_api.GetKinematicEnabledAttr().Set(False)
 
     stage.Save()
+
     return usd_file
 
 
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["box_plane_mjcf"])
+@pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, tol):
+def test_box_plane_mjcf_vs_usd(xml_path, box_plane_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
-    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, box_plane_usd)
+    mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
+    usd_scene = build_usd_scene(box_plane_usd, scale=scale)
     compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
@@ -517,10 +627,12 @@ def prismatic_joint_usd(asset_tmp_path, prismatic_joint_mjcf: ET.ElementTree):
 
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["prismatic_joint_mjcf"])
+@pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, tol):
+def test_prismatic_joint_mjcf_vs_usd(xml_path, prismatic_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with prismatic joints produce equivalent Genesis entities."""
-    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, prismatic_joint_usd)
+    mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
+    usd_scene = build_usd_scene(prismatic_joint_usd, scale=scale)
     compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
@@ -672,10 +784,12 @@ def revolute_joint_usd(asset_tmp_path, revolute_joint_mjcf: ET.ElementTree):
 
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["revolute_joint_mjcf"])
+@pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, tol):
+def test_revolute_joint_mjcf_vs_usd(xml_path, revolute_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with revolute joints produce equivalent Genesis entities."""
-    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, revolute_joint_usd)
+    mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
+    usd_scene = build_usd_scene(revolute_joint_usd, scale=scale)
     compare_scene(mjcf_scene, usd_scene, tol=tol)
 
 
@@ -779,13 +893,90 @@ def spherical_joint_usd(asset_tmp_path, spherical_joint_mjcf: ET.ElementTree):
     joint_prim.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
 
     stage.Save()
+
     return usd_file
 
 
 @pytest.mark.parametrize("precision", ["32"])
 @pytest.mark.parametrize("model_name", ["spherical_joint_mjcf"])
+@pytest.mark.parametrize("scale", [1.0, 2.0])
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
-def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, tol):
+def test_spherical_joint_mjcf_vs_usd(xml_path, spherical_joint_usd, scale, tol):
     """Test that MJCF and USD scenes with spherical joints produce equivalent Genesis entities."""
-    mjcf_scene, usd_scene = build_mjcf_and_usd_scenes(xml_path, spherical_joint_usd)
+    mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
+    usd_scene = build_usd_scene(spherical_joint_usd, scale=scale)
     compare_scene(mjcf_scene, usd_scene, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+def test_usd_visual_parse(model_name, tol):
+    glb_asset_path = get_hf_dataset(pattern=f"{model_name}.glb")
+    glb_file = os.path.join(glb_asset_path, f"{model_name}.glb")
+    usd_asset_path = get_hf_dataset(pattern=f"{model_name}.usdz")
+    usd_file = os.path.join(usd_asset_path, f"{model_name}.usdz")
+
+    mesh_scene = build_mesh_scene(glb_file, scale=1.0)
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
+
+    compare_mesh_scene(mesh_scene, usd_scene, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+def test_usd_parse_nodegraph(usd_file):
+    asset_path = get_hf_dataset(pattern=usd_file)
+    usd_file = os.path.join(asset_path, usd_file)
+
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False)
+
+    texture0 = usd_scene.entities[0].vgeoms[0].vmesh.surface.diffuse_texture
+    texture1 = usd_scene.entities[0].vgeoms[1].vmesh.surface.diffuse_texture
+    assert isinstance(texture0, gs.textures.ColorTexture)
+    assert isinstance(texture1, gs.textures.ColorTexture)
+    assert_allclose(texture0.color, (0.8, 0.2, 0.2), rtol=USD_COLOR_TOL)
+    assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize(
+    "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
+)
+@pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
+def test_usd_bake(usd_file, tmp_path):
+    RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
+    RETRY_DELAY = 30.0
+
+    asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
+    usd_file = os.path.join(asset_path, usd_file)
+
+    # Note that bootstrapping omni-kit by multiple workers concurrently is causing failure.
+    # There is no easy way to get around this limitation except retrying after some delay...
+    retry_idx = 0
+    while True:
+        usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False, fixed=True)
+
+        is_any_baked = False
+        for vgeom in usd_scene.entities[0].vgeoms:
+            vmesh = vgeom.vmesh
+            bake_success = vmesh.metadata["bake_success"]
+            try:
+                assert bake_success is None or bake_success
+            except AssertionError:
+                if retry_idx < RETRY_NUM:
+                    usd_scene.destroy()
+                    print(f"Failed to bake usd. Trying again in {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                    break
+                raise
+            is_any_baked |= bake_success
+        else:
+            assert is_any_baked
+            break

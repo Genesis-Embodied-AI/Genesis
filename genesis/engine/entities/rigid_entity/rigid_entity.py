@@ -1,4 +1,5 @@
 import inspect
+import os
 from copy import copy
 from itertools import chain
 from typing import TYPE_CHECKING, Literal, Any
@@ -453,10 +454,7 @@ class RigidEntity(Entity):
             # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
                 tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(
-                    mesh=tmesh,
-                    surface=gs.surfaces.Collision(),
-                )
+                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 meshes = (mesh,)
 
             for mesh in meshes:
@@ -474,7 +472,7 @@ class RigidEntity(Entity):
         if load_geom_only_for_heterogeneous:
             return g_infos
 
-        link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
+        link_name = os.path.basename(morph.file).replace(".", "_")
 
         self._add_by_info(
             l_info=dict(
@@ -618,14 +616,19 @@ class RigidEntity(Entity):
                 inertia_i = l_info.get("inertial_i")
                 if inertia_i is None:
                     continue
-                inertia_diag = np.linalg.eigvals(inertia_i)
-                if (inertia_diag < 0.0).any():
+
+                # Compute eigenvalues of inertia matrix after enforcing symmetry
+                inertia_diag, Q = np.linalg.eigh(0.5 * (inertia_i + inertia_i.T))
+
+                # Make sure that all eigenvalues are positive, ignoring rounding errors
+                if (inertia_diag < -gs.EPS).any():
                     gs.raise_exception(
                         f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
                     )
+
+                # Make sure that the inertia matrix is physically valid (nothing to do with numerical conditioning)
                 if any(
-                    inertia_diag[i] + inertia_diag[(i + 1) % 3] + gs.EPS
-                    < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
+                    inertia_diag[i] + inertia_diag[(i + 1) % 3] < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
                     for i in range(3)
                 ):
                     gs.raise_exception(
@@ -633,6 +636,9 @@ class RigidEntity(Entity):
                         f"(eigenvalues: {inertia_diag}). Please fix manually you morph file '{morph.file}' or specify "
                         "`recompute_inertia=True`."
                     )
+
+                # Make sure that the inertia matrix is symmetric with positive eigenvalues
+                l_info["inertial_i"] = Q @ np.diag(np.maximum(inertia_diag, 0.0)) @ Q.T
 
         # Add free floating joint at root if necessary
         if (
@@ -2113,7 +2119,9 @@ class RigidEntity(Entity):
             for joint in self.joints:
                 if joint.name == name:
                     return joint
-            gs.raise_exception(f"Joint not found for name: {name}.")
+            gs.raise_exception(
+                f"Joint not found for name: {name}. Available joint names: {[joint.name for joint in self.joints]}."
+            )
 
         elif uid is not None:
             for joint in self.joints:
@@ -2145,7 +2153,9 @@ class RigidEntity(Entity):
             for link in self._links:
                 if link.name == name:
                     return link
-            gs.raise_exception(f"Link not found for name: {name}.")
+            gs.raise_exception(
+                f"Link not found for name: {name}. Available link names: {[link.name for link in self._links]}."
+            )
 
         elif uid is not None:
             for link in self._links:

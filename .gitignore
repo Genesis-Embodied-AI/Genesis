@@ -151,3 +151,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 uv.lock
+
+# alarm.yml outputs
+outputs/

@@ -25,7 +25,6 @@ env:
   PY_COLORS: 1
   MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
   OMNI_KIT_ACCEPT_EULA: "yes"
-  OMNI_KIT_ALLOW_ROOT: "1"
 
 jobs:
   unit-tests:
@@ -55,7 +54,7 @@ jobs:
                --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
@@ -132,7 +131,7 @@ jobs:
                --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA,OMNI_KIT_ALLOW_ROOT"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
@@ -164,6 +163,13 @@ jobs:
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
                    --print -x -m "benchmarks" ./tests
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
+            if [ -n "${WANDB_API_KEY}" ] ; then {
+              python tests/upload_benchmarks_table_to_wandb.py \
+                  --in-file "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
+                  --project genesis-benchmarks-2 \
+                  --metrics max_mem_mb \
+                  --run-prefix mem
+            } fi
           EOF
       - name: Kill Slurm job
         if: always()
