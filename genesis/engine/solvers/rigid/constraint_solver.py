@@ -22,13 +22,12 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 # Check environment variable for decomposed solver usage
 USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
-USE_DECOMPOSED_SOLVER = 1
+# USE_DECOMPOSED_SOLVER = 1
 # Check environment variable for macro kernel usage (only applies when USE_DECOMPOSED_SOLVER is True)
 USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
-USE_BATCHED_LS = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -1685,35 +1684,35 @@ def func_ls_point_fn_3alphas(
                 a2_qf_0 = ln2 * f * (-0.5 * rf - Jaref_c) + lp2 * f * (-0.5 * rf + Jaref_c)
                 a2_qf_1 = ln2 * (-f * jv_c) + lp2 * (f * jv_c)
                 a2_qf_2 = 0.0
-            t2_0 += a2_qf_0
-            t2_1 += a2_qf_1
-            t2_2 += a2_qf_2
+            t2_0 = t2_0 + a2_qf_0
+            t2_1 = t2_1 + a2_qf_1
+            t2_2 = t2_2 + a2_qf_2
 
         elif nef <= i_c:
             # Contact constraints
             act0 = gs.ti_bool(x0 < 0)
             act1 = gs.ti_bool(x1 < 0)
             act2 = gs.ti_bool(x2 < 0)
-            t0_0 += qf_0 * act0
-            t0_1 += qf_1 * act0
-            t0_2 += qf_2 * act0
-            t1_0 += qf_0 * act1
-            t1_1 += qf_1 * act1
-            t1_2 += qf_2 * act1
-            t2_0 += qf_0 * act2
-            t2_1 += qf_1 * act2
-            t2_2 += qf_2 * act2
+            t0_0 = t0_0 + qf_0 * act0
+            t0_1 = t0_1 + qf_1 * act0
+            t0_2 = t0_2 + qf_2 * act0
+            t1_0 = t1_0 + qf_0 * act1
+            t1_1 = t1_1 + qf_1 * act1
+            t1_2 = t1_2 + qf_2 * act1
+            t2_0 = t2_0 + qf_0 * act2
+            t2_1 = t2_1 + qf_1 * act2
+            t2_2 = t2_2 + qf_2 * act2
         else:
             # Equality constraints (always active)
-            t0_0 += qf_0
-            t0_1 += qf_1
-            t0_2 += qf_2
-            t1_0 += qf_0
-            t1_1 += qf_1
-            t1_2 += qf_2
-            t2_0 += qf_0
-            t2_1 += qf_1
-            t2_2 += qf_2
+            t0_0 = t0_0 + qf_0
+            t0_1 = t0_1 + qf_1
+            t0_2 = t0_2 + qf_2
+            t1_0 = t1_0 + qf_0
+            t1_1 = t1_1 + qf_1
+            t1_2 = t1_2 + qf_2
+            t2_0 = t2_0 + qf_0
+            t2_1 = t2_1 + qf_1
+            t2_2 = t2_2 + qf_2
 
     # Derive cost and derivatives for each alpha
     EPS = rigid_global_info.EPS[None]
@@ -1792,26 +1791,31 @@ def func_linesearch(
             static_rigid_sim_config=static_rigid_sim_config,
         )
 
+        # Do eval on the current point
         p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_point_fn(
             i_b, gs.ti_float(0.0), constraint_state, rigid_global_info
         )
+        # Do one step Newton
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
             i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
         )
-
+        # If one step Newton is bad, fallback to current point
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1
 
         if ti.abs(p1_deriv_0) < gtol:
             if ti.abs(p1_alpha) < rigid_global_info.EPS[None]:
+                # Result 2: alpha almost zero
                 constraint_state.ls_result[i_b] = 2
             else:
+                # Result 0: alpha satisfies the threshold
                 constraint_state.ls_result[i_b] = 0
             res_alpha = p1_alpha
         else:
             direction = (p1_deriv_0 < 0) * 2 - 1
             p2update = 0
             p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
+            # Do search according to the direction unitl derivative sign changed or hit the iterations limit
             while (
                 p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
             ):
@@ -1827,16 +1831,19 @@ def func_linesearch(
                     break
             if not done:
                 if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+                    # linesearch iterations limit hitted
                     constraint_state.ls_result[i_b] = 3
                     res_alpha = p1_alpha
                     done = True
 
                 if not p2update and not done:
+                    # Not entering into the while loop above at all
                     constraint_state.ls_result[i_b] = 6
                     res_alpha = p1_alpha
                     done = True
 
                 if not done:
+                    # Now get one side of the bracket
                     p2_next_alpha, p2_next_cost, p2_next_deriv_0, p2_next_deriv_1 = (
                         p1_alpha,
                         p1_cost,
@@ -1848,6 +1855,9 @@ def func_linesearch(
                         i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
                     )
 
+                    # p1_alpha is one side of the bracket
+                    # Here, p2_alpha is the alpha just before the derivative sign changed, 
+                    # i.e., other side of the bracket
                     while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
                         pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = func_ls_point_fn(
                             i_b, (p1_alpha + p2_alpha) * 0.5, constraint_state, rigid_global_info
@@ -1915,9 +1925,14 @@ def func_linesearch(
                             )
 
                             if b1 == 0 and b2 == 0:
+                                # this means both two brackets points are not updated
+                                # possibly because the bottom of the function landscape is noisy
+                                # choose the midpoint as a compromised solution
                                 if pmid_cost < p0_cost:
+                                    # midpoint cost is smaller
                                     constraint_state.ls_result[i_b] = 0
                                 else:
+                                    # midpoint cost is larger
                                     constraint_state.ls_result[i_b] = 7
                                 res_alpha = pmid_alpha
                                 done = True
@@ -1926,6 +1941,7 @@ def func_linesearch(
                         if p1_cost <= p2_cost and p1_cost < p0_cost:
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p1_alpha
+                        # Is the p2_cost < p1_cost a typo? should be p2_cost < p0_cost?
                         elif p2_cost <= p1_cost and p2_cost < p1_cost:
                             constraint_state.ls_result[i_b] = 4
                             res_alpha = p2_alpha
@@ -1982,6 +1998,7 @@ def update_bracket(
 ):
     flag = 0
 
+    # find a same sign but samller derivative point from candidates
     for i in range(3):
         if (
             p_deriv_0 < 0
