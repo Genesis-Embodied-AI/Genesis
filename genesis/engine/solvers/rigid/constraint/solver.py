@@ -7,11 +7,12 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.utils.misc import ti_to_torch
+
 from . import backward as backward_constraint_solver
-import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from . import noslip as constraint_noslip
 from ..collider.contact_island import ContactIsland
-from genesis.utils.misc import ti_to_torch
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -2352,7 +2353,7 @@ def func_update_gradient_batch(
         )
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        rigid_solver.func_solve_mass_batch(
+        func_solve_mass_batch(
             i_b,
             constraint_state.grad,
             constraint_state.Mgrad,
@@ -2388,7 +2389,7 @@ def func_update_gradient_tiled(
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
-            rigid_solver.func_solve_mass_batch(
+            func_solve_mass_batch(
                 i_b,
                 constraint_state.grad,
                 constraint_state.Mgrad,
@@ -2838,7 +2839,7 @@ def func_update_qacc(
         dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
         constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
         if ti.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000100
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
