@@ -1,4 +1,5 @@
 import sys
+import time
 
 import OpenGL.error
 import pyglet
@@ -80,59 +81,74 @@ def test_default_viewer_plugin():
 
     # Press key toggle world frame
     pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
-    scene.step()
-    assert pyrender_viewer.gs_context.world_frame_shown, "Expected world frame to be shown after pressing 'W' key."
 
     # Add a custom keybind
-    flag = False
+    flags = [False, False, False]
 
-    def toggle_flag():
-        nonlocal flag
-        flag = not flag
+    def toggle_flag(idx):
+        flags[idx] = not flags[idx]
 
     scene.viewer.register_keybinds(
         Keybind(
-            name="toggle_flag",
+            name="toggle_flag_0",
             key=Key._0,
             key_action=KeyAction.PRESS,
-            callback=toggle_flag,
+            callback=lambda: toggle_flag(0),
         ),
         Keybind(
-            name="toggle_flag_alternate",
-            key=Key._5,
+            name="toggle_flag_1",
+            key=Key._1,
             key_action=KeyAction.PRESS,
             key_mods=(KeyMod.SHIFT, KeyMod.CTRL),
             callback=toggle_flag,
+            args=(1,),
         ),
     )
 
     # Press key to toggle flag on
     pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
-    scene.step()
-    assert flag, "Expected custom keybind callback to toggle flag on."
-
     # Press key with modifiers to toggle flag off
-    pyrender_viewer.dispatch_event("on_key_press", Key._5, KeyMod.SHIFT | KeyMod.CTRL)
-    scene.step()
-    assert not flag, "Expected custom keybind with key modifiers to toggle flag off."
+    pyrender_viewer.dispatch_event("on_key_press", Key._1, KeyMod.SHIFT | KeyMod.CTRL)
 
-    # Remap the keybind
-    scene.viewer.remap_keybind("toggle_flag", new_key=Key._1)
-    pyrender_viewer.dispatch_event("on_key_press", Key._1, 0)
-    scene.step()
-    assert flag, "Keybind was not rebinded to new key."
+    if pyrender_viewer.run_in_thread:
+        for i in range(100):
+            if flags[0] and flags[1]:
+                break
+            time.sleep(0.1)
+    else:
+        pyrender_viewer.dispatch_pending_events()
+        pyrender_viewer.dispatch_events()
+
+    assert pyrender_viewer.gs_context.world_frame_shown, "Expected world frame to be shown after pressing 'W' key."
+
+    assert flags[0], "Expected custom keybind callback to toggle flag on."
+    assert flags[1], "Expected custom keybind with key modifiers to toggle flag on."
+
+    # Remove the keybind and press key to verify it no longer works
+    scene.viewer.remove_keybind("toggle_flag_0")
+    pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
+    # Remap the keybind and check it works
+    scene.viewer.remap_keybind("toggle_flag_1", new_key=Key._2, new_key_mods=None)
+    pyrender_viewer.dispatch_event("on_key_press", Key._2, 0)
+
+    if pyrender_viewer.run_in_thread:
+        for i in range(1000):
+            if not flags[1]:
+                break
+            time.sleep(0.1)
+    else:
+        pyrender_viewer.dispatch_pending_events()
+        pyrender_viewer.dispatch_events()
+
+    assert flags[0], "Keybind was not removed properly."
+    assert not flags[1], "Expected rebinded keybind to toggle flag off."
 
     # Error when remapping non-existent keybind
     with pytest.raises(ValueError):
-        scene.viewer.remap_keybind("non_existent_keybind", new_key=Key._2)
+        scene.viewer.remap_keybind("non_existent_keybind", new_key=Key._3)
 
     # Error when adding a keybind with same key
     with pytest.raises(ValueError):
         scene.viewer.register_keybinds(
-            Keybind(name="conflicting_keybind", key=Key._1, key_action=KeyAction.PRESS, callback=lambda: None),
+            Keybind(name="conflicting_keybind", key=Key._2, key_action=KeyAction.PRESS, callback=lambda: None),
         )
-
-    # Remove the keybind and press key to verify it no longer works
-    scene.viewer.remove_keybind("toggle_flag")
-    pyrender_viewer.dispatch_event("on_key_press", Key._1, 0)
-    assert flag, "Keybind was not removed properly."

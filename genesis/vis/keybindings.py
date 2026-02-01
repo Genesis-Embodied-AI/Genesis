@@ -341,7 +341,7 @@ class Keybindings:
         self,
         name: str,
         new_key: Key | None,
-        new_key_mods: tuple[KeyMod] | None = None,
+        new_key_mods: tuple[KeyMod] | None,
         new_key_action: KeyAction | None = None,
     ) -> None:
         if name not in self._name_to_hash:
@@ -352,13 +352,14 @@ class Keybindings:
             name=kb.name,
             key=new_key or kb.key,
             key_action=new_key_action or kb.key_action,
-            key_mods=new_key_mods or kb.key_mods,
+            key_mods=new_key_mods,
             callback=kb.callback,
             args=kb.args,
             kwargs=kb.kwargs,
         )
         del self._keybinds_map[old_hash]
         new_hash = new_kb.key_hash()
+        print("new_kb", new_kb)
         self._keybinds_map[new_hash] = new_kb
         self._name_to_hash[name] = new_hash
 

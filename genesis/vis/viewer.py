@@ -34,6 +34,7 @@ class ViewerLock:
 
 class Viewer(RBC):
     def __init__(self, options: "ViewerOptions", context):
+        self._is_built = False
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
@@ -136,6 +137,8 @@ class Viewer(RBC):
         glinfo = self._pyrender_viewer.context.get_info()
         renderer = glinfo.get_renderer()
         gs.logger.debug(f"Using interactive viewer OpenGL device: {renderer}")
+
+        self._is_built = True
 
     def run(self):
         if self._pyrender_viewer is None:
@@ -267,6 +270,7 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
+    @gs.assert_built
     def register_keybinds(self, *keybinds: Keybind) -> None:
         """
         Register a callback function to be called when a key is pressed.
@@ -278,16 +282,16 @@ class Viewer(RBC):
         """
         self._pyrender_viewer.register_keybinds(*keybinds)
 
+    @gs.assert_built
     def remap_keybind(
         self,
         keybind_name: str,
         new_key: Key,
-        new_key_mods: tuple[KeyMod] | None = None,
+        new_key_mods: tuple[KeyMod] | None,
         new_key_action: KeyAction = KeyAction.PRESS,
     ) -> None:
         """
         Remap an existing keybind by name to a new key combination.
-        Use `None` for any parameter you do not wish to change.
 
         Parameters
         ----------
@@ -295,10 +299,10 @@ class Viewer(RBC):
             The name of the keybind to remap.
         new_key : int
             The new key code from pyglet.
-        new_key_mods : tuple[KeyMod] | None, optional
+        new_key_mods : tuple[KeyMod] | None
             The new modifier keys pressed.
         new_key_action : KeyAction, optional
-            The new type of key action (press, hold, release).
+            The new type of key action. If not provided, the key action of the old keybind is used.
         """
         self._pyrender_viewer.remap_keybind(
             keybind_name,
@@ -307,6 +311,7 @@ class Viewer(RBC):
             new_key_action,
         )
 
+    @gs.assert_built
     def remove_keybind(self, keybind_name: str) -> None:
         """
         Remove an existing keybind by name.
@@ -328,11 +333,16 @@ class Viewer(RBC):
             The viewer plugin to add.
         """
         self._viewer_plugins.append(plugin)
-        # self._pyrender_viewer.add_plugin(plugin)
+        if self.is_built:
+            self._viewer.register_plugin(plugin)
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_built(self):
+        return self._is_built
 
     @property
     def res(self):

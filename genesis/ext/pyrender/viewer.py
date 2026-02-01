@@ -15,7 +15,7 @@ import OpenGL
 from OpenGL.GL import *
 
 import genesis as gs
-from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings
+from genesis.vis.keybindings import Key, KeyAction, Keybind, Keybindings, KeyMod
 
 # Importing tkinter and creating a first context before importing pyglet is necessary to avoid later segfault on MacOS.
 # Note that destroying the window will cause segfault at exit.
@@ -343,9 +343,6 @@ class Viewer(pyglet.window.Window):
         self.scene.main_camera_node = self._camera_node
         self._reset_view()
 
-        # Note: context.scene is genesis.engine.scene.Scene
-        # Note: context._scene is genesis.ext.pyrender.scene.Scene
-
         # Setup help text functionality
         self._disable_help_text = disable_help_text
         if not self._disable_help_text:
@@ -362,11 +359,9 @@ class Viewer(pyglet.window.Window):
             self.register_keybinds(Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions))
 
         # Setup viewer plugins
-        self.plugins: list[ViewerPlugin] = plugins if plugins is not None else []
-        for plugin in self.plugins:
-            plugin.build(self, self._camera_node, context.scene)
-            # Register pyglet.window event handlers from the plugin
-            self.push_handlers(plugin)
+        self.plugins: list[ViewerPlugin] = []
+        for plugin in plugins:
+            self.register_plugin(plugin)
 
         #######################################################################
         # Initialize OpenGL context and renderer
@@ -500,6 +495,20 @@ class Viewer(pyglet.window.Window):
     def viewer_flags(self, value):
         self._viewer_flags = value
 
+    def register_plugin(self, plugin: ViewerPlugin) -> None:
+        """
+        Register a viewer plugin.
+
+        Parameters
+        ----------
+        plugin : :class:`.ViewerPlugin`
+            The viewer plugin to add.
+        """
+        self.plugins.append(plugin)
+        plugin.build(self, self._camera_node, self.gs_context.scene)
+        # Register pyglet.window event handlers from the plugin
+        self.push_handlers(plugin)
+
     def register_keybinds(self, *keybinds: Keybind) -> None:
         """
         Add a key handler to call a function when the given key is pressed.
@@ -517,7 +526,7 @@ class Viewer(pyglet.window.Window):
         self,
         keybind_name: str,
         new_key_code: Key,
-        new_key_mods: int | None = None,
+        new_key_mods: tuple[KeyMod] | None,
         new_key_action: KeyAction = KeyAction.PRESS,
     ) -> None:
         """
@@ -529,10 +538,10 @@ class Viewer(pyglet.window.Window):
             The name of the keybind to remap.
         new_key_code : int
             The new key code from pyglet.
-        new_key_mods : int | None, optional
+        new_key_mods : tuple[KeyMod] | None
             The new modifier keys pressed.
         new_key_action : KeyAction, optional
-            The new type of key action (press, hold, release).
+            The new type of key action. If not provided, the key action of the old keybind is used.
         """
         self._keybindings.rebind(
             keybind_name,
