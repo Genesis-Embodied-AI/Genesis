@@ -51,7 +51,7 @@ def func_copy_next_to_curr(
             for i_q in range(n_qs):
                 rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos_next[i_q, i_b]
         else:
-            errno[i_b] = errno[i_b] | 0b00000000000000000000000000001000
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_ACC_NAN
 
 
 @ti.func

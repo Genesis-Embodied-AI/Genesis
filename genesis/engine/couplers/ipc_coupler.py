@@ -19,6 +19,21 @@ if TYPE_CHECKING:
 
 # Import IPC Solver if available
 try:
+    import uipc
+
+    UIPC_AVAILABLE = True
+except ImportError:
+    UIPC_AVAILABLE = False
+
+try:
+    import polyscope as ps
+
+    POLYSCOPE_AVAILABLE = True
+except ImportError:
+    POLYSCOPE_AVAILABLE = False
+
+
+if UIPC_AVAILABLE:
     from uipc import view, builtin, Transform, Vector3, Quaternion, Logger, Timer
     from uipc.backend import SceneVisitor
     from uipc.constitution import (
@@ -42,12 +57,10 @@ try:
         merge,
         ground,
     )
-    from uipc.gui import SceneGUI
     from uipc.unit import MPa
 
-    UIPC_AVAILABLE = True
-except ImportError:
-    UIPC_AVAILABLE = False
+if POLYSCOPE_AVAILABLE:
+    from uipc.gui import SceneGUI
 
 
 @ti.data_oriented
@@ -72,10 +85,9 @@ class IPCCoupler(RBC):
         """
         # Check if uipc is available
         if not UIPC_AVAILABLE:
-            raise ImportError(
-                "libuipc is required for IPC coupling but not found.\n"
-                "Please build and install libuipc from source:\n"
-                "https://github.com/spiriMirror/libuipc"
+            gs.raise_exception(
+                "Python module 'uipc' but not found. Please build and install libuipc from source following the "
+                "official instructions: https://spirimirror.github.io/libuipc-doc/build_install/"
             )
 
         self.sim = simulator
@@ -1021,38 +1033,32 @@ class IPCCoupler(RBC):
 
     def _init_ipc_gui(self):
         """Initialize IPC GUI for debugging"""
-        try:
-            import polyscope as ps
+        if not POLYSCOPE_AVAILABLE:
+            gs.raise_exception("Polyscope module is not installed. Please install it with `pip install polyscope`.")
 
-            # Initialize SceneGUI for IPC scene
-            self._ipc_scene_gui = SceneGUI(self._ipc_scene)
+        # Initialize SceneGUI for IPC scene
+        self._ipc_scene_gui = SceneGUI(self._ipc_scene)
 
-            # Initialize polyscope if not already done
-            if not ps.is_initialized():
-                ps.init()
+        # Initialize polyscope if not already done
+        if not ps.is_initialized():
+            ps.init()
 
-            # Register IPC GUI with polyscope
-            self._ipc_scene_gui.register()
-            self._ipc_scene_gui.set_edge_width(1)
+        # Register IPC GUI with polyscope
+        self._ipc_scene_gui.register()
+        self._ipc_scene_gui.set_edge_width(1)
 
-            # Set up ground plane display in polyscope to match Genesis z=0
-            ps.set_up_dir("z_up")
-            ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
+        # Set up ground plane display in polyscope to match Genesis z=0
+        ps.set_up_dir("z_up")
+        ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
 
-            # Show polyscope window for first frame to initialize properly
-            ps.show(forFrames=1)
-            # Flag to control GUI updates
-            self.sim._scene._ipc_gui_enabled = True
+        # Show polyscope window for first frame to initialize properly
+        ps.show(forFrames=1)
+        # Flag to control GUI updates
+        self.sim._scene._ipc_gui_enabled = True
 
-            gs.logger.info("IPC GUI initialized successfully")
-
-        except Exception as e:
-            gs.logger.warning(f"Failed to initialize IPC GUI: {e}")
-            self.sim._scene._ipc_gui_enabled = False
+        gs.logger.info("IPC GUI initialized successfully")
 
     def update_ipc_gui(self):
         """Update IPC GUI"""
-        import polyscope as ps
-
         ps.frame_tick()  # Non-blocking frame update
         self._ipc_scene_gui.update()

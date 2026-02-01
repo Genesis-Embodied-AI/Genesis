@@ -6,7 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Any, List, Optional, Sequence, Tuple, Union, Literal
+from typing import Any, List, Optional, Sequence, Tuple, Literal
 from pathlib import Path
 
 import numpy as np
@@ -747,13 +747,17 @@ class Mesh(FileMorph, TetGenMixin):
                     "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
                     "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
                 )
-                quat = (0.707, -0.707, 0.0, 0.0)
+                y_up_quat = (1.0, -1.0, 0.0, 0.0)
                 if self.quat is None:
-                    self.quat = quat
+                    self.quat = y_up_quat
                 else:
                     self.quat = gu.transform_quat_by_quat(
-                        np.array(quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
+                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
                     )
+                if self.scale is not None:
+                    scale = np.atleast_1d(np.array(self.scale))
+                    if scale.size == 3:
+                        self.scale = (scale[0], scale[2], scale[1])
             self.file_meshes_are_zup = False
         elif self.file_meshes_are_zup is None:
             self.file_meshes_are_zup = True

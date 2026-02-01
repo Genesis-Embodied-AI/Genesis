@@ -100,7 +100,7 @@ class ContactIsland:
             self.entity_edge.n[eb, i_b] = self.entity_edge.n[eb, i_b] + 1
         else:
             # Signal buffer overflow via errno bit 4 (0b00010000)
-            self.errno[i_b] = self.errno[i_b] | 0b00000000000000000000000000010000
+            self.errno[i_b] = self.errno[i_b] | array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS
 
     @ti.kernel
     def add_contact_edges_to_islands(self):
@@ -205,7 +205,7 @@ class ContactIsland:
 
             # Invariant check: ensure total half-edges don't exceed edge_id buffer
             if entity_list_start > self.edge_id.shape[0]:
-                self.errno[i_b] = self.errno[i_b] | 0b00000000000000000000000000010000
+                self.errno[i_b] = self.errno[i_b] | array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS
 
             # process added collider-info edges
             for i in range(self.n_edges[i_b]):
