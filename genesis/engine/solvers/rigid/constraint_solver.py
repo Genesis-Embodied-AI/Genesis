@@ -28,13 +28,15 @@ USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
+USE_BATCHED_LS = 1
 
 # When True, refinement uses local variables instead of global memory for candidates
 USE_BATCHED_LS_LOCAL = os.environ.get("GS_SOLVER_BATCHED_LS_LOCAL", "0") == "1"
+USE_BATCHED_LS_LOCAL = 1
 
 # When True, split constraint loops by type, fuse init+p0, and pre-sum equality contributions
 USE_LS_OPT = os.environ.get("GS_SOLVER_LS_OPT", "0") == "1"
-
+USE_LS_OPT = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
