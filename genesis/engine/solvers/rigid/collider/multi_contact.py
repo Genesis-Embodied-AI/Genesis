@@ -618,9 +618,9 @@ def func_potential_box_edge_normals(
     # Get the geometry state and quaternion
     g_pos = geoms_state.pos[i_g, i_b]
     g_quat = geoms_state.quat[i_g, i_b]
-    g_size_x = geoms_info.data[0] * 0.5
-    g_size_y = geoms_info.data[1] * 0.5
-    g_size_z = geoms_info.data[2] * 0.5
+    g_size_x = geoms_info.data[i_g][0] * 0.5
+    g_size_y = geoms_info.data[i_g][1] * 0.5
+    g_size_z = geoms_info.data[i_g][2] * 0.5
 
     v1i -= geoms_info.vert_start[i_g]
     v2i -= geoms_info.vert_start[i_g]
