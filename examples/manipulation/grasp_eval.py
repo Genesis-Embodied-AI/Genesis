@@ -145,9 +145,9 @@ def main():
 
                 actions = policy(rgb_obs, ee_pose)
 
-                # Collect frame for video recording
-                if args.record:
-                    env.vis_cam.render()  # render the visualization camera
+            # Collect frame for video recording
+            if args.record:
+                env.vis_cam.render()  # render the visualization camera
 
             obs, rews, dones, infos = env.step(actions)
         env.grasp_and_lift_demo()
