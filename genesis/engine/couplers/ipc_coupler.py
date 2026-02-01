@@ -19,6 +19,14 @@ if TYPE_CHECKING:
 
 # Import IPC Solver if available
 try:
+    import uipc
+
+    UIPC_AVAILABLE = True
+except ImportError:
+    UIPC_AVAILABLE = False
+
+
+if UIPC_AVAILABLE:
     from uipc import view, builtin, Transform, Vector3, Quaternion, Logger, Timer
     from uipc.backend import SceneVisitor
     from uipc.constitution import (
@@ -45,10 +53,6 @@ try:
     from uipc.gui import SceneGUI
     from uipc.unit import MPa
 
-    UIPC_AVAILABLE = True
-except ImportError:
-    UIPC_AVAILABLE = False
-
 
 @ti.data_oriented
 class IPCCoupler(RBC):
@@ -72,10 +76,9 @@ class IPCCoupler(RBC):
         """
         # Check if uipc is available
         if not UIPC_AVAILABLE:
-            raise ImportError(
-                "libuipc is required for IPC coupling but not found.\n"
-                "Please build and install libuipc from source:\n"
-                "https://github.com/spiriMirror/libuipc"
+            gs.raise_exception(
+                "libuipc is required for IPC coupling but not found. Please build and install libuipc from source "
+                "following the official instructions: https://spirimirror.github.io/libuipc-doc/build_install/"
             )
 
         self.sim = simulator
