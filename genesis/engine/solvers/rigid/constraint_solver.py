@@ -28,10 +28,13 @@ USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
-USE_BATCHED_LS = 1
+
 # When True, refinement uses local variables instead of global memory for candidates
 USE_BATCHED_LS_LOCAL = os.environ.get("GS_SOLVER_BATCHED_LS_LOCAL", "0") == "1"
-USE_BATCHED_LS_LOCAL = 1
+
+# When True, split constraint loops by type, fuse init+p0, and pre-sum equality contributions
+USE_LS_OPT = os.environ.get("GS_SOLVER_LS_OPT", "0") == "1"
+
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -1745,6 +1748,315 @@ def func_ls_point_fn_3alphas(
 
 
 @ti.func
+def func_ls_init_and_eval_p0_opt(
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+):
+    """Fused func_ls_init + func_ls_point_fn(alpha=0). Computes eq_sum for subsequent calls."""
+    n_dofs = constraint_state.search.shape[0]
+    n_entities = entities_info.dof_start.shape[0]
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # -- mv and jv (same as func_ls_init) --
+    for i_e in range(n_entities):
+        for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+            mv = gs.ti_float(0.0)
+            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+            constraint_state.mv[i_d1, i_b] = mv
+
+    for i_c in range(n_con):
+        jv = gs.ti_float(0.0)
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        constraint_state.jv[i_c, i_b] = jv
+
+    # -- quad_gauss (same as func_ls_init) --
+    quad_gauss_1 = gs.ti_float(0.0)
+    quad_gauss_2 = gs.ti_float(0.0)
+    for i_d in range(n_dofs):
+        quad_gauss_1 = quad_gauss_1 + (
+            constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
+            - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
+        )
+        quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
+    constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
+    constraint_state.quad_gauss[1, i_b] = quad_gauss_1
+    constraint_state.quad_gauss[2, i_b] = quad_gauss_2
+
+    # -- Compute quad per constraint and accumulate by type --
+    # At alpha=0: x = Jaref, so equality and friction-quadratic are always active
+    tmp_0 = constraint_state.gauss[i_b]
+    tmp_1 = quad_gauss_1
+    tmp_2 = quad_gauss_2
+    eq_sum_0 = gs.ti_float(0.0)
+    eq_sum_1 = gs.ti_float(0.0)
+    eq_sum_2 = gs.ti_float(0.0)
+
+    # Compute quad for all constraints and write to global
+    for i_c in range(n_con):
+        qf_0 = constraint_state.efc_D[i_c, i_b] * (0.5 * constraint_state.Jaref[i_c, i_b] * constraint_state.Jaref[i_c, i_b])
+        qf_1 = constraint_state.efc_D[i_c, i_b] * (constraint_state.jv[i_c, i_b] * constraint_state.Jaref[i_c, i_b])
+        qf_2 = constraint_state.efc_D[i_c, i_b] * (0.5 * constraint_state.jv[i_c, i_b] * constraint_state.jv[i_c, i_b])
+        constraint_state.quad[i_c, 0, i_b] = qf_0
+        constraint_state.quad[i_c, 1, i_b] = qf_1
+        constraint_state.quad[i_c, 2, i_b] = qf_2
+
+    # Equality constraints [0, ne): always active, accumulate eq_sum
+    for i_c in range(ne):
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        eq_sum_0 = eq_sum_0 + qf_0
+        eq_sum_1 = eq_sum_1 + qf_1
+        eq_sum_2 = eq_sum_2 + qf_2
+        tmp_0 = tmp_0 + qf_0
+        tmp_1 = tmp_1 + qf_1
+        tmp_2 = tmp_2 + qf_2
+
+    # Write eq_sum to global for subsequent calls
+    constraint_state.eq_sum[0, i_b] = eq_sum_0
+    constraint_state.eq_sum[1, i_b] = eq_sum_1
+    constraint_state.eq_sum[2, i_b] = eq_sum_2
+
+    # Friction constraints [ne, nef): check linear regime at x=Jaref (alpha=0)
+    for i_c in range(ne, nef):
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        x = constraint_state.Jaref[i_c, i_b]
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = x <= -rf
+        linear_pos = x >= rf
+        if linear_neg or linear_pos:
+            qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
+                -0.5 * rf + constraint_state.Jaref[i_c, i_b]
+            )
+            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
+                f * constraint_state.jv[i_c, i_b]
+            )
+            qf_2 = 0.0
+        tmp_0 = tmp_0 + qf_0
+        tmp_1 = tmp_1 + qf_1
+        tmp_2 = tmp_2 + qf_2
+
+    # Contact constraints [nef, n_con): check Jaref < 0 (alpha=0 so x=Jaref)
+    for i_c in range(nef, n_con):
+        active = constraint_state.Jaref[i_c, i_b] < 0
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        tmp_0 = tmp_0 + qf_0 * active
+        tmp_1 = tmp_1 + qf_1 * active
+        tmp_2 = tmp_2 + qf_2 * active
+
+    # Return p0 result (alpha=0)
+    cost = tmp_0  # alpha=0, so cost = tmp_0
+    deriv_0 = tmp_1
+    deriv_1 = 2 * tmp_2
+    if deriv_1 <= 0.0:
+        deriv_1 = rigid_global_info.EPS[None]
+
+    constraint_state.ls_it[i_b] = 1
+
+    return gs.ti_float(0.0), cost, deriv_0, deriv_1
+
+
+@ti.func
+def func_ls_point_fn_opt(
+    i_b,
+    alpha,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Optimized func_ls_point_fn: skips equality constraints by using pre-summed eq_sum."""
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # Start from quad_gauss + eq_sum (skips ne equality constraints)
+    tmp_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
+    tmp_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+    tmp_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+
+    # Friction constraints [ne, nef)
+    for i_c in range(ne, nef):
+        x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = x <= -rf
+        linear_pos = x >= rf
+        if linear_neg or linear_pos:
+            qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
+                -0.5 * rf + constraint_state.Jaref[i_c, i_b]
+            )
+            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
+                f * constraint_state.jv[i_c, i_b]
+            )
+            qf_2 = 0.0
+        tmp_0 = tmp_0 + qf_0
+        tmp_1 = tmp_1 + qf_1
+        tmp_2 = tmp_2 + qf_2
+
+    # Contact constraints [nef, n_con)
+    for i_c in range(nef, n_con):
+        x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
+        active = x < 0
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        tmp_0 = tmp_0 + qf_0 * active
+        tmp_1 = tmp_1 + qf_1 * active
+        tmp_2 = tmp_2 + qf_2 * active
+
+    cost = alpha * alpha * tmp_2 + alpha * tmp_1 + tmp_0
+    deriv_0 = 2 * alpha * tmp_2 + tmp_1
+    deriv_1 = 2 * tmp_2
+    if deriv_1 <= 0.0:
+        deriv_1 = rigid_global_info.EPS[None]
+
+    constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
+
+    return alpha, cost, deriv_0, deriv_1
+
+
+@ti.func
+def func_ls_point_fn_3alphas_opt(
+    i_b,
+    alpha_0,
+    alpha_1,
+    alpha_2,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Optimized 3-alpha eval: skips equality constraints by using pre-summed eq_sum."""
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    # Start from quad_gauss + eq_sum for all 3
+    base_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
+    base_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+    base_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+
+    t0_0, t0_1, t0_2 = base_0, base_1, base_2
+    t1_0, t1_1, t1_2 = base_0, base_1, base_2
+    t2_0, t2_1, t2_2 = base_0, base_1, base_2
+
+    # Friction constraints [ne, nef)
+    for i_c in range(ne, nef):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+
+        x0 = Jaref_c + alpha_0 * jv_c
+        ln0 = x0 <= -rf
+        lp0 = x0 >= rf
+        a0_qf_0, a0_qf_1, a0_qf_2 = qf_0, qf_1, qf_2
+        if ln0 or lp0:
+            a0_qf_0 = ln0 * f * (-0.5 * rf - Jaref_c) + lp0 * f * (-0.5 * rf + Jaref_c)
+            a0_qf_1 = ln0 * (-f * jv_c) + lp0 * (f * jv_c)
+            a0_qf_2 = 0.0
+        t0_0 = t0_0 + a0_qf_0
+        t0_1 = t0_1 + a0_qf_1
+        t0_2 = t0_2 + a0_qf_2
+
+        x1 = Jaref_c + alpha_1 * jv_c
+        ln1 = x1 <= -rf
+        lp1 = x1 >= rf
+        a1_qf_0, a1_qf_1, a1_qf_2 = qf_0, qf_1, qf_2
+        if ln1 or lp1:
+            a1_qf_0 = ln1 * f * (-0.5 * rf - Jaref_c) + lp1 * f * (-0.5 * rf + Jaref_c)
+            a1_qf_1 = ln1 * (-f * jv_c) + lp1 * (f * jv_c)
+            a1_qf_2 = 0.0
+        t1_0 = t1_0 + a1_qf_0
+        t1_1 = t1_1 + a1_qf_1
+        t1_2 = t1_2 + a1_qf_2
+
+        x2 = Jaref_c + alpha_2 * jv_c
+        ln2 = x2 <= -rf
+        lp2 = x2 >= rf
+        a2_qf_0, a2_qf_1, a2_qf_2 = qf_0, qf_1, qf_2
+        if ln2 or lp2:
+            a2_qf_0 = ln2 * f * (-0.5 * rf - Jaref_c) + lp2 * f * (-0.5 * rf + Jaref_c)
+            a2_qf_1 = ln2 * (-f * jv_c) + lp2 * (f * jv_c)
+            a2_qf_2 = 0.0
+        t2_0 = t2_0 + a2_qf_0
+        t2_1 = t2_1 + a2_qf_1
+        t2_2 = t2_2 + a2_qf_2
+
+    # Contact constraints [nef, n_con)
+    for i_c in range(nef, n_con):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        qf_0 = constraint_state.quad[i_c, 0, i_b]
+        qf_1 = constraint_state.quad[i_c, 1, i_b]
+        qf_2 = constraint_state.quad[i_c, 2, i_b]
+
+        x0 = Jaref_c + alpha_0 * jv_c
+        x1 = Jaref_c + alpha_1 * jv_c
+        x2 = Jaref_c + alpha_2 * jv_c
+        act0 = gs.ti_bool(x0 < 0)
+        act1 = gs.ti_bool(x1 < 0)
+        act2 = gs.ti_bool(x2 < 0)
+        t0_0 = t0_0 + qf_0 * act0
+        t0_1 = t0_1 + qf_1 * act0
+        t0_2 = t0_2 + qf_2 * act0
+        t1_0 = t1_0 + qf_0 * act1
+        t1_1 = t1_1 + qf_1 * act1
+        t1_2 = t1_2 + qf_2 * act1
+        t2_0 = t2_0 + qf_0 * act2
+        t2_1 = t2_1 + qf_1 * act2
+        t2_2 = t2_2 + qf_2 * act2
+
+    EPS = rigid_global_info.EPS[None]
+
+    c0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
+    d0_0 = 2 * alpha_0 * t0_2 + t0_1
+    d0_1 = 2 * t0_2
+    if d0_1 <= 0.0:
+        d0_1 = EPS
+
+    c1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
+    d1_0 = 2 * alpha_1 * t1_2 + t1_1
+    d1_1 = 2 * t1_2
+    if d1_1 <= 0.0:
+        d1_1 = EPS
+
+    c2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
+    d2_0 = 2 * alpha_2 * t2_2 + t2_1
+    d2_1 = 2 * t2_2
+    if d2_1 <= 0.0:
+        d2_1 = EPS
+
+    constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 3
+
+    return alpha_0, c0, d0_0, d0_1, alpha_1, c1, d1_0, d1_1, alpha_2, c2, d2_0, d2_1
+
+
+@ti.func
 def func_no_linesearch(i_b, constraint_state: array_class.ConstraintState):
     func_ls_init(i_b)
     n_dofs = constraint_state.search.shape[0]
@@ -2156,22 +2468,43 @@ def func_linesearch_batched(
         constraint_state.ls_result[i_b] = 1
         res_alpha = 0.0
     else:
-        func_ls_init(
-            i_b,
-            entities_info=entities_info,
-            dofs_state=dofs_state,
-            constraint_state=constraint_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-        )
-
-        # Init phase: p0 and p1 (sequential, unchanged)
-        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_point_fn(
-            i_b, gs.ti_float(0.0), constraint_state, rigid_global_info
-        )
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
-            i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
-        )
+        # Pre-declare so Taichi sees names across ti.static branches
+        p0_alpha = gs.ti_float(0.0)
+        p0_cost = gs.ti_float(0.0)
+        p0_deriv_0 = gs.ti_float(0.0)
+        p0_deriv_1 = gs.ti_float(0.0)
+        p1_alpha = gs.ti_float(0.0)
+        p1_cost = gs.ti_float(0.0)
+        p1_deriv_0 = gs.ti_float(0.0)
+        p1_deriv_1 = gs.ti_float(0.0)
+        if ti.static(USE_LS_OPT):
+            # Fused init + p0 eval
+            p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_init_and_eval_p0_opt(
+                i_b,
+                entities_info=entities_info,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+                i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
+            )
+        else:
+            func_ls_init(
+                i_b,
+                entities_info=entities_info,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_point_fn(
+                i_b, gs.ti_float(0.0), constraint_state, rigid_global_info
+            )
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
+                i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
+            )
 
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1
@@ -2183,7 +2516,7 @@ def func_linesearch_batched(
                 constraint_state.ls_result[i_b] = 0
             res_alpha = p1_alpha
         else:
-            # Bracketing phase (sequential Newton steps, unchanged)
+            # Bracketing phase (sequential Newton steps)
             direction = (p1_deriv_0 < 0) * 2 - 1
             p2update = 0
             p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
@@ -2194,9 +2527,14 @@ def func_linesearch_batched(
                 p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
                 p2update = 1
 
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
-                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
-                )
+                if ti.static(USE_LS_OPT):
+                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+                        i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
+                    )
+                else:
+                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
+                        i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
+                    )
                 if ti.abs(p1_deriv_0) < gtol:
                     res_alpha = p1_alpha
                     done = True
@@ -2220,14 +2558,36 @@ def func_linesearch_batched(
                     alpha_2 = (p1_alpha + p2_alpha) * 0.5  # pmid
 
                     while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+                        # Pre-declare all 3-alpha result vars for Taichi scoping
+                        _a0 = gs.ti_float(0.0)
+                        c0 = gs.ti_float(0.0)
+                        c0_d0 = gs.ti_float(0.0)
+                        c0_d1 = gs.ti_float(0.0)
+                        _a1 = gs.ti_float(0.0)
+                        c1 = gs.ti_float(0.0)
+                        c1_d0 = gs.ti_float(0.0)
+                        c1_d1 = gs.ti_float(0.0)
+                        _a2 = gs.ti_float(0.0)
+                        c2 = gs.ti_float(0.0)
+                        c2_d0 = gs.ti_float(0.0)
+                        c2_d1 = gs.ti_float(0.0)
                         # Batch evaluate all 3 in one constraint loop
-                        (
-                            _a0, c0, c0_d0, c0_d1,
-                            _a1, c1, c1_d0, c1_d1,
-                            _a2, c2, c2_d0, c2_d1,
-                        ) = func_ls_point_fn_3alphas(
-                            i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
-                        )
+                        if ti.static(USE_LS_OPT):
+                            (
+                                _a0, c0, c0_d0, c0_d1,
+                                _a1, c1, c1_d0, c1_d1,
+                                _a2, c2, c2_d0, c2_d1,
+                            ) = func_ls_point_fn_3alphas_opt(
+                                i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                            )
+                        else:
+                            (
+                                _a0, c0, c0_d0, c0_d1,
+                                _a1, c1, c1_d0, c1_d1,
+                                _a2, c2, c2_d0, c2_d1,
+                            ) = func_ls_point_fn_3alphas(
+                                i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                            )
 
                         # Pre-declare variables used after the if/else so Taichi sees them in scope
                         p1_next_alpha = alpha_0

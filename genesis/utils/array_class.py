@@ -206,6 +206,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     mv: V_ANNOTATION
     jv: V_ANNOTATION
     quad_gauss: V_ANNOTATION
+    eq_sum: V_ANNOTATION
     quad: V_ANNOTATION
     candidates: V_ANNOTATION
     ls_it: V_ANNOTATION
@@ -300,6 +301,7 @@ def get_constraint_state(constraint_solver, solver):
         cg_beta=V(dtype=gs.ti_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
+        eq_sum=V(dtype=gs.ti_float, shape=(3, _B)),
         candidates=V(dtype=gs.ti_float, shape=(12, _B)),
         Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
