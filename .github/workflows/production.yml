@@ -59,7 +59,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
@@ -139,7 +139,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
