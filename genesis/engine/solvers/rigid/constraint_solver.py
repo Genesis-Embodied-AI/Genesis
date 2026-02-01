@@ -22,21 +22,20 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 # Check environment variable for decomposed solver usage
 USE_DECOMPOSED_SOLVER = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
-# # USE_DECOMPOSED_SOLVER = 1
+# USE_DECOMPOSED_SOLVER = 1
 # Check environment variable for macro kernel usage (only applies when USE_DECOMPOSED_SOLVER is True)
 USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
-USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "0") == "1"
-USE_BATCHED_LS = 1
+USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "1") == "1"
 
 # When True, refinement uses local variables instead of global memory for candidates
 USE_BATCHED_LS_LOCAL = os.environ.get("GS_SOLVER_BATCHED_LS_LOCAL", "0") == "1"
-USE_BATCHED_LS_LOCAL = 1
+# USE_BATCHED_LS_LOCAL = 1
 
 # When True, split constraint loops by type, fuse init+p0, and pre-sum equality contributions
 USE_LS_OPT = os.environ.get("GS_SOLVER_LS_OPT", "0") == "1"
-USE_LS_OPT = 1
+# USE_LS_OPT = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -217,7 +216,31 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        if USE_BATCHED_LS:
+        if USE_BATCHED_LS and use_decomposed_kernels and USE_DECOMPOSED_MACRO:
+            from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
+                func_solve_batched_profiled,
+            )
+
+            func_solve_batched_profiled(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        elif USE_BATCHED_LS and use_decomposed_kernels:
+            from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
+                func_solve_batched_macrokernels,
+            )
+
+            func_solve_batched_macrokernels(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        elif USE_BATCHED_LS:
             func_solve_batched(
                 self._solver.entities_info,
                 self._solver.dofs_state,

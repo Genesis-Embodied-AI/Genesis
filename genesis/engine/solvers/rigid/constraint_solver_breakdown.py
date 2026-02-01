@@ -1,3 +1,5 @@
+import time
+
 import gstaichi as ti
 
 import genesis as gs
@@ -358,6 +360,10 @@ def _kernel_linesearch_batched_top_level(
             constraint_state.improved[i_b] = False
 
 
+_batched_timer = None
+_batched_call_count = 0
+
+
 def func_solve_batched_macrokernels(
     entities_info,
     dofs_state,
@@ -369,6 +375,17 @@ def func_solve_batched_macrokernels(
     Uses batched 3-alpha linesearch with separate kernels for each solver step per iteration.
     The linesearch evaluates 3 candidate alphas in a single constraint loop pass during refinement.
     """
+    global _batched_timer, _batched_call_count
+    import os
+
+    do_profile = os.environ.get("GS_PROFILE_DECOMPOSED", "0") == "1"
+    if do_profile:
+        from genesis.utils.tools import create_timer
+
+        _batched_call_count += 1
+        skip = (_batched_call_count % 100) != 0
+        _batched_timer = create_timer("batched", new=True, ti_sync=True, skip_first_call=skip)
+
     iterations = rigid_global_info.iterations[None]
     for _it in range(iterations):
         _kernel_linesearch_batched_top_level(
@@ -378,11 +395,15 @@ def func_solve_batched_macrokernels(
             rigid_global_info,
             static_rigid_sim_config,
         )
+        if do_profile and _batched_timer:
+            _batched_timer._stamp("linesearch_batched")
         if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
             _kernel_cg_only_save_prev_grad(
                 constraint_state,
                 static_rigid_sim_config,
             )
+            if do_profile and _batched_timer:
+                _batched_timer._stamp("cg_save_prev_grad")
         _kernel_update_constraint(
             entities_info,
             dofs_state,
@@ -390,6 +411,8 @@ def func_solve_batched_macrokernels(
             rigid_global_info,
             static_rigid_sim_config,
         )
+        if do_profile and _batched_timer:
+            _batched_timer._stamp("update_constraint")
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
             _kernel_newton_only_nt_hessian_incremental(
                 entities_info,
@@ -397,6 +420,8 @@ def func_solve_batched_macrokernels(
                 rigid_global_info,
                 static_rigid_sim_config,
             )
+            if do_profile and _batched_timer:
+                _batched_timer._stamp("nt_hessian")
         _kernel_update_gradient(
             entities_info,
             dofs_state,
@@ -404,8 +429,97 @@ def func_solve_batched_macrokernels(
             rigid_global_info,
             static_rigid_sim_config,
         )
+        if do_profile and _batched_timer:
+            _batched_timer._stamp("update_gradient")
         _kernel_update_search_direction(
             constraint_state,
             rigid_global_info,
             static_rigid_sim_config,
         )
+        if do_profile and _batched_timer:
+            _batched_timer._stamp("update_search_dir")
+
+
+_profiled_timer = None
+_profiled_call_count = 0
+
+
+def func_solve_batched_profiled(
+    entities_info,
+    dofs_state,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+):
+    """
+    Batched linesearch with separate kernels + timer/sync instrumentation.
+
+    Uses the original (non-batched) linesearch kernel with separate per-phase timing.
+    Compare against func_solve_batched_macrokernels which uses the batched 3-alpha linesearch.
+
+    Enable profiling with: GS_PROFILE_DECOMPOSED=1
+    Use with: GS_SOLVER_BATCHED_LS=1 GS_SOLVER_DECOMPOSE=1 GS_SOLVER_DECOMPOSE_MACRO=1
+    """
+    global _profiled_timer, _profiled_call_count
+    import os
+
+    do_profile = os.environ.get("GS_PROFILE_DECOMPOSED", "0") == "1"
+    if do_profile:
+        from genesis.utils.tools import create_timer
+
+        _profiled_call_count += 1
+        skip = (_profiled_call_count % 100) != 0
+        _profiled_timer = create_timer("profiled", new=True, ti_sync=True, skip_first_call=skip)
+
+    iterations = rigid_global_info.iterations[None]
+    for _it in range(iterations):
+        _kernel_linesearch_batched_top_level(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if do_profile and _profiled_timer:
+            _profiled_timer._stamp("linesearch_batched")
+        if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
+            _kernel_cg_only_save_prev_grad(
+                constraint_state,
+                static_rigid_sim_config,
+            )
+            if do_profile and _profiled_timer:
+                _profiled_timer._stamp("cg_save_prev_grad")
+        _kernel_update_constraint(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if do_profile and _profiled_timer:
+            _profiled_timer._stamp("update_constraint")
+        if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
+            _kernel_newton_only_nt_hessian_incremental(
+                entities_info,
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+            )
+            if do_profile and _profiled_timer:
+                _profiled_timer._stamp("nt_hessian")
+        _kernel_update_gradient(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if do_profile and _profiled_timer:
+            _profiled_timer._stamp("update_gradient")
+        _kernel_update_search_direction(
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if do_profile and _profiled_timer:
+            _profiled_timer._stamp("update_search_dir")
