@@ -343,7 +343,7 @@ def concat_with_tensor(
     return torch.cat([tensor, value], dim=dim)
 
 
-def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] | None = None):
+def make_tensor_field(shape: tuple[int, ...] = (), dtype: torch.dtype | None = None):
     """
     Helper method to create a tensor field for dataclasses.
 
@@ -351,16 +351,14 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], t
     ----------
     shape : tuple
         The shape of the tensor field. It must have zero elements, otherwise it will trigger an exception.
-    dtype_factory : Callable[[], torch.dtype], optional
-        The factory function to create the dtype of the tensor field. Default is gs.tc_float.
-        A factory is used because gs types may not be available at the time of field creation.
+    dtype : torch.dtype, optional
+        Data type of the tensor field. Default is gs.tc_float.
     """
     assert not shape or math.prod(shape) == 0
 
     def _default_factory():
-        nonlocal shape, dtype_factory
-        dtype = dtype_factory() if dtype_factory is not None else gs.tc_float
-        return torch.empty(shape, dtype=dtype, device=gs.device)
+        nonlocal shape, dtype
+        return torch.empty(shape, dtype=dtype or gs.tc_float, device=gs.device)
 
     return field(default_factory=_default_factory)
 
