@@ -70,9 +70,9 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
 
     alignment_rot_matrix: torch.Tensor = make_tensor_field((0, 0, 3, 3))
     magnetic_field_vector: torch.Tensor = make_tensor_field((0, 0, 3))  # added another dimension to match data layout
-    acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
-    gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
-    mag_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
+    gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
+    mag_indices: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
 
 
 class IMUData(NamedTuple):
