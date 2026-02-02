@@ -3330,12 +3330,9 @@ class RigidEntity(Entity):
         if isinstance(morph, gs.morphs.MJCF):
             if isinstance(morph.file, str):
                 # Try to get model name from MJCF file, fall back to filename stem
-                try:
-                    model_name = mju.get_model_name(morph.file)
-                    if model_name:
-                        return model_name
-                except (ET.ParseError, FileNotFoundError, OSError) as e:
-                    gs.logger.warning(f"Could not extract model name from MJCF: {e}. Using filename stem instead.")
+                model_name = mju.get_model_name(morph.file)
+                if model_name:
+                    return model_name
                 return Path(morph.file).stem
             return morph.file.name
         if isinstance(morph, gs.morphs.Drone):
