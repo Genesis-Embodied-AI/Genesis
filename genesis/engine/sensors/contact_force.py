@@ -77,6 +77,16 @@ class ContactSensorMetadata(SharedSensorMetadata):
 
     solver: "RigidSolver | None" = None
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # Flag to skip filtering logic when no sensors use filtering options
+    needs_filtering: bool = False
+    # Per-sensor filter options: link range of the sensor's own entity
+    sensor_entity_link_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_entity_link_end: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # Per-sensor filter options: link range of with_entity (-1 means no filter)
+    with_entity_link_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    with_entity_link_end: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # Per-sensor flag: exclude self contact
+    exclude_self_contact: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata, tuple)
@@ -111,6 +121,38 @@ class ContactSensor(Sensor):
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
 
+        # Store sensor's own entity link range for exclude_self_contact
+        self._shared_metadata.sensor_entity_link_start = concat_with_tensor(
+            self._shared_metadata.sensor_entity_link_start, entity.link_start, expand=(1,), dim=0
+        )
+        self._shared_metadata.sensor_entity_link_end = concat_with_tensor(
+            self._shared_metadata.sensor_entity_link_end, entity.link_end, expand=(1,), dim=0
+        )
+
+        # Store with_entity link range (-1 means no filter)
+        if self._options.with_entity_idx is not None:
+            with_entity = self._shared_metadata.solver.entities[self._options.with_entity_idx]
+            with_link_start = with_entity.link_start
+            with_link_end = with_entity.link_end
+        else:
+            with_link_start = -1
+            with_link_end = -1
+        self._shared_metadata.with_entity_link_start = concat_with_tensor(
+            self._shared_metadata.with_entity_link_start, with_link_start, expand=(1,), dim=0
+        )
+        self._shared_metadata.with_entity_link_end = concat_with_tensor(
+            self._shared_metadata.with_entity_link_end, with_link_end, expand=(1,), dim=0
+        )
+
+        # Store exclude_self_contact flag
+        self._shared_metadata.exclude_self_contact = concat_with_tensor(
+            self._shared_metadata.exclude_self_contact, self._options.exclude_self_contact, expand=(1,), dim=0
+        )
+
+        # Update needs_filtering flag if this sensor uses any filtering
+        if self._options.with_entity_idx is not None or self._options.exclude_self_contact:
+            self._shared_metadata.needs_filtering = True
+
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
 
@@ -125,9 +167,72 @@ class ContactSensor(Sensor):
         assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         link_a, link_b = all_contacts["link_a"], all_contacts["link_b"]
-        is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        shared_ground_truth_cache[:] = is_contact_a | is_contact_b
+
+        n_contacts = link_a.shape[-1]
+
+        # Handle empty contacts case
+        if n_contacts == 0:
+            shared_ground_truth_cache[:] = False
+            return
+
+        # Add batch dimension when n_envs=0 (non-batched mode)
+        if shared_metadata.solver.n_envs == 0:
+            link_a, link_b = link_a[None], link_b[None]
+
+        # Base check: sensor link is involved in contact
+        # Shape: link_a is (n_envs, n_contacts), expanded_links_idx is (n_sensors,)
+        # Result shape: (n_envs, n_sensors, n_contacts) -> any over contacts -> (n_envs, n_sensors)
+        sensor_in_a = (
+            link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]
+        )  # (n_envs, n_sensors, n_contacts)
+        sensor_in_b = link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]
+
+        # Fast path: no filtering options used by any sensor
+        if not shared_metadata.needs_filtering:
+            shared_ground_truth_cache[:] = sensor_in_a.any(dim=-1) | sensor_in_b.any(dim=-1)
+            return
+
+        # Slow path: filtering logic for with_entity_idx and/or exclude_self_contact
+        has_with_filter = shared_metadata.with_entity_link_start >= 0  # (n_sensors,)
+        has_exclude_self = shared_metadata.exclude_self_contact  # (n_sensors,)
+
+        # Check if link_a/link_b are in with_entity range
+        link_a_in_with = (link_a[..., None, :] >= shared_metadata.with_entity_link_start[..., None]) & (
+            link_a[..., None, :] < shared_metadata.with_entity_link_end[..., None]
+        )
+        link_b_in_with = (link_b[..., None, :] >= shared_metadata.with_entity_link_start[..., None]) & (
+            link_b[..., None, :] < shared_metadata.with_entity_link_end[..., None]
+        )
+
+        # Check if link_a/link_b are in sensor's own entity range (for exclude_self)
+        link_a_in_self = (link_a[..., None, :] >= shared_metadata.sensor_entity_link_start[..., None]) & (
+            link_a[..., None, :] < shared_metadata.sensor_entity_link_end[..., None]
+        )
+        link_b_in_self = (link_b[..., None, :] >= shared_metadata.sensor_entity_link_start[..., None]) & (
+            link_b[..., None, :] < shared_metadata.sensor_entity_link_end[..., None]
+        )
+
+        # Valid contact for each sensor:
+        # - sensor link in A, other (B) passes filter
+        # - OR sensor link in B, other (A) passes filter
+
+        # with_entity filter for "other": -1 means no filter (accept all)
+        # Expand has_with_filter to match (n_envs, n_sensors, n_contacts)
+        has_with_3d = has_with_filter[None, :, None].expand_as(link_b_in_with)
+        other_passes_with_a = ~has_with_3d | link_b_in_with  # B is other when sensor in A
+        other_passes_with_b = ~has_with_3d | link_a_in_with  # A is other when sensor in B
+
+        # exclude_self filter for "other"
+        exclude_self_3d = has_exclude_self[None, :, None].expand_as(link_b_in_self)
+        other_passes_self_a = ~exclude_self_3d | ~link_b_in_self  # B not in self entity
+        other_passes_self_b = ~exclude_self_3d | ~link_a_in_self  # A not in self entity
+
+        # Combine: sensor in contact AND other passes all filters
+        valid_a = sensor_in_a & other_passes_with_a & other_passes_self_a
+        valid_b = sensor_in_b & other_passes_with_b & other_passes_self_b
+
+        # Any valid contact per sensor per env
+        shared_ground_truth_cache[:] = (valid_a | valid_b).any(dim=-1)
 
     @classmethod
     def _update_shared_cache(

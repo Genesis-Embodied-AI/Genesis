@@ -130,12 +130,20 @@ class Contact(RigidSensorOptionsMixin, SensorOptions):
 
     Parameters
     ----------
+    with_entity_idx : int, optional
+        If specified, only detect contacts with links belonging to this entity.
+        Defaults to None (detect contact with any entity).
+    exclude_self_contact : bool, optional
+        If True, excludes contacts where both links belong to the same entity as the sensor's link.
+        Defaults to False.
     debug_sphere_radius : float, optional
         The radius of the debug sphere. Defaults to 0.05.
     debug_color : float, optional
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
+    with_entity_idx: int | None = None
+    exclude_self_contact: bool = False
     debug_sphere_radius: float = 0.05
     debug_color: tuple[float, float, float, float] = (1.0, 0.0, 1.0, 0.5)
 
