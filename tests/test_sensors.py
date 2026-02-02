@@ -627,3 +627,36 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
         sensor_data = sensor.read()
         assert (sensor_data.distances > gs.EPS).any()
         assert (sensor_data.points.abs() > gs.EPS).any()
+
+
+@pytest.mark.required
+def test_contact_sensor_filtering(show_viewer):
+    """Test ContactSensor with_entity_idx filtering."""
+    n_envs = 4
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        show_viewer=show_viewer,
+    )
+
+    plane = scene.add_entity(gs.morphs.Plane())
+    # box1 slightly penetrating ground to ensure contact
+    box1 = scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0, 0, 0.09)))
+    box2 = scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0, 0, 1.0)))
+
+    sensor_any = scene.add_sensor(gs.sensors.Contact(entity_idx=box1.idx))
+    sensor_with_box2 = scene.add_sensor(gs.sensors.Contact(entity_idx=box1.idx, with_entity_idx=box2.idx))
+
+    scene.build(n_envs=n_envs, env_spacing=(1.0, 1.0))
+
+    # Envs 0,1: box2 touching box1; Envs 2,3: box2 far away
+    box2.set_pos(np.array([[0, 0, 0.28], [0, 0, 0.28], [0, 0, 5.0], [0, 0, 5.0]]))
+
+    # Use force=True to detect collision without scene.step()
+    # Any collision (all box1 touch ground)
+    assert_array_equal(sensor_any.read(force=True).flatten(), [True, True, True, True])
+
+    # Collision with specific entity (only envs 0,1 have box1-box2 contact)
+    assert_array_equal(sensor_with_box2.read(force=True).flatten(), [True, True, False, False])
+
+    # Subset of environments
+    assert_array_equal(sensor_with_box2.read([0, 2], force=True).flatten(), [True, False])
