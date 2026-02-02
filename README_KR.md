@@ -25,7 +25,7 @@
   - [2025-01-08] v0.2.1 릴리스 🎊 🎉
   - [2025-01-08] [Discord](https://discord.gg/nukCuhB47p) 및 [Wechat](https://drive.google.com/uc?export=view&id=1ZS9nnbQ-t1IwkzJlENBYqYIIOOZhXuBZ) 그룹을 생성했습니다.
   - [2024-12-25] 레이 트레이싱 렌더러를 지원하는 [docker](https://www.google.com/search?q=%23docker) 추가
-  - [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md) 가이드라인 추가
+  - [2024-12-24] [제네시스 기여](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/contributing/PULL_REQUESTS.md) 가이드라인 추가
 
 ## Table of Contents
 
@@ -154,7 +154,7 @@ Genesis 프로젝트는 오픈 소스 및 협력 프로젝트입니다. 다음�
 - GitHub Issues를 통한 **버그 리포트 (Bug Reports)**.
 - Genesis의 사용성을 향상시키기 위한 **제안 (Suggestions)**.
 
-자세한 내용은 [기여 가이드](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md)를 참조하세요.
+자세한 내용은 [기여 가이드](https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/contributing/PULL_REQUESTS.md)를 참조하세요.
 
 ## 지원
 

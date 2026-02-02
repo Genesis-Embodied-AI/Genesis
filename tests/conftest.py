@@ -61,7 +61,7 @@ IMG_NUM_ERR_THR = 0.001
 def is_mem_monitoring_supported():
     try:
         assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=2)
+        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
         return True, None
     except Exception as exc:  # platform or nvidia-smi unavailable
         return False, exc
@@ -95,7 +95,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
                 sys.executable,
                 "tests/monitor_test_mem.py",
                 "--die-with-parent",
-                "--out-csv-filepath",
+                "--out-file",
                 mem_filepath,
             ]
         )
@@ -361,6 +361,9 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_setup(item):
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
+    dtype = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY") == "1" else "field"
+    test_name = test_name[:-1] + f"-{dtype}]"
+
     setproctitle.setproctitle(f"pytest: {test_name}")
 
     # Match CUDA device with EGL device.
@@ -398,12 +401,7 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def backend(pytestconfig):
-    import genesis as gs
-
-    backend = pytestconfig.getoption("--backend") or gs.cpu
-    if isinstance(backend, str):
-        return getattr(gs.constants.backend, backend)
-    return backend
+    return pytestconfig.getoption("--backend") or "cpu"
 
 
 @pytest.fixture(scope="session")
@@ -559,6 +557,10 @@ def initialize_genesis(
     if backend is None:
         yield
         return
+
+    # Convert backend from string to enum if necessary
+    if isinstance(backend, str):
+        backend = getattr(gs.constants.backend, backend)
 
     logging_level = request.config.getoption("--log-cli-level", logging.INFO)
     if debug is None:
@@ -745,8 +747,8 @@ def png_snapshot(request, snapshot):
     snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
     snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
 
-    must_update_snapshop = request.config.getoption("--snapshot-update")
-    if must_update_snapshop:
+    must_update_snapshot = request.config.getoption("--snapshot-update")
+    if must_update_snapshot:
         for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
             assert path.is_file()
             path.unlink()

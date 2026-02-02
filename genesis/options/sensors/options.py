@@ -79,7 +79,7 @@ class RigidSensorOptionsMixin:
         super().validate(scene)
         if self.entity_idx is not None and self.entity_idx >= len(scene.entities):
             gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
-        if self.entity_idx is not None:
+        if self.entity_idx is not None and self.entity_idx >= 0:
             entity = scene.entities[self.entity_idx]
             if not isinstance(entity, RigidEntity):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
@@ -214,6 +214,17 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
         The standard deviation of the white noise for each axis of the gyroscope.
     gyro_random_walk : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the gyroscope.
+    mag_resolution : float, optional
+        The measurement resolution of the magnetometer (smallest increment of change in the sensor reading).
+        Default is 0.0, which means no quantization is applied.
+    mag_cross_axis_coupling : float | tuple[float, float, float] | Sequence[float]
+        Magnetometer axes alignment as a 3x3 rotation matrix, similar to `acc_cross_axis_coupling`.
+    mag_bias : tuple[float, float, float]
+        The constant additive bias for each axis of the magnetometer.
+    mag_noise : tuple[float, float, float]
+        The standard deviation of the white noise for each axis of the gyroscope.
+    mag_random_walk : tuple[float, float, float]
+        The standard deviation of the bias drift for each axis of the magnetometer.
     debug_acc_color : float, optional
         The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
     debug_acc_scale: float, optional
@@ -222,27 +233,45 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
         The rgba color of the debug gyroscope arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
     debug_gyro_scale: float, optional
         The scale factor for the debug gyroscope arrow. Defaults to 0.01.
+    debug_mag_color : float, optional
+        The rgba color of the debug magnetometer arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
+    debug_mag_scale: float, optional
+        The scale factor for the debug magnetometer arrow. Defaults to 0.01.
     """
 
+    # Accelerometer
     acc_resolution: MaybeTuple3FType = 0.0
-    gyro_resolution: MaybeTuple3FType = 0.0
     acc_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
-    gyro_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
     acc_noise: MaybeTuple3FType = 0.0
-    gyro_noise: MaybeTuple3FType = 0.0
     acc_bias: MaybeTuple3FType = 0.0
-    gyro_bias: MaybeTuple3FType = 0.0
     acc_random_walk: MaybeTuple3FType = 0.0
+
+    # Gyroscope
+    gyro_resolution: MaybeTuple3FType = 0.0
+    gyro_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
+    gyro_noise: MaybeTuple3FType = 0.0
+    gyro_bias: MaybeTuple3FType = 0.0
     gyro_random_walk: MaybeTuple3FType = 0.0
+
+    # Magnetometer (New)
+    mag_resolution: MaybeTuple3FType = 0.0
+    mag_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
+    mag_noise: MaybeTuple3FType = 0.0
+    mag_bias: MaybeTuple3FType = 0.0
+    mag_random_walk: MaybeTuple3FType = 0.0
+    magnetic_field: MaybeTuple3FType = (0.0, 0.0, 0.5)
 
     debug_acc_color: tuple[float, float, float, float] = (0.0, 1.0, 1.0, 0.5)
     debug_acc_scale: float = 0.01
     debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
     debug_gyro_scale: float = 0.01
+    debug_mag_color: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.5)
+    debug_mag_scale: float = 2.0
 
     def model_post_init(self, _):
         self._validate_cross_axis_coupling(self.acc_cross_axis_coupling)
         self._validate_cross_axis_coupling(self.gyro_cross_axis_coupling)
+        self._validate_cross_axis_coupling(self.mag_cross_axis_coupling)
 
     def _validate_cross_axis_coupling(self, cross_axis_coupling):
         cross_axis_coupling_np = np.array(cross_axis_coupling)

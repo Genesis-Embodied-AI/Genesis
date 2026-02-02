@@ -5,6 +5,8 @@ from unittest.mock import patch
 import pytest
 import torch
 import numpy as np
+from scipy.linalg import polar as scipy_polar
+from scipy.spatial.transform import Rotation as R, Slerp
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -15,7 +17,6 @@ from genesis.utils.warnings import warn_once
 from genesis.utils.urdf import compose_inertial_properties
 
 from .utils import assert_allclose
-from scipy.linalg import polar as scipy_polar
 
 
 TOL = 1e-7
@@ -113,7 +114,7 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args):
 @pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_utils_geom_taichi_vs_tensor_consistency(batch_shape):
+def test_geom_taichi_vs_tensor_consistency(batch_shape):
     import gstaichi as ti
 
     for ti_func, py_func, shapes_in, shapes_out, *args in (
@@ -196,8 +197,9 @@ def polar(A, pure_rotation: bool, side, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_utils_geom_numpy_vs_tensor_consistency(batch_shape, tol):
+def test_geom_numpy_vs_torch_consistency(batch_shape, tol):
     for py_func, shapes_in, shapes_out in (
+        (gu.slerp, [[4], [4], [1]], [[4]]),
         (gu.z_up_to_R, [[3], [3], [3, 3]], [[3, 3]]),
         (gu.pos_lookat_up_to_T, [[3], [3], [3]], [[4, 4]]),
         (partial(polar, pure_rotation=False, side="left", tol=tol), [[3, 3]], [[3, 3], [3, 3]]),
@@ -231,7 +233,7 @@ def test_utils_geom_numpy_vs_tensor_consistency(batch_shape, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_utils_geom_taichi_inverse(batch_shape):
+def test_geom_taichi_inverse(batch_shape):
     import gstaichi as ti
 
     for ti_func, ti_func_inv, shapes_value_args, shapes_transform_args in (
@@ -277,7 +279,7 @@ def test_utils_geom_taichi_inverse(batch_shape):
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_utils_geom_taichi_identity(batch_shape):
+def test_geom_taichi_identity(batch_shape):
     import gstaichi as ti
 
     for ti_funcs, shape_args, funcs_args in (
@@ -306,7 +308,7 @@ def test_utils_geom_taichi_identity(batch_shape):
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_utils_geom_tensor_identity(batch_shape):
+def test_geom_tensor_identity(batch_shape):
     for py_funcs, shape_args in (
         ((gu.R_to_rot6d, gu.rot6d_to_R), ([3, 3], [6])),
         ((gu.R_to_quat, gu.quat_to_R), ([3, 3], [4])),
@@ -495,6 +497,27 @@ def test_compose_inertial_properties():
     assert_allclose(combined_mass, expected_mass, tol=TOL)
     assert_allclose(combined_com, expected_com, tol=TOL)
     assert_allclose(combined_inertia, expected_inertia, tol=TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
+def test_slerp(batch_shape, tol):
+    INTERP_RATIO = 0.7
+
+    numel = math.prod(batch_shape)
+    q0 = np.random.rand(numel, 4)
+    q0 /= np.linalg.norm(q0)
+    q1 = np.random.rand(numel, 4)
+    q1 /= np.linalg.norm(q1)
+
+    lerp_true = np.empty_like(q0)
+    for i in range(numel):
+        rots = R.from_quat([q0[i], q1[i]], scalar_first=True)
+        slerp = Slerp([0, 1], rots)
+        lerp_true[i] = slerp([INTERP_RATIO]).as_quat(scalar_first=True)
+
+    lerp = gu.slerp(q0.reshape((*batch_shape, 4)), q1.reshape((*batch_shape, 4)), np.full(batch_shape, INTERP_RATIO))
+    assert_allclose(lerp_true.reshape((*batch_shape, 4)), lerp, tol=tol)
 
 
 @pytest.mark.required

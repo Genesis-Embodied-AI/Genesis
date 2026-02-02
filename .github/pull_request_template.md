@@ -1,9 +1,9 @@
 <!--  Thanks for sending a pull request!  Please:
 
-1. Follow our contributor guidelines: 
-   https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md
-2. Prepare your PR according to the "Submitting Code Changes" 
-   section of https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/CONTRIBUTING.md
+1. Follow our contributor guidelines:
+   https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/contributing/PULL_REQUESTS.md
+2. Prepare your PR according to the "Submitting Code Changes"
+   section of https://github.com/Genesis-Embodied-AI/Genesis/blob/main/.github/contributing/PULL_REQUESTS.md
 3. Provide a concise summary of your changes in the Title above
 4. Prefix the title according to the type of issue you are addressing. Use:
     - [BUG FIX] for non-breaking changes which fix an issue

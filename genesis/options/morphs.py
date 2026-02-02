@@ -6,11 +6,13 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Any, List, Optional, Sequence, Tuple, Union, Literal
+from typing import Any, List, Optional, Sequence, Tuple, Literal
+from pathlib import Path
 
 import numpy as np
 
 import genesis as gs
+import genesis.utils.geom as gu
 import genesis.utils.misc as mu
 
 from .misc import CoacdOptions
@@ -18,8 +20,8 @@ from .options import Options
 
 URDF_FORMAT = ".urdf"
 MJCF_FORMAT = ".xml"
-MESH_FORMATS = (".obj", ".stl")
 GLTF_FORMATS = (".glb", ".gltf")
+MESH_FORMATS = (".obj", ".stl", *GLTF_FORMATS)
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
 
@@ -413,7 +415,7 @@ class Plane(Primitive):
     Note
     ----
     Plane is a primitive with infinite size. Note that the `pos` is the center of the plane,
-    but essetially only defines a point where the plane passes through.
+    but essentially only defines a point where the plane passes through.
 
     Parameters
     ----------
@@ -511,23 +513,23 @@ class FileMorph(Morph):
         and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
-    decompose_object_error_threshold : bool, optional:
+    decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threashold.
+        volume of original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : bool, optional:
+    decompose_robot_error_threshold : float, optional:
         For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threashold.
+        original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
-    parse_glb_with_zup : bool, optional
-        This parameter is deprecated, see file_meshes_are_zup.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -544,7 +546,7 @@ class FileMorph(Morph):
     """
 
     file: Any = ""
-    scale: Union[float, tuple] = 1.0
+    scale: tuple[float, float, float] | float = 1.0
     decimate: bool = True
     decimate_face_num: int = 500
     decimate_aggressiveness: int = 2
@@ -555,11 +557,15 @@ class FileMorph(Morph):
     coacd_options: Optional[CoacdOptions] = None
     recompute_inertia: bool = False
     parse_glb_with_zup: Optional[bool] = None
-    file_meshes_are_zup: bool = True
+    file_meshes_are_zup: bool | None = True
     batch_fixed_verts: bool = False
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.ndim > 1 or scale.size not in (1, 3):
+            gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
 
         if self.decompose_nonconvex is not None:
             if self.decompose_nonconvex:
@@ -600,18 +606,13 @@ class FileMorph(Morph):
 
             self.file = file
 
-        if isinstance(self, Mesh):
-            if isinstance(self.scale, tuple) and len(self.scale) != 3:
-                gs.raise_exception("`scale` should be a float or a 3-tuple.")
-        else:
-            if not isinstance(self.scale, float):
-                gs.raise_exception("`scale` should be a float.")
-
     def _repr_type(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
     def is_format(self, format):
-        return self.file.lower().endswith(format)
+        if not isinstance(self.file, (str, os.PathLike, Path)):
+            return False
+        return str(self.file).lower().endswith(format)
 
 
 class Mesh(FileMorph, TetGenMixin):
@@ -656,16 +657,19 @@ class Mesh(FileMorph, TetGenMixin):
         and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
-    decompose_object_error_threshold : bool, optional:
+    decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threashold.
+        volume of original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : bool, optional:
+    decompose_robot_error_threshold : float, optional:
         For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threashold.
+        original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     merge_submeshes_for_collision : bool, optional
         Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
     visualization : bool, optional
@@ -678,15 +682,15 @@ class Mesh(FileMorph, TetGenMixin):
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
-    parse_glb_with_trimesh : bool, optional
-        Whether to use trimesh to load glb files. Defaults to False, in which case pygltflib will be used.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). If None, then it will default
+        to True for all mesh formats except GLTF/GLB, as they are defined as Y-up by the standard. Beware that setting
+        this option to True for GLTF/GLB is not supported and will rather apply a rotation on the morph. Default to
+        None.
     fixed : bool, optional
         Whether the object should be fixed. Defaults to False. **This is only used for RigidEntity.**
     batch_fixed_verts : bool, optional
@@ -726,14 +730,37 @@ class Mesh(FileMorph, TetGenMixin):
         **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
-    parse_glb_with_trimesh: bool = False
-
     # Rigid specific
+    file_meshes_are_zup: bool | None = None
     fixed: bool = False
     contype: int = 0xFFFF
     conaffinity: int = 0xFFFF
     group_by_material: bool = True
     merge_submeshes_for_collision: bool = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        if self.is_format(gs.options.morphs.GLTF_FORMATS):
+            if self.file_meshes_are_zup:
+                gs.logger.warning(
+                    "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
+                    "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
+                )
+                y_up_quat = (1.0, -1.0, 0.0, 0.0)
+                if self.quat is None:
+                    self.quat = y_up_quat
+                else:
+                    self.quat = gu.transform_quat_by_quat(
+                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
+                    )
+                if self.scale is not None:
+                    scale = np.atleast_1d(np.array(self.scale))
+                    if scale.size == 3:
+                        self.scale = (scale[0], scale[2], scale[1])
+            self.file_meshes_are_zup = False
+        elif self.file_meshes_are_zup is None:
+            self.file_meshes_are_zup = True
 
 
 class MeshSet(Mesh):
@@ -806,23 +833,25 @@ class MJCF(FileMorph):
         and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
-    decompose_object_error_threshold : bool, optional:
+    decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threashold.
+        volume of original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : bool, optional:
+    decompose_robot_error_threshold : float, optional:
         For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threashold.
+        original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -847,6 +876,7 @@ class MJCF(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
+
         if not self.is_format(MJCF_FORMAT):
             gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
@@ -863,10 +893,10 @@ class MJCF(FileMorph):
         # avoid this inconsistency than limiting scaling to a scalar factor. In this case, scaling between anisotropic
         # and does not depends on the orientation of each geometry anymore, and therefore is independent of the
         # configuration of the entity, which is precisely the property that we want to enforce.
-        if isinstance(self.scale, np.ndarray):
-            if self.scale.std() > gs.EPS:
-                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
-            self.scale = self.scale.mean()
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
+        self.scale = scale.mean()
 
 
 class URDF(FileMorph):
@@ -917,23 +947,25 @@ class URDF(FileMorph):
         and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
-    decompose_object_error_threshold : bool, optional:
+    decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threashold.
+        volume of original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : bool, optional:
+    decompose_robot_error_threshold : float, optional:
         For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threashold.
+        original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -969,14 +1001,21 @@ class URDF(FileMorph):
 
     def __init__(self, **data):
         super().__init__(**data)
-        if isinstance(self.file, str) and not self.is_format(URDF_FORMAT):
+        if not self.is_format(URDF_FORMAT):
             gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
 
         # Anisotropic scaling is ill-defined for poly-articulated robots. See related MJCF about this for details.
-        if isinstance(self.scale, np.ndarray) and self.scale.std() > gs.EPS:
-            if self.scale.std() > gs.EPS:
-                gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
-            self.scale = self.scale.mean()
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.std() > gs.EPS:
+            gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
+        self.scale = scale.mean()
+
+    def is_format(self, format):
+        from genesis.ext.urdfpy.urdf import URDF
+
+        if isinstance(self.file, URDF):
+            return True
+        return super().is_format(format)
 
 
 class Drone(FileMorph):
@@ -1020,23 +1059,25 @@ class Drone(FileMorph):
         and `False` for other deformable entities.
     decompose_nonconvex : bool, optional
         This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
-    decompose_object_error_threshold : bool, optional:
+    decompose_object_error_threshold : float, optional:
         For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threashold.
+        volume of original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : bool, optional:
+    decompose_robot_error_threshold : float, optional:
         For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threashold.
+        original mesh and its convex hull is lower than this threshold.
         0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
     coacd_options : CoacdOptions, optional
         Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
     parse_glb_with_zup : bool, optional
         This parameter is deprecated, see file_meshes_are_zup.
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
-        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y).
-        This conversion always applies to GLTF/GLB files, as they are defined as Y-up by the standard. Defaults to true.
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -1097,7 +1138,7 @@ class Drone(FileMorph):
         # Make sure that Propellers links are preserved
         self.links_to_keep = tuple(set([*self.links_to_keep, *self.propellers_link_name]))
 
-        if isinstance(self.file, str) and not self.is_format(URDF_FORMAT):
+        if not self.is_format(URDF_FORMAT):
             gs.raise_exception(f"Drone only supports `{URDF_FORMAT}` extension: {self.file}")
 
         if self.model not in ("CF2X", "CF2P", "RACE"):
@@ -1331,6 +1372,64 @@ class USD(FileMorph):
     ----------
     file : str
         The path to the USD file.
+    scale : float or tuple, optional
+        The scaling factor for the size of the entity. If a float, it scales uniformly.
+        If a 3-tuple, it scales along each axis. Defaults to 1.0.
+        Note that 3-tuple scaling is only supported for `gs.morphs.Mesh`.
+    pos : tuple, shape (3,), optional
+        The position of the entity in meters. Defaults to (0.0, 0.0, 0.0).
+    euler : tuple, shape (3,), optional
+        The euler angle of the entity in degrees. This follows scipy's extrinsic x-y-z rotation convention.
+        Defaults to (0.0, 0.0, 0.0).
+    quat : tuple, shape (4,), optional
+        The quaternion (w-x-y-z convention) of the entity. If specified, `euler` will be ignored. Defaults to None.
+    decimate : bool, optional
+        Whether to decimate (simplify) the mesh. Default to True. **This is only used for RigidEntity.**
+    decimate_face_num : int, optional
+        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
+    decimate_aggressiveness : int
+        How hard the decimation process will try to match the target number of faces, as a integer ranging from 0 to 8.
+        0 is losseless. 2 preserves all features of the original geometry. 5 may significantly alters the original
+        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
+        **This is only used for RigidEntity.**
+    convexify : bool, optional
+        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
+        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
+        sufficient to met the desired accuracy (see 'decompose_(robot|object)_error_threshold' documentation). The
+        module 'coacd' is used for this decomposition process. If not given, it defaults to `True` for `RigidEntity`
+        and `False` for other deformable entities.
+    decompose_nonconvex : bool, optional
+        This parameter is deprecated. Please use 'convexify' and 'decompose_(robot|object)_error_threshold' instead.
+    decompose_object_error_threshold : float, optional:
+        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
+        volume of original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
+    decompose_robot_error_threshold : float, optional:
+        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
+        original mesh and its convex hull is lower than this threshold.
+        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
+    coacd_options : CoacdOptions, optional
+        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
+    recompute_inertia : bool, optional
+        Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
+        broken assets from external providers that cannot be re-exported from source. Default to False.
+    file_meshes_are_zup : bool, optional
+        Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
+        as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
+        where the original coordinates are transformed as follows: (X, Y, Z) → (X, -Z, Y). Defaults to True.
+    visualization : bool, optional
+        Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
+        purposes. Defaults to True. `visualization` and `collision` cannot both be False.
+        **This is only used for RigidEntity.**
+    collision : bool, optional
+        Whether the entity needs to be considered for collision checking. Defaults to True.
+        `visualization` and `collision` cannot both be False. **This is only used for RigidEntity.**
+    batch_fixed_verts : bool, optional
+        Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
+        significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
+    requires_jac_and_IK : bool, optional
+        Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
+        **This is only used for RigidEntity.**
 
     Joint Dynamics Options
     ----------------------
@@ -1353,59 +1452,48 @@ class USD(FileMorph):
     prismatic_joint_stiffness_attr_candidates : List[str], optional
         List of candidate attribute names for prismatic joint stiffness. The parser will try these in order.
         If no matching attribute is found, Genesis default (0.0) is used.
-        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness", "physxLimit:Z:stiffness",
-        "physics:linear:stiffness", "linear:stiffness"].
+        Defaults to ["physxLimit:linear:stiffness", "physxLimit:X:stiffness", "physxLimit:Y:stiffness",
+        "physxLimit:Z:stiffness", "physics:linear:stiffness", "linear:stiffness"].
     prismatic_joint_damping_attr_candidates : List[str], optional
         List of candidate attribute names for prismatic joint damping. The parser will try these in order.
         If no matching attribute is found, Genesis default (0.0) is used.
-        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping", "physxLimit:Z:damping",
-        "physics:linear:damping", "linear:damping"].
+        Defaults to ["physxLimit:linear:damping", "physxLimit:X:damping", "physxLimit:Y:damping",
+        "physxLimit:Z:damping", "physics:linear:damping", "linear:damping"].
 
     Geometry Parsing Options
     -------------------------
     collision_mesh_prim_patterns : List[str], optional
-        List of regex patterns to match collision mesh prim names. Patterns are tried in order.
-        Defaults to [r"^([cC]ollision).*", r"^.*"].
+        List of regex patterns to match collision mesh prim names. Patterns are tried in order
+        until a match is found. The parser uses `re.match()` to check if a USD prim's name
+        matches each pattern from the start of the string.
+
+        When a prim matches a collision pattern, it is treated as collision-only geometry
+        (not used for visualization). If a prim matches neither a visual nor collision pattern,
+        it is treated as both visual and collision geometry by default.
+
+        Defaults to [r"^([cC]ollision).*"].
     visual_mesh_prim_patterns : List[str], optional
-        List of regex patterns to match visual mesh prim names. Patterns are tried in order.
-        Defaults to [r"^([vV]isual).*", r"^.*"].
+        List of regex patterns to match visual mesh prim names. Patterns are tried in order
+        until a match is found. The parser uses `re.match()` to check if a USD prim's name
+        matches each pattern from the start of the string.
 
-    Geometry Decomposition Options
-    -------------------------------
-    convexify : bool, optional
-        Whether to convexify the entity. When convexify is True, all the meshes in the entity will each be converted
-        to a set of convex hulls. The mesh will be decomposed into multiple convex components if the convex hull is not
-        sufficient to meet the desired accuracy. The module 'coacd' is used for this decomposition process.
-        If not given, it defaults to `True` for `RigidEntity` and `False` for other deformable entities.
-    decompose_object_error_threshold : float, optional
-        For basic rigid objects (mug, table...), skip convex decomposition if the relative difference between the
-        volume of original mesh and its convex hull is lower than this threshold.
-        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to 0.15 (15%).
-    decompose_robot_error_threshold : float, optional
-        For poly-articulated robots, skip convex decomposition if the relative difference between the volume of
-        original mesh and its convex hull is lower than this threshold.
-        0.0 to enforce decomposition, float("inf") to disable it completely. Defaults to float("inf").
-    coacd_options : CoacdOptions, optional
-        Options for configuring coacd convex decomposition. Needs to be a `gs.options.CoacdOptions` object.
-    decimate : bool, optional
-        Whether to decimate (simplify) the mesh. Defaults to True. **This is only used for RigidEntity.**
-    decimate_face_num : int, optional
-        The number of faces to decimate to. Defaults to 500. **This is only used for RigidEntity.**
-    decimate_aggressiveness : int, optional
-        How hard the decimation process will try to match the target number of faces, as an integer ranging from 0 to 8.
-        0 is lossless. 2 preserves all features of the original geometry. 5 may significantly alter the original
-        geometry if necessary. 8 does what needs to be done at all costs. Defaults to 2.
-        **This is only used for RigidEntity.**
+        When a prim matches a visual pattern, it is treated as visual-only geometry
+        (not used for collision detection). If a prim matches neither a visual nor collision
+        pattern, it is treated as both visual and collision geometry by default.
 
-    Internal Options
+        Defaults to [r"^([vV]isual).*"].
+
+    USD specific Options
     ----------------
     prim_path : str, optional
         The parsing target prim path. Defaults to None.
-    parser_ctx : Any, optional
+    usd_ctx : Any, optional
         The parser context. Defaults to None.
     """
 
-    file: str
+    # Mesh Options
+    file_meshes_are_zup: bool | None = None
+    fixed: bool = False
 
     # Joint Dynamics Options
     joint_friction_attr_candidates: List[str] = [
@@ -1447,30 +1535,29 @@ class USD(FileMorph):
     ]
 
     # Geometry Parsing Options
-    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*", r"^.*"]
-    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*", r"^.*"]
+    collision_mesh_prim_patterns: List[str] = [r"^([cC]ollision).*"]
+    visual_mesh_prim_patterns: List[str] = [r"^([vV]isual).*"]
 
-    # Geometry Decomposition Options
-    convexify: Optional[bool] = None
-    decompose_object_error_threshold: float = 0.15
-    decompose_robot_error_threshold: float = float("inf")
-    coacd_options: Optional[CoacdOptions] = None
-    decimate: bool = True
-    decimate_face_num: int = 500
-    decimate_aggressiveness: int = 2
-
-    # Internal Options
+    # USD specific Options
+    usd_ctx: Any = None
     prim_path: Optional[str] = None
-    parser_ctx: Any = None
 
     def __init__(self, **data):
         super().__init__(**data)
 
-        if not isinstance(self.file, str):
-            gs.raise_exception("`file` should be a string.")
+        if self.file_meshes_are_zup is not None:
+            gs.raise_exception(
+                "Specifying `file_meshes_are_zup` not supported for morph USD. "
+                "USD file has independent metadata `up_axis` for up axis specification."
+            )
 
-        if not self.file.lower().endswith(USD_FORMATS):
-            gs.raise_exception(f"USDMorph requires a USD file with extension {USD_FORMATS}, got: {self.file}")
+        if self.usd_ctx is None:
+            from genesis.utils.usd import UsdContext
 
-        if self.coacd_options is None:
-            self.coacd_options = CoacdOptions()
+            if not self.is_format(USD_FORMATS):
+                gs.raise_exception(f"Expected `{USD_FORMATS}` extension for USD file: {self.file}")
+
+            self.usd_ctx = UsdContext(self.file)
+
+    def _repr_type(self):
+        return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}', prim_path='{self.prim_path}')>"
