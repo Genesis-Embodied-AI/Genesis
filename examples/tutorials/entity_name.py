@@ -44,10 +44,6 @@ def main():
     # List all entity names
     print(f"All entity names: {scene.entity_names}")
 
-    scene.build()
-    scene.step()
-    scene.destroy()
-
 
 if __name__ == "__main__":
     main()

@@ -18,6 +18,11 @@ def get_robot_name(file_path):
     """
     Extract the robot name from a URDF file.
 
+    The name is extracted from the ``<robot name="...">`` attribute, which is
+    required by the URDF specification.
+
+    Reference: https://wiki.ros.org/urdf/XML/robot
+
     Parameters
     ----------
     file_path : str or Path
@@ -25,18 +30,23 @@ def get_robot_name(file_path):
 
     Returns
     -------
-    str or None
-        The robot name from the <robot name="..."> attribute, or None if not found.
+    str
+        The robot name.
+
+    Raises
+    ------
+    ValueError
+        If the robot name attribute is missing or empty.
     """
-    try:
-        path = os.path.join(get_assets_dir(), file_path)
-        tree = ET.parse(path)
-        root = tree.getroot()
-        if root.tag == "robot":
-            return root.attrib.get("name")
-    except (ET.ParseError, FileNotFoundError, OSError):
-        pass
-    return None
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "robot":
+        name = root.attrib.get("name")
+        if name:
+            return name
+        raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
+    raise ValueError(f"File '{file_path}' does not have a <robot> root element.")
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):

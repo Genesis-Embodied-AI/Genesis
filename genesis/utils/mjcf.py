@@ -24,7 +24,11 @@ MIN_TIMECONST = np.finfo(np.double).eps
 
 def get_model_name(file_path):
     """
-    Extract the model name from an MJCF file.
+    Extract the model name from an MJCF file, if specified.
+
+    The name is extracted from the optional ``<mujoco model="...">`` attribute.
+
+    Reference: https://mujoco.readthedocs.io/en/stable/XMLreference.html#mujoco
 
     Parameters
     ----------
@@ -34,7 +38,7 @@ def get_model_name(file_path):
     Returns
     -------
     str or None
-        The model name from the <mujoco model="..."> attribute, or None if not found.
+        The model name, or None if not specified or parsing fails.
     """
     try:
         path = os.path.join(get_assets_dir(), file_path)

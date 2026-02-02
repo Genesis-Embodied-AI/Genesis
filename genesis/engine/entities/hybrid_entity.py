@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+
 import numpy as np
 import gstaichi as ti
 import trimesh
@@ -214,10 +216,11 @@ class HybridEntity(Entity):
         if isinstance(morph, gs.morphs.URDF):
             if isinstance(morph.file, str):
                 # Try to get robot name from URDF file, fall back to filename stem
-                robot_name = uu.get_robot_name(morph.file)
-                if robot_name:
-                    return robot_name
-                return Path(morph.file).stem
+                try:
+                    return uu.get_robot_name(morph.file)
+                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
+                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
+                    return Path(morph.file).stem
             return morph.file.name
         if isinstance(morph, gs.morphs.Mesh):
             return Path(morph.file).stem
