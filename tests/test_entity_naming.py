@@ -57,3 +57,14 @@ def test_entity_names_property(scene):
     names = scene.entity_names
     assert isinstance(names, tuple)
     assert names == ("first", "second")
+
+
+def test_urdf_mjcf_names_from_file(scene):
+    """Test that URDF/MJCF entities use robot/model names from files."""
+    # URDF: plane.urdf has <robot name="plane">
+    urdf_entity = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf"))
+    assert urdf_entity.name.startswith("plane_")
+
+    # MJCF: panda.xml has <mujoco model="panda">
+    mjcf_entity = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    assert mjcf_entity.name.startswith("panda_")

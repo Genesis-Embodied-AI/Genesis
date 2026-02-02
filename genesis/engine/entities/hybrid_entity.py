@@ -5,6 +5,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
+import genesis.utils.urdf as uu
 from genesis.ext.urdfpy.urdf import URDF
 
 from genesis.utils.hybrid import (
@@ -212,6 +213,10 @@ class HybridEntity(Entity):
         morph = self._morph
         if isinstance(morph, gs.morphs.URDF):
             if isinstance(morph.file, str):
+                # Try to get robot name from URDF file, fall back to filename stem
+                robot_name = uu.get_robot_name(morph.file)
+                if robot_name:
+                    return robot_name
                 return Path(morph.file).stem
             return morph.file.name
         if isinstance(morph, gs.morphs.Mesh):

@@ -22,6 +22,31 @@ from .misc import get_assets_dir, redirect_libc_stderr
 MIN_TIMECONST = np.finfo(np.double).eps
 
 
+def get_model_name(file_path):
+    """
+    Extract the model name from an MJCF file.
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the MJCF file.
+
+    Returns
+    -------
+    str or None
+        The model name from the <mujoco model="..."> attribute, or None if not found.
+    """
+    try:
+        path = os.path.join(get_assets_dir(), file_path)
+        tree = ET.parse(path)
+        root = tree.getroot()
+        if root.tag == "mujoco":
+            return root.attrib.get("model")
+    except (ET.ParseError, FileNotFoundError, OSError):
+        pass
+    return None
+
+
 def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):

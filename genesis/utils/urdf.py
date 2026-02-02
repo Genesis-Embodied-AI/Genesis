@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 from itertools import chain
 from pathlib import Path
 
@@ -11,6 +12,31 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from .misc import get_assets_dir
+
+
+def get_robot_name(file_path):
+    """
+    Extract the robot name from a URDF file.
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the URDF file.
+
+    Returns
+    -------
+    str or None
+        The robot name from the <robot name="..."> attribute, or None if not found.
+    """
+    try:
+        path = os.path.join(get_assets_dir(), file_path)
+        tree = ET.parse(path)
+        root = tree.getroot()
+        if root.tag == "robot":
+            return root.attrib.get("name")
+    except (ET.ParseError, FileNotFoundError, OSError):
+        pass
+    return None
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):
