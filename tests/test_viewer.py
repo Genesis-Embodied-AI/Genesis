@@ -145,7 +145,7 @@ def test_default_viewer_plugin():
 
     # Error when remapping non-existent keybind
     with pytest.raises(ValueError):
-        scene.viewer.remap_keybind("non_existent_keybind", new_key=Key._3)
+        scene.viewer.remap_keybind("non_existent_keybind", new_key=Key._3, new_key_mods=None)
 
     # Error when adding a keybind with same key
     with pytest.raises(ValueError):
