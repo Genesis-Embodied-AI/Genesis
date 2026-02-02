@@ -38,16 +38,22 @@ def get_model_name(file_path):
     Returns
     -------
     str or None
-        The model name, or None if not specified or parsing fails.
+        The model name, or None if not specified.
+
+    Raises
+    ------
+    ET.ParseError
+        If the file cannot be parsed as XML.
+    FileNotFoundError
+        If the file does not exist.
+    OSError
+        If there is an error reading the file.
     """
-    try:
-        path = os.path.join(get_assets_dir(), file_path)
-        tree = ET.parse(path)
-        root = tree.getroot()
-        if root.tag == "mujoco":
-            return root.attrib.get("model")
-    except (ET.ParseError, FileNotFoundError, OSError):
-        pass
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "mujoco":
+        return root.attrib.get("model")
     return None
 
 
