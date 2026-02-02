@@ -37,8 +37,8 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "c50bfe3e354e105b221ef4eb9a79504650709dd2"
-HUGGINGFACE_SNAPSHOT_REVISION = "53228deca0e3a0e0848cc997315e9f8ba5f97cce"
+HUGGINGFACE_ASSETS_REVISION = "8d9621de48a84fb182da38fd88f2495e4ccf3de9"
+HUGGINGFACE_SNAPSHOT_REVISION = "dc377c0f56a5bc14eb73e2736d6a81296ff31e93"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -186,7 +186,6 @@ def get_hf_dataset(
     local_dir: str | None = None,
     num_retry: int = 4,
     retry_delay: float = 30.0,
-    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -207,7 +206,6 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
-                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful

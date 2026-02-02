@@ -496,7 +496,7 @@ class Alarm:
             for rec in rows:
                 w.writerow(rec)
 
-        return [header, align] + markdown_rows + baseline_block, reg_found, alert_found
+        return [header, align] + markdown_rows + [""] + baseline_block, reg_found, alert_found
 
 
 if __name__ == "__main__":

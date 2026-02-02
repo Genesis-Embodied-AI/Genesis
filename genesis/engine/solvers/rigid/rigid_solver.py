@@ -7,7 +7,6 @@ import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-import genesis.utils.geom as gu
 from genesis.engine.entities import DroneEntity, RigidEntity
 from genesis.engine.entities.base_entity import Entity
 from genesis.engine.states import QueriedStates, RigidSolverState
@@ -27,7 +26,18 @@ from ..base_solver import Solver
 from .collider import Collider
 from .constraint import ConstraintSolver, ConstraintSolverIsland
 from .abd.misc import (
+    func_add_safe_backward,
+    func_apply_coupling_force,
+    func_apply_link_external_force,
+    func_apply_external_torque,
+    func_apply_link_external_torque,
+    func_atomic_add_if,
+    func_check_index_range,
+    func_clear_external_force,
+    func_read_field_if,
     func_wakeup_entity_and_its_temp_island,
+    func_write_field_if,
+    func_write_and_read_field_if,
     kernel_init_invweight,
     kernel_init_meaninertia,
     kernel_init_dof_fields,
@@ -43,77 +53,66 @@ from .abd.misc import (
     kernel_init_equality_fields,
     kernel_apply_links_external_force,
     kernel_apply_links_external_torque,
-    func_apply_coupling_force,
-    func_apply_link_external_force,
-    func_apply_external_torque,
-    func_apply_link_external_torque,
-    func_clear_external_force,
     kernel_update_geoms_render_T,
     kernel_update_vgeoms_render_T,
     kernel_bit_reduction,
     kernel_set_zero,
-    func_atomic_add_if,
-    func_add_safe_backward,
-    func_read_field_if,
-    func_write_field_if,
-    func_write_and_read_field_if,
-    func_check_index_range,
     kernel_clear_external_force,
 )
 from .abd.forward_kinematics import (
-    kernel_forward_kinematics_links_geoms,
-    kernel_masked_forward_kinematics_links_geoms,
-    kernel_forward_velocity,
-    kernel_masked_forward_velocity,
+    func_aggregate_awake_entities,
     func_COM_links,
     func_COM_links_entity,
     func_forward_kinematics_entity,
     func_forward_kinematics_batch,
-    kernel_forward_kinematics_entity,
-    func_update_geoms_entity,
-    func_update_geoms_batch,
-    func_update_geoms,
-    kernel_update_geoms,
     func_forward_velocity_entity,
     func_forward_velocity_batch,
     func_forward_velocity,
-    kernel_update_verts_for_geoms,
-    func_update_verts_for_geom,
+    func_hibernate_entity_and_zero_dof_velocities,
+    func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer,
+    func_update_geoms_entity,
+    func_update_geoms_batch,
     func_update_all_verts,
+    func_update_cartesian_space,
+    func_update_cartesian_space_entity,
+    func_update_cartesian_space_batch,
+    func_update_geoms,
+    func_update_verts_for_geom,
+    kernel_forward_kinematics_links_geoms,
+    kernel_masked_forward_kinematics_links_geoms,
+    kernel_forward_velocity,
+    kernel_masked_forward_velocity,
+    kernel_forward_kinematics_entity,
+    kernel_update_geoms,
+    kernel_update_verts_for_geoms,
     kernel_update_all_verts,
     kernel_update_geom_aabbs,
     kernel_update_vgeoms,
-    func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer,
-    func_aggregate_awake_entities,
-    func_hibernate_entity_and_zero_dof_velocities,
-    func_update_cartesian_space_entity,
-    func_update_cartesian_space_batch,
-    func_update_cartesian_space,
     kernel_update_cartesian_space,
 )
 from .abd.forward_dynamics import (
-    update_qacc_from_qvel_delta,
-    update_qvel,
-    kernel_compute_mass_matrix,
-    func_forward_dynamics,
-    kernel_forward_dynamics,
-    kernel_update_acc,
-    func_vel_at_point,
+    func_actuation,
+    func_bias_force,
     func_compute_mass_matrix,
+    func_compute_qacc,
     func_factor_mass,
+    func_forward_dynamics,
     func_solve_mass_entity,
     func_solve_mass_batch,
     func_solve_mass,
     func_torque_and_passive_force,
     func_update_acc,
     func_update_force,
-    func_actuation,
-    func_bias_force,
-    kernel_compute_qacc,
-    func_compute_qacc,
     func_integrate,
-    kernel_forward_dynamics_without_qacc,
     func_implicit_damping,
+    func_vel_at_point,
+    kernel_compute_mass_matrix,
+    kernel_forward_dynamics,
+    kernel_update_acc,
+    kernel_compute_qacc,
+    kernel_forward_dynamics_without_qacc,
+    update_qacc_from_qvel_delta,
+    update_qvel,
 )
 from .abd.accessor import (
     kernel_get_state,
@@ -126,6 +125,7 @@ from .abd.accessor import (
     kernel_set_links_mass_shift,
     kernel_set_links_COM_shift,
     kernel_set_links_inertial_mass,
+    kernel_wake_up_entities_by_links,
     kernel_set_geoms_friction_ratio,
     kernel_set_qpos,
     kernel_set_global_sol_params,
@@ -155,21 +155,20 @@ from .abd.accessor import (
     kernel_set_geoms_friction,
 )
 from .abd.diff import (
+    func_copy_cartesian_space,
     func_copy_next_to_curr,
     func_copy_next_to_curr_grad,
-    kernel_save_adjoint_cache,
-    func_save_adjoint_cache,
+    func_integrate_dq_entity,
+    func_is_grad_valid,
     func_load_adjoint_cache,
+    func_save_adjoint_cache,
+    kernel_save_adjoint_cache,
     kernel_prepare_backward_substep,
     kernel_begin_backward_substep,
-    func_is_grad_valid,
-    func_copy_cartesian_space,
     kernel_copy_acc,
-    func_integrate_dq_entity,
 )
 
 if TYPE_CHECKING:
-    import genesis.engine.solvers.rigid.array_class
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
     from genesis.engine.entities.rigid_entity import RigidJoint, RigidLink, RigidGeom, RigidVisGeom
@@ -457,6 +456,13 @@ class RigidSolver(Solver):
                 )
 
         self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
+
+        if self._static_rigid_sim_config.use_hibernation:
+            if gs.use_ndarray:
+                gs.raise_exception(
+                    "Hibernation is not yet supported with dynamic array mode. "
+                    "Please set performance_mode=True or use_hibernation=False."
+                )
 
         if self._static_rigid_sim_config.requires_grad:
             if self._static_rigid_sim_config.use_hibernation:
@@ -1184,27 +1190,30 @@ class RigidSolver(Solver):
         return ti_to_torch(self._errno) > 0
 
     def check_errno(self):
+        # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
         if gs.use_zerocopy:
             errno = np.bitwise_or.reduce(ti_to_numpy(self._errno))
         else:
             errno = kernel_bit_reduction(self._errno)
 
-        if errno & 0b00000000000000000000000000000001:
+        if errno & array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
             max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
             gs.raise_exception(
                 f"Exceeding max number of broad phase candidate contact pairs ({max_collision_pairs_broad}). "
                 f"Please increase the value of RigidSolver's option 'multiplier_collision_broad_phase'."
             )
-        if errno & 0b00000000000000000000000000000010:
+        if errno & array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS:
             max_contact_pairs = self.collider._collider_info.max_contact_pairs[None]
             gs.raise_exception(
                 f"Exceeding max number of contact pairs ({max_contact_pairs}). Please increase the value of "
                 "RigidSolver's option 'max_collision_pairs'."
             )
-        if errno & 0b00000000000000000000000000000100:
+        if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
-        if errno & 0b00000000000000000000000000001000:
+        if errno & array_class.ErrorCode.INVALID_ACC_NAN:
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
+        if errno & array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS:
+            gs.raise_exception("Contact island buffer overflow. Please increase RigidOptions 'max_collision_pairs'.")
 
     def _kernel_detect_collision(self):
         self.collider.clear()
@@ -1890,6 +1899,21 @@ class RigidSolver(Solver):
                 "option 'batch_fixed_verts=True'."
             )
 
+        # Wake up hibernated entities before setting position
+        if self._options.use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
         kernel_set_links_pos(
             relative,
             pos,
@@ -1960,6 +1984,21 @@ class RigidSolver(Solver):
         )
         if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
             gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
+
+        # Wake up hibernated entities before setting quaternion
+        if self._options.use_hibernation:
+            kernel_wake_up_entities_by_links(
+                links_idx,
+                envs_idx,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                dofs_state=self.dofs_state,
+                geoms_state=self.geoms_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
         kernel_set_links_quat(
             relative,
@@ -3091,6 +3130,7 @@ def kernel_step_2(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
             contact_island_state=contact_island_state,
+            errno=errno,
         )
         func_aggregate_awake_entities(
             entities_state=entities_state,

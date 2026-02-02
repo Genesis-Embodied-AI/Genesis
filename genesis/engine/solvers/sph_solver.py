@@ -399,7 +399,7 @@ class SPHSolver(Solver):
                 ret = ti.Vector.zero(gs.ti_float, 4)
 
                 self.sh.for_all_neighbors(
-                    i_p, self.particles_reordered.pos, self._support_radius, ret, self._task_compute_DFSPH_factor
+                    i_p, self.particles_reordered.pos, self._support_radius, ret, self._task_compute_DFSPH_factor, i_b
                 )
 
                 sum_grad_p_k = ret[3]
@@ -479,7 +479,12 @@ class SPHSolver(Solver):
                 # TODO: if warm start
                 # get_kappa_V += k_i
                 self.sh.for_all_neighbors(
-                    i_p, self.particles_reordered.pos, self._support_radius, ret, self._task_divergence_solver_iteration
+                    i_p,
+                    self.particles_reordered.pos,
+                    self._support_radius,
+                    ret,
+                    self._task_divergence_solver_iteration,
+                    i_b,
                 )
                 self.particles_reordered.vel[i_p, i_b] = self.particles_reordered.vel[i_p, i_b] + ret.dv
 
@@ -505,8 +510,8 @@ class SPHSolver(Solver):
         # self._kernel_multiply_time_step(self.ps.dfsph_factor, inv_dt)
 
         # Start solver
-        iteration = gs.ti_int(0)
-        avg_density_err = gs.ti_float(0.0)
+        iteration = 0
+        avg_density_err = 0.0
         while iteration < self._df_max_div_iters:
             avg_density_err = self._divergence_solver_iteration()
             # Max allowed density fluctuation
@@ -609,8 +614,8 @@ class SPHSolver(Solver):
         self._kernel_multiply_time_step(self.particles_reordered.dfsph_factor, inv_dt2)
 
         # Start solver
-        iteration = gs.ti_int(0)
-        avg_density_err = gs.ti_float(0.0)
+        iteration = 0
+        avg_density_err = 0.0
         while iteration < self._df_max_den_iters:
             avg_density_err = self._density_solve_iteration()
             # Max allowed density fluctuation
