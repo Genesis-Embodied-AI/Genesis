@@ -389,7 +389,7 @@ class FEMEntity(Entity):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
-        self._uvs = None  # Initialize UVs storage (indexed same as FEM vertices)
+        self._uvs = None
 
         if is_cloth:
             # Cloth: load surface mesh directly (no tetrahedralization)
@@ -405,7 +405,6 @@ class FEMEntity(Entity):
                 # Load UVs from mesh (1:1 mapping for cloth)
                 try:
                     uvs = mesh.visual.uv.copy()
-                    uvs[:, 1] = 1.0 - uvs[:, 1]  # flip V coordinate (trimesh uses top-left origin)
                     self._uvs = uvs.astype(gs.np_float)
                 except AttributeError:
                     self._uvs = None
