@@ -245,6 +245,41 @@ class ContactSensor(Sensor):
         buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
+    @gs.assert_built
+    def read(self, envs_idx=None, force: bool = False):
+        """
+        Read the sensor data.
+
+        Parameters
+        ----------
+        envs_idx : array_like, optional
+            The indices of the environments to read. Defaults to all environments.
+        force : bool, optional
+            If True, run collision detection before reading. Defaults to False.
+        """
+        if force:
+            solver = self._shared_metadata.solver
+            # Update geoms state from links state
+            solver._func_update_geoms(solver._scene._envs_idx)
+            # Run collision detection
+            solver.collider.clear()
+            solver.collider.detection()
+
+            # Update the ground truth cache for this sensor type
+            dtype = self._get_cache_dtype()
+            cache_slice = self._manager._cache_slices_by_type[type(self)]
+            ground_truth_slice = self._manager._ground_truth_cache[dtype][:, cache_slice]
+            self._update_shared_ground_truth_cache(self._shared_metadata, ground_truth_slice)
+
+            # Copy ground truth to regular cache (skip delay/noise for force mode)
+            self._manager._cache[dtype][:, cache_slice] = ground_truth_slice
+
+            # Invalidate cloned cache so next read fetches fresh data
+            self._manager._is_last_cache_cloned[(False, dtype)] = False
+            self._manager._is_last_cache_cloned[(True, dtype)] = False
+
+        return super().read(envs_idx)
+
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
         Draw debug sphere when the sensor detects contact.

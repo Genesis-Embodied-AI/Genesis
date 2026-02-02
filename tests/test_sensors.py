@@ -650,13 +650,13 @@ def test_contact_sensor_filtering(show_viewer):
 
     # Envs 0,1: box2 touching box1; Envs 2,3: box2 far away
     box2.set_pos(np.array([[0, 0, 0.28], [0, 0, 0.28], [0, 0, 5.0], [0, 0, 5.0]]))
-    scene.step()
 
+    # Use force=True to detect collision without scene.step()
     # Any collision (all box1 touch ground)
-    assert_array_equal(sensor_any.read().flatten(), [True, True, True, True])
+    assert_array_equal(sensor_any.read(force=True).flatten(), [True, True, True, True])
 
     # Collision with specific entity (only envs 0,1 have box1-box2 contact)
-    assert_array_equal(sensor_with_box2.read().flatten(), [True, True, False, False])
+    assert_array_equal(sensor_with_box2.read(force=True).flatten(), [True, True, False, False])
 
     # Subset of environments
-    assert_array_equal(sensor_with_box2.read([0, 2]).flatten(), [True, False])
+    assert_array_equal(sensor_with_box2.read([0, 2], force=True).flatten(), [True, False])
