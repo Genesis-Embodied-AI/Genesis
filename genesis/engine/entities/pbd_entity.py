@@ -114,7 +114,6 @@ class PBDBaseEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         return f"pbd_{super()._get_morph_identifier()}"
 
 
@@ -162,9 +161,20 @@ class PBDTetEntity(PBDBaseEntity):
         edge_start,
         vvert_start,
         vface_start,
+        name: str | None = None,
     ):
         super().__init__(
-            scene, solver, material, morph, surface, particle_size, idx, particle_start, vvert_start, vface_start
+            scene,
+            solver,
+            material,
+            morph,
+            surface,
+            particle_size,
+            idx,
+            particle_start,
+            vvert_start,
+            vface_start,
+            name=name,
         )
         self._edge_start = edge_start
 
@@ -305,6 +315,7 @@ class PBD2DEntity(PBDTetEntity):
         inner_edge_start,
         vvert_start,
         vface_start,
+        name: str | None = None,
     ):
         super().__init__(
             scene,
@@ -318,6 +329,7 @@ class PBD2DEntity(PBDTetEntity):
             edge_start,
             vvert_start,
             vface_start,
+            name=name,
         )
 
         self._inner_edge_start = inner_edge_start
@@ -441,6 +453,7 @@ class PBD3DEntity(PBDTetEntity):
         elem_start,
         vvert_start,
         vface_start,
+        name: str | None = None,
     ):
         super().__init__(
             scene,
@@ -454,6 +467,7 @@ class PBD3DEntity(PBDTetEntity):
             edge_start,
             vvert_start,
             vface_start,
+            name=name,
         )
 
         self._elem_start = elem_start
@@ -555,9 +569,11 @@ class PBDParticleEntity(PBDBaseEntity):
         Starting index of this entity's particles in the global particle buffer.
     """
 
-    def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start):
+    def __init__(
+        self, scene, solver, material, morph, surface, particle_size, idx, particle_start, name: str | None = None
+    ):
         super().__init__(
-            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
+            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False, name=name
         )
 
     def _add_particles_to_solver(self):
@@ -631,9 +647,11 @@ class PBDFreeParticleEntity(PBDBaseEntity):
         Starting index of this entity's particles in the global particle buffer.
     """
 
-    def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start):
+    def __init__(
+        self, scene, solver, material, morph, surface, particle_size, idx, particle_start, name: str | None = None
+    ):
         super().__init__(
-            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
+            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False, name=name
         )
 
     def _add_particles_to_solver(self):

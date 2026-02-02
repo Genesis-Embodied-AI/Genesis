@@ -375,7 +375,7 @@ class FEMSolver(Solver):
     def is_active(self):
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
@@ -402,6 +402,7 @@ class FEMSolver(Solver):
             v_start=self.n_vertices,
             el_start=self.n_elements,
             s_start=self.n_surfaces,
+            name=name,
         )
 
         self._entities.append(entity)

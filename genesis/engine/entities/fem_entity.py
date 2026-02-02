@@ -59,8 +59,10 @@ class FEMEntity(Entity):
         Starting index of this entity's surface triangles in the global surface array (default is 0).
     """
 
-    def __init__(self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0):
-        super().__init__(idx, scene, morph, solver, material, surface)
+    def __init__(
+        self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0, name: str | None = None
+    ):
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._v_start = v_start  # offset for vertex index of elements
         self._el_start = el_start  # offset for element index
@@ -1020,7 +1022,6 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
         morph = self._morph

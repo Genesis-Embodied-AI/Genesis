@@ -31,9 +31,11 @@ class SPHEntity(ParticleEntity):
         Start index for the particles belonging to this entity.
     """
 
-    def __init__(self, scene, solver, material, morph, surface, particle_size, idx, particle_start):
+    def __init__(
+        self, scene, solver, material, morph, surface, particle_size, idx, particle_start, name: str | None = None
+    ):
         super().__init__(
-            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False
+            scene, solver, material, morph, surface, particle_size, idx, particle_start, need_skinning=False, name=name
         )
 
     def init_sampler(self):
@@ -194,5 +196,4 @@ class SPHEntity(ParticleEntity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         return f"sph_{super()._get_morph_identifier()}"

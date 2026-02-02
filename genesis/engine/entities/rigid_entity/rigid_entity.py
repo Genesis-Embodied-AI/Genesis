@@ -145,8 +145,13 @@ class RigidEntity(Entity):
         equality_start=0,
         visualize_contact: bool = False,
         morph_heterogeneous: list[Morph] | None = None,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        # Set heterogeneous support before super().__init__() because _get_morph_identifier() needs it
+        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
+        self._enable_heterogeneous = bool(self._morph_heterogeneous)
+
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._idx_in_solver = idx_in_solver
         self._link_start: int = link_start
@@ -174,10 +179,6 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
-
-        # Heterogeneous simulation support (convert None to [] for consistency)
-        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
-        self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         self._load_model()
 
@@ -3300,7 +3301,6 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
         if self._enable_heterogeneous:

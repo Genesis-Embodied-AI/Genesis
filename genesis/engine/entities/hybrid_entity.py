@@ -57,8 +57,9 @@ class HybridEntity(Entity):
         material,
         morph,
         surface,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, None, material, surface)
+        super().__init__(idx, scene, morph, None, material, surface, name=name)
 
         material_rigid = material.material_rigid
         material_soft = material.material_soft
@@ -209,7 +210,6 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
         morph = self._morph

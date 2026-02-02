@@ -196,9 +196,6 @@ class Scene(RBC):
         # emitters
         self._emitters = gs.List()
 
-        # entity name registry for lookup by name
-        self._entity_name_registry: dict[str, "Entity"] = {}
-
         self._backward_ready = False
         self._forward_ready = False
 
@@ -470,10 +467,7 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, gs.materials.Rigid)
 
-        entity = self._sim._add_entity(morph, material, surface, visualize_contact)
-
-        # Set entity name (auto-generate if not specified)
-        entity._set_name(name, self)
+        entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
         return entity
 
@@ -1541,19 +1535,24 @@ class Scene(RBC):
             The matching entity.
         """
         if name is not None:
-            if name in self._entity_name_registry:
-                return self._entity_name_registry[name]
-            gs.raise_exception(f"Entity not found for name: '{name}'.")
+            try:
+                return next(entity for entity in self.entities if entity.name == name)
+            except StopIteration as e:
+                gs.raise_exception_from(f"Entity not found for name: '{name}'.", e)
         elif uid is not None:
-            # Use prefix matching (startswith) instead of substring matching
-            matches = [entity for entity in self.entities if str(entity.uid).startswith(uid)]
+            # First try exact full UID match
+            for entity in self.entities:
+                if entity.uid.match(uid, short_only=False):
+                    return entity
+            # Then try short UID match (7-character prefix shown in terminal)
+            matches = [entity for entity in self.entities if entity.uid.match(uid, short_only=True)]
             if len(matches) == 1:
                 return matches[0]
             elif len(matches) == 0:
-                gs.raise_exception(f"Entity not found for uid prefix: '{uid}'.")
+                gs.raise_exception(f"Entity not found for uid: '{uid}'.")
             else:
                 gs.raise_exception(
-                    f"Multiple entities match uid prefix '{uid}'. Use a longer prefix to uniquely identify the entity."
+                    f"Multiple entities match short uid '{uid}'. Use the full uid to uniquely identify the entity."
                 )
         else:
             gs.raise_exception("Neither `name` nor `uid` is provided.")

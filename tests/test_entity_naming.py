@@ -40,11 +40,16 @@ def test_get_entity_by_name():
 
 
 def test_get_entity_by_uid():
-    """Test retrieving entity by UID."""
+    """Test retrieving entity by UID (full and short)."""
     scene = gs.Scene(show_viewer=False)
 
     box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+
+    # Full UID lookup
     assert scene.get_entity(uid=str(box.uid)) is box
+
+    # Short UID lookup (7-character prefix shown in terminal)
+    assert scene.get_entity(uid=box.uid.short()) is box
 
     # Non-existent UID raises error
     with pytest.raises(Exception, match="not found"):

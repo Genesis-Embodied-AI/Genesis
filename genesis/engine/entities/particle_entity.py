@@ -69,8 +69,9 @@ class ParticleEntity(Entity):
         vvert_start=None,
         vface_start=None,
         need_skinning=True,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._particle_size = particle_size
         self._particle_start = particle_start
@@ -744,7 +745,6 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
         morph = self._morph

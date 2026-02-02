@@ -26,8 +26,9 @@ class ToolEntity(Entity):
         material,
         morph,
         surface,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._init_pos = np.array(morph.pos, dtype=gs.np_float)
         self._init_quat = np.array(morph.quat, dtype=gs.np_float)
@@ -49,7 +50,6 @@ class ToolEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        """Get the identifier string from the morph for name generation."""
         from pathlib import Path
 
         if isinstance(self._morph, gs.morphs.Mesh):
