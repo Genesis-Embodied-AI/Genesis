@@ -69,13 +69,16 @@ class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, Shar
     """
 
     alignment_rot_matrix: torch.Tensor = make_tensor_field((0, 0, 3, 3))
+    magnetic_field_vector: torch.Tensor = make_tensor_field((0, 0, 3))  # added another dimension to match data layout
     acc_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
     gyro_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    mag_indices: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
 
 class IMUData(NamedTuple):
     lin_acc: torch.Tensor
     ang_vel: torch.Tensor
+    mag: torch.Tensor  # added magnetometer to complete 9-axis IMU
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
@@ -102,13 +105,19 @@ class IMUSensor(
     def set_acc_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
-        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2, :, :] = rot_matrix
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3, :, :] = rot_matrix
 
     @gs.assert_built
     def set_gyro_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
-        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 2 + 1, :, :] = rot_matrix
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 1, :, :] = rot_matrix
+
+    @gs.assert_built
+    def set_mag_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
+        envs_idx = self._sanitize_envs_idx(envs_idx)
+        rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
+        self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 2, :, :] = rot_matrix
 
     # ================================ internal methods ================================
 
@@ -117,13 +126,23 @@ class IMUSensor(
         Initialize all shared metadata needed to update all IMU sensors.
         """
         self._options.resolution = _to_tuple(
-            self._options.acc_resolution, self._options.gyro_resolution, length_per_value=3
+            self._options.acc_resolution,
+            self._options.gyro_resolution,
+            self._options.mag_resolution,
+            length_per_value=3,
         )
-        self._options.bias = _to_tuple(self._options.acc_bias, self._options.gyro_bias, length_per_value=3)
+        self._options.bias = _to_tuple(
+            self._options.acc_bias, self._options.gyro_bias, self._options.mag_bias, length_per_value=3
+        )
         self._options.random_walk = _to_tuple(
-            self._options.acc_random_walk, self._options.gyro_random_walk, length_per_value=3
+            self._options.acc_random_walk,
+            self._options.gyro_random_walk,
+            self._options.mag_random_walk,
+            length_per_value=3,
         )
-        self._options.noise = _to_tuple(self._options.acc_noise, self._options.gyro_noise, length_per_value=3)
+        self._options.noise = _to_tuple(
+            self._options.acc_noise, self._options.gyro_noise, self._options.mag_noise, length_per_value=3
+        )
         super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
 
         self._shared_metadata.alignment_rot_matrix = concat_with_tensor(
@@ -132,17 +151,31 @@ class IMUSensor(
                 [
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.acc_cross_axis_coupling),
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.gyro_cross_axis_coupling),
+                    _get_cross_axis_coupling_to_alignment_matrix(self._options.mag_cross_axis_coupling),
                 ],
             ),
-            expand=(self._manager._sim._B, 2, 3, 3),
+            expand=(self._manager._sim._B, 3, 3, 3),  # 3 sub-matrices after adding mag
             dim=1,
         )
+
+        # Initialize global magnetic field vector
+        default_field = self._options.magnetic_field if self._options.magnetic_field is not None else (0.0, 0.0, 0.5)
+        if not isinstance(default_field, torch.Tensor):
+            default_field = torch.tensor(default_field, device=gs.device, dtype=gs.tc_float)
+
+        self._shared_metadata.magnetic_field_vector = concat_with_tensor(
+            self._shared_metadata.magnetic_field_vector,
+            default_field,
+            expand=(self._manager._sim._B, 1, 3),
+            dim=1,
+        )
+
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return (3,), (3,)
+        return (3,), (3,), (3,)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -164,6 +197,7 @@ class IMUSensor(
         if acc.ndim == 2:  # n_envs = 0
             acc = acc[None]
             ang = ang[None]
+            quats = quats[None]
 
         offset_quats = transform_quat_by_quat(quats, shared_metadata.offsets_quat)
 
@@ -182,11 +216,15 @@ class IMUSensor(
         local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
 
+        # is now already (n_envs, n_imus, 3), no need for a reshape
+        local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
+
         # cache shape: (B, n_imus * 6)
         *batch_size, n_imus, _ = local_acc.shape
-        strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 2, 3))
+        strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 3, 3))
         strided_ground_truth_cache[..., 0, :].copy_(local_acc)
         strided_ground_truth_cache[..., 1, :].copy_(local_ang)
+        strided_ground_truth_cache[..., 2, :].copy_(local_mag)
 
     @classmethod
     def _update_shared_cache(
@@ -208,12 +246,13 @@ class IMUSensor(
             shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
+
         # apply rotation matrix to the shared cache
         shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
         shared_cache_xyz_view.copy_(
             torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
         )
-        # apply additive noise and bias to the shared cache
+
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
@@ -232,11 +271,13 @@ class IMUSensor(
         data = self.read(env_idx)
         acc_vec = data.lin_acc.reshape((3,)) * self._options.debug_acc_scale
         gyro_vec = data.ang_vel.reshape((3,)) * self._options.debug_gyro_scale
+        mag_vec = data.mag.reshape((3,)) * self._options.debug_mag_scale  # added mag debug
 
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
         acc_vec = tensor_to_array(transform_by_quat(acc_vec, offset_quat))
         gyro_vec = tensor_to_array(transform_by_quat(gyro_vec, offset_quat))
+        mag_vec = tensor_to_array(transform_by_quat(mag_vec, offset_quat))
 
         for debug_object in self.debug_objects:
             context.clear_debug_object(debug_object)
@@ -247,5 +288,6 @@ class IMUSensor(
             (
                 context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color),
                 context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color),
+                context.draw_debug_arrow(pos=pos, vec=mag_vec, color=self._options.debug_mag_color),
             ),
         )

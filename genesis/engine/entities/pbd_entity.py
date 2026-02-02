@@ -504,7 +504,7 @@ class PBD3DEntity(PBDTetEntity):
         self._mass = self._vmesh.volume * self.material.rho
 
         tet_cfg = mu.generate_tetgen_config_from_morph(self.morph)
-        particles, elems = self._mesh.tetrahedralize(tet_cfg)
+        particles, elems, *_ = self._mesh.tetrahedralize(tet_cfg)
         self._particles = particles.astype(gs.np_float, copy=False)
         self._init_particles_offset = gs.tensor(self._particles) - gs.tensor(self._morph.pos)
 

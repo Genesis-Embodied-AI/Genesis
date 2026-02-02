@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.12"
+version = "0.3.13"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -35,7 +35,7 @@ dependencies = [
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
-    "tetgen>=0.6.4,<0.7.0; platform_machine!='aarch64'",
+    "tetgen==0.8.2",
     # Used for some advanced mesh processing such as `skeletonization`
     "PyGEL3D",
     # Used to convert VTK output to numpy when converting volume to particles for PBS
@@ -72,8 +72,9 @@ dev = [
     "pytest-forked",
     "pytest-random-order",
     "pytest-print",
+    # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
-    "pytest-rerunfailures!=16.0",
+    # "pytest-rerunfailures!=16.0",
     "setproctitle", # allows renaming the test processes on the cluster
     "syrupy",
     "huggingface_hub[hf_xet]",
@@ -115,9 +116,7 @@ render = [
 ]
 usd = [
     # Used for parsing `.usd` mesh files
-    "usd-core<25.11",
-    # import stubs to static code analysis
-    "types-usd==24.5.2",
+    "usd-core==25.11",
 ]
 
 [project.scripts]
@@ -183,3 +182,8 @@ markers = [
     "slow: tests that are slow to run (> 100s).",
 ]
 log_cli_level = "WARNING"
+
+[tool.uv]
+# uv respects the build-system and project tables
+# PyTorch must be installed separately before Genesis due to platform-specific builds
+# See README.md for installation instructions with different PyTorch backends

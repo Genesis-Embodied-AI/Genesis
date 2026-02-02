@@ -65,7 +65,7 @@ class SegmentationColorMap:
                     rgb[k] = (t[k], p, v)
                 case 5:
                     rgb[k] = (v, p, q[k])
-        rgb = np.round(rgb * 255.0).astype(np.uint8)
+        rgb = mu.color_f32_to_u8(rgb)
 
         # Store the generated map
         if self.to_torch:
@@ -192,8 +192,11 @@ class RasterizerContext:
             return self._scene.add(obj, **kwargs)
 
     def remove_node(self, node):
-        with self.scene._visualizer.viewer_lock:
+        if self.scene._visualizer is None:
             self._scene.remove_node(node)
+        else:
+            with self.scene._visualizer.viewer_lock:
+                self._scene.remove_node(node)
 
     def _get_geom_active_envs_idx(self, geom, rendered_envs_idx):
         """Get the intersection of geom.active_envs_idx (for heterogeneous sim) and rendered_envs_idx.
@@ -556,7 +559,9 @@ class RasterizerContext:
                         buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                     elif mpm_entity.surface.vis_mode == "visual":
-                        mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end, idx]
+                        mpm_entity._vmesh.trimesh.vertices = vverts_all[
+                            mpm_entity.vvert_start : mpm_entity.vvert_end, idx
+                        ]
                         self.add_dynamic_node(
                             mpm_entity,
                             pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
@@ -827,7 +832,7 @@ class RasterizerContext:
 
     def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
         mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", is_marker=True)
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", poses=poses, is_marker=True)
         self.add_external_node(node)
         return node
 
@@ -913,7 +918,7 @@ class RasterizerContext:
         )
 
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        mesh.visual.face_colors = np.tile(np.array(color) * 255, (len(faces), 1)).astype(np.uint8)
+        mesh.visual.face_colors = np.tile(mu.color_f32_to_u8(color), (len(faces), 1))
 
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_pyramid_{gs.UID()}", smooth=False, is_marker=True)
         self.add_external_node(node)

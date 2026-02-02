@@ -1,6 +1,7 @@
-import platform
 import io
+import numbers
 import os
+import platform
 import re
 import subprocess
 import time
@@ -8,6 +9,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from functools import cache
 from itertools import chain
 from pathlib import Path
@@ -35,8 +37,8 @@ from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "c50bfe3e354e105b221ef4eb9a79504650709dd2"
-HUGGINGFACE_SNAPSHOT_REVISION = "df9757345148d1469b814f35cde7bb6aa06de66a"
+HUGGINGFACE_ASSETS_REVISION = "8d9621de48a84fb182da38fd88f2495e4ccf3de9"
+HUGGINGFACE_SNAPSHOT_REVISION = "dc377c0f56a5bc14eb73e2736d6a81296ff31e93"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -184,7 +186,6 @@ def get_hf_dataset(
     local_dir: str | None = None,
     num_retry: int = 4,
     retry_delay: float = 30.0,
-    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -205,7 +206,6 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
-                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful
@@ -1055,3 +1055,15 @@ def rgb_array_to_png_bytes(rgb_arr: np.ndarray | torch.Tensor) -> bytes:
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def pprint_oneline(data, delimiter, digits=None):
+    msg_items = []
+    for key, value in data.items():
+        if isinstance(value, Enum):
+            value = value.name
+        if digits is not None and isinstance(value, (numbers.Real, np.floating)):
+            value = f"{value:.{digits}f}"
+        msg_item = "=".join((key, str(value)))
+        msg_items.append(msg_item)
+    return delimiter.join(msg_items)

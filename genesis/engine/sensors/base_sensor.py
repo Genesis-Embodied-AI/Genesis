@@ -50,6 +50,20 @@ class SharedSensorMetadata:
     cache_sizes: list[int] = field(default_factory=list)
     delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
 
+    def __del__(self):
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def destroy(self):
+        """
+        Destroy shared metadata.
+
+        This method is called by SensorManager when the scene is destroyed. his should remove any references to the
+        sensors from the shared metadata, and clean up any resources associated with the sensors.
+        """
+
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
 

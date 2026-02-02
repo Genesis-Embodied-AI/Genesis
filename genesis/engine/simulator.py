@@ -206,6 +206,9 @@ class Simulator(RBC):
 
         self._sensor_manager.build()
 
+    def destroy(self):
+        self._sensor_manager.destroy()
+
     def reset(self, state: SimState, envs_idx=None):
         for solver, solver_state in zip(self._solvers, state):
             if solver.n_entities > 0:
