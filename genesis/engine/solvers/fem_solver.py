@@ -1099,15 +1099,13 @@ class FEMSolver(Solver):
             state = None
         return state
 
-    def get_state_render(self, f, include_uvs=False):
+    def get_state_render(self, f):
         self.get_state_render_kernel(f)
         vertices = self.surface_render_v.vertices
         indices = self.surface_render_f.indices
+        uvs = self.surface_render_uvs
 
-        if include_uvs:
-            uvs = self.surface_render_uvs
-            return vertices, indices, uvs
-        return vertices, indices
+        return vertices, indices, uvs
 
     def get_forces(self):
         """
@@ -1138,6 +1136,7 @@ class FEMSolver(Solver):
         elems: ti.types.ndarray(),
         tri2v: ti.types.ndarray(),
         tri2el: ti.types.ndarray(),
+        uvs: ti.types.ndarray(),
     ):
         n_verts_local = verts.shape[0]
         for i_v, i_b in ti.ndrange(n_verts_local, self._B):
@@ -1145,6 +1144,12 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Copy UVs to solver field (skip if no UVs provided)
+        n_uvs = uvs.shape[0]
+        for i_v in range(n_uvs):
+            i_global = i_v + v_start
+            self.surface_render_uvs[i_global] = ti.Vector([uvs[i_v, 0], uvs[i_v, 1]])
 
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
@@ -1211,6 +1216,7 @@ class FEMSolver(Solver):
         s_start: ti.i32,
         verts: ti.types.ndarray(),
         tri2v: ti.types.ndarray(),
+        uvs: ti.types.ndarray(),
     ):
         """
         Add cloth vertices and surfaces for rendering only (no physics computation).
@@ -1223,6 +1229,12 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Copy UVs to solver field (skip if no UVs provided)
+        n_uvs = uvs.shape[0]
+        for i_v in range(n_uvs):
+            i_global = i_v + v_start
+            self.surface_render_uvs[i_global] = ti.Vector([uvs[i_v, 0], uvs[i_v, 1]])
 
         # Initialize vertex info (mass will be managed by IPC, set to dummy value)
         for i_v in range(n_verts_local):

@@ -743,7 +743,7 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_ti, triangles_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_ti, triangles_ti, _uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = ti_to_numpy(vertices_ti)
             triangles_all = ti_to_numpy(triangles_ti).reshape((-1, 3))
 
@@ -772,7 +772,7 @@ class RasterizerContext:
 
     def update_fem(self, buffer_updates):
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
             triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 

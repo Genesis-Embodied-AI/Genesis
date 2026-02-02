@@ -180,9 +180,13 @@ def get_hashkey(*args):
     return hasher.hexdigest()
 
 
-def load_mesh(file, skip_texture=True):
+def load_mesh(file):
     if isinstance(file, (str, Path)):
-        return trimesh.load(file, force="mesh", skip_texture=skip_texture)
+        try:
+            return trimesh.load_mesh(file, force="mesh", skip_texture=False)
+        except Exception:
+            # try loading without texture data
+            return trimesh.load_mesh(file, force="mesh", skip_texture=True)
     return file
 
 

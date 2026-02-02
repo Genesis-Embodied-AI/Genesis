@@ -404,9 +404,11 @@ class FEMEntity(Entity):
 
                 # Load UVs from mesh (1:1 mapping for cloth)
                 try:
-                    uvs = mesh.visual.uv.copy()
-                    self._uvs = uvs.astype(gs.np_float)
+                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=True)
                 except AttributeError:
+                    # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None
+                    # When UVs are None, the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions
+                    # can be recomputed, thus texture mapping and anisotropic surfaces will not work properly.
                     self._uvs = None
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
@@ -432,7 +434,6 @@ class FEMEntity(Entity):
                     pos=self._morph.pos,
                     scale=self._morph.scale,
                     tet_cfg=self.tet_cfg,
-                    return_uvs=True,
                 )
             else:
                 gs.raise_exception(f"Unsupported morph: {self.morph}.")
@@ -452,6 +453,7 @@ class FEMEntity(Entity):
 
         # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
+        uvs_np = self._uvs if self._uvs is not None else np.zeros((0, 2), dtype=gs.np_float)
 
         if is_cloth:
             # Cloth: add only vertices and surfaces for rendering (no physics computation)
@@ -465,6 +467,7 @@ class FEMEntity(Entity):
                 s_start=self._s_start,
                 verts=verts_numpy,
                 tri2v=self._surface_tri_np,
+                uvs=uvs_np,
             )
         else:
             # Regular FEM: add vertices, elements, and surfaces for physics and rendering
@@ -484,24 +487,10 @@ class FEMEntity(Entity):
                 elems=elems_np,
                 tri2v=self._surface_tri_np,
                 tri2el=self._surface_el_np,
+                uvs=uvs_np,
             )
 
-        # Add UVs to solver if available
-        self._add_uvs_to_solver()
-
         self.active = True
-
-    def _add_uvs_to_solver(self):
-        """
-        Copy UV coordinates to the solver's surface_render_uvs field.
-        """
-        if self._uvs is None:
-            return
-
-        # Copy UVs to solver field starting at v_start
-        uvs_np = self._uvs.astype(gs.np_float, copy=False)
-        for i, uv in enumerate(uvs_np):
-            self._solver.surface_render_uvs[self._v_start + i] = uv
 
     def compute_pressure_field(self):
         """

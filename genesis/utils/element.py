@@ -31,21 +31,10 @@ def cylinder_to_elements():
     raise NotImplementedError
 
 
-def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict(), return_uvs=False):
-    # Load mesh (with texture data if UVs are requested)
-    mesh = mu.load_mesh(file, skip_texture=not return_uvs)
-    mesh.vertices = mesh.vertices * scale
+def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
+    mesh = mu.load_mesh(file)
 
-    # Extract UVs from mesh before tetrahedralization (if requested)
-    # (tetgen preserves original vertices at start of output array)
-    if return_uvs:
-        n_original = len(mesh.vertices)
-        try:
-            original_uvs = mesh.visual.uv.copy()
-            original_uvs[:, 1] = 1.0 - original_uvs[:, 1]  # flip V (trimesh uses top-left origin)
-            original_uvs = original_uvs.astype(gs.np_float)
-        except AttributeError:
-            original_uvs = None
+    mesh.vertices = mesh.vertices * scale
 
     # compute file name via hashing for caching
     tet_file_path = mu.get_tet_path(mesh.vertices, mesh.faces, tet_cfg)
@@ -71,15 +60,22 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict(), return_uvs=
 
     verts += np.array(pos)
 
-    if return_uvs:
-        # Build full UV array: original vertices get their UVs, interior vertices get zeros
-        n_fem = len(verts)
-        uvs = np.zeros((n_fem, 2), dtype=gs.np_float)
-        if original_uvs is not None:
-            uvs[:n_original] = original_uvs
-        return verts, elems, uvs
+    # Extract UVs from mesh before tetrahedralization
+    # (tetgen preserves original vertices at start of output array)
+    n_original = len(mesh.vertices)
+    try:
+        original_uvs = mesh.visual.uv.copy()
+        original_uvs = original_uvs.astype(gs.np_float)
+    except AttributeError:
+        original_uvs = None
 
-    return verts, elems
+    # Build full UV array: original vertices get their UVs, interior vertices get zeros
+    n_fem = len(verts)
+    uvs = np.zeros((n_fem, 2), dtype=gs.np_float)
+    if original_uvs is not None:
+        uvs[:n_original] = original_uvs
+
+    return verts, elems, uvs
 
 
 def split_all_surface_tets(verts, elems):

@@ -745,7 +745,7 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
             triangles_all = triangles_all.to_numpy()
 
