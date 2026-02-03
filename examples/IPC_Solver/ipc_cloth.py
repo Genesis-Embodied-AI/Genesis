@@ -71,16 +71,15 @@ def main():
     cube_size = 0.2
     cube_height = 0.3  # Height below cloth
 
-    # box=scene.add_entity(
-    #     morph=gs.morphs.Box(
-    #         pos=(0, 0, cube_height),
-    #         size=(cube_size, cube_size, cube_size),
-    #     ),
-    #     material=gs.materials.Rigid(rho=500, friction=0.3),
-    #     surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
-    # )
-    # scene.sim.coupler.set_entity_coupling_type(
-    #     entity=box,coupling_type="ipc_only")
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0, 0, cube_height),
+            size=(cube_size, cube_size, cube_size),
+        ),
+        material=gs.materials.Rigid(rho=500, friction=0.3),
+        surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
+    )
+    scene.sim.coupler.set_entity_coupling_type(entity=box, coupling_type="ipc_only")
     # Optional: Add another FEM volume object
     soft_ball = scene.add_entity(
         morph=gs.morphs.Sphere(pos=(0.5, 0.0, 0.1), radius=0.08),

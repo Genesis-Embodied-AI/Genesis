@@ -13,11 +13,43 @@ except ImportError:
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_cloth(n_envs, show_viewer):
+    """Test IPC cloth simulation with gravity physics validation.
+
+    This test validates:
+    1. Basic cloth, rigid, and soft body coupling
+    2. Free fall physics using kinematic equations:
+       - dx_{n+1} = v_n * dt + g * dt^2
+       - v_{n+1} = (x_{n+1} - x_n) / dt
+    """
+    import numpy as np
+    from uipc.backend import SceneVisitor
+    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
+    def get_cloth_vertex_positions(scene):
+        """Extract cloth vertex positions from IPC scene."""
+        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
+        for geo_slot in visitor.geometries():
+            if isinstance(geo_slot, SimplicialComplexSlot):
+                geo = geo_slot.geometry()
+                if geo.dim() == 2:  # Cloth is 2D shell
+                    proc_geo = geo
+                    if geo.instances().size() >= 1:
+                        proc_geo = merge(apply_transform(geo))
+                    positions = proc_geo.positions().view().reshape(-1, 3)
+                    return positions  # Shape: (num_vertices, 3)
+        return None
+
+    dt = 2e-3
+    g = 9.8
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=2e-3,
+            dt=dt,
+            gravity=(0.0, 0.0, -g),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -g),
             contact_d_hat=0.01,
             contact_friction_mu=0.3,
             IPC_self_contact=False,
@@ -83,7 +115,45 @@ def test_ipc_cloth(n_envs, show_viewer):
 
     scene.build(n_envs=n_envs)
 
-    scene.step()
+    # Get initial state (vertex 0 of cloth)
+    x_n = get_cloth_vertex_positions(scene)
+    assert x_n is not None, "Could not retrieve cloth vertex positions"
+    x_n = x_n[0, 2]  # Z position of vertex 0
+    v_n = 0.0  # Initial velocity is zero
+
+    # Run simulation and validate kinematic equations at each step
+    num_validation_steps = 10
+    tolerance = 0.01  # 1% tolerance for kinematic validation
+
+    for step in range(num_validation_steps):
+        scene.step()
+
+        # Get new position
+        x_next = get_cloth_vertex_positions(scene)
+        assert x_next is not None
+        x_next = x_next[0, 2]
+
+        # Expected displacement: dx = v_n * dt + 0.5 * g * dt^2
+        expected_dx = v_n * dt - g * dt * dt  # Negative because gravity is -g
+        expected_x_next = x_n + expected_dx
+
+        # Validate position
+        pos_error = abs(x_next - expected_x_next) / abs(expected_dx) if abs(expected_dx) > 1e-6 else 0
+        assert pos_error < tolerance, f"Step {step}: Position error {pos_error * 100:.2f}% exceeds tolerance"
+
+        # Calculate velocity: v_{n+1} = (x_{n+1} - x_n) / dt
+        v_next = (x_next - x_n) / dt
+
+        # Expected velocity: v_{n+1} = v_n + g * dt
+        expected_v_next = v_n - g * dt  # Negative because gravity is -g
+
+        # Validate velocity
+        vel_error = abs(v_next - expected_v_next) / abs(expected_v_next) if abs(expected_v_next) > 1e-6 else 0
+        assert vel_error < tolerance, f"Step {step}: Velocity error {vel_error * 100:.2f}% exceeds tolerance"
+
+        # Update for next iteration
+        x_n = x_next
+        v_n = v_next
 
 
 @pytest.mark.required
@@ -276,3 +346,119 @@ def test_ipc_two_way_prismatic(n_envs, show_viewer):
                     rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
                     print(f"Step {i}: Rotation difference (rad) = {rot_diff:.6f}")
                     assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0])
+def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
+    """Test cloth free fall physics validation.
+
+    This test validates that cloth entities correctly follow free fall physics
+    under gravity by checking the kinematic equation: displacement = 0.5 * g * t²
+
+    The test tracks vertex 0 position and validates within 1% tolerance.
+    """
+    import numpy as np
+    from uipc.backend import SceneVisitor
+    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
+    def get_cloth_vertex_positions(scene):
+        """Extract cloth vertex positions from IPC scene."""
+        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
+        for geo_slot in visitor.geometries():
+            if isinstance(geo_slot, SimplicialComplexSlot):
+                geo = geo_slot.geometry()
+                if geo.dim() == 2:  # Cloth is 2D shell
+                    proc_geo = geo
+                    if geo.instances().size() >= 1:
+                        proc_geo = merge(apply_transform(geo))
+                    positions = proc_geo.positions().view().reshape(-1, 3)
+                    return positions  # Shape: (num_vertices, 3)
+        return None
+
+    # Physics parameters
+    dt = 2e-3  # 2ms timestep
+    g = 9.8  # Gravity magnitude (m/s²)
+    z0 = 2.0  # Initial height (m)
+    num_steps = 50  # Total simulation steps (0.1s total)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -g),
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -g),
+            contact_d_hat=0.01,
+            contact_friction_mu=0.3,
+            IPC_self_contact=False,
+            two_way_coupling=True,
+            disable_genesis_contact=True,
+            enable_ipc_gui=False,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    # NO ground plane - pure free fall test
+
+    # Get cloth mesh asset
+    asset_path = get_hf_dataset(pattern="grid20x20.obj")
+
+    # Create cloth at initial height
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/grid20x20.obj",
+            scale=2.0,
+            pos=(0.0, 0.0, z0),
+            euler=(0, 0, 0),
+        ),
+        material=gs.materials.FEM.Cloth(
+            E=1e6,  # Young's modulus (Pa)
+            nu=0.499,  # Poisson's ratio
+            rho=200,  # Density (kg/m³)
+            thickness=0.001,  # Shell thickness (m)
+            bending_stiffness=50.0,  # Bending resistance
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.3, 0.5, 0.8, 1.0),
+            double_sided=True,
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+
+    # Get initial position of vertex 0
+    initial_positions = get_cloth_vertex_positions(scene)
+    assert initial_positions is not None, "Could not retrieve initial cloth vertex positions"
+    z_initial = initial_positions[0, 2]  # Z-coordinate of vertex 0
+
+    # Run simulation
+    for _ in range(num_steps):
+        scene.step()
+
+    # Get final position of vertex 0
+    final_positions = get_cloth_vertex_positions(scene)
+    assert final_positions is not None, "Could not retrieve final cloth vertex positions"
+    z_final = final_positions[0, 2]
+
+    # Calculate displacement
+    t_total = num_steps * dt
+    actual_displacement = z_initial - z_final
+    expected_displacement = 0.5 * g * t_total * (t_total + dt)
+
+    # Calculate relative error
+    relative_error = abs(actual_displacement - expected_displacement) / expected_displacement
+
+    # Validation with 1% tolerance
+    tolerance = 0.01
+    print("\nFree fall validation:")
+    print("  Initial Z:              {z_initial:.6f} m")
+    print("  Final Z:                {z_final:.6f} m")
+    print("  Actual displacement:    {actual_displacement:.6f} m")
+    print("  Expected displacement:  {expected_displacement:.6f} m")
+    print("  Relative error:         {relative_error * 100:.4f}%")
+
+    assert relative_error < tolerance, (
+        f"Physics validation failed: {relative_error * 100:.4f}% error (tolerance: {tolerance * 100}%)"
+    )

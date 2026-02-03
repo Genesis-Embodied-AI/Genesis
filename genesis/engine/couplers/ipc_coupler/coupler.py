@@ -846,7 +846,8 @@ class IPCCoupler(RBC):
         import tempfile
 
         # Create workspace directory for IPC output
-        workspace = os.path.join(tempfile.gettempdir(), "genesis_ipc_workspace")
+        # Use process ID to avoid conflicts when running parallel tests
+        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_workspace_{os.getpid()}")
         os.makedirs(workspace, exist_ok=True)
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
@@ -1509,6 +1510,7 @@ class IPCCoupler(RBC):
     def _finalize_ipc(self):
         """Finalize IPC setup"""
         self._ipc_world.init(self._ipc_scene)
+        self._ipc_world.dump()
         gs.logger.info("IPC world initialized successfully")
 
         # Initialize AffineBodyStateAccessorFeature for optimized state retrieval
@@ -2000,11 +2002,10 @@ class IPCCoupler(RBC):
             qpos_new[:3] = pos
             qpos_new[3:7] = quat_wxyz
 
-            qpos_tensor = gs.torch.as_tensor(qpos_new, dtype=gs.tc_float, device=gs.device)
             if is_parallelized:
-                entity.set_qpos(qpos_tensor, envs_idx=env_idx, zero_velocity=True, skip_forward=True)
+                entity.set_qpos(qpos_new, envs_idx=env_idx, zero_velocity=True, skip_forward=True)
             else:
-                entity.set_qpos(qpos_tensor, envs_idx=None, zero_velocity=True, skip_forward=True)
+                entity.set_qpos(qpos_new, envs_idx=None, zero_velocity=True, skip_forward=True)
 
             updated_entities.append(entity_idx)
 
@@ -2055,17 +2056,12 @@ class IPCCoupler(RBC):
         if not pos_list:
             return
 
-        pos_tensor = gs.torch.as_tensor(np.array(pos_list), dtype=gs.tc_float, device=gs.device)
-        quat_tensor = gs.torch.as_tensor(np.array(quat_list), dtype=gs.tc_float, device=gs.device)
-        link_idx_tensor = gs.torch.as_tensor(np.array(link_idx_list), dtype=gs.tc_int, device=gs.device)
-
         if is_parallelized:
-            rigid_solver.set_base_links_pos(pos_tensor, link_idx_tensor, envs_idx=env_idx, relative=False)
-            rigid_solver.set_base_links_quat(quat_tensor, link_idx_tensor, envs_idx=env_idx, relative=False)
+            rigid_solver.set_base_links_pos(pos_list, link_idx_list, envs_idx=env_idx, relative=False)
+            rigid_solver.set_base_links_quat(quat_list, link_idx_list, envs_idx=env_idx, relative=False)
         else:
-            rigid_solver.set_base_links_pos(pos_tensor, link_idx_tensor, envs_idx=None, relative=False)
-            rigid_solver.set_base_links_quat(quat_tensor, link_idx_tensor, envs_idx=None, relative=False)
-
+            rigid_solver.set_base_links_pos(pos_list, link_idx_list, envs_idx=None, relative=False)
+            rigid_solver.set_base_links_quat(quat_list, link_idx_list, envs_idx=None, relative=False)
         for entity_idx in entity_indices:
             entity = rigid_solver._entities[entity_idx]
             if is_parallelized:
@@ -2434,8 +2430,9 @@ class IPCCoupler(RBC):
 
     def reset(self, envs_idx=None):
         """Reset coupling state"""
-        # IPC doesn't need special reset logic currently
-        pass
+        gs.logger.info("Resetting IPC coupler state")
+        self._ipc_world.recover(0)
+        self._ipc_world.retrieve()
 
     # ============================================================
     # Section 9: GUI
