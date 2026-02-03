@@ -1558,34 +1558,16 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
     from genesis.options.sensors import RasterizerCameraOptions
 
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            res=(640, 480),
-            run_in_thread=(sys.platform == "linux"),
-        ),
+        viewer_options=gs.options.ViewerOptions(run_in_thread=(sys.platform == "linux")),
         renderer=renderer,
         show_viewer=True,
-        show_FPS=False,
     )
+    scene.add_entity(morph=gs.morphs.Plane())
+    camera_sensor = scene.add_sensor(RasterizerCameraOptions(res=(256, 256)))
+    scene.build()
 
-    scene.add_entity(
-        morph=gs.morphs.Plane(),
-    )
-
-    # Add a rasterizer camera sensor
-    camera_options = RasterizerCameraOptions(
-        res=(256, 256),
-        pos=(2.0, 0.0, 1.5),
-        lookat=(0.0, 0.0, 0.5),
-    )
-    camera_sensor = scene.add_sensor(camera_options)
-
-    scene.build(n_envs=1)
-
-    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
-    assert pyrender_viewer.is_active
+    assert scene.visualizer.viewer._pyrender_viewer.is_active
 
     scene.step()
     data = camera_sensor.read()
-
-    rgb_std = data.rgb.float().std()
-    assert rgb_std > 1.0, f"RGB std too low ({rgb_std:.2f}), image may be blank"
+    assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
