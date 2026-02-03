@@ -207,6 +207,7 @@ class Viewer(pyglet.window.Window):
         env_separate_rigid=False,
         enable_interaction=False,
         disable_keyboard_shortcuts=False,
+        reserved_keys=None,
         **kwargs,
     ):
         #######################################################################
@@ -287,6 +288,8 @@ class Viewer(pyglet.window.Window):
             self._registered_keys = {ord(k.lower()): registered_keys[k] for k in registered_keys}
 
         self._disable_keyboard_shortcuts = disable_keyboard_shortcuts
+        self._reserved_keys = frozenset(reserved_keys) if reserved_keys else frozenset()
+        self._key_state = {} if self._reserved_keys else None
 
         #######################################################################
         # Save internal settings
@@ -851,6 +854,8 @@ class Viewer(pyglet.window.Window):
 
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
+        if self._key_state is not None:
+            self._key_state[symbol] = True
         # First, check for registered key callbacks
         if symbol in self.registered_keys:
             tup = self.registered_keys[symbol]
@@ -866,6 +871,10 @@ class Viewer(pyglet.window.Window):
                 if len(tup) == 3:
                     kwargs = tup[2]
             callback(self, *args, **kwargs)
+            return self.viewer_interaction.on_key_press(symbol, modifiers)
+
+        # If key is reserved for the application, skip viewer shortcuts
+        if symbol in self._reserved_keys:
             return self.viewer_interaction.on_key_press(symbol, modifiers)
 
         # If keyboard shortcuts are disabled, skip default key functions
@@ -1018,7 +1027,18 @@ class Viewer(pyglet.window.Window):
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
+        if self._key_state is not None:
+            self._key_state[symbol] = False
         return self.viewer_interaction.on_key_release(symbol, modifiers)
+
+    def get_pressed_keys(self):
+        """Return the set of key symbols currently held down (only when reserved_keys was set)."""
+        return set(k for k, v in self._key_state.items() if v) if self._key_state else set()
+
+    def on_deactivate(self):
+        """Clear key state when window loses focus to avoid sticky keys."""
+        if self._key_state is not None:
+            self._key_state.clear()
 
     @staticmethod
     def _time_event(dt, self):

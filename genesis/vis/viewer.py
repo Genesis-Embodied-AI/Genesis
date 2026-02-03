@@ -42,6 +42,7 @@ class Viewer(RBC):
         self._camera_fov = options.camera_fov
         self._enable_interaction = options.enable_interaction
         self._disable_keyboard_shortcuts = options.disable_keyboard_shortcuts
+        self._reserved_keys = options.reserved_keys
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
@@ -102,6 +103,7 @@ class Viewer(RBC):
                         env_separate_rigid=self.context.env_separate_rigid,
                         enable_interaction=self._enable_interaction,
                         disable_keyboard_shortcuts=self._disable_keyboard_shortcuts,
+                        reserved_keys=self._reserved_keys,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,
@@ -174,6 +176,10 @@ class Viewer(RBC):
         # lock FPS
         if self._max_FPS is not None:
             self.rate.sleep()
+
+    def get_pressed_keys(self):
+        """Return the set of key symbols currently held down (only populated when ViewerOptions.reserved_keys is set)."""
+        return self._pyrender_viewer.get_pressed_keys()
 
     def close_offscreen(self, render_target):
         return self._pyrender_viewer.close_offscreen(render_target)

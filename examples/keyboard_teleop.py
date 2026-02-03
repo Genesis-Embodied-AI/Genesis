@@ -11,6 +11,10 @@ k	- Rotate Clockwise
 u	- Reset Scene
 space	- Press to close gripper, release to open gripper
 esc	- Quit
+
+Uses ViewerOptions.reserved_keys so these keys are handled by the application
+(when the viewer has focus) and do not trigger the viewer's shortcuts; the
+viewer's shortcuts (e.g. [a], [z], [r]) remain available for other keys.
 """
 
 import os
@@ -19,8 +23,24 @@ import threading
 
 import genesis as gs
 import numpy as np
+import pyglet.window.key as pyglet_key
 from pynput import keyboard
 from scipy.spatial.transform import Rotation as R
+
+# Keys reserved for this example: viewer will not use them for its shortcuts
+RESERVED_KEYS = (
+    pyglet_key.UP,
+    pyglet_key.DOWN,
+    pyglet_key.LEFT,
+    pyglet_key.RIGHT,
+    pyglet_key.N,
+    pyglet_key.M,
+    pyglet_key.J,
+    pyglet_key.K,
+    pyglet_key.U,
+    pyglet_key.SPACE,
+    pyglet_key.ESCAPE,
+)
 
 
 class KeyboardDevice:
@@ -74,6 +94,7 @@ def build_scene():
             camera_lookat=(0.2, 0.0, 0.1),
             camera_fov=50,
             max_FPS=60,
+            reserved_keys=RESERVED_KEYS,
         ),
         show_viewer=True,
         show_FPS=False,
@@ -158,43 +179,44 @@ def run_sim(scene, entities, clients):
     # reset scen before starting teleoperation
     reset_scene()
 
-    # start teleoperation
+    # start teleoperation (reserved keys from viewer when it has focus, else pynput)
     stop = False
     while not stop:
-        pressed_keys = clients["keyboard"].pressed_keys.copy()
+        pynput_pressed = clients["keyboard"].pressed_keys.copy()
+        viewer_pressed = scene.viewer.get_pressed_keys()
 
-        # reset scene:
-        reset_flag = False
-        reset_flag |= keyboard.KeyCode.from_char("u") in pressed_keys
-        if reset_flag:
+        def is_pressed(pynput_key, pyglet_sym):
+            return pynput_key in pynput_pressed or pyglet_sym in viewer_pressed
+
+        # reset scene
+        if is_pressed(keyboard.KeyCode.from_char("u"), pyglet_key.U):
             reset_scene()
 
         # stop teleoperation
-        stop = keyboard.Key.esc in pressed_keys
+        stop = is_pressed(keyboard.Key.esc, pyglet_key.ESCAPE)
 
         # get ee target pose
         is_close_gripper = False
         dpos = 0.002
         drot = 0.01
-        for key in pressed_keys:
-            if key == keyboard.Key.up:
-                target_pos[0] -= dpos
-            elif key == keyboard.Key.down:
-                target_pos[0] += dpos
-            elif key == keyboard.Key.right:
-                target_pos[1] += dpos
-            elif key == keyboard.Key.left:
-                target_pos[1] -= dpos
-            elif key == keyboard.KeyCode.from_char("n"):
-                target_pos[2] += dpos
-            elif key == keyboard.KeyCode.from_char("m"):
-                target_pos[2] -= dpos
-            elif key == keyboard.KeyCode.from_char("j"):
-                target_R = R.from_euler("z", drot) * target_R
-            elif key == keyboard.KeyCode.from_char("k"):
-                target_R = R.from_euler("z", -drot) * target_R
-            elif key == keyboard.Key.space:
-                is_close_gripper = True
+        if is_pressed(keyboard.Key.up, pyglet_key.UP):
+            target_pos[0] -= dpos
+        if is_pressed(keyboard.Key.down, pyglet_key.DOWN):
+            target_pos[0] += dpos
+        if is_pressed(keyboard.Key.right, pyglet_key.RIGHT):
+            target_pos[1] += dpos
+        if is_pressed(keyboard.Key.left, pyglet_key.LEFT):
+            target_pos[1] -= dpos
+        if is_pressed(keyboard.KeyCode.from_char("n"), pyglet_key.N):
+            target_pos[2] += dpos
+        if is_pressed(keyboard.KeyCode.from_char("m"), pyglet_key.M):
+            target_pos[2] -= dpos
+        if is_pressed(keyboard.KeyCode.from_char("j"), pyglet_key.J):
+            target_R = R.from_euler("z", drot) * target_R
+        if is_pressed(keyboard.KeyCode.from_char("k"), pyglet_key.K):
+            target_R = R.from_euler("z", -drot) * target_R
+        if is_pressed(keyboard.Key.space, pyglet_key.SPACE):
+            is_close_gripper = True
 
         # control arm
         target_quat = target_R.as_quat(scalar_first=True)

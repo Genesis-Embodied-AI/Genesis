@@ -35,6 +35,13 @@ class ViewerOptions(Options):
         The field of view (in degrees) of the camera.
     disable_keyboard_shortcuts : bool
         Whether to disable all keyboard shortcuts in the viewer. Defaults to False.
+    reserved_keys : tuple of int, optional
+        Key symbols (e.g. from ``pyglet.window.key``) reserved for the application.
+        The viewer will not use these keys for its shortcuts; their press state is
+        tracked and can be read via :meth:`genesis.vis.viewer.Viewer.get_pressed_keys`.
+        Use this so application key bindings (e.g. arrow keys for teleop) take
+        priority over the viewer's shortcuts when the window has focus, without
+        disabling the viewer's shortcuts for other keys.
     """
 
     res: Optional[tuple] = None
@@ -47,6 +54,7 @@ class ViewerOptions(Options):
     camera_fov: float = 40
     enable_interaction: bool = False
     disable_keyboard_shortcuts: bool = False
+    reserved_keys: Optional[tuple] = None
 
 
 class VisOptions(Options):
