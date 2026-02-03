@@ -127,7 +127,7 @@ jobs:
       - name: Install python dependencies
         shell: bash
         run: |
-          pip install --upgrade pip setuptools pkg-info wheel
+          python -m pip install --upgrade pip setuptools pkg-info wheel
 
           # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
           pip3 install torch --upgrade --index-url https://download.pytorch.org/whl/cpu

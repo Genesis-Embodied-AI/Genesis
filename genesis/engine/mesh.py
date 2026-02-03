@@ -278,7 +278,7 @@ class Mesh(RBC):
                         color_factor = tuple(np.array(material.diffuse, dtype=np.float32) / 255.0)
 
                     if material.glossiness is not None:
-                        roughness_factor = ((2 / (material.glossiness + 2)) ** (1.0 / 4.0),)
+                        roughness_factor = (mu.glossiness_to_roughness(material.glossiness),)
 
                     opacity = float(material.kwargs.get("d", [1.0])[0])
                     if opacity < 1.0:
