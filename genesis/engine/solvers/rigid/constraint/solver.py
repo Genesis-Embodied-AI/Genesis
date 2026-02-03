@@ -22,7 +22,7 @@ import os
 
 USE_LS_OPT = os.environ.get("GS_SOLVER_LS_OPT", "0") == "1"
 
-# TODO: set always true for CI benchmark use
+# TODO: set always true for CI benchmark use.
 USE_LS_OPT = 1
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
@@ -2184,7 +2184,9 @@ def func_ls_init_and_eval_p0_opt(
 
     # Compute quad for all constraints and write to global
     for i_c in range(n_con):
-        qf_0 = constraint_state.efc_D[i_c, i_b] * (0.5 * constraint_state.Jaref[i_c, i_b] * constraint_state.Jaref[i_c, i_b])
+        qf_0 = constraint_state.efc_D[i_c, i_b] * (
+            0.5 * constraint_state.Jaref[i_c, i_b] * constraint_state.Jaref[i_c, i_b]
+        )
         qf_1 = constraint_state.efc_D[i_c, i_b] * (constraint_state.jv[i_c, i_b] * constraint_state.Jaref[i_c, i_b])
         qf_2 = constraint_state.efc_D[i_c, i_b] * (0.5 * constraint_state.jv[i_c, i_b] * constraint_state.jv[i_c, i_b])
         constraint_state.quad[i_c, 0, i_b] = qf_0
@@ -2223,9 +2225,7 @@ def func_ls_init_and_eval_p0_opt(
             qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
                 -0.5 * rf + constraint_state.Jaref[i_c, i_b]
             )
-            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
-                f * constraint_state.jv[i_c, i_b]
-            )
+            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (f * constraint_state.jv[i_c, i_b])
             qf_2 = 0.0
         tmp_0 = tmp_0 + qf_0
         tmp_1 = tmp_1 + qf_1
@@ -2285,9 +2285,7 @@ def func_ls_point_fn_opt(
             qf_0 = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
                 -0.5 * rf + constraint_state.Jaref[i_c, i_b]
             )
-            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (
-                f * constraint_state.jv[i_c, i_b]
-            )
+            qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (f * constraint_state.jv[i_c, i_b])
             qf_2 = 0.0
         tmp_0 = tmp_0 + qf_0
         tmp_1 = tmp_1 + qf_1
@@ -2669,17 +2667,35 @@ def func_linesearch_batch(
                         # Batch evaluate all 3 in one constraint loop
                         if ti.static(USE_LS_OPT):
                             (
-                                _a0, c0, c0_d0, c0_d1,
-                                _a1, c1, c1_d0, c1_d1,
-                                _a2, c2, c2_d0, c2_d1,
+                                _a0,
+                                c0,
+                                c0_d0,
+                                c0_d1,
+                                _a1,
+                                c1,
+                                c1_d0,
+                                c1_d1,
+                                _a2,
+                                c2,
+                                c2_d0,
+                                c2_d1,
                             ) = func_ls_point_fn_3alphas_opt(
                                 i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
                             )
                         else:
                             (
-                                _a0, c0, c0_d0, c0_d1,
-                                _a1, c1, c1_d0, c1_d1,
-                                _a2, c2, c2_d0, c2_d1,
+                                _a0,
+                                c0,
+                                c0_d0,
+                                c0_d1,
+                                _a1,
+                                c1,
+                                c1_d0,
+                                c1_d1,
+                                _a2,
+                                c2,
+                                c2_d0,
+                                c2_d1,
                             ) = func_ls_point_fn_3alphas(
                                 i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
                             )
@@ -2709,20 +2725,54 @@ def func_linesearch_batch(
                             done = True
                         else:
                             (
-                                b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next_alpha,
+                                b1,
+                                p1_alpha,
+                                p1_cost,
+                                p1_deriv_0,
+                                p1_deriv_1,
+                                p1_next_alpha,
                             ) = update_bracket_no_eval_local(
-                                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1,
-                                alpha_0, c0, c0_d0, c0_d1,
-                                alpha_1, c1, c1_d0, c1_d1,
-                                alpha_2, c2, c2_d0, c2_d1,
+                                p1_alpha,
+                                p1_cost,
+                                p1_deriv_0,
+                                p1_deriv_1,
+                                alpha_0,
+                                c0,
+                                c0_d0,
+                                c0_d1,
+                                alpha_1,
+                                c1,
+                                c1_d0,
+                                c1_d1,
+                                alpha_2,
+                                c2,
+                                c2_d0,
+                                c2_d1,
                             )
                             (
-                                b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next_alpha,
+                                b2,
+                                p2_alpha,
+                                p2_cost,
+                                p2_deriv_0,
+                                p2_deriv_1,
+                                p2_next_alpha,
                             ) = update_bracket_no_eval_local(
-                                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1,
-                                alpha_0, c0, c0_d0, c0_d1,
-                                alpha_1, c1, c1_d0, c1_d1,
-                                alpha_2, c2, c2_d0, c2_d1,
+                                p2_alpha,
+                                p2_cost,
+                                p2_deriv_0,
+                                p2_deriv_1,
+                                alpha_0,
+                                c0,
+                                c0_d0,
+                                c0_d1,
+                                alpha_1,
+                                c1,
+                                c1_d0,
+                                c1_d1,
+                                alpha_2,
+                                c2,
+                                c2_d0,
+                                c2_d1,
                             )
 
                             if b1 == 0 and b2 == 0:

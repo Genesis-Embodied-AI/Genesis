@@ -702,10 +702,23 @@ class ConstraintSolverIsland:
 
     @ti.func
     def update_bracket_no_eval(
-        self, p_alpha, p_cost, p_deriv_0, p_deriv_1,
-        c0_alpha, c0_cost, c0_d0, c0_d1,
-        c1_alpha, c1_cost, c1_d0, c1_d1,
-        c2_alpha, c2_cost, c2_d0, c2_d1,
+        self,
+        p_alpha,
+        p_cost,
+        p_deriv_0,
+        p_deriv_1,
+        c0_alpha,
+        c0_cost,
+        c0_d0,
+        c0_d1,
+        c1_alpha,
+        c1_cost,
+        c1_d0,
+        c1_d1,
+        c2_alpha,
+        c2_cost,
+        c2_d0,
+        c2_d1,
     ):
         """Bracket update using local candidate values. No global memory access or _func_ls_point_fn call."""
         flag = 0
@@ -813,9 +826,18 @@ class ConstraintSolverIsland:
 
                         while self.ls_it[i_b] < self.ls_iterations:
                             (
-                                _a0, c0, c0_d0, c0_d1,
-                                _a1, c1, c1_d0, c1_d1,
-                                _a2, c2, c2_d0, c2_d1,
+                                _a0,
+                                c0,
+                                c0_d0,
+                                c0_d1,
+                                _a1,
+                                c1,
+                                c1_d0,
+                                c1_d1,
+                                _a2,
+                                c2,
+                                c2_d0,
+                                c2_d1,
                             ) = self._func_ls_point_fn_3alphas(i_b, alpha_0, alpha_1, alpha_2)
 
                             p1_next_alpha = alpha_0
@@ -842,20 +864,54 @@ class ConstraintSolverIsland:
                                 done = True
                             else:
                                 (
-                                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next_alpha,
+                                    b1,
+                                    p1_alpha,
+                                    p1_cost,
+                                    p1_deriv_0,
+                                    p1_deriv_1,
+                                    p1_next_alpha,
                                 ) = self.update_bracket_no_eval(
-                                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1,
-                                    alpha_0, c0, c0_d0, c0_d1,
-                                    alpha_1, c1, c1_d0, c1_d1,
-                                    alpha_2, c2, c2_d0, c2_d1,
+                                    p1_alpha,
+                                    p1_cost,
+                                    p1_deriv_0,
+                                    p1_deriv_1,
+                                    alpha_0,
+                                    c0,
+                                    c0_d0,
+                                    c0_d1,
+                                    alpha_1,
+                                    c1,
+                                    c1_d0,
+                                    c1_d1,
+                                    alpha_2,
+                                    c2,
+                                    c2_d0,
+                                    c2_d1,
                                 )
                                 (
-                                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next_alpha,
+                                    b2,
+                                    p2_alpha,
+                                    p2_cost,
+                                    p2_deriv_0,
+                                    p2_deriv_1,
+                                    p2_next_alpha,
                                 ) = self.update_bracket_no_eval(
-                                    p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1,
-                                    alpha_0, c0, c0_d0, c0_d1,
-                                    alpha_1, c1, c1_d0, c1_d1,
-                                    alpha_2, c2, c2_d0, c2_d1,
+                                    p2_alpha,
+                                    p2_cost,
+                                    p2_deriv_0,
+                                    p2_deriv_1,
+                                    alpha_0,
+                                    c0,
+                                    c0_d0,
+                                    c0_d1,
+                                    alpha_1,
+                                    c1,
+                                    c1_d0,
+                                    c1_d1,
+                                    alpha_2,
+                                    c2,
+                                    c2_d0,
+                                    c2_d1,
                                 )
 
                                 if b1 == 0 and b2 == 0:
