@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import gstaichi as ti
 import torch
@@ -50,8 +52,6 @@ class ToolEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        from pathlib import Path
-
         if isinstance(self._morph, gs.morphs.Mesh):
             return Path(self._morph.file).stem
         return "tool"

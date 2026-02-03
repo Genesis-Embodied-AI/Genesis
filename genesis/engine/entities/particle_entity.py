@@ -1,4 +1,5 @@
 import functools
+from pathlib import Path
 
 import numpy as np
 import gstaichi as ti
@@ -745,8 +746,6 @@ class ParticleEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        from pathlib import Path
-
         morph = self._morph
 
         if isinstance(morph, gs.morphs.Box):

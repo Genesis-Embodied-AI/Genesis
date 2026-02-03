@@ -46,7 +46,7 @@ def get_robot_name(file_path):
         if name:
             return name
         raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
-    raise ValueError(f"File '{file_path}' does not have a <robot> root element.")
+    raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):

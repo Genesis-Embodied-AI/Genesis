@@ -3,6 +3,7 @@ import os
 import xml.etree.ElementTree as ET
 from copy import copy
 from itertools import chain
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
@@ -3301,8 +3302,6 @@ class RigidEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        from pathlib import Path
-
         if self._enable_heterogeneous:
             return "heterogeneous"
 

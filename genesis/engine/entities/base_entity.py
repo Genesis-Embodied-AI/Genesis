@@ -36,7 +36,18 @@ class Entity(RBC):
         self._sim = scene.sim
 
         # Set entity name (auto-generate if not provided)
-        self._set_name(name, scene)
+        existing_names = {entity.name for entity in scene.entities if entity.name is not None}
+        if name is not None:
+            if name in existing_names:
+                gs.raise_exception(f"Entity name '{name}' already exists in scene.")
+            self._name = name
+        else:
+            morph_name = self._get_morph_identifier()
+            while True:
+                self._name = f"{morph_name}_{self._uid.short()}"
+                if self._name not in existing_names:
+                    break
+                self._uid = gs.UID()
 
         gs.logger.info(
             f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
@@ -99,30 +110,6 @@ class Entity(RBC):
     # ------------------------------------------------------------------------------------
     # --------------------------------- naming methods -----------------------------------
     # ------------------------------------------------------------------------------------
-
-    def _set_name(self, user_name: str | None, scene: "Scene") -> None:
-        """
-        Set the entity's name, auto-generating if not provided.
-
-        Raises an exception if a user-specified name already exists in the scene.
-        For auto-generated names, regenerates UID until unique.
-        """
-        existing_names = {entity.name for entity in scene.entities if entity.name is not None}
-
-        if user_name is not None:
-            # Validate uniqueness for user-specified names upfront
-            if user_name in existing_names:
-                gs.raise_exception(f"Entity name '{user_name}' already exists in scene.")
-            self._name = user_name
-        else:
-            # Generate name, regenerating UID if collision occurs
-            morph_name = self._get_morph_identifier()
-            while True:
-                self._name = f"{morph_name}_{self._uid.short()}"
-                if self._name not in existing_names:
-                    break
-                # Redraw UID if name collision
-                self._uid = gs.UID()
 
     def _get_morph_identifier(self) -> str:
         """

@@ -1518,44 +1518,36 @@ class Scene(RBC):
         """
         return tuple(entity.name for entity in self.entities)
 
-    def get_entity(self, name: str | None = None, uid: str | None = None) -> "Entity":
+    def get_entity(self, name: str | None = None, *, uid: str | None = None) -> "Entity":
         """
-        Get an entity by name or UID prefix. Raises an exception if not found.
+        Get an entity by name or UID. Raises an exception if not found.
 
         Parameters
         ----------
         name : str, optional
             The exact name of the entity to find.
         uid : str, optional
-            The UID prefix of the entity to find. Must uniquely identify one entity.
+            The short UID (7-character) of the entity to find.
 
         Returns
         -------
         Entity
             The matching entity.
         """
+        if not ((name is None) ^ (uid is None)):
+            gs.raise_exception("Please specify either one argument between `name` or `uid`.")
+
         if name is not None:
             try:
                 return next(entity for entity in self.entities if entity.name == name)
             except StopIteration as e:
                 gs.raise_exception_from(f"Entity not found for name: '{name}'.", e)
-        elif uid is not None:
-            # First try exact full UID match
-            for entity in self.entities:
-                if entity.uid.match(uid, short_only=False):
-                    return entity
-            # Then try short UID match (7-character prefix shown in terminal)
+        else:  # uid is not None
             matches = [entity for entity in self.entities if entity.uid.match(uid, short_only=True)]
-            if len(matches) == 1:
-                return matches[0]
-            elif len(matches) == 0:
-                gs.raise_exception(f"Entity not found for uid: '{uid}'.")
-            else:
-                gs.raise_exception(
-                    f"Multiple entities match short uid '{uid}'. Use the full uid to uniquely identify the entity."
-                )
-        else:
-            gs.raise_exception("Neither `name` nor `uid` is provided.")
+            if matches:
+                (match,) = matches
+                return match
+            gs.raise_exception(f"Entity not found for uid: '{uid}'.")
 
     @property
     def emitters(self):

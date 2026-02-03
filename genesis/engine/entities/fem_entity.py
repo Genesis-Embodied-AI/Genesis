@@ -1,4 +1,5 @@
 from functools import wraps
+from pathlib import Path
 
 import igl
 import numpy as np
@@ -1022,8 +1023,6 @@ class FEMEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        from pathlib import Path
-
         morph = self._morph
 
         if isinstance(morph, gs.morphs.Box):

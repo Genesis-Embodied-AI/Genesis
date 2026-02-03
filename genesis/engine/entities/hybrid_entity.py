@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 import gstaichi as ti
@@ -210,8 +211,6 @@ class HybridEntity(Entity):
     # ------------------------------------------------------------------------------------
 
     def _get_morph_identifier(self) -> str:
-        from pathlib import Path
-
         morph = self._morph
         if isinstance(morph, gs.morphs.URDF):
             if isinstance(morph.file, str):

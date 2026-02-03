@@ -36,10 +36,10 @@ def main():
     retrieved = scene.get_entity(name="ground")
     print(f"Lookup by name: scene.get_entity(name='ground') -> {retrieved.name}")
 
-    # Lookup by UID prefix
-    uid_prefix = str(box.uid)[:4]
-    retrieved = scene.get_entity(uid=uid_prefix)
-    print(f"Lookup by UID: scene.get_entity(uid='{uid_prefix}') -> {retrieved.name}")
+    # Lookup by short UID (7-character prefix shown in terminal)
+    short_uid = box.uid.short()
+    retrieved = scene.get_entity(uid=short_uid)
+    print(f"Lookup by UID: scene.get_entity(uid='{short_uid}') -> {retrieved.name}")
 
     # List all entity names
     print(f"All entity names: {scene.entity_names}")
