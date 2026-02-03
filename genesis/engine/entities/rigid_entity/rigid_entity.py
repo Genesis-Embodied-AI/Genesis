@@ -1422,6 +1422,7 @@ class RigidEntity(Entity):
         link,
         pos=None,
         quat=None,
+        local_point=None,
         init_qpos=None,
         respect_joint_limit=True,
         max_samples=50,
@@ -1447,6 +1448,10 @@ class RigidEntity(Entity):
             The target position. If None, position error will not be considered. Defaults to None.
         quat : None | array_like, shape (4,), optional
             The target orientation. If None, orientation error will not be considered. Defaults to None.
+        local_point : None | array_like, shape (3,), optional
+            A point in the link's local frame to be positioned at `pos`. If None, the link origin is used.
+            This is useful for positioning a tool center point (TCP) or fingertip that is offset from the link origin.
+            Defaults to None (equivalent to [0, 0, 0]).
         init_qpos : None | array_like, shape (n_dofs,), optional
             Initial qpos used for solving IK. If None, the current qpos will be used. Defaults to None.
         respect_joint_limit : bool, optional
@@ -1495,6 +1500,7 @@ class RigidEntity(Entity):
             links=[link],
             poss=[pos] if pos is not None else [],
             quats=[quat] if quat is not None else [],
+            local_points=[local_point] if local_point is not None else [],
             init_qpos=init_qpos,
             respect_joint_limit=respect_joint_limit,
             max_samples=max_samples,
@@ -1521,6 +1527,7 @@ class RigidEntity(Entity):
         links,
         poss=None,
         quats=None,
+        local_points=None,
         init_qpos=None,
         respect_joint_limit=True,
         max_samples=50,
@@ -1546,6 +1553,11 @@ class RigidEntity(Entity):
             List of target positions. If empty, position error will not be considered. Defaults to None.
         quats : list, optional
             List of target orientations. If empty, orientation error will not be considered. Defaults to None.
+        local_points : list, optional
+            List of local points (one per link) in each link's local frame to be positioned at the corresponding target position.
+            If empty or None, link origins are used. Each element should be array_like of shape (3,) or None.
+            This is useful for positioning tool center points (TCP) or fingertips that are offset from the link origin.
+            Defaults to None.
         init_qpos : array_like, shape (n_dofs,), optional
             Initial qpos used for solving IK. If None, the current qpos will be used. Defaults to None.
         respect_joint_limit : bool, optional
@@ -1608,6 +1620,18 @@ class RigidEntity(Entity):
         elif len(quats) != n_links:
             gs.raise_exception("Accepting only `quats` with length equal to `links` or empty list.")
 
+        # Process local_points - default to origin [0, 0, 0] for each link
+        local_points = list(local_points) if local_points is not None else []
+        if not local_points:
+            local_points = [None for _ in range(n_links)]
+        elif len(local_points) != n_links:
+            gs.raise_exception("Accepting only `local_points` with length equal to `links` or empty list.")
+        for i, lp in enumerate(local_points):
+            if lp is None:
+                lp = [0.0, 0.0, 0.0]
+            local_points[i] = broadcast_tensor(lp, gs.tc_float, (3,), ("",)).contiguous()
+        local_points = torch.stack(local_points, dim=0)  # (n_links, 3)
+
         link_pos_mask, link_rot_mask = [], []
         for i, (pos, quat) in enumerate(zip(poss, quats)):
             if pos is None and quat is None:
@@ -1658,6 +1682,7 @@ class RigidEntity(Entity):
             links_idx,
             poss,
             quats,
+            local_points,
             n_links,
             dofs_idx,
             n_dofs,
