@@ -28,6 +28,7 @@ USE_DECOMPOSED_MACRO = os.environ.get("GS_SOLVER_DECOMPOSE_MACRO", "0") == "1"
 # USE_DECOMPOSED_MACRO = 1
 # Check environment variable for batched 3-alpha linesearch
 USE_BATCHED_LS = os.environ.get("GS_SOLVER_BATCHED_LS", "1") == "1"
+# USE_BATCHED_LS = 1
 
 # When True, refinement uses local variables instead of global memory for candidates
 USE_BATCHED_LS_LOCAL = os.environ.get("GS_SOLVER_BATCHED_LS_LOCAL", "0") == "1"
@@ -220,6 +221,7 @@ class ConstraintSolver:
             from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
                 func_solve_batched_profiled,
             )
+            # print("111")
 
             func_solve_batched_profiled(
                 self._solver.entities_info,
@@ -232,6 +234,7 @@ class ConstraintSolver:
             from genesis.engine.solvers.rigid.constraint_solver_breakdown import (
                 func_solve_batched_macrokernels,
             )
+            # print("222")
 
             func_solve_batched_macrokernels(
                 self._solver.entities_info,

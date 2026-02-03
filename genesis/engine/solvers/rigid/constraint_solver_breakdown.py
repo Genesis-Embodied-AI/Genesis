@@ -295,8 +295,8 @@ def func_solve_decomposed_macrokernels(
                 constraint_state,
                 static_rigid_sim_config,
             )
-            if do_profile and _decomposed_timer:
-                _decomposed_timer._stamp("cg_save_prev_grad")
+            # if do_profile and _decomposed_timer:
+            #     _decomposed_timer._stamp("cg_save_prev_grad")
         _kernel_update_constraint(
             entities_info,
             dofs_state,
@@ -304,8 +304,8 @@ def func_solve_decomposed_macrokernels(
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _decomposed_timer:
-            _decomposed_timer._stamp("update_constraint")
+        # if do_profile and _decomposed_timer:
+        #     _decomposed_timer._stamp("update_constraint")
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
             _kernel_newton_only_nt_hessian_incremental(
                 entities_info,
@@ -313,8 +313,8 @@ def func_solve_decomposed_macrokernels(
                 rigid_global_info,
                 static_rigid_sim_config,
             )
-            if do_profile and _decomposed_timer:
-                _decomposed_timer._stamp("nt_hessian")
+            # if do_profile and _decomposed_timer:
+            #     _decomposed_timer._stamp("nt_hessian")
         _kernel_update_gradient(
             entities_info,
             dofs_state,
@@ -322,15 +322,15 @@ def func_solve_decomposed_macrokernels(
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _decomposed_timer:
-            _decomposed_timer._stamp("update_gradient")
+        # if do_profile and _decomposed_timer:
+        #     _decomposed_timer._stamp("update_gradient")
         _kernel_update_search_direction(
             constraint_state,
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _decomposed_timer:
-            _decomposed_timer._stamp("update_search_dir")
+        # if do_profile and _decomposed_timer:
+        #     _decomposed_timer._stamp("update_search_dir")
 
 
 # --- Batched linesearch decomposed kernel ---
@@ -487,8 +487,8 @@ def func_solve_batched_profiled(
                 constraint_state,
                 static_rigid_sim_config,
             )
-            if do_profile and _profiled_timer:
-                _profiled_timer._stamp("cg_save_prev_grad")
+            # if do_profile and _profiled_timer:
+            #     _profiled_timer._stamp("cg_save_prev_grad")
         _kernel_update_constraint(
             entities_info,
             dofs_state,
@@ -496,8 +496,8 @@ def func_solve_batched_profiled(
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _profiled_timer:
-            _profiled_timer._stamp("update_constraint")
+        # if do_profile and _profiled_timer:
+        #     _profiled_timer._stamp("update_constraint")
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
             _kernel_newton_only_nt_hessian_incremental(
                 entities_info,
@@ -505,8 +505,8 @@ def func_solve_batched_profiled(
                 rigid_global_info,
                 static_rigid_sim_config,
             )
-            if do_profile and _profiled_timer:
-                _profiled_timer._stamp("nt_hessian")
+            # if do_profile and _profiled_timer:
+            #     _profiled_timer._stamp("nt_hessian")
         _kernel_update_gradient(
             entities_info,
             dofs_state,
@@ -514,12 +514,12 @@ def func_solve_batched_profiled(
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _profiled_timer:
-            _profiled_timer._stamp("update_gradient")
+        # if do_profile and _profiled_timer:
+        #     _profiled_timer._stamp("update_gradient")
         _kernel_update_search_direction(
             constraint_state,
             rigid_global_info,
             static_rigid_sim_config,
         )
-        if do_profile and _profiled_timer:
-            _profiled_timer._stamp("update_search_dir")
+        # if do_profile and _profiled_timer:
+        #     _profiled_timer._stamp("update_search_dir")
