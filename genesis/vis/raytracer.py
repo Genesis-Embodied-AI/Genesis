@@ -745,9 +745,10 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
             triangles_all = triangles_all.to_numpy()
+            uvs_all = uvs_ti.to_numpy()
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -756,13 +757,14 @@ class Raytracer:
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
                         - fem_entity.v_start
                     )
+                    uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
 
                     self.update_deformable(
                         str(fem_entity.uid),
                         vertices,
                         triangles,
                         trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals,
-                        np.array([]),
+                        uvs,
                     )
 
         # Flush the update buffer.
