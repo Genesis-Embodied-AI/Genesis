@@ -429,6 +429,10 @@ class FEMEntity(Entity):
             elif isinstance(self.morph, gs.options.morphs.Cylinder):
                 verts, elems = eu.cylinder_to_elements()
             elif isinstance(self.morph, gs.options.morphs.Mesh):
+                # We don't need to proces UVs here because the tetrahedralization process append new vertices
+                # and faces at the end of the vertex list, thus the original UVs are preserved at the beginning.
+                # We can't generate UVs for newly created internal vertices as it doesn't make sense but they're
+                # not used for rendering so it's fine.
                 verts, elems, self._uvs = eu.mesh_to_elements(
                     file=self._morph.file,
                     pos=self._morph.pos,
