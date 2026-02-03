@@ -1543,3 +1543,49 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
         f"interactive viewer brightness ({viewer_brightness:.2f}), "
         f"but ratio is {brightness_ratio:.2f}"
     )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
+def test_rasterizer_camera_sensor_with_viewer(renderer):
+    """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
+
+    This verifies that the sensor properly shares the viewer's OpenGL context instead of
+    creating a conflicting separate context.
+    """
+    from genesis.options.sensors import RasterizerCameraOptions
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=(640, 480),
+            run_in_thread=(sys.platform == "linux"),
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+
+    # Add a rasterizer camera sensor
+    camera_options = RasterizerCameraOptions(
+        res=(256, 256),
+        pos=(2.0, 0.0, 1.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    camera_sensor = scene.add_sensor(camera_options)
+
+    scene.build(n_envs=1)
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    scene.step()
+    data = camera_sensor.read()
+
+    rgb_std = data.rgb.float().std()
+    assert rgb_std > 1.0, f"RGB std too low ({rgb_std:.2f}), image may be blank"

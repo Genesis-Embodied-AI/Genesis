@@ -154,16 +154,20 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
     image_cache: Optional[Dict[int, np.ndarray]] = None
     # Track when rasterizer cameras were last updated
     last_render_timestep: int = -1
+    # Whether the context is owned by this sensor (vs shared with visualizer)
+    owns_context: bool = True
 
     def destroy(self):
         super().destroy()
 
-        if self.renderer is not None:
-            self.renderer.destroy()
-            self.renderer = None
-        if self.context is not None:
-            self.context.destroy()
-            self.context = None
+        # Only destroy renderer and context if we own them (not shared with visualizer)
+        if self.owns_context:
+            if self.renderer is not None:
+                self.renderer.destroy()
+            if self.context is not None:
+                self.context.destroy()
+        self.renderer = None
+        self.context = None
         self.lights = None
         self.image_cache = None
         self.sensors = None
@@ -417,6 +421,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
         self._camera_node = None
         self._camera_target = None
         self._camera_wrapper = None
+        self._camera_registered = False  # Track if camera is registered with renderer
 
     # ========================== Sensor Lifecycle ==========================
 
@@ -431,29 +436,50 @@ class RasterizerCameraSensor(BaseCameraSensor):
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
 
-            # Create standalone rasterizer
-            self._shared_metadata.context = self._create_standalone_context(scene)
+            # Check if scene has a viewer - if so, reuse its rasterizer to avoid OpenGL context conflicts
+            visualizer = getattr(scene, "visualizer", None)
+            viewer = getattr(visualizer, "_viewer", None) if visualizer else None
 
-            self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
-            self._shared_metadata.renderer.build()
+            if viewer is not None:
+                # Reuse visualizer's existing rasterizer - it will route rendering through the viewer's OpenGL context
+                # Note: we don't call build() here because the visualizer will build it later
+                self._shared_metadata.context = visualizer.context
+                self._shared_metadata.renderer = visualizer.rasterizer
+                self._shared_metadata.owns_context = False  # Context is shared with visualizer
+            else:
+                # Create standalone rasterizer with its own offscreen context
+                self._shared_metadata.context = self._create_standalone_context(scene)
+                self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
+                self._shared_metadata.renderer.build()
+                self._shared_metadata.owns_context = True  # We own this context
 
         self._shared_metadata.sensors.append(self)
 
-        # Add lights from options to the shared metadata
+        # If using standalone context (not shared), register camera now
+        # If shared context, defer registration to first render when visualizer is built
+        if self._shared_metadata.owns_context:
+            self._register_camera_with_renderer()
+
+        _B = max(self._manager._sim.n_envs, 1)
+        w, h = self._options.res
+        self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
+
+    def _register_camera_with_renderer(self):
+        """Register this camera with the renderer. Called during build for standalone, or deferred for shared context."""
+        if self._camera_registered:
+            return
+
+        # Add lights from options to the context
         for light_config in self._options.lights:
             if self._shared_metadata.lights is not None:
                 # Convert light config to rasterizer format
                 light_dict = self._convert_light_config_to_rasterizer(light_config)
-                # self._shared_metadata.lights.append(light_dict)
                 self._shared_metadata.context.add_light(light_dict)
 
         camera_wrapper = self._get_camera_wrapper()
         self._shared_metadata.renderer.add_camera(camera_wrapper)
         self._update_camera_pose()
-
-        _B = max(self._manager._sim.n_envs, 1)
-        w, h = self._options.res
-        self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
+        self._camera_registered = True
 
     def _create_standalone_context(self, scene):
         """Create a simplified RasterizerContext for camera sensors."""
@@ -540,6 +566,10 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
+        # Deferred camera registration for shared context (visualizer now built)
+        if not self._camera_registered:
+            self._register_camera_with_renderer()
+
         self._shared_metadata.context.update(force_render=True)
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
@@ -652,7 +682,12 @@ class RaytracerCameraSensor(BaseCameraSensor):
 
         # Attach the visualizer camera to the link if this sensor is attached
         if self._link is not None:
-            offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
+            if self._options.offset_T is not None:
+                offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
+            else:
+                # Use pos as offset translation (consistent with BaseCameraSensor.move_to_attach)
+                pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
+                offset_T = trans_quat_to_T(pos, torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device))
             self._camera_obj.attach(self._link, offset_T)
 
         _B = max(n_envs, 1)
@@ -699,7 +734,7 @@ class RaytracerCameraSensor(BaseCameraSensor):
             antialiasing=False,
             force_render=True,
         )
-        rgb_tensor = torch.from_numpy(rgb_arr).to(dtype=torch.uint8, device=gs.device)
+        rgb_tensor = torch.from_numpy(rgb_arr.copy()).to(dtype=torch.uint8, device=gs.device)
 
         self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
 

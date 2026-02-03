@@ -420,6 +420,38 @@ def test_raytracer_destroy():
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+def test_raytracer_attached_without_offset_T():
+    """Test that RaytracerCameraSensor works when attached without explicit offset_T."""
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(),
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(radius=0.5, pos=(0.0, 0.0, 0.0)),
+    )
+
+    # Create attached camera WITHOUT offset_T - this should use identity transform
+    camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            res=(64, 64),
+            pos=(0.0, 0.0, 2.0),
+            lookat=(0.0, 0.0, 0.0),
+            fov=60.0,
+            entity_idx=sphere.idx,
+            link_idx_local=0,
+            # offset_T intentionally omitted to test default behavior
+        )
+    )
+
+    scene.build()
+    data = camera.read()
+
+    assert data.rgb.shape == (64, 64, 3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 1])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer(n_envs, png_snapshot):
