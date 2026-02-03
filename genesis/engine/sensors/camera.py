@@ -154,18 +154,14 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
     image_cache: Optional[Dict[int, np.ndarray]] = None
     # Track when rasterizer cameras were last updated
     last_render_timestep: int = -1
-    # Whether the context is owned by this sensor (vs shared with visualizer)
-    owns_context: bool = True
 
     def destroy(self):
         super().destroy()
 
-        # Only destroy renderer and context if we own them (not shared with visualizer)
-        if self.owns_context:
-            if self.renderer is not None:
-                self.renderer.destroy()
-            if self.context is not None:
-                self.context.destroy()
+        if self.renderer is not None:
+            self.renderer.destroy()
+        if self.context is not None:
+            self.context.destroy()
         self.renderer = None
         self.context = None
         self.lights = None
@@ -421,7 +417,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
         self._camera_node = None
         self._camera_target = None
         self._camera_wrapper = None
-        self._camera_registered = False  # Track if camera is registered with renderer
+        self._camera_registered = False
 
     # ========================== Sensor Lifecycle ==========================
 
@@ -436,28 +432,26 @@ class RasterizerCameraSensor(BaseCameraSensor):
             self._shared_metadata.lights = gs.List()
             self._shared_metadata.image_cache = {}
 
-            # Check if scene has a viewer - if so, reuse its rasterizer to avoid OpenGL context conflicts
+            # Check if scene has a viewer - if so, use visualizer's rasterizer (like add_camera does)
+            # This avoids OpenGL context conflicts since visualizer's rasterizer routes through viewer.render_offscreen()
             visualizer = getattr(scene, "visualizer", None)
             viewer = getattr(visualizer, "_viewer", None) if visualizer else None
 
             if viewer is not None:
-                # Reuse visualizer's existing rasterizer - it will route rendering through the viewer's OpenGL context
-                # Note: we don't call build() here because the visualizer will build it later
+                # Use visualizer's rasterizer - it will use viewer.render_offscreen() which handles context properly
                 self._shared_metadata.context = visualizer.context
                 self._shared_metadata.renderer = visualizer.rasterizer
-                self._shared_metadata.owns_context = False  # Context is shared with visualizer
             else:
-                # Create standalone rasterizer with its own offscreen context
+                # No viewer - create standalone rasterizer with offscreen context
                 self._shared_metadata.context = self._create_standalone_context(scene)
                 self._shared_metadata.renderer = Rasterizer(viewer=None, context=self._shared_metadata.context)
                 self._shared_metadata.renderer.build()
-                self._shared_metadata.owns_context = True  # We own this context
 
         self._shared_metadata.sensors.append(self)
 
-        # If using standalone context (not shared), register camera now
-        # If shared context, defer registration to first render when visualizer is built
-        if self._shared_metadata.owns_context:
+        # Register camera now if standalone (offscreen), or defer to first render if using visualizer's rasterizer
+        # (visualizer isn't built yet at sensor.build() time)
+        if self._shared_metadata.renderer.offscreen:
             self._register_camera_with_renderer()
 
         _B = max(self._manager._sim.n_envs, 1)
@@ -465,14 +459,13 @@ class RasterizerCameraSensor(BaseCameraSensor):
         self._shared_metadata.image_cache[self._idx] = torch.zeros((_B, h, w, 3), dtype=torch.uint8, device=gs.device)
 
     def _register_camera_with_renderer(self):
-        """Register this camera with the renderer. Called during build for standalone, or deferred for shared context."""
+        """Register this camera with the renderer."""
         if self._camera_registered:
             return
 
         # Add lights from options to the context
         for light_config in self._options.lights:
             if self._shared_metadata.lights is not None:
-                # Convert light config to rasterizer format
                 light_dict = self._convert_light_config_to_rasterizer(light_config)
                 self._shared_metadata.context.add_light(light_dict)
 
@@ -566,7 +559,7 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
     def _render_current_state(self):
         """Perform the actual render for the current state."""
-        # Deferred camera registration for shared context (visualizer now built)
+        # Deferred registration for when using visualizer's rasterizer (visualizer now built)
         if not self._camera_registered:
             self._register_camera_with_renderer()
 
