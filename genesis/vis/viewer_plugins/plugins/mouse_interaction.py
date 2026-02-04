@@ -10,7 +10,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
-from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterPlugin
+from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterViewerPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from genesis.utils.raycast import RayHit, plane_raycast
 
 
-class MouseInteractionPlugin(RaycasterPlugin):
+class MouseInteractionPlugin(RaycasterViewerPlugin):
     """
     Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
     """

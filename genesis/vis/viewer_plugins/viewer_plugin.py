@@ -69,7 +69,7 @@ class ViewerPlugin:
         pass
 
 
-class RaycasterPlugin(ViewerPlugin):
+class RaycasterViewerPlugin(ViewerPlugin):
     """
     Base viewer plugins using mouse raycast
     """
