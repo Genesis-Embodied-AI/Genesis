@@ -18,7 +18,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -1578,9 +1578,10 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
     )
 
     # Add PBD cloth with checker texture
+    asset_path = get_hf_dataset(pattern="uv_plane.obj")
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file="meshes/uv_plane.obj",
+            file=f"{asset_path}/uv_plane.obj",
             scale=0.4,
             pos=(-0.2, 0.0, 0.4),
         ),
