@@ -301,7 +301,7 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
-                    self.add_deformable(str(fem_entity.id))
+                    self.add_deformable(str(fem_entity.uid))
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -747,7 +747,7 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
-            triangles_all = triangles_all.to_numpy()
+            triangles_all = triangles_all.to_numpy().reshape((-1, 3))
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -756,12 +756,13 @@ class Raytracer:
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
                         - fem_entity.v_start
                     )
+                    vertex_normals = trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals
 
                     self.update_deformable(
                         str(fem_entity.uid),
                         vertices,
                         triangles,
-                        trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals,
+                        vertex_normals,
                         np.array([]),
                     )
 
