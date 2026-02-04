@@ -279,7 +279,7 @@ class ParticleEntity(Entity):
 
         if isinstance(self._morph, gs.options.morphs.Nowhere):
             self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-            self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+            self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = gu.nowhere()
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
@@ -314,10 +314,10 @@ class ParticleEntity(Entity):
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
-                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)
             else:
                 self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-                self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+                self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
             # transform vmesh
@@ -341,10 +341,10 @@ class ParticleEntity(Entity):
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
-                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)
             else:
                 self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-                self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+                self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = np.asarray(self._morph.pos, dtype=gs.np_float)
 
         self._particles = np.asarray(particles, dtype=gs.np_float, order="C")

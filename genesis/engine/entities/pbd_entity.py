@@ -253,7 +253,7 @@ class PBDTetEntity(PBDBaseEntity):
         quat = np.asarray(self._morph.quat, dtype=gs.np_float)
         self._vmesh.apply_transform(gu.trans_quat_to_T(pos, quat))
         self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
-        self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+        self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)
 
         self._mesh = self._vmesh.copy()
         self._mesh.remesh(edge_len_abs=self.particle_size, fix=isinstance(self, PBD3DEntity))
