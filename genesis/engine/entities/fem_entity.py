@@ -402,14 +402,13 @@ class FEMEntity(Entity):
                 # For cloth, we store faces as "elements" (treating them as surface elements)
                 self.instantiate(verts, faces)
 
-                # Load UVs from mesh (1:1 mapping for cloth)
-                try:
+                # Load UVs from mesh (1:1 mapping for cloth).
+                # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None when UVs are None,
+                # the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions can be recomputed,
+                # thus texture mapping and anisotropic surfaces will not work properly.
+                self._uvs = None
+                if mesh.visual.uv is not None:
                     self._uvs = mesh.visual.uv.astype(gs.np_float, copy=True)
-                except AttributeError:
-                    # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None
-                    # When UVs are None, the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions
-                    # can be recomputed, thus texture mapping and anisotropic surfaces will not work properly.
-                    self._uvs = None
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:

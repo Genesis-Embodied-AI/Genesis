@@ -184,7 +184,8 @@ def load_mesh(file):
     if isinstance(file, (str, Path)):
         try:
             return trimesh.load_mesh(file, force="mesh", skip_texture=False)
-        except Exception:
+        except Exception as e:
+            gs.logger.warning(f"Failed to load mesh with texture: {e}")
             # try loading without texture data
             return trimesh.load_mesh(file, force="mesh", skip_texture=True)
     return file

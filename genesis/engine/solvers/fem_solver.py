@@ -241,11 +241,7 @@ class FEMSolver(Solver):
         )
 
         # UV coordinates for rendering (per-vertex UVs, initialized to zeros)
-        self.surface_render_uvs = ti.field(
-            dtype=gs.ti_vec2,
-            shape=(max(n_vertices_max, 1),),
-            needs_grad=False,
-        )
+        self.surface_render_uvs = ti.field(dtype=gs.ti_vec2, shape=(max(n_vertices_max, 1),), needs_grad=False)
 
     def _init_surface_info(self):
         self.vertices_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_vertices,))

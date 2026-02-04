@@ -15,20 +15,14 @@ class PBDBaseEntity(ParticleEntity):
 
     def _add_to_solver(self):
         super()._add_to_solver()
-        self._add_uvs_and_faces_to_solver()
 
-    def _add_uvs_and_faces_to_solver(self):
-        """Add UV coordinates and face indices to the solver's global buffers."""
         # Get UVs from vmesh (may be None if no texture)
         uvs = self._vmesh.uvs if self._vmesh is not None else None
         if uvs is None or len(uvs) != self.n_vverts:
             # No UVs available, pass empty array (kernel will skip copy)
             uvs = np.zeros((0, 2), dtype=gs.np_float)
 
-        self._kernel_add_uvs_and_faces_to_solver(
-            uvs=uvs,
-            faces=self._vfaces,
-        )
+        self._kernel_add_uvs_and_faces_to_solver(uvs=uvs, faces=self._vfaces)
 
     @ti.kernel
     def _kernel_add_uvs_and_faces_to_solver(
@@ -47,9 +41,9 @@ class PBDBaseEntity(ParticleEntity):
             i_vf = i_vf_ + self._vface_start
             self.solver.vfaces_indices[i_vf] = ti.Vector(
                 [
-                    ti.cast(faces[i_vf_][0], gs.ti_int) + self._vvert_start,
-                    ti.cast(faces[i_vf_][1], gs.ti_int) + self._vvert_start,
-                    ti.cast(faces[i_vf_][2], gs.ti_int) + self._vvert_start,
+                    faces[i_vf_][0] + self._vvert_start,
+                    faces[i_vf_][1] + self._vvert_start,
+                    faces[i_vf_][2] + self._vvert_start,
                 ]
             )
 

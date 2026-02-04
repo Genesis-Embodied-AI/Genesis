@@ -70,10 +70,7 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
         original_uvs = None
 
     # Build full UV array: original vertices get their UVs, interior vertices get zeros
-    n_fem = len(verts)
-    uvs = np.zeros((n_fem, 2), dtype=gs.np_float)
-    if original_uvs is not None:
-        uvs[:n_original] = original_uvs
+    uvs = np.pad(original_uvs, ((0, len(verts) - n_original), (0, 0)))
 
     return verts, elems, uvs
 
