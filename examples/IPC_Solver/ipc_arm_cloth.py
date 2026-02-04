@@ -139,7 +139,7 @@ def build_scene(use_ipc=False, show_viewer=False, enable_ipc_gui=False):
     return scene, entities
 
 
-def run_sim(scene, entities, mode="interactive", trajectory_file=None):
+def run_sim(scene, entities, add_keybinds, mode="interactive", trajectory_file=None):
     robot = entities["robot"]
     target_entity = entities["target"]
     is_running = True
@@ -175,8 +175,8 @@ def run_sim(scene, entities, mode="interactive", trajectory_file=None):
         # entities["cube"].set_pos((random.uniform(0.2, 0.4), random.uniform(-0.2, 0.2), 0.05))
         # entities["cube"].set_quat(R.from_euler("z", random.uniform(0, np.pi * 2)).as_quat(scalar_first=True))
 
-    # Register keybindings (only for interactive and record modes)
-    if mode in ["interactive", "record"]:
+    # Register keybindings
+    if add_keybinds:
 
         def move(dpos_delta: tuple[float, float, float]):
             target_pos[:] += np.array(dpos_delta, dtype=gs.np_float)
@@ -408,7 +408,13 @@ def main():
             trajectory_file = os.path.join(traj_dir, os.path.basename(trajectory_file))
 
     scene, entities = build_scene(use_ipc=args.ipc, show_viewer=args.vis, enable_ipc_gui=False)
-    run_sim(scene, entities, mode=args.mode, trajectory_file=trajectory_file)
+    run_sim(
+        scene,
+        entities,
+        add_keybinds=args.vis or args.mode in ["interactive", "record"],
+        mode=args.mode,
+        trajectory_file=trajectory_file,
+    )
 
 
 if __name__ == "__main__":

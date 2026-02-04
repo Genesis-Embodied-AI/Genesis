@@ -14,6 +14,20 @@ from .utils import rgb_array_to_png_bytes
 CAM_RES = (480, 320)
 
 
+def wait_for_viewer_events(viewer, condition_fn, timeout=2.0, sleep_interval=0.1):
+    """Utility function to wait for viewer events to be processed in a threaded viewer."""
+    if not viewer.run_in_thread:
+        viewer.dispatch_pending_events()
+        viewer.dispatch_events()
+
+    for _ in range(int(timeout / sleep_interval)):
+        if condition_fn():
+            return
+        time.sleep(sleep_interval)
+    else:
+        raise AssertionError("Keyboard event not processed before timeout")
+
+
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
@@ -79,9 +93,6 @@ def test_default_viewer_plugin():
 
     assert len(pyrender_viewer._keybindings) > 0, "Expected default keybindings to be registered."
 
-    # Press key toggle world frame
-    pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
-
     # Add a custom keybind
     flags = [False, False, False]
 
@@ -109,20 +120,14 @@ def test_default_viewer_plugin():
     pyrender_viewer.dispatch_event("on_key_press", Key._0, 0)
     # Press key with modifiers to toggle flag off
     pyrender_viewer.dispatch_event("on_key_press", Key._1, KeyMod.SHIFT | KeyMod.CTRL)
+    # Press key toggle world frame
+    pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
 
-    if pyrender_viewer.run_in_thread:
-        for i in range(100):
-            if flags[0] and flags[1]:
-                break
-            time.sleep(0.1)
-    else:
-        pyrender_viewer.dispatch_pending_events()
-        pyrender_viewer.dispatch_events()
-
-    assert pyrender_viewer.gs_context.world_frame_shown, "Expected world frame to be shown after pressing 'W' key."
+    wait_for_viewer_events(pyrender_viewer, lambda: flags[0] and flags[1])
 
     assert flags[0], "Expected custom keybind callback to toggle flag on."
     assert flags[1], "Expected custom keybind with key modifiers to toggle flag on."
+    assert pyrender_viewer.gs_context.world_frame_shown, "Expected world frame to be shown after pressing 'W' key."
 
     # Remove the keybind and press key to verify it no longer works
     scene.viewer.remove_keybind("toggle_flag_0")
@@ -131,14 +136,7 @@ def test_default_viewer_plugin():
     scene.viewer.remap_keybind("toggle_flag_1", new_key=Key._2, new_key_mods=None)
     pyrender_viewer.dispatch_event("on_key_press", Key._2, 0)
 
-    if pyrender_viewer.run_in_thread:
-        for i in range(1000):
-            if not flags[1]:
-                break
-            time.sleep(0.1)
-    else:
-        pyrender_viewer.dispatch_pending_events()
-        pyrender_viewer.dispatch_events()
+    wait_for_viewer_events(pyrender_viewer, lambda: not flags[1])
 
     assert flags[0], "Keybind was not removed properly."
     assert not flags[1], "Expected rebinded keybind to toggle flag off."
