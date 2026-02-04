@@ -232,9 +232,12 @@ if __name__ == "__main__":
             gravity=(0.0, 0.0, 0.0),
         ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.6, 0.0, 0.8),
-            camera_lookat=(0.0, 0.0, 0.1),
+            camera_pos=(0.6, 0.6, 0.6),
+            camera_lookat=(0.0, 0.0, 0.2),
             camera_fov=40,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -247,7 +250,7 @@ if __name__ == "__main__":
             file="urdf/shadow_hand/shadow_hand.urdf",
             collision=True,
             pos=(0.0, 0.0, 0.0),
-            euler=(0.0, 0.0, 0.0),
+            euler=(0.0, 0.0, 180.0),
             fixed=True,
             merge_fixed_links=False,
         ),
@@ -270,7 +273,7 @@ if __name__ == "__main__":
         is_running = False
 
     scene.viewer.register_keybinds(
-        kb.Keybind(kb.Key.ESCAPE, kb.KeyAction.PRESS, name="quit", callback=stop),
+        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.PRESS, callback=stop),
     )
 
     try:

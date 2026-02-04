@@ -1,6 +1,7 @@
 import math
 
 import genesis as gs
+import genesis.vis.keybindings as kb
 
 if __name__ == "__main__":
     gs.init(backend=gs.gpu)
@@ -35,9 +36,31 @@ if __name__ == "__main__":
             ),
         )
 
-    scene.viewer.add_plugin(gs.vis.viewer_plugins.MouseInteractionPlugin())
+    scene.viewer.add_plugin(
+        gs.vis.viewer_plugins.MouseInteractionPlugin(
+            use_force=True,
+            spring_const=1.0,
+            spring_damping=1.0,
+            color=(0.1, 0.6, 0.8, 0.6),
+        )
+    )
 
     scene.build()
 
-    while True:
-        scene.step()
+    is_running = True
+
+    def stop():
+        global is_running
+        is_running = False
+
+    scene.viewer.register_keybinds(
+        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.PRESS, callback=stop),
+    )
+
+    try:
+        while is_running:
+            scene.step()
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
