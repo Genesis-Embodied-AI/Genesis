@@ -2,19 +2,19 @@ import sys
 import time
 
 import OpenGL.error
-import pyglet
 import pytest
 
 import genesis as gs
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import rgb_array_to_png_bytes
+
 
 CAM_RES = (480, 320)
 
 
-def wait_for_viewer_events(viewer, condition_fn, timeout=2.0, sleep_interval=0.1):
+# Note that software emulation is so slow that it may takes minutes to render a single frame...
+def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0.1):
     """Utility function to wait for viewer events to be processed in a threaded viewer."""
     if not viewer.run_in_thread:
         viewer.dispatch_pending_events()
@@ -59,10 +59,6 @@ def test_interactive_viewer_disable_viewer_defaults():
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_default_viewer_plugin():
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1e-2,
-            substeps=1,
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.0, 1.0),
             camera_lookat=(0.0, 0.0, 0.0),

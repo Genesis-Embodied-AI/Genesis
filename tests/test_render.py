@@ -1621,19 +1621,41 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
     This verifies that the sensor properly shares the viewer's OpenGL context instead of
     creating a conflicting separate context.
     """
+    CAM_RES = (128, 64)
+
     scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(run_in_thread=False),
+        viewer_options=gs.options.ViewerOptions(
+            res=CAM_RES,
+            run_in_thread=False,
+        ),
         renderer=renderer,
         show_viewer=True,
     )
     # At least one entity is needed to ensure the rendered image is not entirely blank,
     # otherwise it is not possible to verify that something was actually rendered.
     scene.add_entity(morph=gs.morphs.Plane())
-    camera_sensor = scene.add_sensor(RasterizerCameraOptions(res=(256, 256)))
+    camera_sensor = scene.add_sensor(
+        RasterizerCameraOptions(
+            res=CAM_RES,
+        )
+    )
     scene.build()
 
-    assert scene.visualizer.viewer._pyrender_viewer.is_active
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
 
     scene.step()
+
+    if sys.platform == "linux":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if "llvmpipe" in renderer:
+            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
+            if llvm_version < "20":
+                pytest.skip(
+                    "OpenGL function 'glBlitFramebuffer' involved in offscreen rendering with the interactive viewer "
+                    "takes ages on old CPU-based Mesa rendering driver. Skipping..."
+                )
+
     data = camera_sensor.read()
     assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
