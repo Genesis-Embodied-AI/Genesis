@@ -8,7 +8,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.vis.keybindings as kb
 from genesis.utils.misc import tensor_to_array
-from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterPlugin
+from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterViewerPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
@@ -35,7 +35,7 @@ class SelectedPoint(NamedTuple):
     local_normal: np.ndarray  # shape (3,)
 
 
-class MeshPointSelectorPlugin(RaycasterPlugin):
+class MeshPointSelectorPlugin(RaycasterViewerPlugin):
     """
     Interactive viewer plugin that enables using mouse clicks to select points on rigid meshes.
     Selected points are stored in local coordinates relative to their link's frame.

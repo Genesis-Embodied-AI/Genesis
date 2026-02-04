@@ -55,20 +55,6 @@ class RaycastPattern:
 # ============================== Generic Patterns ==============================
 
 
-def _sanitize_rays_to_tensor(rays: Sequence[float]) -> torch.Tensor:
-    tensor = torch.tensor(rays, dtype=gs.tc_float, device=gs.device)
-    if tensor.ndim < 2 or tensor.shape[-1] != 3:
-        gs.raise_exception(f"Rays should have shape (..., 3). Got: {tensor.shape}")
-    return tensor
-
-
-class RaycastCustomPattern(RaycastPattern):
-    def __init__(self, ray_dirs: Sequence[float], ray_starts: Sequence[float]):
-        self._ray_dirs = _sanitize_rays_to_tensor(ray_dirs)
-        self._ray_starts = _sanitize_rays_to_tensor(ray_starts)
-        self._return_shape: tuple[int, ...] = ray_dirs.shape[:-1]
-
-
 class GridPattern(RaycastPattern):
     """
     Configuration for grid-based ray casting.
