@@ -167,7 +167,7 @@ class SPHSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         entity = SPHEntity(
             scene=self.scene,
             solver=self,
@@ -177,6 +177,7 @@ class SPHSolver(Solver):
             particle_size=self._particle_size,
             idx=idx,
             particle_start=self.n_particles,
+            name=name,
         )
 
         self.entities.append(entity)

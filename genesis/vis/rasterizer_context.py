@@ -631,6 +631,12 @@ class RasterizerContext:
     def on_pbd(self):
         if self.sim.pbd_solver.is_active:
             for pbd_entity in self.sim.pbd_solver.entities:
+                if pbd_entity.surface.vis_mode == "visual":
+                    # Apply surface visual with UVs to the trimesh
+                    pbd_entity.vmesh.trimesh.visual = mu.surface_uvs_to_trimesh_visual(
+                        pbd_entity.surface, uvs=pbd_entity.vmesh.uvs, n_verts=len(pbd_entity.vmesh.trimesh.vertices)
+                    )
+
                 for idx in self.rendered_envs_idx:
                     if pbd_entity.surface.vis_mode == "recon":
                         self.add_dynamic_node(pbd_entity, None)
@@ -743,9 +749,10 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_ti, triangles_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_ti, triangles_ti, uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = ti_to_numpy(vertices_ti)
             triangles_all = ti_to_numpy(triangles_ti).reshape((-1, 3))
+            uvs_all = ti_to_numpy(uvs_ti)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -755,14 +762,16 @@ class RasterizerContext:
                     )
                     for idx in self.rendered_envs_idx:
                         vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
+                        uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                         # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
                         surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
-                        triangles = inv.reshape(triangles.shape)
+                        triangles_reindexed = inv.reshape(triangles.shape)
                         vertices = vertices[surf_idx]
+                        uvs = uvs[surf_idx]
 
-                        mesh = trimesh.Trimesh(vertices, triangles, process=False)
+                        mesh = trimesh.Trimesh(vertices, triangles_reindexed, process=False)
                         mesh.visual = mu.surface_uvs_to_trimesh_visual(
-                            fem_entity.surface, n_verts=fem_entity.n_surface_vertices
+                            fem_entity.surface, uvs=uvs, n_verts=fem_entity.n_surface_vertices
                         )
                         self.add_static_node(
                             fem_entity,
@@ -772,7 +781,7 @@ class RasterizerContext:
 
     def update_fem(self, buffer_updates):
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
             triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 

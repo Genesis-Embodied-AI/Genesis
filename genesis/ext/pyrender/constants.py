@@ -10,6 +10,7 @@ FLOAT_SZ = 4  # Byte size of GL float32
 UINT_SZ = 4  # Byte size of GL uint32
 SHADOW_TEX_SZ = 8192  # Width and Height of Shadow Textures
 TEXT_PADDING = 20  # Width of padding for rendering text (px)
+FONT_SIZE = 26  # Default font size for rendering text (px)
 
 
 # Flags for render type

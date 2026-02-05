@@ -1,7 +1,9 @@
 import inspect
 import os
+import xml.etree.ElementTree as ET
 from copy import copy
 from itertools import chain
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
@@ -144,8 +146,13 @@ class RigidEntity(Entity):
         equality_start=0,
         visualize_contact: bool = False,
         morph_heterogeneous: list[Morph] | None = None,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        # Set heterogeneous support before super().__init__() because _get_morph_identifier() needs it
+        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
+        self._enable_heterogeneous = bool(self._morph_heterogeneous)
+
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._idx_in_solver = idx_in_solver
         self._link_start: int = link_start
@@ -173,10 +180,6 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
-
-        # Heterogeneous simulation support (convert None to [] for consistency)
-        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
-        self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         self._load_model()
 
@@ -3293,6 +3296,55 @@ class RigidEntity(Entity):
             for link in self.links:
                 mass += link.get_mass()
             return mass
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        if self._enable_heterogeneous:
+            return "heterogeneous"
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Plane):
+            return "plane"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.URDF):
+            if isinstance(morph.file, str):
+                # Try to get robot name from URDF file, fall back to filename stem
+                try:
+                    return uu.get_robot_name(morph.file)
+                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
+                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
+                    return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.MJCF):
+            if isinstance(morph.file, str):
+                # Try to get model name from MJCF file, fall back to filename stem
+                model_name = mju.get_model_name(morph.file)
+                if model_name:
+                    return model_name
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.Drone):
+            if isinstance(morph.file, str):
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.USD):
+            if morph.prim_path:
+                return morph.prim_path.rstrip("/").split("/")[-1]
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Terrain):
+            return morph.name if morph.name else "terrain"
+        return "rigid"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
