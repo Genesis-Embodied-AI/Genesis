@@ -158,7 +158,7 @@ class Rasterizer(RBC):
                     camera_target.delete()
                 elif self._viewer is not None:
                     self._viewer.close_offscreen(camera_target)
-            except OSError:
+            except (OpenGL.error.NullFunctionError, OSError):
                 pass
         self._camera_targets.clear()
 
@@ -166,7 +166,7 @@ class Rasterizer(RBC):
             try:
                 self._renderer.make_current()
                 self._renderer.delete()
-            except (OpenGL.error.GLError, ImportError):
+            except (OpenGL.error.GLError, OpenGL.error.NullFunctionError, ImportError):
                 pass
             del self._renderer
             self._renderer = None
