@@ -289,7 +289,7 @@ class RigidSolver(Solver):
     def init_ckpt(self):
         pass
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact) -> Entity:
+    def add_entity(self, idx, material, morph, surface, visualize_contact, name: str | None = None) -> Entity:
         # Handle heterogeneous morphs (list/tuple of morphs)
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
@@ -327,6 +327,7 @@ class RigidSolver(Solver):
             vface_start=self.n_vfaces,
             visualize_contact=visualize_contact,
             morph_heterogeneous=morph_heterogeneous,
+            name=name,
         )
         assert isinstance(entity, RigidEntity)
         self._entities.append(entity)

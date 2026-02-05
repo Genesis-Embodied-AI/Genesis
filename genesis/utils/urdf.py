@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 from itertools import chain
 from pathlib import Path
 
@@ -11,6 +12,41 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from .misc import get_assets_dir
+
+
+def get_robot_name(file_path):
+    """
+    Extract the robot name from a URDF file.
+
+    The name is extracted from the ``<robot name="...">`` attribute, which is
+    required by the URDF specification.
+
+    Reference: https://wiki.ros.org/urdf/XML/robot
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the URDF file.
+
+    Returns
+    -------
+    str
+        The robot name.
+
+    Raises
+    ------
+    ValueError
+        If the robot name attribute is missing or empty.
+    """
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "robot":
+        name = root.attrib.get("name")
+        if name:
+            return name
+        raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
+    raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):

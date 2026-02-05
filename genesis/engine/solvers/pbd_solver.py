@@ -239,7 +239,7 @@ class PBDSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         if isinstance(material, gs.materials.PBD.Cloth):
             entity = PBD2DEntity(
                 scene=self.scene,
@@ -254,6 +254,7 @@ class PBDSolver(Solver):
                 inner_edge_start=self.n_inner_edges,
                 vvert_start=self.n_vverts,
                 vface_start=self.n_vfaces,
+                name=name,
             )
 
         elif isinstance(material, gs.materials.PBD.Elastic):
@@ -270,6 +271,7 @@ class PBDSolver(Solver):
                 elem_start=self.n_elems,
                 vvert_start=self.n_vverts,
                 vface_start=self.n_vfaces,
+                name=name,
             )
 
         elif isinstance(material, gs.materials.PBD.Liquid):
@@ -282,6 +284,7 @@ class PBDSolver(Solver):
                 particle_size=self._particle_size,
                 idx=idx,
                 particle_start=self.n_particles,
+                name=name,
             )
 
         elif isinstance(material, gs.materials.PBD.Particle):
@@ -294,6 +297,7 @@ class PBDSolver(Solver):
                 particle_size=self._particle_size,
                 idx=idx,
                 particle_start=self.n_particles,
+                name=name,
             )
 
         else:

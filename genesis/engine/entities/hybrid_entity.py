@@ -1,3 +1,6 @@
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
 import numpy as np
 import gstaichi as ti
 import trimesh
@@ -5,6 +8,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
+import genesis.utils.urdf as uu
 from genesis.ext.urdfpy.urdf import URDF
 
 from genesis.utils.hybrid import (
@@ -54,8 +58,9 @@ class HybridEntity(Entity):
         material,
         morph,
         surface,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, None, material, surface)
+        super().__init__(idx, scene, morph, None, material, surface, name=name)
 
         material_rigid = material.material_rigid
         material_soft = material.material_soft
@@ -200,6 +205,25 @@ class HybridEntity(Entity):
 
         # TODO: test with different dt
         assert self._solver_rigid.dt == self._solver_soft.dt, "Rigid and soft solver should have the same dt for now"
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+        if isinstance(morph, gs.morphs.URDF):
+            if isinstance(morph.file, str):
+                # Try to get robot name from URDF file, fall back to filename stem
+                try:
+                    return uu.get_robot_name(morph.file)
+                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
+                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
+                    return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        return "hybrid"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- basic ops --------------------------------------

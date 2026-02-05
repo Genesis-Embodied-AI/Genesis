@@ -1,4 +1,5 @@
 from functools import wraps
+from pathlib import Path
 
 import igl
 import numpy as np
@@ -59,8 +60,10 @@ class FEMEntity(Entity):
         Starting index of this entity's surface triangles in the global surface array (default is 0).
     """
 
-    def __init__(self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0):
-        super().__init__(idx, scene, morph, solver, material, surface)
+    def __init__(
+        self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0, name: str | None = None
+    ):
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._v_start = v_start  # offset for vertex index of elements
         self._el_start = el_start  # offset for element index
@@ -1030,6 +1033,23 @@ class FEMEntity(Entity):
         for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "fem_box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "fem_sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "fem_cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return f"fem_{Path(morph.file).stem}"
+        return "fem_entity"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -1,4 +1,5 @@
 import functools
+from pathlib import Path
 
 import numpy as np
 import gstaichi as ti
@@ -69,8 +70,9 @@ class ParticleEntity(Entity):
         vvert_start=None,
         vface_start=None,
         need_skinning=True,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._particle_size = particle_size
         self._particle_start = particle_start
@@ -738,6 +740,25 @@ class ParticleEntity(Entity):
         if self._scene.n_envs == 0:
             closest_idx = closest_idx[0]
         return closest_idx
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Nowhere):
+            return "emitter"
+        return "particle"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
