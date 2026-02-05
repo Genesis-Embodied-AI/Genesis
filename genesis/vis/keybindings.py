@@ -244,6 +244,12 @@ class KeyAction(LabeledIntEnum):
     RELEASE = 2, "release"
 
 
+class MouseButton(LabeledIntEnum):
+    LEFT = 1 << 0, "left"
+    MIDDLE = 1 << 1, "middle"
+    RIGHT = 1 << 2, "right"
+
+
 def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int:
     """Generate a unique hash for a key combination.
 
@@ -329,13 +335,6 @@ class Keybindings:
 
         self._keybinds_map[key_hash] = keybind
         self._name_to_hash[keybind.name] = key_hash
-
-    def remove(self, name: str) -> None:
-        if name not in self._name_to_hash:
-            raise ValueError(f"No keybind found with name '{name}'.")
-        key_hash = self._name_to_hash[name]
-        del self._keybinds_map[key_hash]
-        del self._name_to_hash[name]
 
     def remove(self, name: str) -> None:
         if name not in self._name_to_hash:
