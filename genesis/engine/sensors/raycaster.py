@@ -23,7 +23,7 @@ from genesis.utils.geom import (
     transform_by_trans_quat,
 )
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
-from genesis.utils.raycast import bvh_ray_cast, kernel_update_verts_and_aabbs
+from genesis.utils.raycast_ti import bvh_ray_cast, kernel_update_verts_and_aabbs
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (

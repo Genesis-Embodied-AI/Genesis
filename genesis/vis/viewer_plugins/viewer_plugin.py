@@ -3,11 +3,13 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from typing_extensions import override
 
+from genesis.utils.raycast import Ray
+
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
     from genesis.ext.pyrender.viewer import Viewer
-    from genesis.utils.raycast import Ray, Raycaster
+    from genesis.utils.raycast_ti import Raycaster
 
 
 EVENT_HANDLE_STATE = Literal[True] | None
@@ -83,7 +85,7 @@ class RaycasterViewerPlugin(ViewerPlugin):
         super().build(viewer, camera, scene)
 
         # NOTE: delayed import to avoid array_class import before gs is fully initialized
-        from genesis.utils.raycast import Raycaster
+        from genesis.utils.raycast_ti import Raycaster
 
         self._raycaster = Raycaster(self.scene)
         self._camera_tan_half_fov = np.tan(0.5 * self.camera.camera.yfov)
@@ -94,7 +96,7 @@ class RaycasterViewerPlugin(ViewerPlugin):
 
         self._raycaster.update()
 
-    def _screen_position_to_ray(self, x: float, y: float) -> tuple[np.ndarray, np.ndarray]:
+    def _screen_position_to_ray(self, x: float, y: float) -> Ray:
         """
         Converts 2D screen position to a ray.
 
@@ -129,4 +131,4 @@ class RaycasterViewerPlugin(ViewerPlugin):
         direction = forward + right * x + up * y
         direction /= np.linalg.norm(direction)
 
-        return (position, direction)
+        return Ray(position, direction)
