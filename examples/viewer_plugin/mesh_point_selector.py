@@ -1,4 +1,5 @@
 import csv
+import os
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -279,6 +280,9 @@ if __name__ == "__main__":
     try:
         while is_running:
             scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
