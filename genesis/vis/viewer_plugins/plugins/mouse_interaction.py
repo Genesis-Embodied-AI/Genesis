@@ -44,8 +44,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self._surface_normal: np.ndarray | None = None
         self._plane_rotation_angle: float = 0.0
 
-        self.lock = Lock()
-
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
         self._prev_mouse_screen_pos = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
@@ -63,10 +61,9 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @override
     def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> EVENT_HANDLE_STATE:
         if self._held_link and self._surface_normal is not None:
-            with self.lock:
-                # Rotate the drag plane around the surface normal
-                self._plane_rotation_angle += scroll_y * 0.1  # 0.1 radians per scroll unit
-                self._update_drag_plane()
+            # Rotate the drag plane around the surface normal
+            self._plane_rotation_angle += scroll_y * 0.1  # 0.1 radians per scroll unit
+            self._update_drag_plane()
             return EVENT_HANDLED
 
     @override
@@ -74,70 +71,68 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         if button == MouseButton.LEFT:  # left mouse button
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self._raycaster.cast(ray[0], ray[1])
-            with self.lock:
-                if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
-                    link = ray_hit.geom.link
 
-                    # Validate mass is not too small to prevent numerical instability
-                    if link.get_mass() < 1e-3:
-                        gs.logger.warning(
-                            f"Link '{link.name}' has very small mass ({link.get_mass():.2e}). "
-                            "Skipping interaction to avoid numerical instability."
-                        )
-                        return
+            if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
+                link = ray_hit.geom.link
 
-                    self._held_link = link
+                # Validate mass is not too small to prevent numerical instability
+                if link.get_mass() < 1e-3:
+                    gs.logger.warning(
+                        f"Link '{link.name}' has very small mass ({link.get_mass():.2e}). "
+                        "Skipping interaction to avoid numerical instability."
+                    )
+                    return
 
-                    # Store the surface normal for rotation
-                    self._surface_normal = ray_hit.normal
-                    self._plane_rotation_angle = 0.0
-                    self._prev_mouse_scene_pos = ray_hit.position
+                self._held_link = link
 
-                    # Create drag plane perpendicular to surface normal
-                    self._update_drag_plane()
+                # Store the surface normal for rotation
+                self._surface_normal = ray_hit.normal
+                self._plane_rotation_angle = 0.0
+                self._prev_mouse_scene_pos = ray_hit.position
 
-                    # Store held point in link-local frame
-                    link_pos = tensor_to_array(link.get_pos())
-                    link_quat = tensor_to_array(link.get_quat())
-                    self._held_point_local = gu.inv_transform_by_trans_quat(ray_hit.position, link_pos, link_quat)
+                # Create drag plane perpendicular to surface normal
+                self._update_drag_plane()
+
+                # Store held point in link-local frame
+                link_pos = tensor_to_array(link.get_pos())
+                link_quat = tensor_to_array(link.get_quat())
+                self._held_point_local = gu.inv_transform_by_trans_quat(ray_hit.position, link_pos, link_quat)
 
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if button == MouseButton.LEFT:
-            with self.lock:
-                self._held_link = None
-                self._held_point_local = None
-                self._mouse_drag_plane = None
-                self._prev_mouse_scene_pos = None
-                self._surface_normal = None
-                self._plane_rotation_angle = 0.0
+            self._held_link = None
+            self._held_point_local = None
+            self._mouse_drag_plane = None
+            self._prev_mouse_scene_pos = None
+            self._surface_normal = None
+            self._plane_rotation_angle = 0.0
 
     @override
     def update_on_sim_step(self) -> None:
         super().update_on_sim_step()
 
-        with self.lock:
-            if self._held_link:
-                mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
-                assert self._mouse_drag_plane is not None
-                ray_hit: RayHit = plane_raycast(*self._mouse_drag_plane, mouse_ray)
+        if self._held_link:
+            mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
+            assert self._mouse_drag_plane is not None
+            ray_hit: RayHit = plane_raycast(*self._mouse_drag_plane, mouse_ray)
 
-                # If ray doesn't hit the plane, skip this update
-                if ray_hit is None:
-                    return
+            # If ray doesn't hit the plane, skip this update
+            if ray_hit is None:
+                return
 
-                new_mouse_3d_pos = ray_hit.position
-                prev_pos = self._prev_mouse_scene_pos
-                delta_3d_pos = new_mouse_3d_pos - prev_pos
-                self._prev_mouse_scene_pos = new_mouse_3d_pos
+            new_mouse_3d_pos = ray_hit.position
+            prev_pos = self._prev_mouse_scene_pos
+            delta_3d_pos = new_mouse_3d_pos - prev_pos
+            self._prev_mouse_scene_pos = new_mouse_3d_pos
 
-                if self.use_force:
-                    self._apply_spring_force(new_mouse_3d_pos, self.scene.sim.dt)
-                else:
-                    # apply displacement
-                    pos = tensor_to_array(self._held_link.entity.get_pos())
-                    pos = pos + delta_3d_pos
-                    self._held_link.entity.set_pos(pos)
+            if self.use_force:
+                self._apply_spring_force(new_mouse_3d_pos, self.scene.sim.dt)
+            else:
+                # apply displacement
+                pos = tensor_to_array(self._held_link.entity.get_pos())
+                pos = pos + delta_3d_pos
+                self._held_link.entity.set_pos(pos)
 
     @override
     def on_draw(self) -> None:
@@ -146,45 +141,44 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
             closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
 
-            with self.lock:
-                if self._held_link:
-                    assert self._mouse_drag_plane is not None
-                    assert self._held_point_local is not None
+            if self._held_link:
+                assert self._mouse_drag_plane is not None
+                assert self._held_point_local is not None
 
-                    # Draw held point
-                    link_pos = tensor_to_array(self._held_link.get_pos())
-                    link_quat = tensor_to_array(self._held_link.get_quat())
-                    held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
+                # Draw held point
+                link_pos = tensor_to_array(self._held_link.get_pos())
+                link_quat = tensor_to_array(self._held_link.get_quat())
+                held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
 
-                    plane_hit: RayHit | None = plane_raycast(*self._mouse_drag_plane, mouse_ray)
-                    if plane_hit is not None:
-                        self.scene.draw_debug_sphere(
-                            plane_hit.position,
-                            radius=0.01,
-                            color=self.color,
-                        )
-                        self.scene.draw_debug_line(
-                            held_point_world,
-                            plane_hit.position,
-                            radius=0.005,
-                            color=self.color,
-                        )
-                        # draw the mouse drag plane as a flat box around the mouse position
-                        plane_normal, plane_dist = self._mouse_drag_plane
-                        self._draw_plane(
-                            plane_normal,
-                            plane_hit.position,
-                            size=1.0,
-                            color=self.plane_color,
-                        )
+                plane_hit: RayHit | None = plane_raycast(*self._mouse_drag_plane, mouse_ray)
+                if plane_hit is not None:
+                    self.scene.draw_debug_sphere(
+                        plane_hit.position,
+                        radius=0.01,
+                        color=self.color,
+                    )
+                    self.scene.draw_debug_line(
+                        held_point_world,
+                        plane_hit.position,
+                        radius=0.005,
+                        color=self.color,
+                    )
+                    # draw the mouse drag plane as a flat box around the mouse position
+                    plane_normal, plane_dist = self._mouse_drag_plane
+                    self._draw_plane(
+                        plane_normal,
+                        plane_hit.position,
+                        size=1.0,
+                        color=self.plane_color,
+                    )
 
-                else:
-                    if closest_hit is not None:
-                        self.scene.draw_debug_arrow(
-                            closest_hit.position,
-                            closest_hit.normal * 0.25,
-                            color=self.color,
-                        )
+            else:
+                if closest_hit is not None:
+                    self.scene.draw_debug_arrow(
+                        closest_hit.position,
+                        closest_hit.normal * 0.25,
+                        color=self.color,
+                    )
 
     def _draw_plane(
         self,
