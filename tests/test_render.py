@@ -18,7 +18,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -1543,3 +1543,91 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
         f"interactive viewer brightness ({viewer_brightness:.2f}), "
         f"but ratio is {brightness_ratio:.2f}"
     )
+
+
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
+def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, png_snapshot):
+    CAM_RES = (256, 256)
+
+    # Increase tolerance for deformable rendering
+    png_snapshot.extension._std_err_threshold = 15.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.04,
+            substeps=6,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
+            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    # Add ground plane
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+
+    # Add PBD cloth with checker texture
+    asset_path = get_hf_dataset(pattern="uv_plane.obj")
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/uv_plane.obj",
+            scale=0.4,
+            pos=(-0.2, 0.0, 0.4),
+        ),
+        material=gs.materials.PBD.Cloth(),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            ),
+            vis_mode="visual",
+        ),
+    )
+
+    # Add FEM elastic object with checker texture
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.1,
+            pos=(0.2, 0.0, 0.2),
+        ),
+        material=gs.materials.FEM.Elastic(E=1e5, nu=0.4),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            ),
+            vis_mode="visual",
+        ),
+    )
+
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, 1.5, 1),
+        lookat=(0.0, 0.0, 0.3),
+        fov=45,
+        GUI=show_viewer,
+        spp=64 if renderer_type == RENDERER_TYPE.RAYTRACER else 1,
+    )
+
+    scene.build()
+
+    # Step simulation to deform the objects
+    for _ in range(4):
+        scene.step()
+
+    # Render and verify
+    rgb_arr, *_ = camera.render(rgb=True)
+    rgb_arr = tensor_to_array(rgb_arr)
+
+    # Snapshot test for visual regression
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot

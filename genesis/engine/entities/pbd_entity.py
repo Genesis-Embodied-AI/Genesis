@@ -13,6 +13,40 @@ class PBDBaseEntity(ParticleEntity):
     Base class for PBD entity.
     """
 
+    def _add_to_solver(self):
+        super()._add_to_solver()
+
+        # Get UVs from vmesh (may be None if no texture)
+        uvs = self._vmesh.uvs if self._vmesh is not None else None
+        if uvs is None or len(uvs) != self.n_vverts:
+            # No UVs available, pass empty array (kernel will skip copy)
+            uvs = np.zeros((0, 2), dtype=gs.np_float)
+
+        self._kernel_add_uvs_and_faces_to_solver(uvs=uvs, faces=self._vfaces)
+
+    @ti.kernel
+    def _kernel_add_uvs_and_faces_to_solver(
+        self,
+        uvs: ti.types.ndarray(element_dim=1),
+        faces: ti.types.ndarray(element_dim=1),
+    ):
+        # Copy UVs to solver's global UV buffer (skip if no UVs provided)
+        n_uvs = uvs.shape[0]
+        for i_vv_ in range(n_uvs):
+            i_vv = i_vv_ + self._vvert_start
+            self.solver.vverts_uvs[i_vv] = uvs[i_vv_]
+
+        # Copy faces to solver's global face buffer (with global vertex indices)
+        for i_vf_ in range(self.n_vfaces):
+            i_vf = i_vf_ + self._vface_start
+            self.solver.vfaces_indices[i_vf] = ti.Vector(
+                [
+                    faces[i_vf_][0] + self._vvert_start,
+                    faces[i_vf_][1] + self._vvert_start,
+                    faces[i_vf_][2] + self._vvert_start,
+                ]
+            )
+
     @gs.assert_built
     def set_particles_pos(self, poss, particles_idx_local=None, envs_idx=None):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
