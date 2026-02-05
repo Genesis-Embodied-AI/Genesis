@@ -20,15 +20,18 @@ NO_HIT_DISTANCE = -1.0
 def get_triangle_vertices(
     i_f: ti.i32,
     i_b: ti.i32,
-    faces_info: ti.template(),
-    verts_info: ti.template(),
-    fixed_verts_state: ti.template(),
-    free_verts_state: ti.template(),
+    faces_info: array_class.FacesInfo,
+    verts_info: array_class.VertsInfo,
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
 ):
     """
     Get the three vertices of a triangle in world space.
 
-    Returns: 3x3 matrix where each column is a vertex position.
+    Returns
+    -------
+    tri_vertices : ti.Matrix
+        3x3 matrix where each column is a vertex position.
     """
     tri_vertices = ti.Matrix.zero(gs.ti_float, 3, 3)
     for i in ti.static(range(3)):
@@ -43,24 +46,28 @@ def get_triangle_vertices(
 
 @ti.func
 def bvh_ray_cast(
-    ray_start: ti.template(),
-    ray_dir: ti.template(),
+    ray_start: ti.types.vector(3, ti.f32),
+    ray_dir: ti.types.vector(3, ti.f32),
     max_range: ti.f32,
     i_b: ti.i32,
     bvh_nodes: ti.template(),
     bvh_morton_codes: ti.template(),
-    faces_info: ti.template(),
-    verts_info: ti.template(),
-    fixed_verts_state: ti.template(),
-    free_verts_state: ti.template(),
+    faces_info: array_class.FacesInfo,
+    verts_info: array_class.VertsInfo,
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
 
-    Returns: (hit_face, hit_distance, hit_normal)
-        - hit_face: index of the hit triangle (-1 if no hit)
-        - hit_distance: distance to hit point (unchanged max_range if no hit)
-        - hit_normal: normal vector at hit point (zero vector if no hit)
+    Returns
+    -------
+    hit_face : ti.i32
+        index of the hit triangle (-1 if no hit)
+    hit_distance : ti.f32
+        distance to hit point (unchanged max_range if no hit)
+    hit_normal : ti.math.vec3
+        normal vector at hit point (zero vector if no hit)
     """
     n_triangles = faces_info.verts_idx.shape[0]
 
@@ -115,11 +122,20 @@ def bvh_ray_cast(
 
 
 @ti.func
-def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
+def ray_triangle_intersection(
+    ray_start: ti.types.vector(3, ti.f32),
+    ray_dir: ti.types.vector(3, ti.f32),
+    v0: ti.types.vector(3, ti.f32),
+    v1: ti.types.vector(3, ti.f32),
+    v2: ti.types.vector(3, ti.f32),
+):
     """
     Moller-Trumbore ray-triangle intersection.
 
-    Returns: vec4(t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
+    Returns
+    -------
+    result : ti.math.vec4
+        (t, u, v, hit) where hit=1.0 if intersection found, 0.0 otherwise
     """
     result = ti.Vector.zero(gs.ti_float, 4)
 
@@ -174,7 +190,12 @@ def ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2):
 
 
 @ti.func
-def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
+def ray_aabb_intersection(
+    ray_start: ti.types.vector(3, ti.f32),
+    ray_dir: ti.types.vector(3, ti.f32),
+    aabb_min: ti.types.vector(3, ti.f32),
+    aabb_max: ti.types.vector(3, ti.f32),
+):
     """
     Fast ray-AABB intersection test.
     Returns the t value of intersection, or -1.0 if no intersection.
@@ -204,11 +225,11 @@ def ray_aabb_intersection(ray_start, ray_dir, aabb_min, aabb_max):
 
 @ti.func
 def update_aabbs(
-    free_verts_state,
-    fixed_verts_state,
-    verts_info,
-    faces_info,
-    aabb_state,
+    free_verts_state: array_class.VertsState,
+    fixed_verts_state: array_class.VertsState,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    aabb_state: array_class.V_ANNOTATION,
 ):
     for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
@@ -236,7 +257,7 @@ def kernel_update_verts_and_aabbs(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     static_rigid_sim_config: ti.template(),
-    aabb_state: ti.template(),
+    aabb_state: array_class.V_ANNOTATION,
 ):
     func_update_all_verts(
         geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
@@ -252,10 +273,10 @@ def kernel_update_verts_and_aabbs(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def kernel_cast_ray(
-    fixed_verts_state: ti.template(),
-    free_verts_state: ti.template(),
-    verts_info: ti.template(),
-    faces_info: ti.template(),
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
     bvh_nodes: ti.template(),
     bvh_morton_codes: ti.template(),
     ray_start: ti.types.ndarray(ndim=1),  # (3,)
@@ -266,14 +287,8 @@ def kernel_cast_ray(
 ):
     """
     Taichi kernel for casting a single ray.
-    This loops over all environments in envs_idx and returns the closest hit.
 
-    Returns:
-        result.distance: distance to hit point (NO_HIT_DISTANCE if no hit)
-        result.geom_idx: index of hit geometry (-1 if no hit)
-        result.hit_point: 3D position of hit point
-        result.normal: 3D normal vector at hit point
-        result.env_idx: index of hit environment (-1 if no hit)
+    This loops over all environments in envs_idx and stores the closest hit in result.
     """
     # Setup ray
     ray_start_world = ti.math.vec3(ray_start[0], ray_start[1], ray_start[2])
