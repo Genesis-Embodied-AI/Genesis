@@ -26,7 +26,10 @@ class Entity(RBC):
         surface,
         name: str | None = None,
     ):
-        self._uid = gs.UID()
+        uid = gs.UID()
+        while any(entity.uid.match(uid, short_only=True) for entity in scene.entities):
+            uid = gs.UID()
+        self._uid = uid
         self._idx = idx
         self._scene: "Scene" = scene
         self._solver = solver
@@ -43,11 +46,7 @@ class Entity(RBC):
             self._name = name
         else:
             morph_name = self._get_morph_identifier()
-            while True:
-                self._name = f"{morph_name}_{self._uid.short()}"
-                if self._name not in existing_names:
-                    break
-                self._uid = gs.UID()
+            self._name = f"{morph_name}_{uid.short()}"
 
         gs.logger.info(
             f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
