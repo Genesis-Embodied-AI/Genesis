@@ -1,14 +1,15 @@
 import sys
 import time
 
+import numpy as np
 import OpenGL.error
 import pytest
 
 import genesis as gs
-from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod
+from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-
+from .utils import assert_allclose, rgb_array_to_png_bytes
 
 CAM_RES = (480, 320)
 
@@ -153,10 +154,7 @@ def test_default_viewer_plugin():
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_mouse_interaction_plugin(png_snapshot):
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=1e-2,
-            substeps=1,
-        ),
+        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.0, 1.0),
             camera_lookat=(0.0, 0.0, 0.0),
@@ -169,33 +167,59 @@ def test_mouse_interaction_plugin(png_snapshot):
     )
 
     scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(
-        morph=gs.morphs.Box(
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
             pos=(0.4, 0.0, 0.2),
-            size=(0.2, 0.2, 0.2),
             euler=(30, 40, 0),
+            radius=0.1,
         )
     )
-    scene.viewer.add_plugin(gs.vis.viewer_plugins.MouseInteractionPlugin())
+    scene.viewer.add_plugin(
+        gs.vis.viewer_plugins.MouseInteractionPlugin(
+            use_force=True,
+        )
+    )
     scene.build()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
 
+    class EventCounterHandler:
+        def __init__(self):
+            self.count = 0
+
+        def on_mouse_press(self, x: int, y: int, button: int, modifiers: int):
+            self.count += 1
+
+        def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int):
+            self.count += 1
+
+    event_counter = EventCounterHandler()
+    pyrender_viewer.push_handlers(event_counter)
+
     scene.step()
 
-    viewport_size = pyrender_viewer._viewport_size
-    x, y = viewport_size[0] // 2, viewport_size[1] // 2
-    dx, dy = 4, 8
-    pyrender_viewer.dispatch_event("on_mouse_press", x, y, 1, 0)
+    assert_allclose(sphere.get_vel(), 0, tol=gs.EPS)
 
-    for _ in range(30):
+    viewport_size = pyrender_viewer._viewport_size
+    x, y = viewport_size[0] // 2 + 8, viewport_size[1] // 2 + 8
+    dx, dy = 8, 8
+    pyrender_viewer.dispatch_event("on_mouse_press", x, y, MouseButton.LEFT, 0)
+    wait_for_viewer_events(pyrender_viewer, lambda: event_counter.count == 1)
+
+    rgb_arrs = []
+    for i in range(20):
         x += dx
         y += dy
-        pyrender_viewer.dispatch_event("on_mouse_drag", x, y, dx, dy, 1, 0)
+        pyrender_viewer.dispatch_event("on_mouse_drag", x, y, dx, dy, MouseButton.LEFT, 0)
+        wait_for_viewer_events(
+            pyrender_viewer, lambda: event_counter.count == i + 2
+        )  # +1 for mouse press, +1 each drag
         scene.step()
+        if i % 10 == 0:
+            rgb_arr, *_ = pyrender_viewer.render_offscreen(
+                pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+            )
+            rgb_arrs.append(rgb_arr)
 
-    rgb_arr, *_ = pyrender_viewer.render_offscreen(
-        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
-    )
-    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+    assert rgb_array_to_png_bytes(np.concatenate(rgb_arrs)) == png_snapshot
