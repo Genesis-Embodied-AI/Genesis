@@ -1,9 +1,15 @@
+import argparse
 import math
+import os
 
 import genesis as gs
 import genesis.vis.keybindings as kb
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Mouse interaction viewer plugin example.")
+    parser.add_argument("--use_force", action="store_true", help="Apply spring forces instead of setting position")
+    args = parser.parse_args()
+
     gs.init(backend=gs.gpu)
 
     scene = gs.Scene(
@@ -38,9 +44,7 @@ if __name__ == "__main__":
 
     scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
-            use_force=True,
-            spring_const=1.0,
-            spring_damping=1.0,
+            use_force=args.use_force,
             color=(0.1, 0.6, 0.8, 0.6),
         )
     )
@@ -60,6 +64,9 @@ if __name__ == "__main__":
     try:
         while is_running:
             scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:
