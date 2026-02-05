@@ -17,22 +17,21 @@ from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
-import numpy as np
 import mujoco
+import numpy as np
 import torch
-from httpx import HTTPError as HTTPXError
 from httpcore import TimeoutException as HTTPTimeoutException
+from httpx import HTTPError as HTTPXError
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
-from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
-
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
