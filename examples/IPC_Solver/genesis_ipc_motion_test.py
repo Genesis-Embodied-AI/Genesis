@@ -43,7 +43,10 @@ def main():
         material=gs.materials.Rigid(rho=1000, friction=0.3),
         surface=gs.surfaces.Plastic(color=(0.8, 0.2, 0.2, 0.8)),
     )
-
+    scene.sim.coupler.set_entity_coupling_type(
+        entity=rigid_cube,
+        coupling_type="two_way_soft_constraint",
+    )
     scene.build(n_envs=1)
 
     # Show IPC GUI for debugging
@@ -296,10 +299,6 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("momentum_conservation_test.png", dpi=150)
-    print(f"\n{'=' * 70}")
-    print("Plot saved to: momentum_conservation_test.png")
-    print(f"{'=' * 70}")
     plt.show()
 
 
