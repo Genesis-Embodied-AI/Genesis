@@ -2,14 +2,14 @@ from threading import Lock
 from typing import TYPE_CHECKING
 
 import numpy as np
-import torch
-import trimesh
 from typing_extensions import override
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.mesh import create_plane
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
+from genesis.vis.keybindings import MouseButton
 
 from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterViewerPlugin
 
@@ -32,11 +32,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         color: tuple[float, float, float, float] = (0.1, 0.6, 0.8, 0.6),
     ) -> None:
         super().__init__()
-        self.spring_const = spring_const
-        self.spring_damping = spring_damping
-        self.color = color
-        self.plane_color = (color[0], color[1], color[2], color[3] * 0.2)
-        self.use_force = use_force
+        self.spring_const = float(spring_const)
+        self.spring_damping = float(spring_damping)
+        self.color = tuple(color)
+        self.plane_color = (color[0], color[1], color[2], color[3] * 0.4)
+        self.use_force = bool(use_force)
 
         self.held_link: "RigidLink | None" = None
         self.held_point_in_local: np.ndarray | None = None
@@ -78,7 +78,17 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             ray_hit = self._raycaster.cast(ray[0], ray[1])
             with self.lock:
                 if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
-                    self.held_link = ray_hit.geom.link
+                    link = ray_hit.geom.link
+
+                    # Validate mass is not too small to prevent numerical instability
+                    if link.get_mass() < 1e-3:
+                        gs.logger.warning(
+                            f"Link '{link.name}' has very small mass ({link.get_mass():.2e}). "
+                            "Skipping interaction to avoid numerical instability."
+                        )
+                        return
+
+                    self.held_link = link
 
                     # Store the surface normal for rotation
                     self.surface_normal = ray_hit.normal
@@ -95,7 +105,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
-        if button == 1:  # left mouse button
+        if button == MouseButton.LEFT:
             with self.lock:
                 self.held_link = None
                 self.held_point_in_local = None
@@ -129,7 +139,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                     # apply displacement
                     pos = tensor_to_array(self.held_link.entity.get_pos())
                     pos = pos + delta_3d_pos
-                    self.held_link.entity.set_pos(torch.from_numpy(pos))
+                    self.held_link.entity.set_pos(pos)
 
     @override
     def on_draw(self) -> None:
@@ -165,7 +175,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                         self._draw_plane(
                             plane_normal,
                             plane_hit.position,
-                            size=0.5,
+                            size=1.0,
                             color=self.plane_color,
                         )
 
@@ -181,30 +191,13 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self,
         normal: np.ndarray,
         center: np.ndarray | tuple[float, float, float],
-        size: float = 0.5,
+        size: float = 1.0,
         color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 0.2),
     ) -> None:
-        center_arr = np.array(center, dtype=gs.np_float)
-        normal_arr = np.array(normal, dtype=gs.np_float)
-
-        rotation = gu.z_up_to_R(normal_arr)
-        T = gu.trans_R_to_T(center_arr, rotation)
-
-        vertices = np.array(
-            [
-                [-size, -size, 0],
-                [size, -size, 0],
-                [size, size, 0],
-                [-size, size, 0],
-            ],
-            dtype=gs.np_float,
-        )
-        # Create double-sided faces so plane is visible from both sides
-        faces = np.array([[0, 1, 2], [0, 2, 3], [2, 1, 0], [3, 2, 0]], dtype=np.int32)
-        plane_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        plane_mesh.visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(np.array([color]), [len(vertices), 1]))
-
-        self.scene.draw_debug_mesh(plane_mesh, T=T)
+        vmesh, _ = create_plane(plane_size=(size, size), color_or_texture=color, double_sided=True)
+        normal_arr = np.ascontiguousarray(normal, dtype=gs.np_float)
+        T = gu.trans_R_to_T(center, gu.z_up_to_R(normal_arr))
+        self.scene.draw_debug_mesh(vmesh, T=T)
 
     def _update_drag_plane(self) -> None:
         """Update the drag plane based on surface normal and rotation angle."""
@@ -212,32 +205,20 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             return
 
         # Get camera direction
-        cam_forward = -self.camera.matrix[:3, 2]
+        cam_forward = np.ascontiguousarray(-self.camera.matrix[:3, 2], dtype=gs.np_float)
+        surface_normal_contig = np.ascontiguousarray(self.surface_normal, dtype=gs.np_float)
 
-        # Project camera direction onto the surface tangent plane
-        surface_normal = self.surface_normal / (np.linalg.norm(self.surface_normal) + 1e-8)
-        cam_proj = cam_forward - np.dot(cam_forward, surface_normal) * surface_normal
-        cam_proj_norm = np.linalg.norm(cam_proj)
+        # Create orthonormal basis with surface_normal as z-axis
+        R = gu.z_up_to_R(surface_normal_contig, up=cam_forward)
 
-        # If camera is looking along the normal, use an arbitrary tangent vector
-        if cam_proj_norm < 1e-3:
-            if abs(surface_normal[0]) < 0.9:
-                cam_proj = np.array([1.0, 0.0, 0.0], dtype=gs.np_float)
-            else:
-                cam_proj = np.array([0.0, 1.0, 0.0], dtype=gs.np_float)
-            cam_proj = cam_proj - np.dot(cam_proj, surface_normal) * surface_normal
+        plane_normal = R[:, 0] * np.dot(R[:, 0], cam_forward) + R[:, 1] * np.dot(R[:, 1], cam_forward)
+        plane_normal = plane_normal / (np.linalg.norm(plane_normal) + gs.EPS)
 
-        cam_proj = cam_proj / (np.linalg.norm(cam_proj) + 1e-8)
-
-        # Apply rotation around the surface normal using geom utils
-        if abs(self.plane_rotation_angle) > 1e-6:
-            rotation_matrix = gu.axis_angle_to_R(surface_normal, self.plane_rotation_angle)
-            plane_normal = gu.transform_by_R(cam_proj, rotation_matrix)
-        else:
-            plane_normal = cam_proj
+        if abs(self.plane_rotation_angle) > gs.EPS:
+            rotation_matrix = gu.axis_angle_to_R(surface_normal_contig, self.plane_rotation_angle)
+            plane_normal = gu.transform_by_R(plane_normal, rotation_matrix)
 
         # Set the drag plane (perpendicular to surface normal)
-        plane_normal = plane_normal / (np.linalg.norm(plane_normal) + 1e-8)
         self.mouse_drag_plane = (plane_normal, -np.dot(plane_normal, self.prev_mouse_scene_pos))
 
     def _apply_spring_force(self, control_point: np.ndarray, delta_time: float) -> None:
@@ -261,8 +242,11 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         arm_in_world = gu.transform_by_quat(arm_in_principal, world_principal_quat)
 
         pos_err_v = control_point - held_point_in_world
-        inv_mass: float = float(1.0 / link.get_mass() if link.get_mass() > 0.0 else 0.0)
-        inv_spherical_inertia: float = float(1.0 / link.inertial_i[0, 0] if link.inertial_i[0, 0] > 0.0 else 0.0)
+        inv_mass: float = float(1.0 / link.get_mass())
+
+        R_world = gu.quat_to_R(world_principal_quat)
+        inertia_world = R_world @ link.inertial_i @ R_world.T
+        inv_inertia_world = np.linalg.inv(inertia_world)
 
         inv_dt: float = 1.0 / delta_time
         tau: float = self.spring_const
@@ -283,11 +267,12 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             error = tau * pos_err * inv_dt + damp * vel_err
 
             arm_x_dir = np.cross(arm_in_world, direction)
-            virtual_mass = 1.0 / (inv_mass + np.dot(arm_x_dir, arm_x_dir) * inv_spherical_inertia + 1e-24)
+            rotational_mass_contribution = np.dot(arm_x_dir, inv_inertia_world @ arm_x_dir)
+            virtual_mass = 1.0 / (inv_mass + rotational_mass_contribution + gs.EPS)
             impulse = error * virtual_mass
 
             lin_vel = lin_vel + direction * impulse * inv_mass
-            ang_vel = ang_vel + arm_x_dir * impulse * inv_spherical_inertia
+            ang_vel = ang_vel + inv_inertia_world @ (arm_x_dir * impulse)
 
             total_impulse[i % 3] += impulse
             total_torque_impulse += arm_x_dir * impulse
