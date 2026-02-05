@@ -407,8 +407,8 @@ class FEMEntity(Entity):
                 # the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions can be recomputed,
                 # thus texture mapping and anisotropic surfaces will not work properly.
                 self._uvs = None
-                if mesh.visual.uv is not None:
-                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=True)
+                if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
+                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=False)
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:

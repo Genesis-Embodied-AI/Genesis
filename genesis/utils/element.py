@@ -60,17 +60,15 @@ def mesh_to_elements(file, pos=(0, 0, 0), scale=1.0, tet_cfg=dict()):
 
     verts += np.array(pos)
 
-    # Extract UVs from mesh before tetrahedralization
-    # (tetgen preserves original vertices at start of output array)
-    n_original = len(mesh.vertices)
-    try:
-        original_uvs = mesh.visual.uv.copy()
-        original_uvs = original_uvs.astype(gs.np_float)
-    except AttributeError:
-        original_uvs = None
+    # Build full UV array
+    uvs = None
+    if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
+        # Extract UVs from mesh before tetrahedralization.
+        # Note that 'tetgen' preserves original vertices at start of output array.
+        uvs_orig = mesh.visual.uv.astype(gs.np_float, copy=False)
 
-    # Build full UV array: original vertices get their UVs, interior vertices get zeros
-    uvs = np.pad(original_uvs, ((0, len(verts) - n_original), (0, 0)))
+        # Original vertices get their UVs, interior vertices get zeros
+        uvs = np.pad(uvs_orig, ((0, len(verts) - len(mesh.vertices)), (0, 0)))
 
     return verts, elems, uvs
 
