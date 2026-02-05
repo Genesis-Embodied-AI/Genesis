@@ -310,6 +310,9 @@ def run_sim(scene, entities, add_keybinds, mode="interactive", trajectory_file=N
 
             scene.step()
             step_count += 1
+
+            if "PYTEST_VERSION" in os.environ:
+                break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
 

@@ -15,6 +15,7 @@ esc	- Quit
 Plus all default viewer controls (press 'i' to see them)
 """
 
+import os
 import random
 
 import numpy as np
@@ -164,6 +165,9 @@ if __name__ == "__main__":
             robot.control_dofs_position(q[:-2], motors_dof)
 
             scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted, exiting.")
     finally:

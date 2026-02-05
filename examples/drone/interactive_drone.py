@@ -73,19 +73,19 @@ def main():
     scene.build()
 
     # Register keybindings
-    def direction_keybinds(key: Key, name: str, direction: tuple[float, float, float, float]):
+    def direction_keybinds(name: str, key: Key, direction: tuple[float, float, float, float]):
         """Helper to create press/release keybinds for a direction"""
         dir_arr = np.array(direction)
         return [
             Keybind(
-                key_name=f"{name}_press",
+                name=f"{name}_press",
                 key=key,
                 key_action=KeyAction.PRESS,
                 callback=controller.add_direction,
                 args=(dir_arr,),
             ),
             Keybind(
-                key_name=f"{name}_release",
+                name=f"{name}_release",
                 key=key,
                 key_action=KeyAction.RELEASE,
                 callback=controller.add_direction,
@@ -93,13 +93,20 @@ def main():
             ),
         ]
 
+    is_running = True
+
+    def stop():
+        nonlocal is_running
+        is_running = False
+
     scene.viewer.register_keybinds(
-        *direction_keybinds(Key.UP, "move_forward", (1.0, 1.0, -1.0, -1.0)),
-        *direction_keybinds(Key.DOWN, "move_backward", (-1.0, -1.0, 1.0, 1.0)),
-        *direction_keybinds(Key.LEFT, "move_left", (-1.0, 1.0, -1.0, 1.0)),
-        *direction_keybinds(Key.RIGHT, "move_right", (1.0, -1.0, 1.0, -1.0)),
+        *direction_keybinds("move_forward", Key.UP, (1.0, 1.0, -1.0, -1.0)),
+        *direction_keybinds("move_backward", Key.DOWN, (-1.0, -1.0, 1.0, 1.0)),
+        *direction_keybinds("move_left", Key.LEFT, (-1.0, 1.0, -1.0, 1.0)),
+        *direction_keybinds("move_right", Key.RIGHT, (1.0, -1.0, 1.0, -1.0)),
         Keybind("accelerate", Key.SPACE, KeyAction.HOLD, callback=controller.accelerate),
         Keybind("decelerate", Key.LSHIFT, KeyAction.HOLD, callback=controller.decelerate),
+        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
     )
 
     # Print control instructions
@@ -110,15 +117,12 @@ def main():
     print("→ - Move Right (East)")
     print("space - Increase RPM")
     print("shift - Decrease RPM")
-    print("\nPlus all default viewer controls (press 'i' to see them)\n")
-    print("Initial hover RPM:", controller.thrust)
 
     # Run simulation
     try:
-        while True:
+        while is_running:
             # Update and apply RPMs based on current direction
             rpms = controller.update_rpms()
-            print("Current RPMs:", rpms)
             drone.set_propellels_rpm(rpms)
 
             # Step simulation
