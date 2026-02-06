@@ -1,6 +1,7 @@
 import importlib
 import os
 import threading
+from traceback import TracebackException
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -114,9 +115,10 @@ class Viewer(RBC):
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
                 break
-            except (OpenGL.error.Error, RuntimeError):
+            except (OpenGL.error.Error, RuntimeError) as e:
                 # Invalid OpenGL context. Trying another platform if any...
-                gs.logger.debug("Invalid OpenGL context.")
+                traceback = TracebackException.from_exception(e)
+                gs.logger.debug("".join(traceback.format()))
 
                 # Clear broken OpenGL context if it went this far
                 if self._pyrender_viewer is not None:
@@ -126,6 +128,7 @@ class Viewer(RBC):
                 if i == len(all_opengl_platforms) - 1:
                     raise
             finally:
+                # Restore original platform systematically
                 del os.environ["PYOPENGL_PLATFORM"]
                 if opengl_platform_orig is not None:
                     os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig

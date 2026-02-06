@@ -19,15 +19,13 @@ from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
 
-has_display = True
+# Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
+has_tkinter = False
 try:
-    from tkinter import Tk
+    import tkinter
 
-    root = Tk()
-    root.withdraw()
-    root.destroy()
-except Exception:  # ImportError, TclError
-    # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
+    has_tkinter = True
+except ImportError:
     tkinter = type(sys)("tkinter")
     tkinter.Tk = type(sys)("Tk")
     tkinter.filedialog = type(sys)("filedialog")
@@ -35,18 +33,35 @@ except Exception:  # ImportError, TclError
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
-    # Assuming headless server if tkinder is not installed
-    has_display = False
+# Determine whether a screen is available
+if has_tkinter:
+    has_display = True
+    try:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.destroy()
+    except tkinter.TclError:
+        has_display = False
+else:
+    # Assuming headless server if tkinter is not installed unless DISPLAY env var is available on Linux
+    if sys.platform.startswith("linux"):
+        has_display = bool(os.environ.get("DISPLAY"))
+    else:
+        has_display = False
 
+# Determine whether EGL driver is available
 has_egl = True
 try:
     pyglet.lib.load_library("EGL")
 except ImportError:
     has_egl = False
 
+# Forcibly disable Mujoco OpenGL to avoid conflicts with Genesis
+os.environ["MUJOCO_GL"] = "0"
+
+# pyglet must be configured in headless mode before importing Genesis if necessary.
+# Note that environment variables are used instead of global options to ease option propagation to subprocesses.
 if not has_display and has_egl:
-    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis.
-    # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
     pyglet.options["headless"] = True
     os.environ["PYGLET_HEADLESS"] = "1"
 
@@ -115,7 +130,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
-    show_viewer = config.getoption("--vis")
+    show_viewer = config.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
     if show_viewer:
         config.option.numprocesses = 0
 
@@ -383,7 +398,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
     )
-    parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    if IS_INTERACTIVE_VIEWER_AVAILABLE:
+        parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
     supported, _reason = is_mem_monitoring_supported()
     help_text = (
@@ -396,7 +412,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis") and IS_INTERACTIVE_VIEWER_AVAILABLE
+    return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
 
 
 @pytest.fixture(scope="session")
