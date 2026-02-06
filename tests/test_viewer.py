@@ -37,6 +37,7 @@ def test_interactive_viewer_disable_viewer_defaults():
     # Test with keyboard shortcuts DISABLED
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
+            run_in_thread=(sys.platform == "linux"),
             disable_help_text=True,
             disable_default_keybinds=True,
         ),
