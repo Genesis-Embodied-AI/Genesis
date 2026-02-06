@@ -998,9 +998,9 @@ class Viewer(pyglet.window.Window):
         elif self.render_flags["all_solid"]:
             flags |= RenderFlags.ALL_SOLID
 
-        if self.render_flags["shadows"]:
+        if self.render_flags["shadows"] and not self._is_software:
             flags |= RenderFlags.SHADOWS_ALL
-        if self.render_flags["plane_reflection"]:
+        if self.render_flags["plane_reflection"] and not self._is_software:
             flags |= RenderFlags.REFLECTIVE_FLOOR
         if self.render_flags["env_separate_rigid"]:
             flags |= RenderFlags.ENV_SEPARATE
@@ -1149,6 +1149,11 @@ class Viewer(pyglet.window.Window):
                         confs.insert(0, conf)
                     raise
 
+                # Determine if software emulation is being used
+                glinfo = self.context.get_info()
+                renderer = glinfo.get_renderer()
+                self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
+
                 # Run the entire rendering pipeline first without window, to make sure that all kernels are compiled
                 self.refresh()
 
@@ -1201,6 +1206,13 @@ class Viewer(pyglet.window.Window):
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():
             self._initialized_event.set()
+
+        gs.logger.debug(f"Using interactive viewer OpenGL device: {renderer}")
+        if self._is_software:
+            gs.logger.info(
+                "Software rendering context detected. Shadows and plane reflection not supported. Beware rendering "
+                "will be extremely slow."
+            )
 
         if auto_refresh:
             while self._is_active:
