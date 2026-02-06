@@ -66,13 +66,6 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description):
     """
     Compare analytical capsule-capsule collision with GJK.
-    
-    This test creates two scenes with identical capsule configurations:
-    - One using analytical capsule-capsule detection (default)
-    - One forcing GJK for all collisions
-    
-    Then compares the collision results and VERIFIES which code path was used
-    by checking debug counters.
     """
     radius = 0.1
     half_length = 0.25
@@ -83,12 +76,11 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,  # Use analytical when available
+            use_gjk_collision=False,
         ),
     )
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Add capsules to analytical scene
         mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
         mjcf1_path = os.path.join(tmpdir, "capsule1_analytical.xml")
         ET.ElementTree(mjcf1).write(mjcf1_path)
@@ -107,7 +99,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=True,  # Force GJK for reference
+            use_gjk_collision=True,
         ),
     )
     
@@ -125,12 +117,9 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         
         scene_gjk.build()
     
-    # Run one step to detect collisions
     scene_analytical.step()
     scene_gjk.step()
     
-    # VERIFY: Check debug counters to ensure correct paths were taken (only in debug mode)
-    # In debug mode, __debug__ is True and counters are active
     import gstaichi as ti
     if hasattr(ti.lang._template_mapper.__builtins__, '__debug__') and ti.lang._template_mapper.__builtins__['__debug__']:
         analytical_capsule_count = scene_analytical.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
@@ -150,19 +139,15 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         assert gjk_scene_capsule_count == 0, \
             f"Scene 2 should NOT have used analytical capsule path (count={gjk_scene_capsule_count})"
     
-    # Get contacts from both methods
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
     
-    # Check if collision detection agrees
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical['geom_a']) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk['geom_a']) > 0
     
-    # Both should agree on whether collision exists
     assert has_collision_analytical == has_collision_gjk, \
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
     
-    # If there is a collision, compare the details
     if has_collision_analytical and has_collision_gjk:
         # Get first contact from each (may have multiple due to multi-contact)
         pen_analytical = contacts_analytical['penetration'][0]
@@ -174,17 +159,14 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         pos_analytical = np.array(contacts_analytical['position'][0])
         pos_gjk = np.array(contacts_gjk['position'][0])
         
-        # Check that penetration depths are similar (within 10% or 0.01 units)
         pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
         assert abs(pen_analytical - pen_gjk) < pen_tol, \
             f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
         
-        # Normals should be aligned (dot product > 0.95)
         normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
         assert normal_agreement > 0.95, \
             f"Normal direction mismatch! Analytical: {normal_analytical}, GJK: {normal_gjk}, agreement: {normal_agreement:.4f}"
         
-        # Contact positions should be close (within 0.05 units)
         pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
         assert pos_diff < 0.05, \
             f"Contact position mismatch! Diff: {pos_diff:.6f}"
@@ -230,15 +212,12 @@ def test_capsule_analytical_accuracy(backend):
     
     assert contacts is not None and len(contacts['geom_a']) > 0
     
-    # Check penetration is correct (should be 0.05)
     penetration = contacts['penetration'][0]
     expected_pen = 0.05
     
-    # Analytical solution should be exact (within numerical precision)
     assert abs(penetration - expected_pen) < 1e-5, \
         f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
     
-    # Normal should point in X direction [1, 0, 0] or [-1, 0, 0]
     normal = np.array(contacts['normal'][0])
     
     # Check normal is along X axis
