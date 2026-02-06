@@ -6,19 +6,20 @@ import sys
 import time
 
 import numpy as np
+import OpenGL.error
 import pyglet
 import pytest
 import torch
-import OpenGL.error
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
 
@@ -1234,28 +1235,6 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
-def test_interactive_viewer_disable_keyboard_shortcuts():
-    """Test that keyboard shortcuts can be disabled in the interactive viewer."""
-
-    # Test with keyboard shortcuts DISABLED
-    scene = gs.Scene(
-        viewer_options=gs.options.ViewerOptions(
-            disable_keyboard_shortcuts=True,
-        ),
-        show_viewer=True,
-    )
-    scene.build()
-    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
-    assert pyrender_viewer.is_active
-
-    # Verify the flag is set correctly
-    assert pyrender_viewer._disable_keyboard_shortcuts is True
-
-
-@pytest.mark.required
-@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_camera_gimbal_lock_singularity(renderer, show_viewer):
     """
     Test that camera maintains continuous orientation when moving through singularity conditions.
@@ -1543,3 +1522,118 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
         f"interactive viewer brightness ({viewer_brightness:.2f}), "
         f"but ratio is {brightness_ratio:.2f}"
     )
+
+
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
+def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, png_snapshot):
+    CAM_RES = (256, 256)
+
+    # Increase tolerance for deformable rendering
+    png_snapshot.extension._std_err_threshold = 15.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.04,
+            substeps=6,
+        ),
+        pbd_options=gs.options.PBDOptions(
+            particle_size=1e-2,
+        ),
+        fem_options=gs.options.FEMOptions(
+            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
+            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+
+    # Add ground plane
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Aluminium(
+            ior=10.0,
+        ),
+    )
+
+    # Add PBD cloth with checker texture
+    asset_path = get_hf_dataset(pattern="uv_plane.obj")
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/uv_plane.obj",
+            scale=0.4,
+            pos=(-0.2, 0.0, 0.4),
+        ),
+        material=gs.materials.PBD.Cloth(),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            ),
+            vis_mode="visual",
+        ),
+    )
+
+    # Add FEM elastic object with checker texture
+    scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/duck.obj",
+            scale=0.1,
+            pos=(0.2, 0.0, 0.2),
+        ),
+        material=gs.materials.FEM.Elastic(E=1e5, nu=0.4),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            ),
+            vis_mode="visual",
+        ),
+    )
+
+    camera = scene.add_camera(
+        res=CAM_RES,
+        pos=(1.5, 1.5, 1),
+        lookat=(0.0, 0.0, 0.3),
+        fov=45,
+        GUI=show_viewer,
+        spp=64 if renderer_type == RENDERER_TYPE.RAYTRACER else 1,
+    )
+
+    scene.build()
+
+    # Step simulation to deform the objects
+    for _ in range(4):
+        scene.step()
+
+    # Render and verify
+    rgb_arr, *_ = camera.render(rgb=True)
+    rgb_arr = tensor_to_array(rgb_arr)
+
+    # Snapshot test for visual regression
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_rasterizer_camera_sensor_with_viewer(renderer):
+    """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
+
+    This verifies that the sensor properly shares the viewer's OpenGL context instead of
+    creating a conflicting separate context.
+    """
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(run_in_thread=False),
+        renderer=renderer,
+        show_viewer=True,
+    )
+    # At least one entity is needed to ensure the rendered image is not entirely blank,
+    # otherwise it is not possible to verify that something was actually rendered.
+    scene.add_entity(morph=gs.morphs.Plane())
+    camera_sensor = scene.add_sensor(RasterizerCameraOptions(res=(256, 256)))
+    scene.build()
+
+    assert scene.visualizer.viewer._pyrender_viewer.is_active
+
+    scene.step()
+    data = camera_sensor.read()
+    assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"

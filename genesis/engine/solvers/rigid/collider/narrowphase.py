@@ -619,7 +619,7 @@ def func_convex_convex_contact(
 
             if multi_contact and is_col_0:
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
-                # otherwise it would be more sensitive to ill-conditionning.
+                # otherwise it would be more sensitive to ill-conditioning.
                 axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
                 func_rotate_frame(i_ga, contact_pos_0, qrot, i_b, geoms_state, geoms_info)
@@ -918,8 +918,8 @@ def func_convex_convex_contact(
                 # First-order correction of the normal direction.
                 # The way the contact normal gets twisted by applying perturbation of geometry poses is
                 # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                # the mininal rotation that makes the corrected twisted normal as closed as possible to the
-                # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                # the minimal rotation that makes the corrected twisted normal as closed as possible to the
+                # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
                 # Rodrigues' rotation formula.
                 twist_rotvec = ti.math.clamp(
                     normal.cross(normal_0),

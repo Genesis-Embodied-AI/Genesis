@@ -17,28 +17,27 @@ from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
-import numpy as np
 import mujoco
+import numpy as np
 import torch
-from httpx import HTTPError as HTTPXError
 from httpcore import TimeoutException as HTTPTimeoutException
+from httpx import HTTPError as HTTPXError
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
-from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
-
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "8d9621de48a84fb182da38fd88f2495e4ccf3de9"
-HUGGINGFACE_SNAPSHOT_REVISION = "dc377c0f56a5bc14eb73e2736d6a81296ff31e93"
+HUGGINGFACE_ASSETS_REVISION = "ca29b66018b449a37738257a3a76a78529d29bcc"
+HUGGINGFACE_SNAPSHOT_REVISION = "0cf1780dd70b67dc426023cd97738037f0d834e3"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")

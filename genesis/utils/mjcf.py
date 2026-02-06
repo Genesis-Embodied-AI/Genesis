@@ -22,6 +22,41 @@ from .misc import get_assets_dir, redirect_libc_stderr
 MIN_TIMECONST = np.finfo(np.double).eps
 
 
+def get_model_name(file_path):
+    """
+    Extract the model name from an MJCF file, if specified.
+
+    The name is extracted from the optional ``<mujoco model="...">`` attribute.
+
+    Reference: https://mujoco.readthedocs.io/en/stable/XMLreference.html#mujoco
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the MJCF file.
+
+    Returns
+    -------
+    str or None
+        The model name, or None if not specified.
+
+    Raises
+    ------
+    ET.ParseError
+        If the file cannot be parsed as XML.
+    FileNotFoundError
+        If the file does not exist.
+    OSError
+        If there is an error reading the file.
+    """
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "mujoco":
+        return root.attrib.get("model")
+    return None
+
+
 def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
     if isinstance(xml, (str, Path, urdfpy.URDF)):
         if isinstance(xml, urdfpy.URDF):

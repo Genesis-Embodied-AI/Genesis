@@ -240,6 +240,9 @@ class FEMSolver(Solver):
             layout=ti.Layout.SOA,
         )
 
+        # UV coordinates for rendering (per-vertex UVs, initialized to zeros)
+        self.surface_render_uvs = ti.field(dtype=gs.ti_vec2, shape=(max(n_vertices_max, 1),), needs_grad=False)
+
     def _init_surface_info(self):
         self.vertices_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_vertices,))
         self.elements_on_surface = ti.field(dtype=gs.ti_bool, shape=(self.n_elements,))
@@ -375,7 +378,7 @@ class FEMSolver(Solver):
     def is_active(self):
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
@@ -402,6 +405,7 @@ class FEMSolver(Solver):
             v_start=self.n_vertices,
             el_start=self.n_elements,
             s_start=self.n_surfaces,
+            name=name,
         )
 
         self._entities.append(entity)
@@ -1096,8 +1100,9 @@ class FEMSolver(Solver):
         self.get_state_render_kernel(f)
         vertices = self.surface_render_v.vertices
         indices = self.surface_render_f.indices
+        uvs = self.surface_render_uvs
 
-        return vertices, indices
+        return vertices, indices, uvs
 
     def get_forces(self):
         """
@@ -1128,6 +1133,7 @@ class FEMSolver(Solver):
         elems: ti.types.ndarray(),
         tri2v: ti.types.ndarray(),
         tri2el: ti.types.ndarray(),
+        uvs: ti.types.ndarray(),
     ):
         n_verts_local = verts.shape[0]
         for i_v, i_b in ti.ndrange(n_verts_local, self._B):
@@ -1135,6 +1141,12 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Copy UVs to solver field (skip if no UVs provided)
+        n_uvs = uvs.shape[0]
+        for i_v in range(n_uvs):
+            i_global = i_v + v_start
+            self.surface_render_uvs[i_global] = ti.Vector([uvs[i_v, 0], uvs[i_v, 1]])
 
         for i_v in range(n_verts_local):
             i_global = i_v + v_start
@@ -1201,6 +1213,7 @@ class FEMSolver(Solver):
         s_start: ti.i32,
         verts: ti.types.ndarray(),
         tri2v: ti.types.ndarray(),
+        uvs: ti.types.ndarray(),
     ):
         """
         Add cloth vertices and surfaces for rendering only (no physics computation).
@@ -1213,6 +1226,12 @@ class FEMSolver(Solver):
             for j in ti.static(range(3)):
                 self.elements_v[f, i_global, i_b].pos[j] = verts[i_v, j]
             self.elements_v[f, i_global, i_b].vel = ti.Vector.zero(gs.ti_float, 3)
+
+        # Copy UVs to solver field (skip if no UVs provided)
+        n_uvs = uvs.shape[0]
+        for i_v in range(n_uvs):
+            i_global = i_v + v_start
+            self.surface_render_uvs[i_global] = ti.Vector([uvs[i_v, 0], uvs[i_v, 1]])
 
         # Initialize vertex info (mass will be managed by IPC, set to dummy value)
         for i_v in range(n_verts_local):
@@ -1378,7 +1397,8 @@ class FEMSolver(Solver):
                 pos_j = ti.cast(self.elements_v[f, i_v, i_b].pos[j], ti.f32)
                 self.surface_render_v[i_v, i_b].vertices[j] = pos_j + self.envs_offset[i_b][j]
 
-        for i_s, i_b in ti.ndrange(self.n_surfaces, self._B):
+        # Fill triangle indices (flat array, 3 ints per triangle)
+        for i_s in range(self.n_surfaces):
             for j in ti.static(range(3)):
                 self.surface_render_f[i_s * 3 + j].indices = ti.cast(self.surface[i_s].tri2v[j], ti.i32)
 

@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
     from .rigid_joint import RigidJoint
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-    from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
@@ -783,11 +782,6 @@ class RigidLink(RBC):
     @property
     def is_free(self):
         raise DeprecationError("This property has been removed.")
-
-    @property
-    def pose(self) -> "Pose":
-        """Return the current pose of the link (note, this is not necessarily the same as the principal axes frame)."""
-        return Pose.from_link(self)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import gstaichi as ti
 import torch
@@ -26,8 +28,9 @@ class ToolEntity(Entity):
         material,
         morph,
         surface,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._init_pos = np.array(morph.pos, dtype=gs.np_float)
         self._init_quat = np.array(morph.quat, dtype=gs.np_float)
@@ -43,6 +46,19 @@ class ToolEntity(Entity):
 
         # for rendering purpose only
         self.latest_pos = ti.Vector.field(3, dtype=gs.ti_float, shape=(1))
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        if isinstance(self._morph, gs.morphs.Mesh):
+            return Path(self._morph.file).stem
+        return "tool"
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- initialization -----------------------------------
+    # ------------------------------------------------------------------------------------
 
     def init_tgt_vars(self):
         # temp variable to store targets for next step
