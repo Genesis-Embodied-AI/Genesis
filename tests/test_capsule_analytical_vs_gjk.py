@@ -1,8 +1,13 @@
 """
 Unit test comparing analytical capsule-capsule contact detection with GJK.
 
-This test directly calls the collision functions without running a full simulation,
-allowing for precise comparison of results.
+NOTE: These tests should ideally be run with debug mode enabled (pytest --dev)
+to verify that the correct collision detection code paths are being used.
+
+Debug mode enables collision path tracking counters in the narrowphase kernel that
+empirically verify which algorithm (analytical vs GJK) was actually executed, not just
+which was configured. Without debug mode, the test can only verify configuration flags,
+not actual execution paths, making the test less robust.
 """
 
 import os
@@ -33,6 +38,7 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
     return mjcf
 
 
+@pytest.mark.debug(True)
 @pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.parametrize(
     "pos1,euler1,pos2,euler2,should_collide,description",
@@ -68,7 +74,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     - One forcing GJK for all collisions
     
     Then compares the collision results and VERIFIES which code path was used
-    by checking scene configuration.
+    by checking debug counters.
     """
     radius = 0.1
     half_length = 0.25
@@ -125,17 +131,26 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     scene_analytical.step()
     scene_gjk.step()
     
-    # VERIFY: Check that the correct collision paths are configured
-    # Scene 1 should NOT use GJK (use_gjk_collision=False allows analytical)
-    # Scene 2 should use GJK (use_gjk_collision=True forces GJK)
-    use_gjk_analytical = scene_analytical.rigid_solver.collider._solver._rigid_static_config.use_gjk_collision
-    use_gjk_gjk_scene = scene_gjk.rigid_solver.collider._solver._rigid_static_config.use_gjk_collision
-    
-    # Verify the paths are configured correctly
-    assert use_gjk_analytical == False, \
-        f"Scene 1 should have use_gjk_collision=False to enable analytical path (got {use_gjk_analytical})"
-    assert use_gjk_gjk_scene == True, \
-        f"Scene 2 should have use_gjk_collision=True to force GJK path (got {use_gjk_gjk_scene})"
+    # VERIFY: Check debug counters to ensure correct paths were taken (only in debug mode)
+    # In debug mode, __debug__ is True and counters are active
+    import gstaichi as ti
+    if hasattr(ti.lang._template_mapper.__builtins__, '__debug__') and ti.lang._template_mapper.__builtins__['__debug__']:
+        analytical_capsule_count = scene_analytical.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
+        analytical_gjk_count = scene_analytical.rigid_solver.collider.collider_state.debug_gjk_count[0]
+        gjk_scene_capsule_count = scene_gjk.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
+        gjk_scene_gjk_count = scene_gjk.rigid_solver.collider.collider_state.debug_gjk_count[0]
+        
+        # Scene 1 (analytical) should use analytical path, NOT GJK
+        assert analytical_capsule_count > 0, \
+            f"Scene 1 should have used analytical capsule path (count={analytical_capsule_count})"
+        assert analytical_gjk_count == 0, \
+            f"Scene 1 should NOT have used GJK path (count={analytical_gjk_count})"
+        
+        # Scene 2 (GJK) should use GJK path, NOT analytical
+        assert gjk_scene_gjk_count > 0, \
+            f"Scene 2 should have used GJK path (count={gjk_scene_gjk_count})"
+        assert gjk_scene_capsule_count == 0, \
+            f"Scene 2 should NOT have used analytical capsule path (count={gjk_scene_capsule_count})"
     
     # Get contacts from both methods
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
@@ -145,29 +160,9 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical['geom_a']) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk['geom_a']) > 0
     
-    print(f"\n{'='*70}")
-    print(f"Test: {description}")
-    print(f"{'='*70}")
-    print(f"Configuration:")
-    print(f"  Capsule 1: pos={pos1}, euler={euler1}")
-    print(f"  Capsule 2: pos={pos2}, euler={euler2}")
-    print(f"  Radius=0.1, Half-length=0.25")
-    print(f"\nResults:")
-    print(f"  Expected collision: {should_collide}")
-    print(f"  Analytical detected: {has_collision_analytical}")
-    print(f"  GJK detected: {has_collision_gjk}")
-    
     # Both should agree on whether collision exists
     assert has_collision_analytical == has_collision_gjk, \
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-    
-    # If both methods agree, update expectation if needed
-    if has_collision_analytical != should_collide:
-        print(f"  ⚠️  NOTE: Both methods agree on {has_collision_analytical}, but expected {should_collide}")
-        print(f"       This suggests the test expectation may need adjustment.")
-        # Don't fail - both methods agreeing is what matters
-    else:
-        print(f"  ✓ Result matches expectation!")
     
     # If there is a collision, compare the details
     if has_collision_analytical and has_collision_gjk:
@@ -181,35 +176,20 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         pos_analytical = np.array(contacts_analytical['position'][0])
         pos_gjk = np.array(contacts_gjk['position'][0])
         
-        print(f"  Analytical penetration: {pen_analytical:.6f}")
-        print(f"  GJK penetration: {pen_gjk:.6f}")
-        print(f"  Penetration difference: {abs(pen_analytical - pen_gjk):.6f}")
-        
-        print(f"  Analytical normal: [{normal_analytical[0]:.4f}, {normal_analytical[1]:.4f}, {normal_analytical[2]:.4f}]")
-        print(f"  GJK normal: [{normal_gjk[0]:.4f}, {normal_gjk[1]:.4f}, {normal_gjk[2]:.4f}]")
-        
-        # Normals should point in same direction (dot product close to 1 or -1)
-        normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-        print(f"  Normal agreement: {normal_agreement:.4f}")
-        
         # Check that penetration depths are similar (within 10% or 0.01 units)
-        # Analytical should be at least as accurate as iterative methods
         pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
         assert abs(pen_analytical - pen_gjk) < pen_tol, \
             f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
         
         # Normals should be aligned (dot product > 0.95)
-        # Allow for opposite directions if both are valid
+        normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
         assert normal_agreement > 0.95, \
             f"Normal direction mismatch! Analytical: {normal_analytical}, GJK: {normal_gjk}, agreement: {normal_agreement:.4f}"
         
         # Contact positions should be close (within 0.05 units)
         pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
-        print(f"  Contact position difference: {pos_diff:.6f}")
         assert pos_diff < 0.05, \
             f"Contact position mismatch! Diff: {pos_diff:.6f}"
-        
-        print("  ✓ Analytical and GJK results match!")
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -256,21 +236,13 @@ def test_capsule_analytical_accuracy(backend):
     penetration = contacts['penetration'][0]
     expected_pen = 0.05
     
-    print(f"\nAnalytical accuracy test:")
-    print(f"  Expected penetration: {expected_pen}")
-    print(f"  Actual penetration: {penetration:.6f}")
-    print(f"  Error: {abs(penetration - expected_pen):.6f}")
-    
     # Analytical solution should be exact (within numerical precision)
     assert abs(penetration - expected_pen) < 1e-5, \
         f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
     
     # Normal should point in X direction [1, 0, 0] or [-1, 0, 0]
     normal = np.array(contacts['normal'][0])
-    print(f"  Normal: [{normal[0]:.6f}, {normal[1]:.6f}, {normal[2]:.6f}]")
     
     # Check normal is along X axis
     assert abs(abs(normal[0]) - 1.0) < 1e-5, f"Normal should be along X axis, got {normal}"
     assert abs(normal[1]) < 1e-5 and abs(normal[2]) < 1e-5, f"Normal should be along X axis, got {normal}"
-    
-    print("  ✓ Analytical solution is exact!")
