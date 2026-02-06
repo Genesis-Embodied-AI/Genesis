@@ -18,9 +18,6 @@ from ..collider.contact_island import ContactIsland
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
-
-import os
-
 USE_LS_OPT = os.environ.get("GS_SOLVER_LS_OPT", "0") == "1"
 
 # TODO: set always true for CI benchmark use.
