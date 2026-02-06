@@ -626,7 +626,6 @@ def func_convex_convex_contact(
                 func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                # Analytical capsule-capsule collision (much faster than MPR/GJK)
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                     is_col, normal, contact_pos, penetration = func_capsule_capsule_contact(
                         i_ga,
@@ -639,8 +638,6 @@ def func_convex_convex_contact(
                         collider_info,
                         errno,
                     )
-                    # Continue with perturbation loop for multi-contact
-                # Analytical sphere-capsule collision (much faster than MPR/GJK)
                 elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or \
                      (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
                     # Ensure sphere is always i_ga and capsule is i_gb
@@ -657,7 +654,6 @@ def func_convex_convex_contact(
                             errno,
                         )
                     else:
-                        # Swap: capsule is i_ga, sphere is i_gb - call with swapped args
                         is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
                             i_gb,  # sphere
                             i_ga,  # capsule
@@ -669,7 +665,6 @@ def func_convex_convex_contact(
                             collider_info,
                             errno,
                         )
-                        # Normal returned is from capsule to sphere, but we need from i_gb to i_ga
                         # Since we swapped, we need to negate the normal
                         normal = -normal
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:

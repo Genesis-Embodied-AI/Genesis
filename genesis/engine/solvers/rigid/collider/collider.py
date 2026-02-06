@@ -66,7 +66,6 @@ from .narrowphase import (
     func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
     func_narrow_phase_nonconvex_vs_nonterrain,
-    func_capsule_capsule_contact,
 )
 
 if TYPE_CHECKING:
