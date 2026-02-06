@@ -149,8 +149,14 @@ def func_capsule_capsule_contact(
         Collider configuration
     errno : V_ANNOTATION
         Error number for debugging
+        
+    Returns
+    -------
+    is_col : bool
+        True if collision (penetration) detected, False otherwise
     """
     EPS = rigid_global_info.EPS[None]
+    is_col = False
     
     # Get capsule A parameters
     pos_a = geoms_state.pos[i_ga, i_b]
@@ -189,6 +195,7 @@ def func_capsule_capsule_contact(
     # Check for collision
     if dist_sq < combined_radius_sq:
         # Collision detected
+        is_col = True
         dist = ti.sqrt(dist_sq)
         
         # Compute contact normal (from A to B)
@@ -227,3 +234,5 @@ def func_capsule_capsule_contact(
             collider_info,
             errno,
         )
+    
+    return is_col

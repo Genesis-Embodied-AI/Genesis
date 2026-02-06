@@ -632,7 +632,7 @@ def func_convex_convex_contact(
             if (multi_contact and is_col_0) or (i_detection == 0):
                 # Analytical capsule-capsule collision (much faster than MPR/GJK)
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                    func_capsule_capsule_contact(
+                    is_col = func_capsule_capsule_contact(
                         i_ga,
                         i_gb,
                         i_b,
@@ -643,7 +643,6 @@ def func_convex_convex_contact(
                         collider_info,
                         errno,
                     )
-                    is_col = True  # Mark as handled
                     # Continue with perturbation loop for multi-contact
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
