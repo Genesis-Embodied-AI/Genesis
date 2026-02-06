@@ -1,5 +1,5 @@
 """
-Unit test comparing analytical capsule-capsule contact detection with MPR.
+Unit test comparing analytical capsule-capsule contact detection with GJK.
 
 This test directly calls the collision functions without running a full simulation,
 allowing for precise comparison of results.
@@ -59,15 +59,16 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
         ((0, 0, 0), (0, 0, 0), (0.3, 0.3, 0), (0, 0, 0), False, "diagonal_separated"),
     ],
 )
-def test_capsule_capsule_vs_mpr(backend, pos1, euler1, pos2, euler2, should_collide, description):
+def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description):
     """
-    Compare analytical capsule-capsule collision with MPR.
+    Compare analytical capsule-capsule collision with GJK.
     
     This test creates two scenes with identical capsule configurations:
     - One using analytical capsule-capsule detection (default)
-    - One forcing MPR for all collisions
+    - One forcing GJK for all collisions
     
-    Then compares the collision results.
+    Then compares the collision results and VERIFIES which code path was used
+    by checking scene configuration.
     """
     radius = 0.1
     half_length = 0.25
@@ -78,7 +79,7 @@ def test_capsule_capsule_vs_mpr(backend, pos1, euler1, pos2, euler2, should_coll
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,  # Use MPR/analytical when available
+            use_gjk_collision=False,  # Use analytical when available
         ),
     )
     
@@ -123,6 +124,18 @@ def test_capsule_capsule_vs_mpr(backend, pos1, euler1, pos2, euler2, should_coll
     # Run one step to detect collisions
     scene_analytical.step()
     scene_gjk.step()
+    
+    # VERIFY: Check that the correct collision paths are configured
+    # Scene 1 should NOT use GJK (use_gjk_collision=False allows analytical)
+    # Scene 2 should use GJK (use_gjk_collision=True forces GJK)
+    use_gjk_analytical = scene_analytical.rigid_solver.collider._solver._rigid_static_config.use_gjk_collision
+    use_gjk_gjk_scene = scene_gjk.rigid_solver.collider._solver._rigid_static_config.use_gjk_collision
+    
+    # Verify the paths are configured correctly
+    assert use_gjk_analytical == False, \
+        f"Scene 1 should have use_gjk_collision=False to enable analytical path (got {use_gjk_analytical})"
+    assert use_gjk_gjk_scene == True, \
+        f"Scene 2 should have use_gjk_collision=True to force GJK path (got {use_gjk_gjk_scene})"
     
     # Get contacts from both methods
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
