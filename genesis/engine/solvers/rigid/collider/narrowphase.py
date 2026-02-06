@@ -632,7 +632,7 @@ def func_convex_convex_contact(
             if (multi_contact and is_col_0) or (i_detection == 0):
                 # Analytical capsule-capsule collision (much faster than MPR/GJK)
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                    is_col = func_capsule_capsule_contact(
+                    is_col, normal, contact_pos, penetration = func_capsule_capsule_contact(
                         i_ga,
                         i_gb,
                         i_b,

@@ -152,11 +152,17 @@ def func_capsule_capsule_contact(
         
     Returns
     -------
-    is_col : bool
-        True if collision (penetration) detected, False otherwise
+    is_col, normal, contact_pos, penetration : tuple
+        is_col: True if collision detected
+        normal: Contact normal vector
+        contact_pos: Contact position in world space
+        penetration: Penetration depth
     """
     EPS = rigid_global_info.EPS[None]
     is_col = False
+    normal = ti.Vector.zero(gs.ti_float, 3)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    penetration = gs.ti_float(0.0)
     
     # Get capsule A parameters
     pos_a = geoms_state.pos[i_ga, i_b]
@@ -199,7 +205,6 @@ def func_capsule_capsule_contact(
         dist = ti.sqrt(dist_sq)
         
         # Compute contact normal (from A to B)
-        normal = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
         if dist > EPS:
             normal = diff / dist
         else:
@@ -219,20 +224,5 @@ def func_capsule_capsule_contact(
         
         # Compute contact position (on surface of capsule A)
         contact_pos = Pa + radius_a * normal
-        
-        # Add contact to collision state
-        func_add_contact(
-            i_ga,
-            i_gb,
-            normal,
-            contact_pos,
-            penetration,
-            i_b,
-            geoms_state,
-            geoms_info,
-            collider_state,
-            collider_info,
-            errno,
-        )
     
-    return is_col
+    return is_col, normal, contact_pos, penetration
