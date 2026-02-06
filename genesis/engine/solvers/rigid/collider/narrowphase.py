@@ -36,6 +36,7 @@ from .box_contact import (
 
 from .capsule_contact import (
     func_capsule_capsule_contact,
+    func_sphere_capsule_contact,
 )
 
 
@@ -639,6 +640,38 @@ def func_convex_convex_contact(
                         errno,
                     )
                     # Continue with perturbation loop for multi-contact
+                # Analytical sphere-capsule collision (much faster than MPR/GJK)
+                elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or \
+                     (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                    # Ensure sphere is always i_ga and capsule is i_gb
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE:
+                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                            i_ga,
+                            i_gb,
+                            i_b,
+                            geoms_state,
+                            geoms_info,
+                            rigid_global_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                        )
+                    else:
+                        # Swap: capsule is i_ga, sphere is i_gb - call with swapped args
+                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                            i_gb,  # sphere
+                            i_ga,  # capsule
+                            i_b,
+                            geoms_state,
+                            geoms_info,
+                            rigid_global_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                        )
+                        # Normal returned is from capsule to sphere, but we need from i_gb to i_ga
+                        # Since we swapped, we need to negate the normal
+                        normal = -normal
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float

@@ -3,6 +3,7 @@ Capsule collision contact detection functions.
 
 This module contains specialized analytical contact detection algorithms for capsule geometries:
 - Capsule-capsule contact detection (analytical line segment distance)
+- Sphere-capsule contact detection (point to line segment distance)
 """
 
 import gstaichi as ti
@@ -226,5 +227,127 @@ def func_capsule_capsule_contact(
         # Compute contact position (on surface of capsule A)
         # Note: normal now points from B to A, so we subtract to get point on A's surface
         contact_pos = Pa - radius_a * normal
+    
+    return is_col, normal, contact_pos, penetration
+
+
+@ti.func
+def func_sphere_capsule_contact(
+    i_ga,
+    i_gb,
+    i_b,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
+):
+    """
+    Analytical sphere-capsule collision detection.
+    
+    A sphere-capsule collision reduces to:
+      1. Find closest point on the capsule's line segment to sphere center
+      2. Check if distance < sum of radii
+      3. Compute contact point and normal
+    
+    This is a closed-form solution that's much faster than MPR/GJK.
+    
+    Parameters
+    ----------
+    i_ga : int
+        Index of geometry A (sphere)
+    i_gb : int
+        Index of geometry B (capsule)
+    i_b : int
+        Batch/entity index
+    geoms_state : GeomsState
+        Geometry states (positions, orientations)
+    geoms_info : GeomsInfo
+        Geometry info (radii, lengths)
+    rigid_global_info : RigidGlobalInfo
+        Global simulation info (EPS, etc.)
+    collider_state : ColliderState
+        Collider state for storing contacts
+    collider_info : ColliderInfo
+        Collider configuration
+    errno : V_ANNOTATION
+        Error number for debugging
+        
+    Returns
+    -------
+    (is_col, normal, contact_pos, penetration) : tuple
+        is_col: True if collision detected
+        normal: Contact normal vector (from B to A)
+        contact_pos: Contact position in world space
+        penetration: Penetration depth
+    """
+    EPS = rigid_global_info.EPS[None]
+    is_col = False
+    normal = ti.Vector.zero(gs.ti_float, 3)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    penetration = gs.ti_float(0.0)
+    
+    # Get sphere parameters
+    sphere_center = geoms_state.pos[i_ga, i_b]
+    sphere_radius = geoms_info.data[i_ga][0]
+    
+    # Get capsule parameters
+    capsule_center = geoms_state.pos[i_gb, i_b]
+    capsule_quat = geoms_state.quat[i_gb, i_b]
+    capsule_radius = geoms_info.data[i_gb][0]
+    capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
+    
+    # Capsule is aligned along local Z-axis
+    local_z = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    capsule_axis = gu.ti_transform_by_quat(local_z, capsule_quat)
+    
+    # Compute capsule segment endpoints
+    P1 = capsule_center - capsule_halflength * capsule_axis
+    P2 = capsule_center + capsule_halflength * capsule_axis
+    
+    # Find closest point on capsule segment to sphere center
+    # Using parametric form: P(t) = P1 + t*(P2-P1), t ∈ [0,1]
+    segment_vec = P2 - P1
+    segment_length_sq = segment_vec.dot(segment_vec)
+    
+    # Project sphere center onto segment
+    t = gs.ti_float(0.5)  # Default for degenerate case
+    if segment_length_sq > EPS:
+        t = (sphere_center - P1).dot(segment_vec) / segment_length_sq
+        t = ti.math.clamp(t, 0.0, 1.0)
+    
+    closest_point = P1 + t * segment_vec
+    
+    # Compute distance from sphere center to closest point
+    diff = sphere_center - closest_point
+    dist_sq = diff.dot(diff)
+    combined_radius = sphere_radius + capsule_radius
+    combined_radius_sq = combined_radius * combined_radius
+    
+    # Check for collision
+    if dist_sq < combined_radius_sq:
+        # Collision detected
+        is_col = True
+        dist = ti.sqrt(dist_sq)
+        
+        # Compute contact normal (from capsule to sphere, i.e., B to A)
+        if dist > EPS:
+            normal = diff / dist
+        else:
+            # Sphere center is exactly on capsule axis
+            # Use any perpendicular direction to the capsule axis
+            if ti.abs(capsule_axis[0]) < 0.9:
+                normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(capsule_axis)
+            else:
+                normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(capsule_axis)
+            normal = gu.ti_normalize(normal, EPS)
+        
+        # Compute penetration depth
+        penetration = combined_radius - dist
+        
+        # Compute contact position (on surface of sphere, geometry A)
+        # Normal points from B to A, so subtract to get point on A's surface
+        contact_pos = sphere_center - sphere_radius * normal
     
     return is_col, normal, contact_pos, penetration
