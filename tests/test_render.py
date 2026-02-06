@@ -1646,16 +1646,5 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
 
     scene.step()
 
-    if sys.platform == "linux":
-        glinfo = pyrender_viewer.context.get_info()
-        renderer = glinfo.get_renderer()
-        if "llvmpipe" in renderer:
-            llvm_version = re.search(r"LLVM\s+([\d.]+)", renderer).group(1)
-            if llvm_version < "20":
-                pytest.skip(
-                    "OpenGL function 'glBlitFramebuffer' involved in offscreen rendering with the interactive viewer "
-                    "takes ages on old CPU-based Mesa rendering driver. Skipping..."
-                )
-
     data = camera_sensor.read()
     assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
