@@ -6,15 +6,14 @@ import pickle as pkl
 from functools import lru_cache
 from pathlib import Path
 
-import numpy as np
-import tetgen
-import trimesh
-import OpenEXR
-import Imath
-from PIL import Image
-
 import coacd
 import igl
+import Imath
+import numpy as np
+import OpenEXR
+import tetgen
+import trimesh
+from PIL import Image
 
 import genesis as gs
 
@@ -23,13 +22,13 @@ from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
     get_exr_cache_dir,
-    get_gsd_cache_dir,
     get_gnd_cache_dir,
+    get_gsd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
-    get_usd_cache_dir,
     get_tet_cache_dir,
+    get_usd_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -910,7 +909,11 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
 
 
 def create_plane(
-    normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color_or_texture=DEFAULT_PLANE_TEXTURE_PATH
+    normal=(0.0, 0.0, 1.0),
+    plane_size=(1e3, 1e3),
+    tile_size=(1, 1),
+    color_or_texture=DEFAULT_PLANE_TEXTURE_PATH,
+    double_sided=False,
 ):
     if isinstance(color_or_texture, str):
         color, texture_path = None, color_or_texture
@@ -935,24 +938,34 @@ def create_plane(
         dtype=np.float32,
     )
     faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+
+    if double_sided:
+        # Add reversed faces for back-facing visibility
+        faces = np.vstack([faces, faces[:, ::-1]])
+
     vmesh = trimesh.Trimesh(verts, faces, process=False)
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     if texture_path is not None:
         n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
+        uv_coords = np.array(
+            [
+                [0, 0],
+                [n_tile_x, 0],
+                [n_tile_x, n_tile_y],
+                [0, 0],
+                [n_tile_x, n_tile_y],
+                [0, n_tile_y],
+            ],
+            dtype=np.float32,
+        )
+        if double_sided:
+            # Duplicate UV coords for back faces
+            uv_coords = np.vstack([uv_coords, uv_coords])
+
         vmesh.visual = trimesh.visual.TextureVisuals(
-            uv=np.array(
-                [
-                    [0, 0],
-                    [n_tile_x, 0],
-                    [n_tile_x, n_tile_y],
-                    [0, 0],
-                    [n_tile_x, n_tile_y],
-                    [0, n_tile_y],
-                ],
-                dtype=np.float32,
-            ),
+            uv=uv_coords,
             material=trimesh.visual.material.SimpleMaterial(
                 image=Image.open(os.path.join(get_assets_dir(), texture_path)),
             ),
