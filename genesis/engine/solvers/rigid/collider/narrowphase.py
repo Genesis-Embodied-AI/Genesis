@@ -34,6 +34,14 @@ from .box_contact import (
     func_box_box_contact,
 )
 
+from .capsule_contact import (
+    func_capsule_capsule_contact,
+)
+
+from .capsule_contact import (
+    func_capsule_capsule_contact,
+)
+
 
 class CCD_ALGORITHM_CODE(IntEnum):
     """Convex collision detection algorithm codes."""
@@ -568,6 +576,7 @@ def func_convex_convex_contact(
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
         # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
         # criteria to get rid of redundant contact points seems to be a better option.
+        # Ellipsoids are excluded as they can cause issues with multi-contact perturbation.
         multi_contact = (
             static_rigid_sim_config.enable_multi_contact
             # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
@@ -621,7 +630,22 @@ def func_convex_convex_contact(
                 func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                # Analytical capsule-capsule collision (much faster than MPR/GJK)
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
+                    func_capsule_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                    is_col = True  # Mark as handled
+                    # Continue with perturbation loop for multi-contact
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
                     )
