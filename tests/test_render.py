@@ -13,6 +13,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
@@ -1609,3 +1610,30 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
 
     # Snapshot test for visual regression
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+def test_rasterizer_camera_sensor_with_viewer(renderer):
+    """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
+
+    This verifies that the sensor properly shares the viewer's OpenGL context instead of
+    creating a conflicting separate context.
+    """
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(run_in_thread=False),
+        renderer=renderer,
+        show_viewer=True,
+    )
+    # At least one entity is needed to ensure the rendered image is not entirely blank,
+    # otherwise it is not possible to verify that something was actually rendered.
+    scene.add_entity(morph=gs.morphs.Plane())
+    camera_sensor = scene.add_sensor(RasterizerCameraOptions(res=(256, 256)))
+    scene.build()
+
+    assert scene.visualizer.viewer._pyrender_viewer.is_active
+
+    scene.step()
+    data = camera_sensor.read()
+    assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
