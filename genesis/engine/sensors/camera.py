@@ -562,7 +562,8 @@ class RasterizerCameraSensor(BaseCameraSensor):
             normal=False,
         )
 
-        rgb_tensor = torch.from_numpy(rgb_arr).to(dtype=torch.uint8, device=gs.device)
+        # Ensure contiguous layout because the rendered array may have negative strides.
+        rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)
 
         if len(rgb_tensor.shape) == 3:
             # Single environment rendered - add batch dimension.
@@ -715,7 +716,8 @@ class RaytracerCameraSensor(BaseCameraSensor):
             antialiasing=False,
             force_render=True,
         )
-        rgb_tensor = torch.from_numpy(rgb_arr).to(dtype=torch.uint8, device=gs.device)
+        # Ensure contiguous layout because the rendered array may have negative strides.
+        rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)
 
         self._shared_metadata.image_cache[self._idx][0] = rgb_tensor
 
