@@ -160,6 +160,9 @@ jobs:
           restore-keys: |
             ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       - name: Run unit tests
         run: |
           pytest -v -ra --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
