@@ -5,9 +5,7 @@ NOTE: These tests should ideally be run with debug mode enabled (pytest --dev)
 to verify that the correct collision detection code paths are being used.
 
 Debug mode enables collision path tracking counters in the narrowphase kernel that
-empirically verify which algorithm (analytical vs GJK) was actually executed, not just
-which was configured. Without debug mode, the test can only verify configuration flags,
-not actual execution paths, making the test less robust.
+empirically verify which algorithm (analytical vs GJK) was actually executed.
 """
 
 import os
