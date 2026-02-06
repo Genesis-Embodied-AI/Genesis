@@ -640,8 +640,9 @@ def func_convex_convex_contact(
                         collider_info,
                         errno,
                     )
-                elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or \
-                     (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
                     if ti.static(__debug__):
                         ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
                     # Ensure sphere is always i_ga and capsule is i_gb
@@ -894,9 +895,9 @@ def func_convex_convex_contact(
             elif multi_contact and is_col_0 > 0 and is_col > 0:
                 # For perturbed iterations (i_detection > 0), correct contact position and normal
                 # This applies to ALL collision methods when multi-contact is enabled
-                
+
                 # 1. Project the contact point on both geometries
-                # 2. Revert the effect of small rotation  
+                # 2. Revert the effect of small rotation
                 # 3. Update contact point
                 contact_point_a = (
                     gu.ti_transform_by_quat(

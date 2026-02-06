@@ -19,15 +19,15 @@ def func_closest_points_on_segments(
 ):
     """
     Compute closest points on two line segments using analytical solution.
-    
+
     Given two line segments:
       Segment A: P1 + s*(P2-P1), s ∈ [0,1]
       Segment B: Q1 + t*(Q2-Q1), t ∈ [0,1]
-    
+
     Find parameters s, t that minimize ||A(s) - B(t)||²
-    
+
     This is a well-known computer graphics problem with closed-form solution.
-    
+
     Parameters
     ----------
     P1, P2 : ti.Vector
@@ -36,21 +36,21 @@ def func_closest_points_on_segments(
         Endpoints of segment B
     EPS : float
         Small epsilon for numerical stability
-        
+
     Returns
     -------
     Pa : ti.Vector
         Closest point on segment A
     Pb : ti.Vector
         Closest point on segment B
-    
+
     References
     ----------
     Real-Time Collision Detection by Christer Ericson, Chapter 5.1.9
     """
     d1 = P2 - P1  # Direction vector of segment A
     d2 = Q2 - Q1  # Direction vector of segment B
-    r = P1 - Q1   # Vector between segment origins
+    r = P1 - Q1  # Vector between segment origins
 
     a = d1.dot(d1)  # Squared length of segment A
     b = d1.dot(d2)  # Dot product of directions
@@ -112,7 +112,7 @@ def func_capsule_capsule_contact(
 ):
     """
     Analytical capsule-capsule collision detection.
-    
+
     A capsule is defined as a line segment plus a radius (swept sphere).
     Collision between two capsules reduces to:
       1. Find closest points on the two line segments (analytical)
@@ -179,7 +179,7 @@ def func_capsule_capsule_contact(
 
         penetration = combined_radius - dist
         contact_pos = Pa - radius_a * normal
-    
+
     return is_col, normal, contact_pos, penetration
 
 
