@@ -38,10 +38,6 @@ from .capsule_contact import (
     func_capsule_capsule_contact,
 )
 
-from .capsule_contact import (
-    func_capsule_capsule_contact,
-)
-
 
 class CCD_ALGORITHM_CODE(IntEnum):
     """Convex collision detection algorithm codes."""
@@ -576,7 +572,6 @@ def func_convex_convex_contact(
         # Disabling multi-contact for pairs of decomposed geoms would speed up simulation but may cause physical
         # instabilities in the few cases where multiple contact points are actually need. Increasing the tolerance
         # criteria to get rid of redundant contact points seems to be a better option.
-        # Ellipsoids are excluded as they can cause issues with multi-contact perturbation.
         multi_contact = (
             static_rigid_sim_config.enable_multi_contact
             # and not (self._solver.geoms_info[i_ga].is_decomposed and self._solver.geoms_info[i_gb].is_decomposed)
@@ -863,44 +858,46 @@ def func_convex_convex_contact(
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
-                    contact_point_a = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.ti_inv_quat(qrot),
-                        )
-                        + contact_pos_0
+                # For perturbed iterations (i_detection > 0), correct contact position and normal
+                # This applies to ALL collision methods when multi-contact is enabled
+                
+                # 1. Project the contact point on both geometries
+                # 2. Revert the effect of small rotation  
+                # 3. Update contact point
+                contact_point_a = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                        gu.ti_inv_quat(qrot),
                     )
-                    contact_point_b = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
+                    + contact_pos_0
+                )
+                contact_point_b = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                        qrot,
                     )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
+                    + contact_pos_0
+                )
+                contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
-                    # First-order correction of the normal direction.
-                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                    # the mininal rotation that makes the corrected twisted normal as closed as possible to the
-                    # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
-                    # Rodrigues' rotation formula.
-                    twist_rotvec = ti.math.clamp(
-                        normal.cross(normal_0),
-                        -collider_info.mc_perturbation[None],
-                        collider_info.mc_perturbation[None],
-                    )
-                    normal = normal + twist_rotvec.cross(normal)
+                # First-order correction of the normal direction.
+                # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                # the mininal rotation that makes the corrected twisted normal as closed as possible to the
+                # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                # Rodrigues' rotation formula.
+                twist_rotvec = ti.math.clamp(
+                    normal.cross(normal_0),
+                    -collider_info.mc_perturbation[None],
+                    collider_info.mc_perturbation[None],
+                )
+                normal = normal + twist_rotvec.cross(normal)
 
-                    # Make sure that the penetration is still positive before adding contact point.
-                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                    # contact points and thefore more continuous contact forces, without changing the mean-field
-                    # dynamics since zero-penetration contact points should not induce any force.
-                    penetration = normal.dot(contact_point_b - contact_point_a)
+                # Make sure that the penetration is still positive before adding contact point.
+                # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                # contact points and thefore more continuous contact forces, without changing the mean-field
+                # dynamics since zero-penetration contact points should not induce any force.
+                penetration = normal.dot(contact_point_b - contact_point_a)
                 if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                     # Only change penetration to the initial one, because the normal vector could change abruptly
                     # under MuJoCo's GJK-EPA.

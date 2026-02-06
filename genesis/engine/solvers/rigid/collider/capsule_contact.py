@@ -204,9 +204,9 @@ def func_capsule_capsule_contact(
         is_col = True
         dist = ti.sqrt(dist_sq)
         
-        # Compute contact normal (from A to B)
+        # Compute contact normal (from B to A, pointing into geom A)
         if dist > EPS:
-            normal = diff / dist
+            normal = -diff / dist  # Negative because func_add_contact expects normal from B to A
         else:
             # Segments are coincident, use arbitrary perpendicular direction
             # Try cross product with axis_a first
@@ -217,12 +217,14 @@ def func_capsule_capsule_contact(
                     temp_normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
                 else:
                     temp_normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(axis_a)
-            normal = gu.ti_normalize(temp_normal, EPS)
+            # For coincident case, the sign doesn't matter much, but keep consistent
+            normal = -gu.ti_normalize(temp_normal, EPS)
         
         # Compute penetration depth
         penetration = combined_radius - dist
         
         # Compute contact position (on surface of capsule A)
-        contact_pos = Pa + radius_a * normal
+        # Note: normal now points from B to A, so we subtract to get point on A's surface
+        contact_pos = Pa - radius_a * normal
     
     return is_col, normal, contact_pos, penetration
