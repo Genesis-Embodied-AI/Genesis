@@ -65,7 +65,7 @@ class SegmentationColorMap:
                     rgb[k] = (t[k], p, v)
                 case 5:
                     rgb[k] = (v, p, q[k])
-        rgb = np.round(rgb * 255.0).astype(np.uint8)
+        rgb = mu.color_f32_to_u8(rgb)
 
         # Store the generated map
         if self.to_torch:
@@ -559,7 +559,9 @@ class RasterizerContext:
                         buffer_updates[node] = tfs.transpose((0, 2, 1))
 
                     elif mpm_entity.surface.vis_mode == "visual":
-                        mpm_entity._vmesh.verts = vverts_all[mpm_entity.vvert_start : mpm_entity.vvert_end, idx]
+                        mpm_entity._vmesh.trimesh.vertices = vverts_all[
+                            mpm_entity.vvert_start : mpm_entity.vvert_end, idx
+                        ]
                         self.add_dynamic_node(
                             mpm_entity,
                             pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
@@ -629,6 +631,12 @@ class RasterizerContext:
     def on_pbd(self):
         if self.sim.pbd_solver.is_active:
             for pbd_entity in self.sim.pbd_solver.entities:
+                if pbd_entity.surface.vis_mode == "visual":
+                    # Apply surface visual with UVs to the trimesh
+                    pbd_entity.vmesh.trimesh.visual = mu.surface_uvs_to_trimesh_visual(
+                        pbd_entity.surface, uvs=pbd_entity.vmesh.uvs, n_verts=len(pbd_entity.vmesh.trimesh.vertices)
+                    )
+
                 for idx in self.rendered_envs_idx:
                     if pbd_entity.surface.vis_mode == "recon":
                         self.add_dynamic_node(pbd_entity, None)
@@ -741,9 +749,10 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_ti, triangles_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_ti, triangles_ti, uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = ti_to_numpy(vertices_ti)
             triangles_all = ti_to_numpy(triangles_ti).reshape((-1, 3))
+            uvs_all = ti_to_numpy(uvs_ti)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -753,14 +762,16 @@ class RasterizerContext:
                     )
                     for idx in self.rendered_envs_idx:
                         vertices = vertices_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices, idx]
+                        uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
                         # Select only vertices used in surface triangles, then reindex triangles against the new vertex list
                         surf_idx, inv = np.unique(triangles.flat, return_inverse=True)
-                        triangles = inv.reshape(triangles.shape)
+                        triangles_reindexed = inv.reshape(triangles.shape)
                         vertices = vertices[surf_idx]
+                        uvs = uvs[surf_idx]
 
-                        mesh = trimesh.Trimesh(vertices, triangles, process=False)
+                        mesh = trimesh.Trimesh(vertices, triangles_reindexed, process=False)
                         mesh.visual = mu.surface_uvs_to_trimesh_visual(
-                            fem_entity.surface, n_verts=fem_entity.n_surface_vertices
+                            fem_entity.surface, uvs=uvs, n_verts=fem_entity.n_surface_vertices
                         )
                         self.add_static_node(
                             fem_entity,
@@ -770,7 +781,7 @@ class RasterizerContext:
 
     def update_fem(self, buffer_updates):
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, _uvs = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy(dtype=gs.np_float)
             triangles_all = triangles_all.to_numpy(dtype=gs.np_int).reshape((-1, 3))
 
@@ -830,7 +841,7 @@ class RasterizerContext:
 
     def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
         mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
-        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", is_marker=True)
+        node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", poses=poses, is_marker=True)
         self.add_external_node(node)
         return node
 
@@ -916,7 +927,7 @@ class RasterizerContext:
         )
 
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        mesh.visual.face_colors = np.tile(np.array(color) * 255, (len(faces), 1)).astype(np.uint8)
+        mesh.visual.face_colors = np.tile(mu.color_f32_to_u8(color), (len(faces), 1))
 
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_pyramid_{gs.UID()}", smooth=False, is_marker=True)
         self.add_external_node(node)

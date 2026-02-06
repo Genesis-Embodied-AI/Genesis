@@ -98,15 +98,22 @@ def kernel_collider_clear(
 
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
+        # Clear contacts: when hibernation is enabled, only clear non-hibernated contacts.
+        # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
         for i_c in range(collider_state.n_contacts[i_b]):
-            collider_state.contact_data.link_a[i_c, i_b] = -1
-            collider_state.contact_data.link_b[i_c, i_b] = -1
-            collider_state.contact_data.geom_a[i_c, i_b] = -1
-            collider_state.contact_data.geom_b[i_c, i_b] = -1
-            collider_state.contact_data.penetration[i_c, i_b] = 0.0
-            collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            should_clear = True
+            if ti.static(static_rigid_sim_config.use_hibernation):
+                # Only clear if this is not a hibernated contact
+                should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
+            if should_clear:
+                collider_state.contact_data.link_a[i_c, i_b] = -1
+                collider_state.contact_data.link_b[i_c, i_b] = -1
+                collider_state.contact_data.geom_a[i_c, i_b] = -1
+                collider_state.contact_data.geom_b[i_c, i_b] = -1
+                collider_state.contact_data.penetration[i_c, i_b] = 0.0
+                collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
         if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
@@ -189,7 +196,7 @@ def func_add_contact(
 
         collider_state.n_contacts[i_b] = i_c + 1
     else:
-        errno[i_b] = errno[i_b] | 0b00000000000000000000000000000010
+        errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @ti.func

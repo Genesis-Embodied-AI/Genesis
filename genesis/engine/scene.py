@@ -322,6 +322,7 @@ class Scene(RBC):
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
+        name: str | None = None,
     ):
         """
         Add an entity to the scene.
@@ -337,9 +338,14 @@ class Scene(RBC):
         surface : gs.surfaces.Surface | None, optional
             The surface of the entity. If None, use ``gs.surfaces.Default()``.
         visualize_contact : bool
-            Whether to visualize contact forces applied to this entity as arrows in the viewer and rendered images. Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
+            Whether to visualize contact forces applied to this entity as arrows in the viewer and rendered images.
+            Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
         vis_mode : str | None, optional
-            The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without explicitly creating a surface object.
+            The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without
+            explicitly creating a surface object.
+        name : str | None, optional
+            User-specified name for the entity. If not provided, an auto-generated name will be assigned
+            based on the morph type and entity UID (e.g., "box_a1b2c3d4"). Must be unique within the scene.
 
         Returns
         -------
@@ -377,7 +383,7 @@ class Scene(RBC):
         if isinstance(morph_for_checks, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
             surface.smooth = False
 
-        if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Terrain)):
+        if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.USD, gs.morphs.Terrain)):
             if not isinstance(material, (gs.materials.Rigid, gs.materials.Hybrid)):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph_for_checks}.")
 
@@ -461,7 +467,7 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, gs.materials.Rigid)
 
-        entity = self._sim._add_entity(morph, material, surface, visualize_contact)
+        entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
         return entity
 
@@ -469,12 +475,48 @@ class Scene(RBC):
     def add_stage(
         self,
         morph: gs.morphs.USD,
-        vis_mode: Literal["visual", "collision"] = "visual",
+        material: Material | None = None,
+        surface: Surface | None = None,
         visualize_contact: bool = False,
+        vis_mode: Literal["visual", "collision"] = "visual",
     ):
-        from genesis.utils.usd import import_from_stage
+        """
+        Add a stage to the scene.
 
-        return import_from_stage(self, morph.file, vis_mode, morph, visualize_contact)
+        Parameters
+        ----------
+        morph : gs.morphs.USD
+            The stage to add to the scene.
+        material : gs.materials.Material | None, optional
+            The material of the stage. If None, use ``gs.materials.Rigid()`` for all morphs.
+        surface : gs.surfaces.Surface | None, optional
+            The surface of the stage. If None, use ``gs.surfaces.Default()`` for all morphs.
+        visualize_contact : bool
+            Whether to visualize contact forces applied to this stage as arrows in the viewer and rendered images.
+            Note that this will not be displayed in images rendered by camera using the `RayTracer` renderer.
+        vis_mode : str | None, optional
+            The visualization mode of the stage. This is a handy shortcut for setting `surface.vis_mode` without
+            explicitly creating a surface object.
+
+        Returns
+        -------
+        entities : List[genesis.Entity]
+            The created entities.
+        """
+        entity_morphs = []
+        if isinstance(morph, gs.morphs.USD):
+            from genesis.utils.usd import parse_usd_stage
+
+            # Return a list of `gs.morphs.USD` for each parsed rigid entity in the stage.
+            entity_morphs = parse_usd_stage(morph)
+        else:
+            gs.raise_exception(f"Unsupported morph: {morph}.")
+
+        entities = []
+        for entity_morph in entity_morphs:
+            entities.append(self.add_entity(entity_morph, material, surface, visualize_contact, vis_mode))
+
+        return entities
 
     @gs.assert_unbuilt
     def add_mesh_light(
@@ -1463,6 +1505,49 @@ class Scene(RBC):
     def entities(self) -> list["Entity"]:
         """All the entities in the scene."""
         return self._sim.entities
+
+    @property
+    def entity_names(self) -> tuple[str, ...]:
+        """
+        Get the names of all entities in the scene.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Tuple of entity names in order of creation.
+        """
+        return tuple(entity.name for entity in self.entities)
+
+    def get_entity(self, name: str | None = None, *, uid: str | None = None) -> "Entity":
+        """
+        Get an entity by name or UID. Raises an exception if not found.
+
+        Parameters
+        ----------
+        name : str, optional
+            The exact name of the entity to find.
+        uid : str, optional
+            The short UID (7-character) of the entity to find.
+
+        Returns
+        -------
+        Entity
+            The matching entity.
+        """
+        if not ((name is None) ^ (uid is None)):
+            gs.raise_exception("Please specify either one argument between `name` or `uid`.")
+
+        if name is not None:
+            try:
+                return next(entity for entity in self.entities if entity.name == name)
+            except StopIteration as e:
+                gs.raise_exception_from(f"Entity not found for name: '{name}'.", e)
+        else:  # uid is not None
+            matches = [entity for entity in self.entities if entity.uid.match(uid, short_only=True)]
+            if matches:
+                (match,) = matches
+                return match
+            gs.raise_exception(f"Entity not found for uid: '{uid}'.")
 
     @property
     def emitters(self):

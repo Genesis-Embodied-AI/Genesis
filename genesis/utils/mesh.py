@@ -3,15 +3,15 @@ import marshal
 import math
 import os
 import pickle as pkl
-import platform
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import tetgen
 import trimesh
-from PIL import Image
 import OpenEXR
 import Imath
+from PIL import Image
 
 import coacd
 import igl
@@ -40,6 +40,18 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
 
+def color_f32_to_u8(color) -> np.ndarray:
+    return np.round(np.asarray(color, dtype=np.float32) * 255.0).astype(np.uint8)
+
+
+def color_u8_to_f32(color) -> np.ndarray:
+    return np.asarray(color, dtype=np.uint8).astype(np.float32) / 255.0
+
+
+def glossiness_to_roughness(glossiness: float) -> float:
+    return (2 / (glossiness + 2)) ** (1.0 / 4.0)
+
+
 class MeshInfo:
     def __init__(self):
         self.surface = None
@@ -62,29 +74,28 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale):
+    def export_mesh(self, scale, is_mesh_zup):
+        uvs = None
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
                 if uvs is None:
                     self.uvs[i] = np.zeros((len(verts), 2), dtype=gs.np_float)
             uvs = np.concatenate(self.uvs, axis=0)
-        else:
-            uvs = None
 
         verts = np.concatenate(self.verts, axis=0)
         faces = np.concatenate(self.faces, axis=0)
         normals = np.concatenate(self.normals, axis=0)
 
-        mesh = gs.Mesh.from_attrs(
+        return gs.Mesh.from_attrs(
             verts=verts,
             faces=faces,
             normals=normals,
             surface=self.surface,
             uvs=uvs,
             scale=scale,
+            metadata=self.metadata,
+            is_mesh_zup=is_mesh_zup,
         )
-        mesh.metadata.update(self.metadata)
-        return mesh
 
 
 class MeshInfoGroup:
@@ -99,8 +110,8 @@ class MeshInfoGroup:
             first_created = True
         return mesh_info, first_created
 
-    def export_meshes(self, scale):
-        return [mesh_info.export_mesh(scale) for mesh_info in self.infos.values()]
+    def export_meshes(self, scale, is_mesh_zup):
+        return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
 def get_asset_path(file):
@@ -171,7 +182,12 @@ def get_hashkey(*args):
 
 def load_mesh(file):
     if isinstance(file, (str, Path)):
-        return trimesh.load(file, force="mesh", skip_texture=True)
+        try:
+            return trimesh.load_mesh(file, force="mesh", skip_texture=False)
+        except Exception as e:
+            gs.logger.warning(f"Failed to load mesh with texture: {e}")
+            # try loading without texture data
+            return trimesh.load_mesh(file, force="mesh", skip_texture=True)
     return file
 
 
@@ -468,13 +484,15 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, surface):
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     meshes = []
     scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
-        mesh = gs.Mesh.from_trimesh(mesh=tmesh, scale=scale, surface=surface, metadata={"mesh_path": path})
+        mesh = gs.Mesh.from_trimesh(
+            mesh=tmesh, scale=scale, surface=surface, is_mesh_zup=is_mesh_zup, metadata={"mesh_path": path}
+        )
         meshes.append(mesh)
     return meshes
 
@@ -716,7 +734,7 @@ def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_sphere_impl(subdivisions=subdivisions)
     vertices = vertices * radius
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -737,7 +755,7 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_cylinder_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -762,7 +780,7 @@ def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
         normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
         attrs[name] = normals
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -883,7 +901,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
         vertices = vertices * extents + pos
 
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -991,27 +1009,17 @@ def make_tetgen_switches(cfg):
 
 
 def tetrahedralize_mesh(mesh, tet_cfg):
-    if platform.machine() == "aarch64":
-        gs.raise_exception("This method is not support on Linux ARM because 'tetgen' module is crashing.")
+    tet = tetgen.TetGen(mesh.vertices.astype(np.float64, copy=False), mesh.faces.astype(np.int32, copy=False))
 
-    # Importing pyvista and tetgen are very slow to import and not used very often. Let's delay import.
-    import pyvista as pv
-    import tetgen
-
-    pv_obj = pv.PolyData(
-        mesh.vertices, np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
-    )
-    tet = tetgen.TetGen(pv_obj)
     # Build and apply the switches string directly, since
     # the Python wrapper sometimes ignores certain kwargs
     # (e.g. maxvolume). See: https://github.com/pyvista/tetgen/issues/24
-    switches = make_tetgen_switches(tet_cfg)
-    verts, elems = tet.tetrahedralize(switches=switches)
-    # visualize_tet(tet, pv_obj, show_surface=False, plot_cell_qual=False)
+    verts, elems, *_ = tet.tetrahedralize(switches=make_tetgen_switches(tet_cfg))
+
     return verts, elems
 
 
-def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
+def visualize_tet(tet, mesh, show_surface=True, plot_cell_qual=False):
     grid = tet.grid
     if show_surface:
         grid.plot(show_edges=True)
@@ -1031,8 +1039,11 @@ def visualize_tet(tet, pv_data, show_surface=True, plot_cell_qual=False):
                 scalars=cell_qual, stitle="Quality", cmap="bwr", clim=[0, 1], flip_scalars=True, show_edges=True
             )
         else:
-            # Importing pyvista is very slow and not used very often. Let's delay import.
+            # Delaying import of 'pyvista' because it is an optional dependency
             import pyvista as pv
+
+            faces = np.concatenate([np.full((mesh.faces.shape[0], 1), mesh.faces.shape[1]), mesh.faces], axis=1)
+            pv_data = pv.PolyData(mesh.vertices, faces)
 
             plotter = pv.Plotter()
             plotter.add_mesh(subgrid, "lightgrey", lighting=True, show_edges=True)
