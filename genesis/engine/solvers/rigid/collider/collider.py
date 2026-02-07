@@ -465,6 +465,8 @@ class Collider:
         )
         
         # Kernel 2: Validate candidates in parallel
+        self._collider_state.n_broad_pairs.fill(0)
+        
         func_broad_phase_validate_candidates(
             self._solver.links_state,
             self._solver.links_info,
