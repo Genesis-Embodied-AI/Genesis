@@ -6,13 +6,15 @@ import gstaichi as ti
 import genesis as gs
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
-from .data import IPCTransformData, IPCCouplingData
+from .data import IPCTransformData, IPCCouplingData, ArticulationData
 from .utils import (
     find_target_link_for_fixed_merge,
     compute_link_to_link_transform,
+    compute_link_init_world_rotation,
     is_robot_entity,
     categorize_entities_by_coupling_type,
     build_ipc_scene_config,
+    extract_articulated_joints,
     read_ipc_geometry_metadata,
     decompose_transform_matrix,
     build_link_transform_matrix,
@@ -137,9 +139,7 @@ class IPCCoupler(RBC):
                 out_forces[i, j] = linear_force[j]
                 out_torques[i, j] = angular_torque[j]
 
-    # ---------- 1.2 Batch data kernels (qpos read/write/compare) ----------
-
-    # ---------- 1.3 Transform and initialization kernels ----------
+    # ---------- 1.2 Transform and state storage kernels ----------
 
     @ti.kernel
     def _store_link_states_kernel(
@@ -206,6 +206,116 @@ class IPCCoupler(RBC):
         for i in range(n_qs):
             transform_data.stored_qpos[entity_idx, env_idx, i] = solver_qpos[q_start + i, env_idx]
 
+    # ---------- 1.3 Articulation coupling kernels ----------
+
+    def _copy_stored_qpos_to_articulation_kernel(
+        self,
+        transform_data: ti.template(),
+        articulation_data: ti.template(),
+        n_envs: ti.i32,
+    ):
+        """Copy qpos from stored_qpos to qpos_current (ArticulationData)."""
+        n_entities = articulation_data.n_entities[None]
+        for idx in range(n_entities):
+            entity_idx = articulation_data.entity_indices[idx]
+            n_dofs = transform_data.stored_qpos_size[entity_idx]
+            for env_idx, dof_idx in ti.ndrange(n_envs, n_dofs):
+                articulation_data.qpos_current[idx, env_idx, dof_idx] = transform_data.stored_qpos[
+                    entity_idx, env_idx, dof_idx
+                ]
+
+    @ti.kernel
+    def _compute_delta_theta_tilde_kernel(
+        self,
+        articulation_data: ti.template(),
+        n_envs: ti.i32,
+    ):
+        """Compute target joint displacement: delta_theta_tilde = qpos_current - ref_dof_prev"""
+        n_entities = articulation_data.n_entities[None]
+        for entity_idx, env_idx in ti.ndrange(n_entities, n_envs):
+            n_joints = articulation_data.entity_n_joints[entity_idx]
+            for joint_idx in range(n_joints):
+                qpos_idx = articulation_data.joint_qpos_indices[entity_idx, joint_idx]
+                qpos_curr = articulation_data.qpos_current[entity_idx, env_idx, qpos_idx]
+                qpos_prev = articulation_data.ref_dof_prev[entity_idx, env_idx, qpos_idx]
+                articulation_data.delta_theta_tilde[entity_idx, env_idx, joint_idx] = qpos_curr - qpos_prev
+
+    @ti.kernel
+    def _compute_qpos_new_kernel(
+        self,
+        articulation_data: ti.template(),
+        n_envs: ti.i32,
+    ):
+        """Compute new qpos from ref_dof_prev and delta_theta_ipc."""
+        n_entities = articulation_data.n_entities[None]
+        for entity_idx, env_idx in ti.ndrange(n_entities, n_envs):
+            n_dofs = articulation_data.entity_n_dofs[entity_idx]
+            n_joints = articulation_data.entity_n_joints[entity_idx]
+            for dof_idx in range(n_dofs):
+                articulation_data.qpos_new[entity_idx, env_idx, dof_idx] = articulation_data.ref_dof_prev[
+                    entity_idx, env_idx, dof_idx
+                ]
+            for joint_idx in range(n_joints):
+                qpos_idx = articulation_data.joint_qpos_indices[entity_idx, joint_idx]
+                if qpos_idx < n_dofs:
+                    delta_theta = articulation_data.delta_theta_ipc[entity_idx, env_idx, joint_idx]
+                    articulation_data.qpos_new[entity_idx, env_idx, qpos_idx] = (
+                        articulation_data.ref_dof_prev[entity_idx, env_idx, qpos_idx] + delta_theta
+                    )
+
+    @ti.kernel
+    def _extract_joint_mass_matrix_kernel(
+        self,
+        articulation_data: ti.template(),
+        solver_mass_mat: ti.types.ndarray(),
+        entity_idx: ti.i32,
+        env_idx: ti.i32,
+    ):
+        """Extract joint mass matrix submatrix in column-major order."""
+        dof_start = articulation_data.entity_dof_start[entity_idx]
+        n_joints = articulation_data.entity_n_joints[entity_idx]
+        for i in range(n_joints):
+            dof_i = articulation_data.joint_dof_indices[entity_idx, i]
+            for j in range(n_joints):
+                dof_j = articulation_data.joint_dof_indices[entity_idx, j]
+                articulation_data.mass_matrix[entity_idx, j * n_joints + i] = solver_mass_mat[
+                    dof_start + dof_i, dof_start + dof_j, env_idx
+                ]
+
+    @ti.kernel
+    def _extract_joint_mass_matrix_kernel_field(
+        self,
+        articulation_data: ti.template(),
+        solver_mass_mat: ti.template(),
+        entity_idx: ti.i32,
+        env_idx: ti.i32,
+    ):
+        """Extract joint mass matrix submatrix from ti.field (for performance_mode=True)."""
+        dof_start = articulation_data.entity_dof_start[entity_idx]
+        n_joints = articulation_data.entity_n_joints[entity_idx]
+        for i in range(n_joints):
+            dof_i = articulation_data.joint_dof_indices[entity_idx, i]
+            for j in range(n_joints):
+                dof_j = articulation_data.joint_dof_indices[entity_idx, j]
+                articulation_data.mass_matrix[entity_idx, j * n_joints + i] = solver_mass_mat[
+                    dof_start + dof_i, dof_start + dof_j, env_idx
+                ]
+
+    @ti.kernel
+    def _update_ref_dof_prev_kernel(
+        self,
+        articulation_data: ti.template(),
+        n_envs: ti.i32,
+    ):
+        """Update ref_dof_prev from qpos_new for next timestep."""
+        n_entities = articulation_data.n_entities[None]
+        for entity_idx, env_idx in ti.ndrange(n_entities, n_envs):
+            n_dofs = articulation_data.entity_n_dofs[entity_idx]
+            for dof_idx in range(n_dofs):
+                articulation_data.ref_dof_prev[entity_idx, env_idx, dof_idx] = articulation_data.qpos_new[
+                    entity_idx, env_idx, dof_idx
+                ]
+
     # ============================================================
     # Section 2: Initialization & Setup
     # ============================================================
@@ -250,7 +360,7 @@ class IPCCoupler(RBC):
         self._use_subscenes = False  # Will be set in _init_ipc based on number of environments
 
         # Per-entity coupling type: maps entity_idx -> coupling_type
-        # Valid types: None (default, not in IPC), "two_way_soft_constraint", "ipc_only"
+        # Valid types: None (default, not in IPC), "two_way_soft_constraint", "external_articulation", "ipc_only"
         self._entity_coupling_types = {}
 
         # IPC link filter: maps entity_idx -> set of link_idx to include in IPC
@@ -327,6 +437,14 @@ class IPCCoupler(RBC):
         # Link collision settings for IPC
         # Structure: {entity_idx: {link_idx: bool}} - True to enable collision, False to disable
         self._link_collision_settings = {}
+
+        # Initialize Taichi data structure for articulation coupling
+        self.articulation_data = ArticulationData(
+            self.MAX_ARTICULATED_ENTITIES,
+            self.MAX_DOFS_PER_ENTITY,
+            self.MAX_JOINTS_PER_ENTITY,
+            self.MAX_ENVS,
+        )
 
     def build(self) -> None:
         """Build IPC system"""
@@ -547,6 +665,11 @@ class IPCCoupler(RBC):
         # Add rigid geoms to IPC based on per-entity coupling types
         if self.rigid_solver.is_active:
             self._add_rigid_geoms_to_ipc()
+
+        # Add articulated entities for entities with external_articulation coupling type
+        has_articulation_entities = any(ct == "external_articulation" for ct in self._entity_coupling_types.values())
+        if has_articulation_entities and self.rigid_solver.is_active:
+            self._add_articulated_entities_to_ipc()
 
     def _add_fem_entities_to_ipc(self):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
@@ -1022,6 +1145,168 @@ class IPCCoupler(RBC):
         # NOTE: Mass scaling removed - now using external_kinetic=1 instead
         # All mass is handled by IPC, Genesis uses external_kinetic for kinematic coupling
 
+    def _add_articulated_entities_to_ipc(self):
+        """Add articulated robot entities to IPC using ExternalArticulationConstraint."""
+        from uipc.constitution import (
+            ExternalArticulationConstraint,
+            AffineBodyRevoluteJoint,
+            AffineBodyPrismaticJoint,
+        )
+        from uipc.geometry import linemesh
+        from uipc import view
+
+        # Create ExternalArticulationConstraint if not exists
+        if not hasattr(self, "_ipc_eac") or self._ipc_eac is None:
+            self._ipc_eac = ExternalArticulationConstraint()
+            self._ipc_scene.constitution_tabular().insert(self._ipc_eac)
+
+        # Initialize cache for non-fixed base entities
+        if not hasattr(self, "_articulated_entities"):
+            self._articulated_entities = {}
+            self._articulation_with_non_fixed_base = []
+
+        rigid_solver = self.rigid_solver
+        scene = self._ipc_scene
+
+        # Process each entity with external_articulation coupling
+        for entity_idx, coupling_type in self._entity_coupling_types.items():
+            if coupling_type != "external_articulation":
+                continue
+
+            entity = rigid_solver._entities[entity_idx]
+            joint_info = extract_articulated_joints(entity)
+
+            if joint_info["n_joints"] == 0:
+                gs.logger.warning(f"Entity {entity_idx}: external_articulation set but no joints found")
+                continue
+
+            base_link = entity.links[0]
+            has_non_fixed_base = not base_link.is_fixed
+
+            gs.logger.info(
+                f"Adding articulated entity {entity_idx}: {joint_info['n_joints']} joints "
+                f"({len(joint_info['revolute_joints'])} revolute, {len(joint_info['prismatic_joints'])} prismatic)"
+            )
+
+            # Create joint constitutions
+            abrj = AffineBodyRevoluteJoint()
+            abpj = AffineBodyPrismaticJoint()
+            joint_geo_slots = []
+
+            # Process revolute joints
+            for joint in joint_info["revolute_joints"]:
+                child_link_idx = joint.link.idx
+                parent_link_idx_orig = joint.link.parent_idx if joint.link.parent_idx >= 0 else 0
+                parent_link_idx = find_target_link_for_fixed_merge(rigid_solver, parent_link_idx_orig)
+
+                parent_abd_slot = self._find_abd_geometry_slot_by_link(parent_link_idx, env_idx=0)
+                child_abd_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx=0)
+
+                if parent_abd_slot is None or child_abd_slot is None:
+                    gs.logger.warning(f"Skipping joint {joint.name}: ABD slots not found")
+                    continue
+
+                # Get joint axis in world coordinates
+                joint_axis_local = joint.dofs_motion_ang[0]
+                child_rot_matrix = compute_link_init_world_rotation(rigid_solver, child_link_idx)
+                joint_axis = child_rot_matrix @ joint_axis_local
+
+                # Get joint position from FK
+                joint_idx = joint.idx
+                joint_pos = rigid_solver.joints_state.xanchor.to_numpy()[joint_idx, 0]
+
+                # Create linemesh for revolute joint
+                axis_length = 1.0
+                v1 = joint_pos - (axis_length / 2) * joint_axis
+                v2 = joint_pos + (axis_length / 2) * joint_axis
+                vertices = np.array([v2, v1], dtype=np.float64)
+                edges = np.array([[0, 1]], dtype=np.int32)
+                revolute_mesh = linemesh(vertices, edges)
+
+                abrj.apply_to(revolute_mesh, [parent_abd_slot], [0], [child_abd_slot], [0], [100.0])
+
+                joint_obj = scene.objects().create(f"revolute_joint_{entity_idx}_{joint.name}")
+                revolute_slot, _ = joint_obj.geometries().create(revolute_mesh)
+                joint_geo_slots.append(revolute_slot)
+
+            # Process prismatic joints
+            for joint in joint_info["prismatic_joints"]:
+                child_link_idx = joint.link.idx
+                parent_link_idx_orig = joint.link.parent_idx if joint.link.parent_idx >= 0 else 0
+                parent_link_idx = find_target_link_for_fixed_merge(rigid_solver, parent_link_idx_orig)
+
+                parent_abd_slot = self._find_abd_geometry_slot_by_link(parent_link_idx, env_idx=0)
+                child_abd_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx=0)
+
+                if parent_abd_slot is None or child_abd_slot is None:
+                    gs.logger.warning(f"Skipping joint {joint.name}: ABD slots not found")
+                    continue
+
+                # Get joint axis in world coordinates
+                joint_axis_local = joint.dofs_motion_vel[0]
+                child_rot_matrix = compute_link_init_world_rotation(rigid_solver, child_link_idx)
+                joint_axis = child_rot_matrix @ joint_axis_local
+
+                # Get joint position
+                joint_idx = joint.idx
+                joint_pos = rigid_solver.joints_state.xanchor.to_numpy()[joint_idx, 0]
+
+                # Create linemesh for prismatic joint
+                axis_length = 1.0
+                v1 = joint_pos - (axis_length / 2) * joint_axis
+                v2 = joint_pos + (axis_length / 2) * joint_axis
+                vertices = np.array([v1, v2], dtype=np.float64)
+                edges = np.array([[0, 1]], dtype=np.int32)
+                prismatic_mesh = linemesh(vertices, edges)
+
+                abpj.apply_to(prismatic_mesh, [parent_abd_slot], [0], [child_abd_slot], [0], [100.0])
+
+                joint_obj = scene.objects().create(f"prismatic_joint_{entity_idx}_{joint.name}")
+                prismatic_slot, _ = joint_obj.geometries().create(prismatic_mesh)
+                joint_geo_slots.append(prismatic_slot)
+
+            if len(joint_geo_slots) == 0:
+                gs.logger.warning(f"Entity {entity_idx}: No valid joint geometry created")
+                continue
+
+            # Create articulation geometry
+            n_joints = len(joint_geo_slots)
+            indices = [0] * n_joints
+            articulation_geo = self._ipc_eac.create_geometry(joint_geo_slots, indices)
+
+            # Initialize mass matrix
+            mass_matrix = np.eye(n_joints, dtype=np.float64) * 1e4
+            mass_attr = articulation_geo["joint_joint"].find("mass")
+            mass_view = view(mass_attr)
+            mass_view[:] = mass_matrix.T.flatten()
+
+            # Create object in IPC scene
+            articulation_obj = scene.objects().create(f"articulation_entity_{entity_idx}")
+            articulation_slot, _ = articulation_obj.geometries().create(articulation_geo)
+
+            # Store articulation data
+            self._articulated_entities[entity_idx] = {
+                "entity": entity,
+                "env_idx": 0,
+                "revolute_joints": joint_info["revolute_joints"],
+                "prismatic_joints": joint_info["prismatic_joints"],
+                "joint_geo_slots": joint_geo_slots,
+                "articulation_geo": articulation_geo,
+                "articulation_slot": articulation_slot,
+                "articulation_object": articulation_obj,
+                "n_joints": n_joints,
+                "joint_qpos_indices": joint_info["joint_qpos_indices"],
+                "joint_dof_indices": joint_info["joint_dof_indices"],
+                "mass_matrix": mass_matrix,
+                "has_non_fixed_base": has_non_fixed_base,
+                "base_link_idx": entity.base_link_idx,
+            }
+
+            if has_non_fixed_base:
+                self._articulation_with_non_fixed_base.append(entity_idx)
+
+            gs.logger.info(f"Successfully added articulated entity {entity_idx} to IPC")
+
     def _finalize_ipc(self):
         """Finalize IPC setup"""
         self._ipc_world.init(self._ipc_scene)
@@ -1030,6 +1315,10 @@ class IPCCoupler(RBC):
 
         # Initialize AffineBodyStateAccessorFeature for optimized state retrieval
         self._init_abd_state_accessor()
+
+    def _find_abd_geometry_slot_by_link(self, link_idx, env_idx=0):
+        """Find ABD geometry slot by link index."""
+        return self._link_to_abd_slot.get((env_idx, link_idx), None)
 
     def _init_abd_state_accessor(self):
         """
@@ -1106,6 +1395,7 @@ class IPCCoupler(RBC):
             Type of coupling:
             - None: Entity not processed by IPC (default)
             - 'two_way_soft_constraint': Two-way coupling using SoftTransformConstraint
+            - 'external_articulation': Joint-level coupling using ExternalArticulationConstraint
             - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way)
                          Only allowed for single base-link entities (free rigid bodies)
 
@@ -1114,6 +1404,8 @@ class IPCCoupler(RBC):
         - None: Entity is completely ignored by IPC coupler
         - 'two_way_soft_constraint': Uses SoftTransformConstraint for bidirectional coupling,
           can use set_ipc_coupling_link_filter to select specific links
+        - 'external_articulation': Uses ExternalArticulationConstraint for articulated bodies,
+          joint positions are coupled at the DOF level
         - 'ipc_only': Entity only simulated in IPC, transforms directly set to Genesis.
           Only allowed for entities with a single base link (no joints).
 
@@ -1123,7 +1415,7 @@ class IPCCoupler(RBC):
         entity_idx = entity._idx_in_solver
 
         # Validate coupling type
-        valid_types = [None, "two_way_soft_constraint", "ipc_only"]
+        valid_types = [None, "two_way_soft_constraint", "external_articulation", "ipc_only"]
         if coupling_type not in valid_types:
             raise ValueError(f"Invalid coupling_type '{coupling_type}'. Must be one of {valid_types}.")
 
@@ -1445,9 +1737,14 @@ class IPCCoupler(RBC):
 
         two_way_entities = self._entities_by_coupling_type["two_way_soft_constraint"]
         ipc_only_entities = self._entities_by_coupling_type["ipc_only"]
+        articulation_entities = self._entities_by_coupling_type["external_articulation"]
 
         # ========== Step 1: Store Genesis rigid states (common) ==========
         self._store_genesis_rigid_states()
+
+        # For external_articulation: prepare articulation data before advance
+        if articulation_entities:
+            self._pre_advance_external_articulation(articulation_entities)
 
         # ========== Step 2: IPC advance + retrieve (common) ==========
         self._ipc_world.advance()
@@ -1457,8 +1754,11 @@ class IPCCoupler(RBC):
         self._retrieve_fem_states(f)
 
         # ========== Step 4: Post-advance processing (per entity type) ==========
-        # First, retrieve rigid states for all entities that need it (two_way + ipc_only)
-        rigid_entities = two_way_entities + ipc_only_entities
+        # Get articulation entities with non-fixed base (pre-computed during build)
+        articulation_with_non_fixed_base = getattr(self, "_articulation_with_non_fixed_base", [])
+
+        # First, retrieve rigid states for all entities that need it (two_way + ipc_only + articulation with non-fixed base)
+        rigid_entities = two_way_entities + ipc_only_entities + articulation_with_non_fixed_base
         if rigid_entities:
             self._retrieve_rigid_states(f, set(rigid_entities))
 
@@ -1466,6 +1766,10 @@ class IPCCoupler(RBC):
         if two_way_entities:
             if self.options.two_way_coupling:
                 self._apply_abd_coupling_forces(set(two_way_entities))
+
+        # For external_articulation: read delta_theta and update Genesis qpos
+        if articulation_entities:
+            self._post_advance_external_articulation(articulation_entities)
 
         # For ipc_only: directly set Genesis transforms from IPC
         if ipc_only_entities:
@@ -1937,6 +2241,155 @@ class IPCCoupler(RBC):
                 except Exception as e:
                     gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}: {e}")
                     continue
+
+    def _pre_advance_external_articulation(self, entity_indices):
+        """Pre-advance processing for external_articulation entities."""
+        from uipc import view
+        from uipc.geometry import affine_body
+
+        if len(self._articulated_entities) == 0:
+            return
+
+        ad = self.articulation_data
+
+        # Initialize metadata on first call
+        if not hasattr(self, "_articulation_metadata_initialized"):
+            n_entities = len(self._articulated_entities)
+            ad.n_entities[None] = n_entities
+
+            for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
+                entity = art_data["entity"]
+                env_idx = art_data["env_idx"]
+                n_joints = art_data["n_joints"]
+
+                # Get actual qpos size
+                if self.sim._B > 1:
+                    actual_qpos = entity.get_qpos(envs_idx=env_idx).cpu().numpy()
+                else:
+                    actual_qpos = entity.get_qpos().cpu().numpy()
+                n_dofs_actual = len(actual_qpos)
+
+                # Fill metadata
+                ad.entity_indices[idx] = entity_idx
+                ad.entity_env_indices[idx] = env_idx
+                ad.entity_n_dofs[idx] = n_dofs_actual
+                ad.entity_n_joints[idx] = n_joints
+                ad.entity_dof_start[idx] = entity.dof_start
+
+                # Fill joint mappings
+                for j_idx in range(n_joints):
+                    ad.joint_qpos_indices[idx, j_idx] = art_data["joint_qpos_indices"][j_idx]
+                    ad.joint_dof_indices[idx, j_idx] = art_data["joint_dof_indices"][j_idx]
+
+            self._articulation_metadata_initialized = True
+
+        # Get dimensions
+        is_parallelized = self.sim._scene.n_envs > 0
+        n_envs = self.sim._scene.n_envs if is_parallelized else 1
+
+        # Copy qpos and compute delta_theta_tilde
+        self._copy_stored_qpos_to_articulation_kernel(self.transform_data, ad, n_envs)
+        self._compute_delta_theta_tilde_kernel(ad, n_envs)
+
+        # Update IPC geometry for each entity
+        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
+            articulation_slot = art_data["articulation_slot"]
+            articulation_geo = articulation_slot.geometry()
+            env_idx = art_data["env_idx"]
+            n_joints = art_data["n_joints"]
+
+            # Set delta_theta_tilde to IPC
+            delta_theta_tilde_attr = articulation_geo["joint"].find("delta_theta_tilde")
+            delta_theta_tilde_view = view(delta_theta_tilde_attr)
+            for joint_idx in range(n_joints):
+                delta_theta_tilde_view[joint_idx] = ad.delta_theta_tilde[idx, env_idx, joint_idx]
+
+            # Update mass matrix (select kernel based on data type)
+            mass_kernel_func = (
+                self._extract_joint_mass_matrix_kernel
+                if gs.use_ndarray
+                else self._extract_joint_mass_matrix_kernel_field
+            )
+            mass_kernel_func(ad, self.rigid_solver.mass_mat, idx, env_idx)
+
+            # Transfer to IPC
+            mass_attr = articulation_geo["joint_joint"].find("mass")
+            if mass_attr is not None:
+                mass_view = view(mass_attr)
+                mass_size = n_joints * n_joints
+                for i in range(mass_size):
+                    mass_view[i] = ad.mass_matrix[idx, i]
+
+    def _post_advance_external_articulation(self, entity_indices):
+        """Post-advance processing for external_articulation entities."""
+        from uipc import view
+
+        if len(self._articulated_entities) == 0:
+            return
+
+        ad = self.articulation_data
+        is_parallelized = self.sim._scene.n_envs > 0
+        n_envs = self.sim._scene.n_envs if is_parallelized else 1
+
+        # Read delta_theta_ipc from IPC
+        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
+            articulation_slot = art_data["articulation_slot"]
+            env_idx = art_data["env_idx"]
+            n_joints = art_data["n_joints"]
+
+            scene_art_geo = articulation_slot.geometry()
+            delta_theta_attr = scene_art_geo["joint"].find("delta_theta")
+            delta_theta_view = view(delta_theta_attr)
+            for joint_idx in range(n_joints):
+                ad.delta_theta_ipc[idx, env_idx, joint_idx] = delta_theta_view[joint_idx]
+
+        # Compute qpos_new
+        self._compute_qpos_new_kernel(ad, n_envs)
+
+        # Export qpos_new
+        qpos_new_all = ad.qpos_new.to_numpy()
+
+        # Write back to Genesis
+        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
+            entity = art_data["entity"]
+            env_idx = art_data["env_idx"]
+            n_dofs = ad.entity_n_dofs[idx]
+
+            qpos_new_np = qpos_new_all[idx, env_idx, :n_dofs].astype(np.float32)
+
+            if self.sim._B > 1:
+                entity.set_qpos(qpos_new_np, envs_idx=env_idx, zero_velocity=False)
+            else:
+                entity.set_qpos(qpos_new_np, zero_velocity=False)
+
+            # Handle non-fixed base
+            has_non_fixed_base = art_data.get("has_non_fixed_base", False)
+            if has_non_fixed_base:
+                base_link_idx = art_data["base_link_idx"]
+                if hasattr(self, "abd_data_by_link") and base_link_idx in self.abd_data_by_link:
+                    env_data = self.abd_data_by_link[base_link_idx]
+                    if env_idx in env_data:
+                        ipc_transform = env_data[env_idx].get("transform")
+                        if ipc_transform is not None:
+                            pos, quat_wxyz = decompose_transform_matrix(ipc_transform)
+
+                            if self.sim._B > 1:
+                                self.rigid_solver.set_base_links_pos(
+                                    pos, [base_link_idx], envs_idx=env_idx, relative=False
+                                )
+                                self.rigid_solver.set_base_links_quat(
+                                    quat_wxyz, [base_link_idx], envs_idx=env_idx, relative=False
+                                )
+                            else:
+                                self.rigid_solver.set_base_links_pos(
+                                    pos, [base_link_idx], envs_idx=None, relative=False
+                                )
+                                self.rigid_solver.set_base_links_quat(
+                                    quat_wxyz, [base_link_idx], envs_idx=None, relative=False
+                                )
+
+        # Update ref_dof_prev for next timestep
+        self._update_ref_dof_prev_kernel(ad, n_envs)
 
     def couple_grad(self, f):
         """Gradient computation for coupling"""

@@ -82,3 +82,42 @@ class IPCCouplingData:
         self.out_forces = np.empty((max_links, 3), dtype=gs.np_float)
         self.out_torques = np.empty((max_links, 3), dtype=gs.np_float)
         self.n_items = 0  # Track actual number of items used
+
+
+@ti.data_oriented
+class ArticulationData:
+    """Data-oriented class for joint articulation coupling with Taichi parallelization."""
+
+    def __init__(self, max_entities, max_dofs_per_entity, max_joints_per_entity, max_envs):
+        # Entity-level metadata
+        self.n_entities = ti.field(dtype=ti.i32, shape=())
+        self.entity_indices = ti.field(dtype=ti.i32, shape=max_entities)
+        self.entity_env_indices = ti.field(dtype=ti.i32, shape=max_entities)
+        self.entity_n_dofs = ti.field(dtype=ti.i32, shape=max_entities)
+        self.entity_n_joints = ti.field(dtype=ti.i32, shape=max_entities)
+        self.entity_dof_start = ti.field(dtype=ti.i32, shape=max_entities)  # DOF start index in rigid solver
+
+        # Joint to qpos and DOF mapping (per entity)
+        # joint_qpos_indices[entity_idx, joint_idx] = local q-space index (for qpos_current, qpos_new access)
+        # joint_dof_indices[entity_idx, joint_idx] = local DOF index (for mass_mat access)
+        self.joint_qpos_indices = ti.field(dtype=ti.i32, shape=(max_entities, max_joints_per_entity))
+        self.joint_dof_indices = ti.field(dtype=ti.i32, shape=(max_entities, max_joints_per_entity))
+
+        # DOF data (per entity, per environment)
+        self.ref_dof_prev = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_dofs_per_entity))
+        self.qpos_current = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_dofs_per_entity))
+        self.qvel_genesis = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_dofs_per_entity))
+        self.qpos_new = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_dofs_per_entity))
+
+        # Joint data (per entity, per environment)
+        self.delta_theta_tilde = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_joints_per_entity))
+        self.delta_theta_ipc = ti.field(dtype=gs.ti_float, shape=(max_entities, max_envs, max_joints_per_entity))
+
+        # Mass matrix (per entity, flattened column-major)
+        max_mass_size = max_joints_per_entity * max_joints_per_entity
+        self.mass_matrix = ti.field(dtype=gs.ti_float, shape=(max_entities, max_mass_size))
+
+        # Previous timestep link transforms for ref_dof_prev computation
+        # Stores link indices and transform matrices from previous step
+        # Dictionary: {(entity_idx, joint_idx, env_idx): transform_matrix_4x4}
+        self.prev_link_transforms = {}
