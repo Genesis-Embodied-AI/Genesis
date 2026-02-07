@@ -449,9 +449,86 @@ class Collider:
         self._contact_data_cache.clear()
         
         # Two-kernel approach: generate candidates, then validate in parallel
-        use_two_kernel = False  # Toggle to test performance
+        use_two_kernel = True  # Toggle to test performance
+        use_three_kernel = False  # Split into sort/sweep/validate for profiling
         
-        if use_two_kernel:
+        if use_two_kernel and use_three_kernel:
+            # THREE-KERNEL approach with profiling
+            import time
+            from genesis.engine.solvers.rigid.collider.broadphase import (
+                func_collision_clear_kernel,
+                func_broad_phase_sort_only,
+                func_broad_phase_sweep_candidates,
+            )
+            
+            # Initialize timing accumulators if not exists
+            if not hasattr(self, '_kernel_times'):
+                self._kernel_times = {'sort': [], 'sweep': [], 'validate': []}
+            
+            # Clear collision state first (separate kernel)
+            func_collision_clear_kernel(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._collider_state,
+                self._solver._static_rigid_sim_config,
+            )
+            
+            # Kernel 1: Sort (includes func_collision_clear internally)
+            gs.ti.sync()
+            t0 = time.perf_counter()
+            func_broad_phase_sort_only(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+            gs.ti.sync()
+            t1 = time.perf_counter()
+            self._kernel_times['sort'].append((t1 - t0) * 1000)
+            
+            # Kernel 2: Sweep candidates
+            gs.ti.sync()
+            t0 = time.perf_counter()
+            func_broad_phase_sweep_candidates(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+            gs.ti.sync()
+            t1 = time.perf_counter()
+            self._kernel_times['sweep'].append((t1 - t0) * 1000)
+            
+            # Kernel 3: Validate candidates
+            gs.ti.sync()
+            t0 = time.perf_counter()
+            func_broad_phase_validate_candidates(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver.constraint_solver.constraint_state,
+                self._solver.equalities_info,
+                self._solver._errno,
+            )
+            gs.ti.sync()
+            t1 = time.perf_counter()
+            self._kernel_times['validate'].append((t1 - t0) * 1000)
+            
+        elif use_two_kernel:
+            # TWO-KERNEL approach (original)
             # Clear counters
             self._collider_state.n_candidates.fill(0)
             self._collider_state.n_broad_pairs.fill(0)
