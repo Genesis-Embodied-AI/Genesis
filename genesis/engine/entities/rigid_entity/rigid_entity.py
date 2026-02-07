@@ -24,7 +24,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
-from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_numpy, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -3285,17 +3285,15 @@ class RigidEntity(Entity):
             an array of shape (n_envs,) with per-environment masses.
         """
         if self._enable_heterogeneous:
-            # Use solver's batched links_info for accurate per-environment masses
-            all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
-            links_idx = np.arange(self.link_start, self.link_end)
-            # Shape: (n_links, n_envs) -> sum over links axis
-            return all_links_mass[links_idx].sum(axis=0)
-        else:
-            # Original behavior: sum link masses to scalar
-            mass = 0.0
-            for link in self.links:
-                mass += link.get_mass()
-            return mass
+            links_idx = slice(self.link_start, self.link_end)
+            links_mass = ti_to_numpy(self._solver.links_info.inertial_mass, None, links_idx, transpose=True)
+            return links_mass.sum(axis=1)
+
+        # Original behavior: sum link masses to scalar
+        mass = 0.0
+        for link in self.links:
+            mass += link.get_mass()
+        return mass
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- naming methods -----------------------------------

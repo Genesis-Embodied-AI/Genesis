@@ -1,8 +1,6 @@
 import hashlib
-import numbers
 import os
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +13,7 @@ import genesis as gs
 
 from .utils import (
     get_hardware_fingerprint,
+    get_hf_dataset,
     get_platform_fingerprint,
     get_git_commit_timestamp,
     get_git_commit_info,
@@ -725,6 +724,83 @@ def box_pyramid_6(solver, n_envs, gjk):
     return _box_pyramid(solver, n_envs, gjk, n_cubes=6)
 
 
+@pytest.fixture
+def g1_fall(solver, n_envs, gjk):
+    """G1 humanoid robot falling from above a plane."""
+    import gstaichi as ti
+
+    # This is sufficient, as long as we use sync
+    duration_warmup = 20.0
+    duration_record = 5.0
+
+    # Needed in order to reproduce the benefits for parallelizing Hessian that
+    # we see on Eden Beyond Mimic
+    step_dt = 0.005
+
+    asset_path = get_hf_dataset(pattern="unitree_g1/*")
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            dt=step_dt,
+            iterations=10,
+            tolerance=1e-5,
+            ls_iterations=20,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    scene.add_entity(
+        gs.morphs.Plane(),
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            **get_file_morph_options(
+                file=f"{asset_path}/unitree_g1/g1_29dof_rev_1_0.xml",
+                pos=(0, 0, 1.0),
+            )
+        ),
+        vis_mode="collision",
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    # Set initial position with robot elevated above ground
+    init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
+    init_qpos[2] = 1.0  # z position
+    init_qpos[3] = 1.0  # quaternion w component
+    robot.set_qpos(init_qpos)
+
+    random_forces = torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device)
+    max_force = 50.0
+
+    num_steps = 0
+    is_recording = False
+    ti.sync()
+    time_start = time.time()
+    while True:
+        random_forces.uniform_(-max_force, max_force)
+        robot.control_dofs_force(random_forces)
+        scene.step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > duration_record:
+                ti.sync()
+                time_elapsed = time.time() - time_start
+                break
+        elif time_elapsed > duration_warmup:
+            ti.sync()
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * step_dt
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -752,6 +828,7 @@ def box_pyramid_6(solver, n_envs, gjk):
         ("box_pyramid_5", None, None, 4096, gs.gpu),
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
+        ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
