@@ -1,6 +1,7 @@
+import importlib
 import os
 import threading
-import importlib
+from traceback import TracebackException
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -9,14 +10,16 @@ import OpenGL.platform
 
 import genesis as gs
 import genesis.utils.geom as gu
-
 from genesis.ext import pyrender
 from genesis.repr_base import RBC
-from genesis.utils.tools import Rate
 from genesis.utils.misc import redirect_libc_stderr, tensor_to_array
+from genesis.utils.tools import Rate
+from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod
+from genesis.vis.viewer_plugins import DefaultControlsPlugin
 
 if TYPE_CHECKING:
     from genesis.options.vis import ViewerOptions
+    from genesis.vis.viewer_plugins import ViewerPlugin
 
 
 class ViewerLock:
@@ -32,6 +35,7 @@ class ViewerLock:
 
 class Viewer(RBC):
     def __init__(self, options: "ViewerOptions", context):
+        self._is_built = False
         self._res = options.res
         self._run_in_thread = options.run_in_thread
         self._refresh_rate = options.refresh_rate
@@ -40,15 +44,15 @@ class Viewer(RBC):
         self._camera_init_lookat = np.asarray(options.camera_lookat, dtype=gs.np_float)
         self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
         self._camera_fov = options.camera_fov
-        self._enable_interaction = options.enable_interaction
-        self._disable_keyboard_shortcuts = options.disable_keyboard_shortcuts
+
+        self._disable_help_text = options.disable_help_text
+        self._viewer_plugins: list["ViewerPlugin"] = []
+        if not options.disable_default_keybinds:
+            self._viewer_plugins.append(DefaultControlsPlugin())
 
         # Validate viewer options
         if any(e.shape != (3,) for e in (self._camera_init_pos, self._camera_init_lookat, self._camera_up)):
             gs.raise_exception("ViewerOptions.camera_(pos|lookat|up) must be sequences of length 3.")
-
-        if options.enable_interaction and gs.backend != gs.cpu:
-            gs.logger.warning("Interaction code is slow on GPU. Switch to CPU backend or disable interaction.")
 
         self._pyrender_viewer = None
         self.context = context
@@ -100,8 +104,8 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
-                        enable_interaction=self._enable_interaction,
-                        disable_keyboard_shortcuts=self._disable_keyboard_shortcuts,
+                        disable_help_text=self._disable_help_text,
+                        plugins=self._viewer_plugins,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",
                             "refresh_rate": self._refresh_rate,
@@ -111,9 +115,10 @@ class Viewer(RBC):
                         self._pyrender_viewer.start(auto_refresh=False)
                     self._pyrender_viewer.wait_until_initialized()
                 break
-            except (OpenGL.error.Error, RuntimeError):
+            except (OpenGL.error.Error, RuntimeError) as e:
                 # Invalid OpenGL context. Trying another platform if any...
-                gs.logger.debug("Invalid OpenGL context.")
+                traceback = TracebackException.from_exception(e)
+                gs.logger.debug("".join(traceback.format()))
 
                 # Clear broken OpenGL context if it went this far
                 if self._pyrender_viewer is not None:
@@ -123,6 +128,7 @@ class Viewer(RBC):
                 if i == len(all_opengl_platforms) - 1:
                     raise
             finally:
+                # Restore original platform systematically
                 del os.environ["PYOPENGL_PLATFORM"]
                 if opengl_platform_orig is not None:
                     os.environ["PYOPENGL_PLATFORM"] = opengl_platform_orig
@@ -134,6 +140,8 @@ class Viewer(RBC):
         glinfo = self._pyrender_viewer.context.get_info()
         renderer = glinfo.get_renderer()
         gs.logger.debug(f"Using interactive viewer OpenGL device: {renderer}")
+
+        self._is_built = True
 
     def run(self):
         if self._pyrender_viewer is None:
@@ -265,9 +273,79 @@ class Viewer(RBC):
         else:
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
+    @gs.assert_built
+    def register_keybinds(self, *keybinds: Keybind) -> None:
+        """
+        Register a callback function to be called when a key is pressed.
+
+        Parameters
+        ----------
+        keybinds : Keybind
+            One or more Keybind objects to register. See Keybind documentation for usage.
+        """
+        self._pyrender_viewer.register_keybinds(*keybinds)
+
+    @gs.assert_built
+    def remap_keybind(
+        self,
+        keybind_name: str,
+        new_key: Key,
+        new_key_mods: tuple[KeyMod] | None,
+        new_key_action: KeyAction = KeyAction.PRESS,
+    ) -> None:
+        """
+        Remap an existing keybind by name to a new key combination.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remap.
+        new_key : int
+            The new key code from pyglet.
+        new_key_mods : tuple[KeyMod] | None
+            The new modifier keys pressed.
+        new_key_action : KeyAction, optional
+            The new type of key action. If not provided, the key action of the old keybind is used.
+        """
+        self._pyrender_viewer.remap_keybind(
+            keybind_name,
+            new_key,
+            new_key_mods,
+            new_key_action,
+        )
+
+    @gs.assert_built
+    def remove_keybind(self, keybind_name: str) -> None:
+        """
+        Remove an existing keybind by name.
+
+        Parameters
+        ----------
+        keybind_name : str
+            The name of the keybind to remove.
+        """
+        self._pyrender_viewer.remove_keybind(keybind_name)
+
+    def add_plugin(self, plugin: "ViewerPlugin") -> None:
+        """
+        Add a viewer plugin to the viewer.
+
+        Parameters
+        ----------
+        plugin : ViewerPlugin
+            The viewer plugin to add.
+        """
+        self._viewer_plugins.append(plugin)
+        if self.is_built:
+            self._viewer.register_plugin(plugin)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
+
+    @property
+    def is_built(self):
+        return self._is_built
 
     @property
     def res(self):

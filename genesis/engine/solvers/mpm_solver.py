@@ -244,7 +244,7 @@ class MPMSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         self.add_material(material)
 
         # create entity
@@ -259,6 +259,7 @@ class MPMSolver(Solver):
             particle_start=self.n_particles,
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
+            name=name,
         )
         self._entities.append(entity)
 

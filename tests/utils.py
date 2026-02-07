@@ -17,28 +17,27 @@ from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
-import numpy as np
 import mujoco
+import numpy as np
 import torch
-from httpx import HTTPError as HTTPXError
 from httpcore import TimeoutException as HTTPTimeoutException
+from httpx import HTTPError as HTTPXError
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
-from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
-
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "e0d8081ddf6d7490f67eac214d09820ba8689b2f"
-HUGGINGFACE_SNAPSHOT_REVISION = "53228deca0e3a0e0848cc997315e9f8ba5f97cce"
+HUGGINGFACE_ASSETS_REVISION = "ca29b66018b449a37738257a3a76a78529d29bcc"
+HUGGINGFACE_SNAPSHOT_REVISION = "0cf1780dd70b67dc426023cd97738037f0d834e3"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -186,7 +185,6 @@ def get_hf_dataset(
     local_dir: str | None = None,
     num_retry: int = 4,
     retry_delay: float = 30.0,
-    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -207,7 +205,6 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
-                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful

@@ -196,7 +196,7 @@ def func_add_contact(
 
         collider_state.n_contacts[i_b] = i_c + 1
     else:
-        errno[i_b] = errno[i_b] | 0b00000000000000000000000000000010
+        errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @ti.func

@@ -48,7 +48,7 @@ class SharedSensorMetadata:
     """
 
     cache_sizes: list[int] = field(default_factory=list)
-    delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype=gs.tc_int)
 
     def __del__(self):
         try:
@@ -329,7 +329,7 @@ class RigidSensorMetadataMixin:
     """
 
     solver: "RigidSolver | None" = None
-    links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    links_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
     offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
 

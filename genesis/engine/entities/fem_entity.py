@@ -1,4 +1,5 @@
 from functools import wraps
+from pathlib import Path
 
 import igl
 import numpy as np
@@ -59,8 +60,10 @@ class FEMEntity(Entity):
         Starting index of this entity's surface triangles in the global surface array (default is 0).
     """
 
-    def __init__(self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0):
-        super().__init__(idx, scene, morph, solver, material, surface)
+    def __init__(
+        self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0, name: str | None = None
+    ):
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._v_start = v_start  # offset for vertex index of elements
         self._el_start = el_start  # offset for element index
@@ -389,6 +392,7 @@ class FEMEntity(Entity):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
+        self._uvs = None
 
         if is_cloth:
             # Cloth: load surface mesh directly (no tetrahedralization)
@@ -400,6 +404,14 @@ class FEMEntity(Entity):
                 faces = mesh.faces
                 # For cloth, we store faces as "elements" (treating them as surface elements)
                 self.instantiate(verts, faces)
+
+                # Load UVs from mesh (1:1 mapping for cloth).
+                # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None when UVs are None,
+                # the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions can be recomputed,
+                # thus texture mapping and anisotropic surfaces will not work properly.
+                self._uvs = None
+                if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
+                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=False)
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:
@@ -419,7 +431,11 @@ class FEMEntity(Entity):
             elif isinstance(self.morph, gs.options.morphs.Cylinder):
                 verts, elems = eu.cylinder_to_elements()
             elif isinstance(self.morph, gs.options.morphs.Mesh):
-                verts, elems = eu.mesh_to_elements(
+                # We don't need to proces UVs here because the tetrahedralization process append new vertices
+                # and faces at the end of the vertex list, thus the original UVs are preserved at the beginning.
+                # We can't generate UVs for newly created internal vertices as it doesn't make sense but they're
+                # not used for rendering so it's fine.
+                verts, elems, self._uvs = eu.mesh_to_elements(
                     file=self._morph.file,
                     pos=self._morph.pos,
                     scale=self._morph.scale,
@@ -443,6 +459,7 @@ class FEMEntity(Entity):
 
         # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
+        uvs_np = self._uvs if self._uvs is not None else np.zeros((0, 2), dtype=gs.np_float)
 
         if is_cloth:
             # Cloth: add only vertices and surfaces for rendering (no physics computation)
@@ -456,6 +473,7 @@ class FEMEntity(Entity):
                 s_start=self._s_start,
                 verts=verts_numpy,
                 tri2v=self._surface_tri_np,
+                uvs=uvs_np,
             )
         else:
             # Regular FEM: add vertices, elements, and surfaces for physics and rendering
@@ -475,6 +493,7 @@ class FEMEntity(Entity):
                 elems=elems_np,
                 tri2v=self._surface_tri_np,
                 tri2el=self._surface_el_np,
+                uvs=uvs_np,
             )
 
         self.active = True
@@ -1016,6 +1035,23 @@ class FEMEntity(Entity):
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
 
     # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "fem_box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "fem_sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "fem_cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return f"fem_{Path(morph.file).stem}"
+        return "fem_entity"
+
+    # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
 
@@ -1073,6 +1109,11 @@ class FEMEntity(Entity):
     def surface_triangles(self):
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
+
+    @property
+    def uvs(self):
+        """UV coordinates for this entity's vertices, or None if not available."""
+        return self._uvs
 
     @property
     def tet_cfg(self):

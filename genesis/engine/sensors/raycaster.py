@@ -293,7 +293,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     min_ranges: torch.Tensor = make_tensor_field((0,))
     max_ranges: torch.Tensor = make_tensor_field((0,))
     no_hit_values: torch.Tensor = make_tensor_field((0,))
-    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
+    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_bool)
 
     patterns: list[RaycastPattern] = field(default_factory=list)
     ray_dirs: torch.Tensor = make_tensor_field((0, 3))
@@ -301,10 +301,10 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     ray_starts_world: torch.Tensor = make_tensor_field((0, 3))
     ray_dirs_world: torch.Tensor = make_tensor_field((0, 3))
 
-    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
 
 
 class RaycasterData(NamedTuple):
