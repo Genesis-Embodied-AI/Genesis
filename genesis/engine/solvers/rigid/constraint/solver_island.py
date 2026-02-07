@@ -654,7 +654,17 @@ class ConstraintSolverIsland:
 
     @ti.func
     def _func_ls_point_fn_3alphas(self, i_b, alpha_0, alpha_1, alpha_2):
-        """Evaluate 3 candidate alphas in a single constraint loop pass (contact-only)."""
+        """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint loop pass.
+
+        This function batches the evaluation of three candidate step sizes into one loop over constraints, amortizing
+        the cost of memory loads (Jaref, jv, quad) across all three evaluations. Each constraint's data is loaded once
+        and used to update three independent sets of accumulators simultaneously.
+
+        Since the island solver only handles contact constraints (no equality or friction), all constraints use the
+        same simple activation test (x < 0). The combined effect of loop fusion (3x fewer constraint iterations vs.
+        three separate _func_ls_point_fn calls) and improved cache/register reuse makes this particularly effective in
+        the refinement phase of the linesearch, where it is called repeatedly inside a tight loop. Islands with many
+        contact constraints benefit most from the reduced iteration count."""
         qg0 = self.quad_gauss[0, i_b]
         qg1 = self.quad_gauss[1, i_b]
         qg2 = self.quad_gauss[2, i_b]
@@ -720,7 +730,16 @@ class ConstraintSolverIsland:
         c2_d0,
         c2_d1,
     ):
-        """Bracket update using local candidate values. No global memory access or _func_ls_point_fn call."""
+        """Update the linesearch bracket using locally available candidate values without additional constraint evaluation.
+
+        This function replaces the original update_bracket which read candidates from global memory and called
+        _func_ls_point_fn to evaluate the next step. Instead, it takes all three candidates' (alpha, cost, deriv_0,
+        deriv_1) as local arguments — already computed by _func_ls_point_fn_3alphas — and selects the best bracket
+        update purely from local variables. The next candidate alpha is computed via a Newton step without an additional
+        constraint evaluation, deferring that to the next batched 3-alpha call.
+
+        This avoids both redundant global memory reads and extra single-point constraint evaluations, which is
+        beneficial when the refinement loop runs many iterations."""
         flag = 0
 
         # Candidate 0
@@ -941,39 +960,6 @@ class ConstraintSolverIsland:
                                 self.ls_result[i_b] = 5
                                 res_alpha = 0.0
         return res_alpha
-
-    @ti.func
-    def update_bracket(self, p_alpha, p_cost, p_deriv_0, p_deriv_1, i_b):
-        flag = 0
-
-        for i in range(3):
-            if p_deriv_0 < 0 and self.candidates[4 * i + 2, i_b] < 0 and p_deriv_0 < self.candidates[4 * i + 2, i_b]:
-                p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
-                    self.candidates[4 * i + 0, i_b],
-                    self.candidates[4 * i + 1, i_b],
-                    self.candidates[4 * i + 2, i_b],
-                    self.candidates[4 * i + 3, i_b],
-                )
-
-                flag = 1
-            elif p_deriv_0 > 0 and self.candidates[4 * i + 2, i_b] > 0 and p_deriv_0 > self.candidates[4 * i + 2, i_b]:
-                p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
-                    self.candidates[4 * i + 0, i_b],
-                    self.candidates[4 * i + 1, i_b],
-                    self.candidates[4 * i + 2, i_b],
-                    self.candidates[4 * i + 3, i_b],
-                )
-                flag = 2
-            else:
-                pass
-
-        p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
-
-        if flag > 0:
-            p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = self._func_ls_point_fn(
-                i_b, p_alpha - p_deriv_0 / p_deriv_1
-            )
-        return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
 
     @ti.func
     def _func_solve_body(self, island, i_b):
