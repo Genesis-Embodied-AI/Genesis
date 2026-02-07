@@ -11,7 +11,7 @@ import random
 import sys
 from dataclasses import field
 from itertools import combinations
-from typing import Any, Callable, NoReturn, Optional, Type, Sequence
+from typing import Any, NoReturn, Optional, Type, Sequence
 
 import cpuinfo
 import gstaichi as ti

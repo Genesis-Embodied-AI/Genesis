@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
 import gstaichi as ti
 

@@ -4,13 +4,15 @@ from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
 
+# Note the importing mujoco with env var `MUJOCO_GL=EGL` forcibly defines `PYOPENGL_PLATFORM=egl`
+import mujoco
+
 import numpy as np
 import trimesh
+import z3
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
-import z3
-import mujoco
 import genesis as gs
 from genesis.ext import urdfpy
 
