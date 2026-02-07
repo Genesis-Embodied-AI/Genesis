@@ -271,7 +271,7 @@ class IMUSensor(
         data = self.read(env_idx)
         acc_vec = data.lin_acc.reshape((3,)) * self._options.debug_acc_scale
         gyro_vec = data.ang_vel.reshape((3,)) * self._options.debug_gyro_scale
-        mag_vec = data.mag.reshape((3,)) * self._options.debug_mag_scale  # added mag debug
+        mag_vec = data.mag.reshape((3,)) * self._options.debug_mag_scale
 
         # transform from local frame to world frame
         offset_quat = transform_quat_by_quat(self.quat_offset, quat)
@@ -286,8 +286,8 @@ class IMUSensor(
         self.debug_objects += filter(
             None,
             (
-                context.draw_debug_arrow(pos=pos, vec=acc_vec, color=self._options.debug_acc_color),
-                context.draw_debug_arrow(pos=pos, vec=gyro_vec, color=self._options.debug_gyro_color),
-                context.draw_debug_arrow(pos=pos, vec=mag_vec, color=self._options.debug_mag_color),
+                context.draw_debug_arrow(pos=pos, vec=acc_vec, radius=0.006, color=self._options.debug_acc_color),
+                context.draw_debug_arrow(pos=pos, vec=gyro_vec, radius=0.0055, color=self._options.debug_gyro_color),
+                context.draw_debug_arrow(pos=pos, vec=mag_vec, radius=0.005, color=self._options.debug_mag_color),
             ),
         )
