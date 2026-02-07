@@ -526,8 +526,10 @@ class StructColliderState(metaclass=BASE_METACLASS):
     active_buffer: V_ANNOTATION
     n_broad_pairs: V_ANNOTATION
     broad_collision_pairs: V_ANNOTATION
-    candidate_pairs: V_ANNOTATION  # Candidate pairs before validation
-    n_candidates: V_ANNOTATION  # Count of candidates per env
+    # Candidate pairs before validation
+    candidate_pairs: V_ANNOTATION
+    # Count of candidates per env
+    n_candidates: V_ANNOTATION
     active_buffer_awake: V_ANNOTATION
     active_buffer_hib: V_ANNOTATION
     box_depth: V_ANNOTATION
