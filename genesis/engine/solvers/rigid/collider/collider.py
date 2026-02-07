@@ -478,6 +478,34 @@ class Collider:
             self._solver.equalities_info,
             self._solver._errno,
         )
+        
+        # Narrowphase: compute actual contacts from broad pairs
+        if self._collider_static_config.has_convex_convex:
+            func_narrow_phase_convex_vs_convex(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver.geoms_init_AABB,
+                self._solver.verts_info,
+                self._solver.faces_info,
+                self._solver.edges_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+                self._collider_info,
+                self._collider_static_config,
+                self._mpr._mpr_state,
+                self._mpr._mpr_info,
+                self._gjk._gjk_state,
+                self._gjk._gjk_info,
+                self._gjk._gjk_static_config,
+                self._sdf._sdf_info,
+                self._support_field._support_field_info,
+                self._gjk._gjk_state.diff_contact_input,
+                self._solver._errno,
+            )
+        
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,
