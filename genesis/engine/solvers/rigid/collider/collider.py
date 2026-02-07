@@ -451,7 +451,7 @@ class Collider:
         # TODO: move this inside some kernel, proably inside generate candidates
         self._collider_state.n_candidates.fill(0)
         self._collider_state.n_broad_pairs.fill(0)
-        
+
         # Kernel 1: Generate candidates (sort + sweep without validation)
         func_broad_phase_generate_candidates(
             self._solver.links_state,
@@ -463,10 +463,11 @@ class Collider:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        
-        # Kernel 2: Validate candidates in parallel
+
+        # TODO: move this fill into some kernel, probably generate_candidates
         self._collider_state.n_broad_pairs.fill(0)
-        
+
+        # Kernel 2: Validate candidates in parallel
         func_broad_phase_validate_candidates(
             self._solver.links_state,
             self._solver.links_info,
@@ -480,7 +481,7 @@ class Collider:
             self._solver.equalities_info,
             self._solver._errno,
         )
-        
+
         # Narrowphase: compute actual contacts from broad pairs
         if self._collider_static_config.has_convex_convex:
             func_narrow_phase_convex_vs_convex(
@@ -507,7 +508,7 @@ class Collider:
                 self._gjk._gjk_state.diff_contact_input,
                 self._solver._errno,
             )
-        
+
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,

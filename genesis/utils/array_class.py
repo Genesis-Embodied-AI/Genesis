@@ -527,7 +527,7 @@ class StructColliderState(metaclass=BASE_METACLASS):
     n_broad_pairs: V_ANNOTATION
     broad_collision_pairs: V_ANNOTATION
     candidate_pairs: V_ANNOTATION  # Candidate pairs before validation
-    n_candidates: V_ANNOTATION     # Count of candidates per env
+    n_candidates: V_ANNOTATION  # Count of candidates per env
     active_buffer_awake: V_ANNOTATION
     active_buffer_hib: V_ANNOTATION
     box_depth: V_ANNOTATION
@@ -578,7 +578,7 @@ def get_collider_state(
 
     # Calculate max possible candidate pairs (n*(n-1)/2)
     max_candidates = (n_geoms * (n_geoms - 1)) // 2
-    
+
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
         active_buffer=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
