@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
 
 pyglet.options["shadow_window"] = False
+pyglet.options["dpi_scaling"] = "real"
 
 
 MODULE_DIR = os.path.dirname(__file__)
@@ -366,9 +367,7 @@ class Viewer(pyglet.window.Window):
         #######################################################################
         # Initialize OpenGL context and renderer
         #######################################################################
-        self._renderer = Renderer(
-            self._viewport_size[0], self._viewport_size[1], context.jit, self.render_flags["point_size"]
-        )
+        self._renderer = Renderer(*self._viewport_size, context.jit, self.render_flags["point_size"])
         self._is_active = True
 
         # Starting the viewer would raise an exception if the OpenGL context is invalid for some reason. This exception
@@ -654,12 +653,18 @@ class Viewer(pyglet.window.Window):
             super().close()
         except Exception:
             pass
-        finally:
+        try:
             super().on_close()
-            try:
-                pyglet.app.exit()
-            except Exception:
-                pass
+        except Exception:
+            pass
+        try:
+            pyglet.app.exit()
+        except Exception:
+            pass
+        try:
+            pyglet.app.platform_event_loop.stop()
+        except Exception:
+            pass
 
         self._offscreen_semaphore.release()
 
@@ -788,8 +793,8 @@ class Viewer(pyglet.window.Window):
 
         self._viewport_size = (width, height)
         self._trackball.resize(self._viewport_size)
-        self._renderer.viewport_width = self._viewport_size[0]
-        self._renderer.viewport_height = self._viewport_size[1]
+        self._renderer.viewport_width = width
+        self._renderer.viewport_height = height
         self.on_draw()
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -998,9 +1003,9 @@ class Viewer(pyglet.window.Window):
         elif self.render_flags["all_solid"]:
             flags |= RenderFlags.ALL_SOLID
 
-        if self.render_flags["shadows"]:
+        if self.render_flags["shadows"] and not self._is_software:
             flags |= RenderFlags.SHADOWS_ALL
-        if self.render_flags["plane_reflection"]:
+        if self.render_flags["plane_reflection"] and not self._is_software:
             flags |= RenderFlags.REFLECTIVE_FLOOR
         if self.render_flags["env_separate_rigid"]:
             flags |= RenderFlags.ENV_SEPARATE
@@ -1149,12 +1154,16 @@ class Viewer(pyglet.window.Window):
                         confs.insert(0, conf)
                     raise
 
+                # Determine if software emulation is being used
+                glinfo = self.context.get_info()
+                renderer = glinfo.get_renderer()
+                self._is_software = any(e in renderer for e in ("llvmpipe", "Apple Software Renderer"))
+
                 # Run the entire rendering pipeline first without window, to make sure that all kernels are compiled
                 self.refresh()
 
-                # At this point, we are all set to display the graphical window if requested
-                if not pyglet.options["headless"]:
-                    self.set_visible(True)
+                # At this point, we are all set to display the graphical window
+                self.set_visible(True)
 
                 # Run the entire rendering pipeline once again, as a final validation that everything is fine
                 self.refresh()
@@ -1201,6 +1210,13 @@ class Viewer(pyglet.window.Window):
         # The viewer can be considered as fully initialized at this point
         if not self._initialized_event.is_set():
             self._initialized_event.set()
+
+        gs.logger.debug(f"Using interactive viewer OpenGL device: {renderer}")
+        if self._is_software:
+            gs.logger.info(
+                "Software rendering context detected. Shadows and plane reflection not supported. Beware rendering "
+                "will be extremely slow."
+            )
 
         if auto_refresh:
             while self._is_active:
