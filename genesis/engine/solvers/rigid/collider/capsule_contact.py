@@ -11,10 +11,10 @@ from .contact import (
 
 @ti.func
 def func_closest_points_on_segments(
-    P1: ti.types.vector(3, gs.ti_float),
-    P2: ti.types.vector(3, gs.ti_float),
-    Q1: ti.types.vector(3, gs.ti_float),
-    Q2: ti.types.vector(3, gs.ti_float),
+    seg_a_p1: ti.types.vector(3, gs.ti_float),
+    seg_a_p2: ti.types.vector(3, gs.ti_float),
+    seg_b_p1: ti.types.vector(3, gs.ti_float),
+    seg_b_p2: ti.types.vector(3, gs.ti_float),
     EPS: gs.ti_float,
 ):
     """
@@ -28,15 +28,6 @@ def func_closest_points_on_segments(
 
     This is a well-known computer graphics problem with closed-form solution.
 
-    Parameters
-    ----------
-    P1, P2 : ti.Vector
-        Endpoints of segment A
-    Q1, Q2 : ti.Vector
-        Endpoints of segment B
-    EPS : float
-        Small epsilon for numerical stability
-
     Returns
     -------
     Pa : ti.Vector
@@ -48,52 +39,48 @@ def func_closest_points_on_segments(
     ----------
     Real-Time Collision Detection by Christer Ericson, Chapter 5.1.9
     """
-    d1 = P2 - P1  # Direction vector of segment A
-    d2 = Q2 - Q1  # Direction vector of segment B
-    r = P1 - Q1  # Vector between segment origins
+    segment_a_dir = seg_a_p2 - seg_a_p1
+    segment_b_dir = seg_b_p2 - seg_b_p1
+    vec_between_segment_origins = seg_a_p1 - seg_b_p1
 
-    a = d1.dot(d1)  # Squared length of segment A
-    b = d1.dot(d2)  # Dot product of directions
-    c = d2.dot(d2)  # Squared length of segment B
-    d = d1.dot(r)
-    e = d2.dot(r)
+    a_squared_len = segment_a_dir.dot(segment_a_dir)
+    dot_product_dir = segment_a_dir.dot(segment_b_dir)
+    b_squared_len = segment_b_dir.dot(segment_b_dir)
+    d = segment_a_dir.dot(vec_between_segment_origins)
+    e = segment_b_dir.dot(vec_between_segment_origins)
 
-    denom = a * c - b * b  # Denominator (always >= 0)
+    denom = a_squared_len * b_squared_len - dot_product_dir * dot_product_dir
 
-    # Initialize parameters
     s = gs.ti_float(0.0)
     t = gs.ti_float(0.0)
 
-    # Check if segments are parallel or degenerate
     if denom < EPS:
         # Segments are parallel or one/both are degenerate
-        # Handle as special case
         s = 0.0
-        if c > EPS:
-            t = ti.math.clamp(e / c, 0.0, 1.0)
+        if b_squared_len > EPS:
+            t = ti.math.clamp(e / b_squared_len, 0.0, 1.0)
         else:
             t = 0.0
     else:
         # General case: solve for optimal parameters
-        s = (b * e - c * d) / denom
-        t = (a * e - b * d) / denom
+        s = (dot_product_dir * e - b_squared_len * d) / denom
+        t = (a_squared_len * e - dot_product_dir * d) / denom
 
-        # Clamp s to [0, 1]
         s = ti.math.clamp(s, 0.0, 1.0)
 
         # Recompute t for clamped s
-        t = ti.math.clamp((b * s + e) / c if c > EPS else 0.0, 0.0, 1.0)
+        t = ti.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Recompute s for clamped t (ensures we're on segment boundaries)
-        s_new = ti.math.clamp((b * t - d) / a if a > EPS else 0.0, 0.0, 1.0)
+        s_new = ti.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Use refined s if it improves the solution
-        if a > EPS:
+        if a_squared_len > EPS:
             s = s_new
 
     # Compute closest points
-    Pa = P1 + s * d1
-    Pb = Q1 + t * d2
+    Pa = seg_a_p1 + s * segment_a_dir
+    Pb = seg_b_p1 + t * segment_b_dir
 
     return Pa, Pb
 
