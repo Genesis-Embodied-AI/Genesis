@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import gstaichi as ti
-from uipc.constitution import ElasticModuli2D, ElasticModuli
 
 import genesis as gs
 from genesis.options.solvers import IPCCouplerOptions
@@ -552,6 +551,7 @@ class IPCCoupler(RBC):
     def _add_fem_entities_to_ipc(self):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
         from uipc.geometry import label_surface, tetmesh, trimesh
+        from uipc.constitution import ElasticModuli2D, ElasticModuli
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         fem_solver = self.fem_solver

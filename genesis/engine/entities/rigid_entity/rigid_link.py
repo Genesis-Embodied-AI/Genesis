@@ -152,27 +152,65 @@ class RigidLink(RBC):
 
             # Process each geom individually and compose their properties
             for geom in geom_list:
-                # Create mesh based on geom type
                 if is_visual:
-                    inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
+                    geom_type = gs.GEOM_TYPE.MESH
                 else:
-                    inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces)
+                    geom_type = geom.type
 
                 geom_pos = geom._init_pos
                 geom_quat = geom._init_quat
 
-                if not inertia_mesh.is_watertight:
-                    inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+                geom_com_local = np.zeros(3)
+                if geom_type == gs.GEOM_TYPE.PLANE:
+                    pass
+                elif geom_type == gs.GEOM_TYPE.SPHERE:
+                    radius = geom.data[0]
+                    geom_mass = (4.0 / 3.0) * np.pi * radius**3 * rho
+                    I = (2.0 / 5.0) * geom_mass * radius**2
+                    geom_inertia_local = np.diag([I, I, I])
+                elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+                    hx, hy, hz = geom.data[:3]
+                    geom_mass = (4.0 / 3.0) * np.pi * hx * hy * hz * rho
+                    geom_inertia_local = (geom_mass / 5.0) * np.diag([hy**2 + hz**2, hx**2 + hz**2, hx**2 + hy**2])
+                elif geom_type == gs.GEOM_TYPE.CYLINDER:
+                    radius, height = geom.data[:2]
+                    geom_mass = np.pi * radius**2 * height * rho
+                    I_r = (geom_mass / 12.0) * (3.0 * radius**2 + height**2)
+                    I_z = 0.5 * geom_mass * radius**2
+                    geom_inertia_local = np.diag([I_r, I_r, I_z])
+                elif geom_type == gs.GEOM_TYPE.CAPSULE:
+                    radius, height = geom.data[:2]
+                    m_cyl = np.pi * radius**2 * height * rho
+                    m_sph = (4.0 / 3.0) * np.pi * radius**3 * rho
+                    geom_mass = m_cyl + m_sph
+                    I_r = (m_cyl * radius**2 / 12.0 * (3.0 + height**2 / radius**2)) + (
+                        m_sph * radius**2 / 4.0 * (83.0 / 80.0 + (height / radius + 3.0 / 4.0) ** 2)
+                    )
+                    I_h = 0.5 * m_cyl * radius**2 + (2.0 / 5.0) * m_sph * radius**2
+                    geom_inertia_local = np.diag([I_r, I_r, I_h])
+                elif geom_type == gs.GEOM_TYPE.BOX:
+                    hx, hy, hz = geom.data[:3]
+                    geom_mass = (hx * hy * hz) * rho
+                    geom_inertia_local = (geom_mass / 12.0) * np.diag([hy**2 + hz**2, hx**2 + hz**2, hx**2 + hy**2])
+                else:  # geom_type == gs.GEOM_TYPE.MESH:
+                    # Create mesh based on geom type
+                    if is_visual:
+                        inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces, process=False)
+                    else:
+                        inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces, process=False)
 
-                # FIXME: without this check, some geom will have negative volume even after the above convex
-                # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
-                if inertia_mesh.volume < -gs.EPS:
-                    inertia_mesh.invert()
+                    if not inertia_mesh.is_watertight:
+                        inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
-                geom_mass = inertia_mesh.volume * rho
-                geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+                    # FIXME: without this check, some geom will have negative volume even after the above convex
+                    # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
+                    if inertia_mesh.volume < -gs.EPS:
+                        inertia_mesh.invert()
 
-                geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+                    geom_mass = inertia_mesh.volume * rho
+                    geom_com_local = inertia_mesh.center_mass
+
+                    geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
 
                 # Transform geom properties to link frame
                 geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos

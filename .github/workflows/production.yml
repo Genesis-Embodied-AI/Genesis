@@ -10,7 +10,7 @@ on:
       - main
 
 concurrency:
-  # Cancel all workflows that are stil running if any when updating branches associated with PRs,
+  # Cancel all workflows that are still running if any when updating branches associated with PRs,
   # BUT don't do anything for workflows that are not triggered by PRs.
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -19,12 +19,11 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_20"
+  GENESIS_IMAGE_VER: "1_21"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
   MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
-  OMNI_KIT_ACCEPT_EULA: "yes"
 
 jobs:
   unit-tests:
@@ -54,13 +53,13 @@ jobs:
                --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
@@ -80,7 +79,7 @@ jobs:
       - name: Run unit tests
         if: github.event_name == 'pull_request'
         run: |
-          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+          srun ${SRUN_COMMON} bash -s <<'EOF'
             source /venv/bin/activate
 
             # sudo apt update
@@ -131,7 +130,7 @@ jobs:
                --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
-          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY},OMNI_KIT_ACCEPT_EULA"
+          SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
           if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
@@ -140,7 +139,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-mid --nodes=1 --gpus=8 --exclusive \
+                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
@@ -158,7 +157,7 @@ jobs:
         run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
       - name: Run benchmarks
         run: |
-          srun ${SRUN_COMMON} bash -e -s <<'EOF'
+          srun ${SRUN_COMMON} bash -s <<'EOF'
             source /venv/bin/activate
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
                    --print -x -m "benchmarks" ./tests
