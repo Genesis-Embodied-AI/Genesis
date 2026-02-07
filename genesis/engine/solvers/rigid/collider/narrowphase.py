@@ -645,33 +645,17 @@ def func_convex_convex_contact(
                 ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
                     if ti.static(__debug__):
                         ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
-                    # Ensure sphere is always i_ga and capsule is i_gb
-                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE:
-                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
-                            i_ga,
-                            i_gb,
-                            i_b,
-                            geoms_state,
-                            geoms_info,
-                            rigid_global_info,
-                            collider_state,
-                            collider_info,
-                            errno,
-                        )
-                    else:
-                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
-                            i_gb,  # sphere
-                            i_ga,  # capsule
-                            i_b,
-                            geoms_state,
-                            geoms_info,
-                            rigid_global_info,
-                            collider_state,
-                            collider_info,
-                            errno,
-                        )
-                        # Since we swapped, we need to negate the normal
-                        normal = -normal
+                    is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float

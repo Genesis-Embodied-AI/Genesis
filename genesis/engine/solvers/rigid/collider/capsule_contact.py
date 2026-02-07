@@ -172,6 +172,12 @@ def func_sphere_capsule_contact(
       3. Compute contact point and normal
 
     """
+    # Ensure sphere is always i_ga and capsule is i_gb
+    normal_dir = 1
+    if geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+        i_ga, i_gb = i_gb, i_ga
+        normal_dir = -1
+
     EPS = rigid_global_info.EPS[None]
     is_col = False
     normal = ti.Vector.zero(gs.ti_float, 3)
@@ -233,4 +239,4 @@ def func_sphere_capsule_contact(
         penetration = combined_radius - dist
         contact_pos = sphere_center - sphere_radius * normal
 
-    return is_col, normal, contact_pos, penetration
+    return is_col, normal * normal_dir, contact_pos, penetration
