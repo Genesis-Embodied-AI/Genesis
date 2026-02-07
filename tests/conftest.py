@@ -167,6 +167,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         worker_num = int(worker_id[2:])
         gpu_indices = _get_gpu_indices()
         gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
         os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
 
@@ -190,17 +191,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
 def _get_gpu_indices():
     nvidia_gpu_indices = os.environ.get("CUDA_VISIBLE_DEVICES")
     if nvidia_gpu_indices is not None:
-        return tuple(sorted(map(int, nvidia_gpu_indices.split(","))))
+        return tuple(map(int, nvidia_gpu_indices.split(",")))
 
     if sys.platform == "linux":
         nvidia_gpu_indices = []
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
         if os.path.exists(nvidia_gpu_interface_path):
-            for device_path in os.listdir(nvidia_gpu_interface_path):
-                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                    gpu_id = int(re.search(r"Device Minor:\s+(\d+)", f.read()).group(1))
-                nvidia_gpu_indices.append(gpu_id)
-            return tuple(sorted(nvidia_gpu_indices))
+            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
 
     return (0,)
 
@@ -216,11 +213,11 @@ def _torch_get_gpu_idx(device):
         device_uuid = str(device_property.uuid)
 
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_path in os.listdir(nvidia_gpu_interface_path):
+        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
             with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
                 device_info = f.read()
             if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return int(re.search(r"Device Minor:\s+(\d+)", device_info).group(1))
+                return device_idx
 
     return -1
 
@@ -387,10 +384,11 @@ def pytest_runtest_setup(item):
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         gpu_index = int(os.environ["CUDA_VISIBLE_DEVICES"])
-        try:
-            os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
-        except Exception:
-            pass
+        if has_egl:
+            try:
+                os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
+            except AttributeError:
+                pass
 
 
 def pytest_addoption(parser):
@@ -620,8 +618,8 @@ def initialize_genesis(
         gc.collect()
 
         if gs.backend != gs.cpu and gs.device.index is not None:
-            if _torch_get_gpu_idx(gs.device) not in _get_gpu_indices():
-                raise RuntimeError("Wrong CUDA GPU device.")
+            if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
+                raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
