@@ -144,7 +144,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             compiler.attrib |= dict(
                 fusestatic="false",
                 strippath="false",
-                inertiafromgeom="false",  # This option is unreliable, so doing this ourselves
+                inertiafromgeom="false",
                 balanceinertia="false",
                 discardvisual="true" if discard_visual else "false",
                 autolimits="true",
@@ -173,7 +173,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
-                for i, link in enumerate(robot.links):
+                for link in robot.links:
                     if link.inertial is None:
                         body = mj.body(link.name)
                         body.inertia[:] = 0.0

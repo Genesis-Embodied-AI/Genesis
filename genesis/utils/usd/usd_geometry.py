@@ -53,7 +53,7 @@ def parse_prim_geoms(
 
     if link_prim is not None and prim.IsA(UsdGeom.Gprim):
         # parse materials
-        geom_surface, geom_uvname, surface_id, bake_success = context.apply_surface(prim, surface)
+        geom_surface, geom_uvname, _surface_id, bake_success = context.apply_surface(prim, surface)
         gprim = UsdGeom.Gprim(prim)
         uvs = {geom_uvname: None}
 

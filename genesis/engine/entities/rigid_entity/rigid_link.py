@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
 MASS_EPS = 0.005
+AABB_EPS = 0.002
 INERTIA_RATIO_MAX = 100.0
 
 
@@ -137,6 +138,8 @@ class RigidLink(RBC):
         hint_mass = 0.0
         hint_com = np.zeros(3, dtype=gs.np_float)
         hint_inertia = np.zeros((3, 3), dtype=gs.np_float)
+        aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
+        aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
         if not self._is_fixed:
             # Determine which geom list to use: geoms first, then vgeoms, then fallback
             if self._geoms:
@@ -220,8 +223,29 @@ class RigidLink(RBC):
                     hint_mass, hint_com, hint_inertia, geom_mass, geom_com_link, geom_inertia_link
                 )
 
+            # Compute the bounding box of the links using both visual and collision geometries to be conservative
+            for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
+                for geom in geoms:
+                    verts = geom.init_vverts if is_visual else geom.init_verts
+                    verts = gu.transform_by_trans_quat(verts, geom._init_pos, geom._init_quat)
+                    aabb_min = np.minimum(aabb_min, verts.min(axis=0))
+                    aabb_max = np.maximum(aabb_max, verts.max(axis=0))
+
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if hint_mass > MASS_EPS:
+            if self._inertial_pos is not None:
+                tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
+                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                    com_str: list[str] = []
+                    aabb_str: list[str] = []
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                        com_str.append(f"{name}={pos:0.3f}")
+                        aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
+                    gs.logger.warning(
+                        f"Link '{self._name}' has dubious center of mass [{', '.join(com_str)}] compared to the "
+                        f"bounding box from geometry [{', '.join(aabb_str)}]."
+                    )
+
             if self._inertial_mass is not None:
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):
                     gs.logger.warning(
@@ -229,6 +253,7 @@ class RigidLink(RBC):
                         f"from geometry {hint_mass:0.3f} given material density {rho:0.0f}."
                     )
                 hint_inertia *= self._inertial_mass / hint_mass
+
             if self._inertial_i is not None:
                 inertia_diag = np.diag(self._inertial_i)
                 hint_inertia_diag = np.diag(hint_inertia)
