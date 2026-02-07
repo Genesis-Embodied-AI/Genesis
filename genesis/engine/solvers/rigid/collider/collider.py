@@ -35,6 +35,8 @@ from .broadphase import (
     func_check_collision_valid,
     func_collision_clear,
     func_broad_phase,
+    func_broad_phase_generate_candidates,
+    func_broad_phase_validate_candidates,
 )
 
 from .contact import (
@@ -445,19 +447,56 @@ class Collider:
             return
 
         self._contact_data_cache.clear()
-        func_broad_phase(
-            self._solver.links_state,
-            self._solver.links_info,
-            self._solver.geoms_state,
-            self._solver.geoms_info,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-            self._solver.constraint_solver.constraint_state,
-            self._collider_state,
-            self._solver.equalities_info,
-            self._collider_info,
-            self._solver._errno,
-        )
+        
+        # Two-kernel approach: generate candidates, then validate in parallel
+        use_two_kernel = False  # Toggle to test performance
+        
+        if use_two_kernel:
+            # Clear counters
+            self._collider_state.n_candidates.fill(0)
+            self._collider_state.n_broad_pairs.fill(0)
+            
+            # Kernel 1: Generate candidates (sort + sweep without validation)
+            func_broad_phase_generate_candidates(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+            
+            # Kernel 2: Validate candidates in parallel
+            func_broad_phase_validate_candidates(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._collider_state,
+                self._collider_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver.constraint_solver.constraint_state,
+                self._solver.equalities_info,
+                self._solver._errno,
+            )
+        else:
+            # Original single-kernel SAP
+            func_broad_phase(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver.constraint_solver.constraint_state,
+                self._collider_state,
+                self._solver.equalities_info,
+                self._collider_info,
+                self._solver._errno,
+            )
         if self._collider_static_config.has_convex_convex:
             func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,

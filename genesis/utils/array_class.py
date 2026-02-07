@@ -526,6 +526,8 @@ class StructColliderState(metaclass=BASE_METACLASS):
     active_buffer: V_ANNOTATION
     n_broad_pairs: V_ANNOTATION
     broad_collision_pairs: V_ANNOTATION
+    candidate_pairs: V_ANNOTATION  # Candidate pairs before validation
+    n_candidates: V_ANNOTATION     # Count of candidates per env
     active_buffer_awake: V_ANNOTATION
     active_buffer_hib: V_ANNOTATION
     box_depth: V_ANNOTATION
@@ -574,10 +576,15 @@ def get_collider_state(
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
 
+    # Calculate max possible candidate pairs (n*(n-1)/2)
+    max_candidates = (n_geoms * (n_geoms - 1)) // 2
+    
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
         active_buffer=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         n_broad_pairs=V(dtype=gs.ti_int, shape=(_B,)),
+        candidate_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max_candidates, _B)),
+        n_candidates=V(dtype=gs.ti_int, shape=(_B,)),
         active_buffer_awake=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         active_buffer_hib=V(dtype=gs.ti_int, shape=(n_geoms, _B)),
         box_depth=V(dtype=gs.ti_float, shape=box_depth_shape),
