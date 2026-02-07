@@ -450,7 +450,7 @@ class Collider:
         
         # Two-kernel approach: generate candidates, then validate in parallel
         use_two_kernel = True  # Toggle to test performance
-        use_three_kernel = False  # Split into sort/sweep/validate for profiling
+        use_three_kernel = True  # Split into sort/sweep/validate for profiling
         
         if use_two_kernel and use_three_kernel:
             # THREE-KERNEL approach with profiling
@@ -506,6 +506,9 @@ class Collider:
             gs.ti.sync()
             t1 = time.perf_counter()
             self._kernel_times['sweep'].append((t1 - t0) * 1000)
+            
+            # CRITICAL: Clear n_broad_pairs before validation (atomic adds require starting from 0)
+            self._collider_state.n_broad_pairs.fill(0)
             
             # Kernel 3: Validate candidates
             gs.ti.sync()
