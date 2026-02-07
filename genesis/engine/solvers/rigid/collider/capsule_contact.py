@@ -4,10 +4,6 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
-from .contact import (
-    func_add_contact,
-)
-
 
 @ti.func
 def func_closest_points_on_segments(
@@ -19,21 +15,6 @@ def func_closest_points_on_segments(
 ):
     """
     Compute closest points on two line segments using analytical solution.
-
-    Given two line segments:
-      Segment A: P1 + s*(P2-P1), s ∈ [0,1]
-      Segment B: Q1 + t*(Q2-Q1), t ∈ [0,1]
-
-    Find parameters s, t that minimize ||A(s) - B(t)||²
-
-    This is a well-known computer graphics problem with closed-form solution.
-
-    Returns
-    -------
-    Pa : ti.Vector
-        Closest point on segment A
-    Pb : ti.Vector
-        Closest point on segment B
 
     References
     ----------
@@ -78,11 +59,10 @@ def func_closest_points_on_segments(
         if a_squared_len > EPS:
             s = s_new
 
-    # Compute closest points
-    Pa = seg_a_p1 + s * segment_a_dir
-    Pb = seg_b_p1 + t * segment_b_dir
+    seg_a_closest = seg_a_p1 + s * segment_a_dir
+    seg_b_closest = seg_b_p1 + t * segment_b_dir
 
-    return Pa, Pb
+    return seg_a_closest, seg_b_closest
 
 
 @ti.func
@@ -150,7 +130,8 @@ def func_capsule_capsule_contact(
 
         # Compute contact normal (from B to A, pointing into geom A)
         if dist > EPS:
-            normal = -diff / dist  # Negative because func_add_contact expects normal from B to A
+            # Negative because func_add_contact expects normal from B to A
+            normal = -diff / dist
         else:
             # Segments are coincident, use arbitrary perpendicular direction
             # Try cross product with axis_a first
@@ -219,7 +200,8 @@ def func_sphere_capsule_contact(
     segment_length_sq = segment_vec.dot(segment_vec)
 
     # Project sphere center onto segment
-    t = gs.ti_float(0.5)  # Default for degenerate case
+    # Default for degenerate case
+    t = gs.ti_float(0.5)
     if segment_length_sq > EPS:
         t = (sphere_center - P1).dot(segment_vec) / segment_length_sq
         t = ti.math.clamp(t, 0.0, 1.0)
