@@ -10,7 +10,6 @@ import torch
 import wandb
 
 import genesis as gs
-import gstaichi as ti
 
 from .utils import (
     get_hardware_fingerprint,
@@ -728,6 +727,7 @@ def box_pyramid_6(solver, n_envs, gjk):
 @pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     """G1 humanoid robot falling from above a plane."""
+    import gstaichi as ti
 
     # This is sufficient, as long as we use sync
     duration_warmup = 20.0
