@@ -1915,7 +1915,7 @@ def func_ls_init_and_eval_p0_opt(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
-    # -- mv and jv (same as func_ls_init) --
+    # -- mv and jv (same as original func_ls_init) --
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.ti_float(0.0)
@@ -1934,7 +1934,7 @@ def func_ls_init_and_eval_p0_opt(
                 jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
         constraint_state.jv[i_c, i_b] = jv
 
-    # -- quad_gauss (same as func_ls_init) --
+    # -- quad_gauss (same as original func_ls_init) --
     quad_gauss_1 = gs.ti_float(0.0)
     quad_gauss_2 = gs.ti_float(0.0)
     for i_d in range(n_dofs):
