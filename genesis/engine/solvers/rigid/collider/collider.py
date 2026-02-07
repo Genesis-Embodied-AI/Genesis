@@ -449,8 +449,8 @@ class Collider:
         self._contact_data_cache.clear()
         
         # Two-kernel approach: generate candidates, then validate in parallel
-        use_two_kernel = True  # Toggle to test performance
-        use_three_kernel = True  # Split into sort/sweep/validate for profiling
+        use_two_kernel = True  # Default: faster than original SAP (1.39x on CUDA, 1.0x on Metal)
+        use_three_kernel = False  # Set to True for detailed profiling (sort/sweep/validate breakdown)
         
         if use_two_kernel and use_three_kernel:
             # THREE-KERNEL approach with profiling
