@@ -158,8 +158,14 @@ def test_ipc_cloth(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-def test_ipc_two_way_revolute(n_envs, show_viewer):
-    """Test two-way coupling with revolute joint."""
+@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
+    """Test two-way coupling with revolute joint.
+
+    Tests both coupling types:
+    - two_way_soft_constraint: Soft constraint coupling for rigid links
+    - external_articulation: Joint-level coupling with ExternalArticulationConstraint
+    """
     import numpy as np
 
     scene = gs.Scene(
@@ -186,10 +192,10 @@ def test_ipc_two_way_revolute(n_envs, show_viewer):
         ),
     )
 
-    # Set two-way coupling for the robot
+    # Set coupling type for the robot
     scene.sim.coupler.set_entity_coupling_type(
         entity=robot,
-        coupling_type="two_way_soft_constraint",
+        coupling_type=coupling_type,
     )
 
     scene.build(n_envs=n_envs)
@@ -254,8 +260,14 @@ def test_ipc_two_way_revolute(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-def test_ipc_two_way_prismatic(n_envs, show_viewer):
-    """Test two-way coupling with prismatic joint."""
+@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
+    """Test two-way coupling with prismatic joint.
+
+    Tests both coupling types:
+    - two_way_soft_constraint: Soft constraint coupling for rigid links
+    - external_articulation: Joint-level coupling with ExternalArticulationConstraint
+    """
     import numpy as np
 
     scene = gs.Scene(
@@ -282,10 +294,10 @@ def test_ipc_two_way_prismatic(n_envs, show_viewer):
         ),
     )
 
-    # Set two-way coupling for the robot
+    # Set coupling type for the robot
     scene.sim.coupler.set_entity_coupling_type(
         entity=robot,
-        coupling_type="two_way_soft_constraint",
+        coupling_type=coupling_type,
     )
 
     scene.build(n_envs=n_envs)

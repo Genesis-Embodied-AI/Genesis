@@ -13,6 +13,12 @@ def main():
     parser.add_argument("--ipc", action="store_true", default=False)
     parser.add_argument("--vis_ipc", action="store_true", default=False)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
+    parser.add_argument(
+        "--coupling_type",
+        type=str,
+        default="external_articulation",
+        choices=["two_way_soft_constraint", "external_articulation"],
+    )
     args = parser.parse_args()
 
     dt = 1e-2
@@ -24,7 +30,7 @@ def main():
             ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
             # coupling_strategy="external_articulation",
             disable_ipc_ground_contact=True,
-            disable_ipc_logging=False,
+            disable_ipc_logging=True,
             IPC_self_contact=False,
             contact_friction_mu=0.8,
             enable_ipc_gui=args.vis_ipc,
@@ -54,7 +60,7 @@ def main():
     if args.ipc:
         scene.sim.coupler.set_entity_coupling_type(
             entity=franka,
-            coupling_type="two_way_soft_constraint",
+            coupling_type=args.coupling_type,
         )
         scene.sim.coupler.set_ipc_coupling_link_filter(
             entity=franka,

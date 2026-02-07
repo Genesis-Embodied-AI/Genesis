@@ -30,6 +30,12 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--vis_ipc", action="store_true", default=False)
+    parser.add_argument(
+        "--coupling_type",
+        type=str,
+        default="external_articulation",
+        choices=["two_way_soft_constraint", "external_articulation"],
+    )
     args = parser.parse_args()
 
     dt = 2e-2
@@ -85,7 +91,7 @@ def main():
     )
     scene.sim.coupler.set_entity_coupling_type(
         entity=franka,
-        coupling_type="two_way_soft_constraint",
+        coupling_type=args.coupling_type,
     )
     scene.sim.coupler.set_ipc_coupling_link_filter(
         entity=franka,
@@ -97,12 +103,12 @@ def main():
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
         revision="8aa8fcd60500b9f3a36c356080224bdb1be9ee59",
-        allow_patterns="IPC/*",
+        allow_patterns="/IPC/grid20x20.obj",
         max_workers=1,
     )
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"{cloth_asset_path}/IPC/grid40x40.obj",
+            file=f"{cloth_asset_path}/IPC/grid20x20.obj",
             scale=0.5,
             pos=(0.5, 0.0, 0.1),
             euler=(90, 0, 0),

@@ -108,6 +108,91 @@ def is_robot_entity(entity):
         return False
 
 
+def compute_link_init_world_rotation(rigid_solver, link_idx):
+    """
+    Compute the world rotation matrix for a link in its initial configuration.
+    This recursively computes the rotation by traversing up the kinematic tree.
+
+    Note: In MuJoCo/URDF, the joint origin rotation (rpy) is baked into the child
+    link's body transformation. Therefore, we use link.quat (not joint.quat) which
+    contains the complete transformation including the joint origin rotation.
+    """
+    link = rigid_solver.links[link_idx]
+    if link.parent_idx < 0:
+        # Root link, just use its own orientation
+        link_quat = link.quat
+        link_rot = gu.quat_to_R(link_quat)
+        return link_rot
+
+    parent_rot = compute_link_init_world_rotation(rigid_solver, link.parent_idx)
+
+    # Use link.quat which contains the joint origin rotation (from URDF <origin rpy="..."/>)
+    # Note: joint.quat is hardcoded to [1,0,0,0] in Genesis's MJCF parser and is NOT used
+    link_quat = link.quat
+    link_local_rot = gu.quat_to_R(link_quat)
+    link_world_rot = parent_rot @ link_local_rot
+
+    return link_world_rot
+
+
+def extract_articulated_joints(entity):
+    """
+    Extract revolute and prismatic joints from a RigidEntity.
+
+    Parameters
+    ----------
+    entity : RigidEntity
+        The rigid entity to extract joints from
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'revolute_joints': List of revolute joints
+        - 'prismatic_joints': List of prismatic joints
+        - 'joint_qpos_indices': List of local q-space indices for each joint
+        - 'joint_dof_indices': List of local DOF indices for each joint
+        - 'n_joints': Total number of joints
+    """
+    revolute_joints = []
+    prismatic_joints = []
+    joint_qpos_indices = []
+    joint_dof_indices = []
+
+    for link_joints in entity._joints:
+        if len(link_joints) == 0:
+            continue
+
+        for joint in link_joints:
+            if joint.type == gs.JOINT_TYPE.FIXED:
+                continue
+
+            if joint.type == gs.JOINT_TYPE.REVOLUTE:
+                revolute_joints.append(joint)
+                joint_qpos_indices.append(joint.qs_idx_local[0])
+                joint_dof_indices.append(joint.dofs_idx_local[0])
+            elif joint.type == gs.JOINT_TYPE.PRISMATIC:
+                prismatic_joints.append(joint)
+                joint_qpos_indices.append(joint.qs_idx_local[0])
+                joint_dof_indices.append(joint.dofs_idx_local[0])
+
+    n_joints = len(revolute_joints) + len(prismatic_joints)
+
+    if n_joints == 0:
+        gs.logger.warning(
+            f"Entity {entity.idx} has no revolute or prismatic joints. "
+            f"External articulation coupling requires at least one 1-DOF joint."
+        )
+
+    return {
+        "revolute_joints": revolute_joints,
+        "prismatic_joints": prismatic_joints,
+        "joint_qpos_indices": joint_qpos_indices,
+        "joint_dof_indices": joint_dof_indices,
+        "n_joints": n_joints,
+    }
+
+
 def categorize_entities_by_coupling_type(entity_coupling_types):
     """
     Categorize entities by their coupling type.
@@ -124,6 +209,7 @@ def categorize_entities_by_coupling_type(entity_coupling_types):
     """
     result = {
         "two_way_soft_constraint": [],
+        "external_articulation": [],
         "ipc_only": [],
     }
 
