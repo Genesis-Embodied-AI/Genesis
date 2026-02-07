@@ -48,10 +48,12 @@ jobs:
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
             GS_ENABLE_NDARRAY: "0"
-          - OS: "windows-2025"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "0"
+          # FIXME: Taichi compilation is taking so slow on Windows that running the unit tests
+          # for static arrays takes about 400min, which is not acceptable. Disabling for now.
+          # - OS: "windows-2025"
+          #   PYTHON_VERSION: "3.12"
+          #   GS_BACKEND: "cpu"
+          #   GS_ENABLE_NDARRAY: "0"
           - OS: "macos-15"
             PYTHON_VERSION: "3.12"
             GS_BACKEND: "cpu"
@@ -114,7 +116,7 @@ jobs:
           7z x mesa.7z -omesa
           mv -v mesa/x64/* /C/Windows/System32/
 
-      - name: Install Mesa 25 OpenGL driver (Linux)
+      - name: Install Mesa OpenGL driver (Linux)
         if: startsWith(matrix.OS, 'ubuntu-')
         run: |
           for retry in {1..10}; do
