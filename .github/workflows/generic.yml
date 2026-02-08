@@ -142,7 +142,9 @@ jobs:
           if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
             PYTHON_DEPS="${PYTHON_DEPS},usd"
           fi
-          pip install -e ".[${PYTHON_DEPS}]"
+          # TODO: remove only-binary for z3 solver once they
+          # have binary releases for latest version
+          pip install --only-binary=z3-solver -e ".[${PYTHON_DEPS}]"
 
       - name: Get artifact prefix name
         id: artifact_prefix
