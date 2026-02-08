@@ -164,12 +164,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         # Enforce GPU affinity
-        worker_num = int(worker_id[2:])
         gpu_indices = _get_gpu_indices()
-        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+        if gpu_indices:
+            worker_num = int(worker_id[2:])
+            gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+            os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
         if is_benchmarks:
@@ -189,9 +190,9 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
 
 
 def _get_gpu_indices():
-    nvidia_gpu_indices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if nvidia_gpu_indices is not None:
-        return tuple(map(int, nvidia_gpu_indices.split(",")))
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible_devices is not None:
+        return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
         nvidia_gpu_indices = []
@@ -383,12 +384,16 @@ def pytest_runtest_setup(item):
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
-        gpu_index = int(os.environ["CUDA_VISIBLE_DEVICES"])
-        if has_egl:
-            try:
-                os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
-            except AttributeError:
-                pass
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda_visible_devices is not None:
+            gpu_index = int(cuda_visible_devices)
+            if has_egl:
+                try:
+                    os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
+                except (AttributeError, KeyError):
+                    # AttributeError: CUDA is not supported on this machine
+                    # KeyError: The selected GPU does not support CUDA
+                    pass
 
 
 def pytest_addoption(parser):
