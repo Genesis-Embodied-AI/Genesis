@@ -267,15 +267,16 @@ def func_broad_phase_generate_candidates(
                     geoms_state.min_buffer_idx[key_i_g, i_b] = j + 1
 
         # Sweep to generate candidates (NO validation)
+        collider_state.n_candidates[i_b] = 0
         n_candidates = 0
         n_active = 0
+
         for i in range(2 * env_n_geoms):
             if not collider_state.sort_buffer.is_max[i, i_b]:
                 # MIN endpoint - add all pairs to candidates
-                i_gb = collider_state.sort_buffer.i_g[i, i_b]
-
                 for j in range(n_active):
                     i_ga = collider_state.active_buffer[j, i_b]
+                    i_gb = collider_state.sort_buffer.i_g[i, i_b]
 
                     # Canonical ordering
                     if i_ga > i_gb:
@@ -284,10 +285,11 @@ def func_broad_phase_generate_candidates(
                     # Write candidate (no validation!)
                     collider_state.candidate_pairs[n_candidates, i_b][0] = i_ga
                     collider_state.candidate_pairs[n_candidates, i_b][1] = i_gb
-                    n_candidates += 1
+                    n_candidates = n_candidates + 1
 
-                collider_state.active_buffer[n_active, i_b] = i_gb
-                n_active += 1
+                # Add current geom to active list
+                collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                n_active = n_active + 1
             else:
                 # MAX endpoint - remove from active
                 i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
