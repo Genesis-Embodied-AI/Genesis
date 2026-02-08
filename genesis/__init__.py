@@ -485,11 +485,36 @@ from .options import textures
 from .datatypes import List
 from .grad.creation_ops import *
 
-from .engine import states, materials, force_fields
-from .engine.mesh import Mesh
-from .engine.scene import Scene
+# Import Mesh and Scene directly - they are lightweight
+from ._engine.mesh import Mesh
+from ._engine.scene import Scene
 
 from . import recorders
 
+# Public API: expose engine as an alias for backward compatibility
+# This allows users to access gs.engine.entities.* after gs.init()
+from . import _engine as engine
+
+# Register genesis.engine in sys.modules to support "from genesis.engine.entities import ..."
+sys.modules["genesis.engine"] = _engine
+
 for name, member in gs_backend.__members__.items():
     globals()[name] = member
+
+
+# Lazy imports to avoid initialization issues
+# These will be loaded on first access after gs.init()
+def __getattr__(name):
+    if name == "states":
+        from ._engine import states
+        globals()["states"] = states  # Cache it
+        return states
+    elif name == "materials":
+        from ._engine import materials
+        globals()["materials"] = materials  # Cache it
+        return materials
+    elif name == "force_fields":
+        from ._engine import force_fields
+        globals()["force_fields"] = force_fields  # Cache it
+        return force_fields
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

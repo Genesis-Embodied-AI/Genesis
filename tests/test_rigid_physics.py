@@ -3050,7 +3050,7 @@ def test_get_constraints_api(show_viewer, tol):
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_cholesky_tiling(monkeypatch, tol):
-    import genesis.engine.solvers
+    import genesis._engine.solvers
 
     rigid_solver_build_orig = genesis.engine.solvers.RigidSolver.build
 

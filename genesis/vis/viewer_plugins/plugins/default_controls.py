@@ -7,7 +7,7 @@ from genesis.vis.keybindings import Key, Keybind
 from ..viewer_plugin import ViewerPlugin
 
 if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
+    from genesis._engine.scene import Scene
     from genesis.ext.pyrender.node import Node
 
 
