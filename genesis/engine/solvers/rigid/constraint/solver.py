@@ -1900,15 +1900,15 @@ def func_ls_init_and_eval_p0_opt(
     jv, quad, quad_gauss) and evaluating the cost at alpha=0 — into a single pass. It also pre-computes eq_sum, the
     summed quadratic coefficients for equality constraints, and stores it for reuse by subsequent evaluation calls.
 
-    The key optimization is exploiting the fact that equality constraints are always active regardless of alpha. Their
-    contribution to the cost function is constant across all linesearch iterations, so it only needs to be computed once
-    during initialization. By pre-summing eq_sum here, all subsequent calls to func_ls_point_fn_opt and
-    func_ls_point_fn_3alphas_opt can skip iterating over equality constraints entirely, reducing the per-iteration
-    constraint loop from n_constraints to (n_friction + n_contact).
+    The key optimization is exploiting the fact that equality constraints (weld, connect, joint-equality) are always
+    active regardless of alpha. Their contribution to the cost function is constant across all linesearch iterations, so
+    it only needs to be computed once during initialization. By pre-summing eq_sum here, all subsequent calls to
+    func_ls_point_fn_opt and func_ls_point_fn_3alphas_opt can skip iterating over equality constraints entirely,
+    reducing the per-iteration constraint loop from n_constraints to (n_friction + n_contact + n_joint_limit).
 
-    This optimization is most beneficial for scenes with many equality constraints (e.g. articulated robots with joint
-    limits), where equality constraints can dominate the constraint count. For contact-only scenes with no equality
-    constraints, the speedup is minimal."""
+    This optimization is most beneficial for scenes with many equality constraints (e.g. multi-body systems connected
+    by weld or connect constraints), where equality constraints can dominate the constraint count. For contact-only
+    scenes with no equality constraints, the speedup is minimal."""
     n_dofs = constraint_state.search.shape[0]
     n_entities = entities_info.dof_start.shape[0]
     ne = constraint_state.n_constraints_equality[i_b]
@@ -1948,9 +1948,9 @@ def func_ls_init_and_eval_p0_opt(
     constraint_state.quad_gauss[2, i_b] = quad_gauss_2
 
     # -- Compute quad per constraint and accumulate by type --
-    tmp_0 = constraint_state.gauss[i_b]
-    tmp_1 = quad_gauss_1
-    tmp_2 = quad_gauss_2
+    quad_total_0 = constraint_state.gauss[i_b]
+    quad_total_1 = quad_gauss_1
+    quad_total_2 = quad_gauss_2
     eq_sum_0 = gs.ti_float(0.0)
     eq_sum_1 = gs.ti_float(0.0)
     eq_sum_2 = gs.ti_float(0.0)
@@ -1974,9 +1974,9 @@ def func_ls_init_and_eval_p0_opt(
         eq_sum_0 = eq_sum_0 + qf_0
         eq_sum_1 = eq_sum_1 + qf_1
         eq_sum_2 = eq_sum_2 + qf_2
-        tmp_0 = tmp_0 + qf_0
-        tmp_1 = tmp_1 + qf_1
-        tmp_2 = tmp_2 + qf_2
+        quad_total_0 = quad_total_0 + qf_0
+        quad_total_1 = quad_total_1 + qf_1
+        quad_total_2 = quad_total_2 + qf_2
 
     # Write eq_sum to global for subsequent calls
     constraint_state.eq_sum[0, i_b] = eq_sum_0
@@ -2000,9 +2000,9 @@ def func_ls_init_and_eval_p0_opt(
             )
             qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (f * constraint_state.jv[i_c, i_b])
             qf_2 = 0.0
-        tmp_0 = tmp_0 + qf_0
-        tmp_1 = tmp_1 + qf_1
-        tmp_2 = tmp_2 + qf_2
+        quad_total_0 = quad_total_0 + qf_0
+        quad_total_1 = quad_total_1 + qf_1
+        quad_total_2 = quad_total_2 + qf_2
 
     # Contact constraints [nef, n_con): check Jaref < 0 (alpha=0 so x=Jaref)
     for i_c in range(nef, n_con):
@@ -2010,14 +2010,14 @@ def func_ls_init_and_eval_p0_opt(
         qf_0 = constraint_state.quad[i_c, 0, i_b]
         qf_1 = constraint_state.quad[i_c, 1, i_b]
         qf_2 = constraint_state.quad[i_c, 2, i_b]
-        tmp_0 = tmp_0 + qf_0 * active
-        tmp_1 = tmp_1 + qf_1 * active
-        tmp_2 = tmp_2 + qf_2 * active
+        quad_total_0 = quad_total_0 + qf_0 * active
+        quad_total_1 = quad_total_1 + qf_1 * active
+        quad_total_2 = quad_total_2 + qf_2 * active
 
     # Return p0 result (alpha=0)
-    cost = tmp_0
-    deriv_0 = tmp_1
-    deriv_1 = 2 * tmp_2
+    cost = quad_total_0
+    deriv_0 = quad_total_1
+    deriv_1 = 2 * quad_total_2
     if deriv_1 <= 0.0:
         deriv_1 = rigid_global_info.EPS[None]
 
@@ -2036,22 +2036,18 @@ def func_ls_point_fn_opt(
     """Evaluate linesearch cost, gradient, and curvature at a single candidate alpha.
 
     This function computes the quadratic cost and its first two derivatives at a given step size alpha by iterating over
-    only friction and contact constraints. Equality constraints are skipped entirely by initializing the accumulators
-    from quad_gauss + eq_sum, where eq_sum was pre-computed by func_ls_init_and_eval_p0_opt during initialization.
-
-    Since equality constraints are always active (their contribution is alpha-independent in the quadratic coefficients),
-    their summed quad values are constant across all linesearch iterations. By folding them into the initial accumulator
-    value, this function avoids redundant work on every evaluation. The benefit scales with the ratio of equality
-    constraints to total constraints — scenes with heavily constrained articulated bodies (many joint equality
-    constraints) see the largest speedup."""
+    only friction, contact, and joint-limit constraints. Equality constraints (weld, connect, joint-equality) are
+    skipped entirely by initializing the accumulators from quad_gauss + eq_sum, where eq_sum was pre-computed by
+    func_ls_init_and_eval_p0_opt during initialization. The benefit scales with the ratio of equality constraints to
+    total constraints."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
     # Start from quad_gauss + eq_sum (skips ne equality constraints)
-    tmp_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
-    tmp_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
-    tmp_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+    quad_total_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
+    quad_total_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+    quad_total_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
 
     # Friction constraints [ne, nef)
     for i_c in range(ne, nef):
@@ -2070,9 +2066,9 @@ def func_ls_point_fn_opt(
             )
             qf_1 = linear_neg * (-f * constraint_state.jv[i_c, i_b]) + linear_pos * (f * constraint_state.jv[i_c, i_b])
             qf_2 = 0.0
-        tmp_0 = tmp_0 + qf_0
-        tmp_1 = tmp_1 + qf_1
-        tmp_2 = tmp_2 + qf_2
+        quad_total_0 = quad_total_0 + qf_0
+        quad_total_1 = quad_total_1 + qf_1
+        quad_total_2 = quad_total_2 + qf_2
 
     # Contact constraints [nef, n_con)
     for i_c in range(nef, n_con):
@@ -2081,13 +2077,13 @@ def func_ls_point_fn_opt(
         qf_0 = constraint_state.quad[i_c, 0, i_b]
         qf_1 = constraint_state.quad[i_c, 1, i_b]
         qf_2 = constraint_state.quad[i_c, 2, i_b]
-        tmp_0 = tmp_0 + qf_0 * active
-        tmp_1 = tmp_1 + qf_1 * active
-        tmp_2 = tmp_2 + qf_2 * active
+        quad_total_0 = quad_total_0 + qf_0 * active
+        quad_total_1 = quad_total_1 + qf_1 * active
+        quad_total_2 = quad_total_2 + qf_2 * active
 
-    cost = alpha * alpha * tmp_2 + alpha * tmp_1 + tmp_0
-    deriv_0 = 2 * alpha * tmp_2 + tmp_1
-    deriv_1 = 2 * tmp_2
+    cost = alpha * alpha * quad_total_2 + alpha * quad_total_1 + quad_total_0
+    deriv_0 = 2 * alpha * quad_total_2 + quad_total_1
+    deriv_1 = 2 * quad_total_2
     if deriv_1 <= 0.0:
         deriv_1 = rigid_global_info.EPS[None]
 
@@ -2111,11 +2107,10 @@ def func_ls_point_fn_3alphas_opt(
     cost of memory loads (Jaref, jv, quad, efc_D, etc.) across all three evaluations. Each constraint's data is loaded
     once and used to update three independent sets of accumulators simultaneously.
 
-    Like func_ls_point_fn_opt, equality constraints are skipped by initializing all three accumulator sets from
-    quad_gauss + eq_sum, pre-computed during initialization. The combined effect of loop fusion (3x fewer constraint
-    iterations vs. three separate calls) and equality skipping makes this particularly effective in the refinement phase
-    of the linesearch, where it is called repeatedly inside a tight loop. Scenes with many constraints benefit most from
-    the reduced iteration count and improved cache/register reuse."""
+    Like func_ls_point_fn_opt, equality constraints (weld, connect, joint-equality) are skipped by initializing all
+    three accumulator sets from quad_gauss + eq_sum. The combined effect of loop fusion (3x fewer constraint iterations
+    vs. three separate calls) and equality skipping makes this particularly effective in the refinement phase of the
+    linesearch, where it is called repeatedly inside a tight loop."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]

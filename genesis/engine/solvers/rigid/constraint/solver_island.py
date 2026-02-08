@@ -653,124 +653,6 @@ class ConstraintSolverIsland:
         return alpha, cost, deriv_0, deriv_1
 
     @ti.func
-    def _func_ls_point_fn_3alphas(self, i_b, alpha_0, alpha_1, alpha_2):
-        """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint loop pass.
-
-        This function batches the evaluation of three candidate step sizes into one loop over constraints, amortizing
-        the cost of memory loads (Jaref, jv, quad) across all three evaluations. Each constraint's data is loaded once
-        and used to update three independent sets of accumulators simultaneously.
-
-        Since the island solver only handles contact constraints (no equality or friction), all constraints use the
-        same simple activation test (x < 0). The combined effect of loop fusion (3x fewer constraint iterations vs.
-        three separate _func_ls_point_fn calls) and improved cache/register reuse makes this particularly effective in
-        the refinement phase of the linesearch, where it is called repeatedly inside a tight loop. Islands with many
-        contact constraints benefit most from the reduced iteration count."""
-        qg0 = self.quad_gauss[0, i_b]
-        qg1 = self.quad_gauss[1, i_b]
-        qg2 = self.quad_gauss[2, i_b]
-
-        t0_0, t0_1, t0_2 = qg0, qg1, qg2
-        t1_0, t1_1, t1_2 = qg0, qg1, qg2
-        t2_0, t2_1, t2_2 = qg0, qg1, qg2
-
-        for i_c in range(self.n_constraints[i_b]):
-            Jaref_c = self.Jaref[i_c, i_b]
-            jv_c = self.jv[i_c, i_b]
-            qf_0 = self.quad[i_c, 0, i_b]
-            qf_1 = self.quad[i_c, 1, i_b]
-            qf_2 = self.quad[i_c, 2, i_b]
-
-            act0 = gs.ti_bool(Jaref_c + alpha_0 * jv_c < 0)
-            act1 = gs.ti_bool(Jaref_c + alpha_1 * jv_c < 0)
-            act2 = gs.ti_bool(Jaref_c + alpha_2 * jv_c < 0)
-
-            t0_0 = t0_0 + qf_0 * act0
-            t0_1 = t0_1 + qf_1 * act0
-            t0_2 = t0_2 + qf_2 * act0
-            t1_0 = t1_0 + qf_0 * act1
-            t1_1 = t1_1 + qf_1 * act1
-            t1_2 = t1_2 + qf_2 * act1
-            t2_0 = t2_0 + qf_0 * act2
-            t2_1 = t2_1 + qf_1 * act2
-            t2_2 = t2_2 + qf_2 * act2
-
-        c0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
-        d0_0 = 2 * alpha_0 * t0_2 + t0_1
-        d0_1 = 2 * t0_2 + gs.EPS * (ti.abs(t0_2) < gs.EPS)
-
-        c1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
-        d1_0 = 2 * alpha_1 * t1_2 + t1_1
-        d1_1 = 2 * t1_2 + gs.EPS * (ti.abs(t1_2) < gs.EPS)
-
-        c2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
-        d2_0 = 2 * alpha_2 * t2_2 + t2_1
-        d2_1 = 2 * t2_2 + gs.EPS * (ti.abs(t2_2) < gs.EPS)
-
-        self.ls_it[i_b] = self.ls_it[i_b] + 3
-
-        return alpha_0, c0, d0_0, d0_1, alpha_1, c1, d1_0, d1_1, alpha_2, c2, d2_0, d2_1
-
-    @ti.func
-    def update_bracket_no_eval(
-        self,
-        p_alpha,
-        p_cost,
-        p_deriv_0,
-        p_deriv_1,
-        c0_alpha,
-        c0_cost,
-        c0_d0,
-        c0_d1,
-        c1_alpha,
-        c1_cost,
-        c1_d0,
-        c1_d1,
-        c2_alpha,
-        c2_cost,
-        c2_d0,
-        c2_d1,
-    ):
-        """Update the linesearch bracket using locally available candidate values without additional constraint evaluation.
-
-        This function replaces the original update_bracket which read candidates from global memory and called
-        _func_ls_point_fn to evaluate the next step. Instead, it takes all three candidates' (alpha, cost, deriv_0,
-        deriv_1) as local arguments — already computed by _func_ls_point_fn_3alphas — and selects the best bracket
-        update purely from local variables. The next candidate alpha is computed via a Newton step without an additional
-        constraint evaluation, deferring that to the next batched 3-alpha call.
-
-        This avoids both redundant global memory reads and extra single-point constraint evaluations, which is
-        beneficial when the refinement loop runs many iterations."""
-        flag = 0
-
-        # Candidate 0
-        if p_deriv_0 < 0 and c0_d0 < 0 and p_deriv_0 < c0_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
-            flag = 1
-        elif p_deriv_0 > 0 and c0_d0 > 0 and p_deriv_0 > c0_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
-            flag = 2
-        # Candidate 1
-        if p_deriv_0 < 0 and c1_d0 < 0 and p_deriv_0 < c1_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
-            flag = 1
-        elif p_deriv_0 > 0 and c1_d0 > 0 and p_deriv_0 > c1_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
-            flag = 2
-        # Candidate 2
-        if p_deriv_0 < 0 and c2_d0 < 0 and p_deriv_0 < c2_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
-            flag = 1
-        elif p_deriv_0 > 0 and c2_d0 > 0 and p_deriv_0 > c2_d0:
-            p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
-            flag = 2
-
-        p_next_alpha = p_alpha
-        if flag > 0:
-            p_next_alpha = p_alpha - p_deriv_0 / p_deriv_1
-
-        return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha
-
-    @ti.func
     def _func_linesearch(self, island, i_b):
         ## use adaptive linesearch tolerance
         snorm = gs.ti_float(0.0)
@@ -838,48 +720,54 @@ class ConstraintSolverIsland:
                         done = True
 
                     if not done:
-                        # Batched refinement phase: evaluate 3 alphas per iteration
-                        alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1  # Newton from p1
-                        alpha_1 = p1_alpha  # p2_next (= current p1)
-                        alpha_2 = (p1_alpha + p2_alpha) * 0.5  # midpoint
+                        p2_next_alpha, p2_next_cost, p2_next_deriv_0, p2_next_deriv_1 = (
+                            p1_alpha,
+                            p1_cost,
+                            p1_deriv_0,
+                            p1_deriv_1,
+                        )
+
+                        p1_next_alpha, p1_next_cost, p1_next_deriv_0, p1_next_deriv_1 = self._func_ls_point_fn(
+                            i_b, p1_alpha - p1_deriv_0 / p1_deriv_1
+                        )
 
                         while self.ls_it[i_b] < self.ls_iterations:
+                            pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1 = self._func_ls_point_fn(
+                                i_b, (p1_alpha + p2_alpha) * 0.5
+                            )
+
+                            i = 0
                             (
-                                _a0,
-                                c0,
-                                c0_d0,
-                                c0_d1,
-                                _a1,
-                                c1,
-                                c1_d0,
-                                c1_d1,
-                                _a2,
-                                c2,
-                                c2_d0,
-                                c2_d1,
-                            ) = self._func_ls_point_fn_3alphas(i_b, alpha_0, alpha_1, alpha_2)
+                                self.candidates[4 * i + 0, i_b],
+                                self.candidates[4 * i + 1, i_b],
+                                self.candidates[4 * i + 2, i_b],
+                                self.candidates[4 * i + 3, i_b],
+                            ) = (p1_next_alpha, p1_next_cost, p1_next_deriv_0, p1_next_deriv_1)
+                            i = 1
+                            (
+                                self.candidates[4 * i + 0, i_b],
+                                self.candidates[4 * i + 1, i_b],
+                                self.candidates[4 * i + 2, i_b],
+                                self.candidates[4 * i + 3, i_b],
+                            ) = (p2_next_alpha, p2_next_cost, p2_next_deriv_0, p2_next_deriv_1)
+                            i = 2
+                            (
+                                self.candidates[4 * i + 0, i_b],
+                                self.candidates[4 * i + 1, i_b],
+                                self.candidates[4 * i + 2, i_b],
+                                self.candidates[4 * i + 3, i_b],
+                            ) = (pmid_alpha, pmid_cost, pmid_deriv_0, pmid_deriv_1)
 
-                            p1_next_alpha = alpha_0
-                            p2_next_alpha = alpha_1
-
-                            best_alpha = gs.ti_float(0.0)
+                            best_i = -1
                             best_cost = gs.ti_float(0.0)
-                            best_found = False
-                            if ti.abs(c0_d0) < gtol:
-                                best_alpha = alpha_0
-                                best_cost = c0
-                                best_found = True
-                            if ti.abs(c1_d0) < gtol and (not best_found or c1 < best_cost):
-                                best_alpha = alpha_1
-                                best_cost = c1
-                                best_found = True
-                            if ti.abs(c2_d0) < gtol and (not best_found or c2 < best_cost):
-                                best_alpha = alpha_2
-                                best_cost = c2
-                                best_found = True
-
-                            if best_found:
-                                res_alpha = best_alpha
+                            for ii in range(3):
+                                if ti.abs(self.candidates[4 * ii + 2, i_b]) < gtol and (
+                                    best_i < 0 or self.candidates[4 * ii + 1, i_b] < best_cost
+                                ):
+                                    best_cost = self.candidates[4 * ii + 1, i_b]
+                                    best_i = ii
+                            if best_i >= 0:
+                                res_alpha = self.candidates[4 * best_i + 0, i_b]
                                 done = True
                             else:
                                 (
@@ -889,24 +777,10 @@ class ConstraintSolverIsland:
                                     p1_deriv_0,
                                     p1_deriv_1,
                                     p1_next_alpha,
-                                ) = self.update_bracket_no_eval(
-                                    p1_alpha,
-                                    p1_cost,
-                                    p1_deriv_0,
-                                    p1_deriv_1,
-                                    alpha_0,
-                                    c0,
-                                    c0_d0,
-                                    c0_d1,
-                                    alpha_1,
-                                    c1,
-                                    c1_d0,
-                                    c1_d1,
-                                    alpha_2,
-                                    c2,
-                                    c2_d0,
-                                    c2_d1,
-                                )
+                                    p1_next_cost,
+                                    p1_next_deriv_0,
+                                    p1_next_deriv_1,
+                                ) = self.update_bracket(p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, i_b)
                                 (
                                     b2,
                                     p2_alpha,
@@ -914,40 +788,19 @@ class ConstraintSolverIsland:
                                     p2_deriv_0,
                                     p2_deriv_1,
                                     p2_next_alpha,
-                                ) = self.update_bracket_no_eval(
-                                    p2_alpha,
-                                    p2_cost,
-                                    p2_deriv_0,
-                                    p2_deriv_1,
-                                    alpha_0,
-                                    c0,
-                                    c0_d0,
-                                    c0_d1,
-                                    alpha_1,
-                                    c1,
-                                    c1_d0,
-                                    c1_d1,
-                                    alpha_2,
-                                    c2,
-                                    c2_d0,
-                                    c2_d1,
-                                )
+                                    p2_next_cost,
+                                    p2_next_deriv_0,
+                                    p2_next_deriv_1,
+                                ) = self.update_bracket(p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, i_b)
 
                                 if b1 == 0 and b2 == 0:
-                                    if c2 < p0_cost:
+                                    if pmid_cost < p0_cost:
                                         self.ls_result[i_b] = 0
                                     else:
                                         self.ls_result[i_b] = 7
-                                    res_alpha = alpha_2
+
+                                    res_alpha = pmid_alpha
                                     done = True
-
-                            if done:
-                                break
-
-                            # Compute next 3 alphas for next iteration
-                            alpha_0 = p1_next_alpha
-                            alpha_1 = p2_next_alpha
-                            alpha_2 = (p1_alpha + p2_alpha) * 0.5
 
                         if not done:
                             if p1_cost <= p2_cost and p1_cost < p0_cost:
@@ -960,6 +813,39 @@ class ConstraintSolverIsland:
                                 self.ls_result[i_b] = 5
                                 res_alpha = 0.0
         return res_alpha
+
+    @ti.func
+    def update_bracket(self, p_alpha, p_cost, p_deriv_0, p_deriv_1, i_b):
+        flag = 0
+
+        for i in range(3):
+            if p_deriv_0 < 0 and self.candidates[4 * i + 2, i_b] < 0 and p_deriv_0 < self.candidates[4 * i + 2, i_b]:
+                p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
+                    self.candidates[4 * i + 0, i_b],
+                    self.candidates[4 * i + 1, i_b],
+                    self.candidates[4 * i + 2, i_b],
+                    self.candidates[4 * i + 3, i_b],
+                )
+
+                flag = 1
+            elif p_deriv_0 > 0 and self.candidates[4 * i + 2, i_b] > 0 and p_deriv_0 > self.candidates[4 * i + 2, i_b]:
+                p_alpha, p_cost, p_deriv_0, p_deriv_1 = (
+                    self.candidates[4 * i + 0, i_b],
+                    self.candidates[4 * i + 1, i_b],
+                    self.candidates[4 * i + 2, i_b],
+                    self.candidates[4 * i + 3, i_b],
+                )
+                flag = 2
+            else:
+                pass
+
+        p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = p_alpha, p_cost, p_deriv_0, p_deriv_1
+
+        if flag > 0:
+            p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1 = self._func_ls_point_fn(
+                i_b, p_alpha - p_deriv_0 / p_deriv_1
+            )
+        return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
 
     @ti.func
     def _func_solve_body(self, island, i_b):
