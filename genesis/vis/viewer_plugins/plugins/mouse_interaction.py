@@ -247,7 +247,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         total_impulse = np.zeros(3, dtype=gs.np_float)
         total_torque_impulse = np.zeros(3, dtype=gs.np_float)
 
-        for i in range(3 * 4):
+        # Approximate spring-damper in each axis
+        for i in range(3):
             body_point_vel = lin_vel + np.cross(ang_vel, arm_in_world)
             vel_err_v = -body_point_vel
 
