@@ -137,6 +137,7 @@ def func_gjk_contact(
                         geoms_state,
                         geoms_info,
                         verts_info,
+                        rigid_global_info,
                         static_rigid_sim_config,
                         collider_state,
                         collider_static_config,
@@ -353,6 +354,7 @@ def func_extended_epa(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_static_config: ti.template(),
@@ -378,7 +380,7 @@ def func_extended_epa(
     discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gs.EPS
+        tolerance = rigid_global_info.EPS[None]
 
     k = 0
     converged = False

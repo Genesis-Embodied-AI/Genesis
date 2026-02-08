@@ -11,6 +11,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 import setproctitle
 import psutil
 import pyglet
@@ -71,6 +72,7 @@ TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
 IMG_STD_ERR_THR = 1.0
 IMG_NUM_ERR_THR = 0.001
+IMG_BLUR_KERNEL_SIZE = 1  # Size of the blur kernel (must be odd)
 
 
 def is_mem_monitoring_supported():
@@ -729,29 +731,66 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
     return filename
 
 
+def _apply_blur(img_arr: np.ndarray, kernel_size: int) -> np.ndarray:
+    # Early return if nothing to do:
+    if kernel_size == 1:
+        return img_arr
+
+    # Create normalized box kernel
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.float32) / (kernel_size**2)
+
+    pad_size = kernel_size // 2
+    h, w = img_arr.shape[:2]
+
+    # Pad the image
+    if img_arr.ndim == 2:
+        padded = np.pad(img_arr, pad_size, mode="edge")
+    else:
+        padded = np.pad(img_arr, ((pad_size, pad_size), (pad_size, pad_size), (0, 0)), mode="edge")
+
+    # Apply convolution
+    blurred_arr = np.zeros_like(img_arr, dtype=np.float32)
+    if img_arr.ndim == 2:
+        for i in range(h):
+            for j in range(w):
+                blurred_arr[i, j] = np.sum(padded[i : i + kernel_size, j : j + kernel_size] * kernel)
+    else:
+        for c in range(img_arr.shape[-1]):
+            for i in range(h):
+                for j in range(w):
+                    blurred_arr[i, j, c] = np.sum(padded[i : i + kernel_size, j : j + kernel_size, c] * kernel)
+
+    return blurred_arr
+
+
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     _std_err_threshold: float = IMG_STD_ERR_THR
     _ratio_err_threshold: float = IMG_NUM_ERR_THR
+    _blurred_kernel_size: int = IMG_BLUR_KERNEL_SIZE
 
     def matches(self, *, serialized_data, snapshot_data) -> bool:
-        import numpy as np
-
-        img_arrays = []
+        img_arrays, blurred_arrays = [], []
         for data in (serialized_data, snapshot_data):
             buffer = BytesIO()
             buffer.write(data)
             buffer.seek(0)
-            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.int32))
+            img_array = np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.float32)
+            blurred_array = _apply_blur(img_array, self._blurred_kernel_size)
+            img_arrays.append(img_array)
+            blurred_arrays.append(blurred_array)
 
         if img_arrays[0].shape != img_arrays[1].shape:
             return False
 
-        img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
+        # Compute difference on blurred images
+        img_err = np.minimum(np.abs(blurred_arrays[1] - blurred_arrays[0]), 255).astype(np.uint8)
+
         if (
-            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
-            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
+            np.max(np.std(img_err.reshape((-1, img_err.shape[-1])), axis=0)) > self._std_err_threshold
+            and (np.abs(img_err) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_err.size
         ):
             raw_bytes = BytesIO()
+            img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
             img_obj.save(raw_bytes, "PNG")
             raw_bytes.seek(0)
