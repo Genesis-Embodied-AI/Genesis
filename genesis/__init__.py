@@ -507,14 +507,17 @@ for name, member in gs_backend.__members__.items():
 def __getattr__(name):
     if name == "states":
         from ._engine import states
+
         globals()["states"] = states  # Cache it
         return states
     elif name == "materials":
         from ._engine import materials
+
         globals()["materials"] = materials  # Cache it
         return materials
     elif name == "force_fields":
         from ._engine import force_fields
+
         globals()["force_fields"] = force_fields  # Cache it
         return force_fields
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
