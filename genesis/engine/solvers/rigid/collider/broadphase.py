@@ -269,37 +269,113 @@ def func_broad_phase_generate_candidates(
         # Sweep to generate candidates (NO validation)
         collider_state.n_candidates[i_b] = 0
         n_candidates = 0
-        n_active = 0
 
-        for i in range(2 * env_n_geoms):
-            if not collider_state.sort_buffer.is_max[i, i_b]:
-                # MIN endpoint - add all pairs to candidates
-                for j in range(n_active):
-                    i_ga = collider_state.active_buffer[j, i_b]
-                    i_gb = collider_state.sort_buffer.i_g[i, i_b]
+        if ti.static(not static_rigid_sim_config.use_hibernation):
+            # Non-hibernation path: single active buffer
+            n_active = 0
+            for i in range(2 * env_n_geoms):
+                if not collider_state.sort_buffer.is_max[i, i_b]:
+                    # MIN endpoint - add all pairs to candidates
+                    for j in range(n_active):
+                        i_ga = collider_state.active_buffer[j, i_b]
+                        i_gb = collider_state.sort_buffer.i_g[i, i_b]
 
-                    # Canonical ordering
-                    if i_ga > i_gb:
-                        i_ga, i_gb = i_gb, i_ga
+                        # Canonical ordering
+                        if i_ga > i_gb:
+                            i_ga, i_gb = i_gb, i_ga
 
-                    # Write candidate (no validation!)
-                    collider_state.candidate_pairs[n_candidates, i_b][0] = i_ga
-                    collider_state.candidate_pairs[n_candidates, i_b][1] = i_gb
-                    n_candidates = n_candidates + 1
+                        # Write candidate (no validation!)
+                        collider_state.candidate_pairs[n_candidates, i_b][0] = i_ga
+                        collider_state.candidate_pairs[n_candidates, i_b][1] = i_gb
+                        n_candidates = n_candidates + 1
 
-                # Add current geom to active list
-                collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
-                n_active = n_active + 1
-            else:
-                # MAX endpoint - remove from active
-                i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
-                for j in range(n_active):
-                    if collider_state.active_buffer[j, i_b] == i_g_to_remove:
-                        if j < n_active - 1:
-                            for k in range(j, n_active - 1):
-                                collider_state.active_buffer[k, i_b] = collider_state.active_buffer[k + 1, i_b]
-                        n_active = n_active - 1
-                        break
+                    # Add current geom to active list
+                    collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                    n_active = n_active + 1
+                else:
+                    # MAX endpoint - remove from active
+                    i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+                    for j in range(n_active):
+                        if collider_state.active_buffer[j, i_b] == i_g_to_remove:
+                            # Shift down
+                            if j < n_active - 1:
+                                for k in range(j, n_active - 1):
+                                    collider_state.active_buffer[k, i_b] = collider_state.active_buffer[k + 1, i_b]
+                            n_active = n_active - 1
+                            break
+        else:
+            # Hibernation path: separate awake and hibernated active buffers
+            if rigid_global_info.n_awake_dofs[i_b] > 0:
+                n_active_awake = 0
+                n_active_hib = 0
+
+                for i in range(2 * env_n_geoms):
+                    # Read hibernation status for this geom (avoid intermediate variable)
+                    if not collider_state.sort_buffer.is_max[i, i_b]:
+                        # MIN endpoint - generate candidates with awake geoms
+                        for j in range(n_active_awake):
+                            i_ga = collider_state.active_buffer_awake[j, i_b]
+                            i_gb = collider_state.sort_buffer.i_g[i, i_b]
+
+                            # Canonical ordering
+                            if i_ga > i_gb:
+                                i_ga, i_gb = i_gb, i_ga
+
+                            # Write candidate (no validation!)
+                            collider_state.candidate_pairs[n_candidates, i_b][0] = i_ga
+                            collider_state.candidate_pairs[n_candidates, i_b][1] = i_gb
+                            n_candidates = n_candidates + 1
+
+                        # If incoming geom is awake, also check with hibernated geoms
+                        if not geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]:
+                            for j in range(n_active_hib):
+                                i_ga = collider_state.active_buffer_hib[j, i_b]
+                                i_gb = collider_state.sort_buffer.i_g[i, i_b]
+
+                                # Canonical ordering
+                                if i_ga > i_gb:
+                                    i_ga, i_gb = i_gb, i_ga
+
+                                # Write candidate (no validation!)
+                                collider_state.candidate_pairs[n_candidates, i_b][0] = i_ga
+                                collider_state.candidate_pairs[n_candidates, i_b][1] = i_gb
+                                n_candidates = n_candidates + 1
+
+                        # Add to appropriate active buffer
+                        if geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]:
+                            collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                            n_active_hib = n_active_hib + 1
+                        else:
+                            collider_state.active_buffer_awake[n_active_awake, i_b] = collider_state.sort_buffer.i_g[
+                                i, i_b
+                            ]
+                            n_active_awake = n_active_awake + 1
+                    else:
+                        # MAX endpoint - remove from appropriate active buffer
+                        i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+
+                        if geoms_state.hibernated[i_g_to_remove, i_b]:
+                            # Remove from hibernated active buffer
+                            for j in range(n_active_hib):
+                                if collider_state.active_buffer_hib[j, i_b] == i_g_to_remove:
+                                    if j < n_active_hib - 1:
+                                        for k in range(j, n_active_hib - 1):
+                                            collider_state.active_buffer_hib[k, i_b] = collider_state.active_buffer_hib[
+                                                k + 1, i_b
+                                            ]
+                                    n_active_hib = n_active_hib - 1
+                                    break
+                        else:
+                            # Remove from awake active buffer
+                            for j in range(n_active_awake):
+                                if collider_state.active_buffer_awake[j, i_b] == i_g_to_remove:
+                                    if j < n_active_awake - 1:
+                                        for k in range(j, n_active_awake - 1):
+                                            collider_state.active_buffer_awake[k, i_b] = (
+                                                collider_state.active_buffer_awake[k + 1, i_b]
+                                            )
+                                    n_active_awake = n_active_awake - 1
+                                    break
 
         collider_state.n_candidates[i_b] = n_candidates
 
