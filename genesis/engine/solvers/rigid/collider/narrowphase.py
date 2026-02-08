@@ -34,6 +34,11 @@ from .box_contact import (
     func_box_box_contact,
 )
 
+from .capsule_contact import (
+    func_capsule_capsule_contact,
+    func_sphere_capsule_contact,
+)
+
 
 class CCD_ALGORITHM_CODE(IntEnum):
     """Convex collision detection algorithm codes."""
@@ -621,7 +626,53 @@ def func_convex_convex_contact(
                 func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
+                    if ti.static(__debug__):
+                        ti.atomic_add(collider_state.debug_analytical_capsule_count[i_b], 1)
+                    is_col, normal, contact_pos, penetration = func_capsule_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                    if ti.static(__debug__):
+                        ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
+                    # Ensure sphere is always i_ga and capsule is i_gb
+                    if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE:
+                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                            i_ga,
+                            i_gb,
+                            i_b,
+                            geoms_state,
+                            geoms_info,
+                            rigid_global_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                        )
+                    else:
+                        is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                            i_gb,  # sphere
+                            i_ga,  # capsule
+                            i_b,
+                            geoms_state,
+                            geoms_info,
+                            rigid_global_info,
+                            collider_state,
+                            collider_info,
+                            errno,
+                        )
+                        # Since we swapped, we need to negate the normal
+                        normal = -normal
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
                     )
@@ -697,6 +748,8 @@ def func_convex_convex_contact(
                     ### GJK, MJ_GJK
                     if ti.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
+                            if ti.static(__debug__):
+                                ti.atomic_add(collider_state.debug_gjk_count[i_b], 1)
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     links_state,
@@ -840,44 +893,46 @@ def func_convex_convex_contact(
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
-                    contact_point_a = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.ti_inv_quat(qrot),
-                        )
-                        + contact_pos_0
-                    )
-                    contact_point_b = (
-                        gu.ti_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
-                    )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
+                # For perturbed iterations (i_detection > 0), correct contact position and normal
+                # This applies to ALL collision methods when multi-contact is enabled
 
-                    # First-order correction of the normal direction.
-                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                    # the minimal rotation that makes the corrected twisted normal as closed as possible to the
-                    # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
-                    # Rodrigues' rotation formula.
-                    twist_rotvec = ti.math.clamp(
-                        normal.cross(normal_0),
-                        -collider_info.mc_perturbation[None],
-                        collider_info.mc_perturbation[None],
+                # 1. Project the contact point on both geometries
+                # 2. Revert the effect of small rotation
+                # 3. Update contact point
+                contact_point_a = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                        gu.ti_inv_quat(qrot),
                     )
-                    normal = normal + twist_rotvec.cross(normal)
+                    + contact_pos_0
+                )
+                contact_point_b = (
+                    gu.ti_transform_by_quat(
+                        (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                        qrot,
+                    )
+                    + contact_pos_0
+                )
+                contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
-                    # Make sure that the penetration is still positive before adding contact point.
-                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                    # contact points and thefore more continuous contact forces, without changing the mean-field
-                    # dynamics since zero-penetration contact points should not induce any force.
-                    penetration = normal.dot(contact_point_b - contact_point_a)
+                # First-order correction of the normal direction.
+                # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                # the minimal rotation that makes the corrected twisted normal as closed as possible to the
+                # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
+                # Rodrigues' rotation formula.
+                twist_rotvec = ti.math.clamp(
+                    normal.cross(normal_0),
+                    -collider_info.mc_perturbation[None],
+                    collider_info.mc_perturbation[None],
+                )
+                normal = normal + twist_rotvec.cross(normal)
+
+                # Make sure that the penetration is still positive before adding contact point.
+                # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                # contact points and thefore more continuous contact forces, without changing the mean-field
+                # dynamics since zero-penetration contact points should not induce any force.
+                penetration = normal.dot(contact_point_b - contact_point_a)
                 if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                     # Only change penetration to the initial one, because the normal vector could change abruptly
                     # under MuJoCo's GJK-EPA.

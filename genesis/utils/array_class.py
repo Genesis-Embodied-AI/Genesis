@@ -221,6 +221,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     quad_gauss: V_ANNOTATION
     quad: V_ANNOTATION
     candidates: V_ANNOTATION
+    eq_sum: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
     # Optional CG fields
@@ -295,6 +296,7 @@ def get_constraint_state(constraint_solver, solver):
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
         candidates=V(dtype=gs.ti_float, shape=(12, _B)),
+        eq_sum=V(dtype=gs.ti_float, shape=(3, _B)),
         Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
@@ -544,6 +546,10 @@ class StructColliderState(metaclass=BASE_METACLASS):
     contact_cache: StructContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
+    # Debug counters for collision detection path tracking
+    debug_analytical_capsule_count: V_ANNOTATION
+    debug_analytical_sphere_capsule_count: V_ANNOTATION
+    debug_gjk_count: V_ANNOTATION
 
 
 def get_collider_state(
@@ -597,6 +603,9 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.ti_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
+        debug_analytical_capsule_count=V(dtype=gs.ti_int, shape=(_B,)),
+        debug_analytical_sphere_capsule_count=V(dtype=gs.ti_int, shape=(_B,)),
+        debug_gjk_count=V(dtype=gs.ti_int, shape=(_B,)),
     )
 
 
