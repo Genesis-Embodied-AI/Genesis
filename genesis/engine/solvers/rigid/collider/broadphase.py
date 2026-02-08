@@ -191,7 +191,6 @@ def func_broad_phase_generate_candidates(
     n_geoms, _B = collider_state.active_buffer.shape
     n_links = links_info.geom_start.shape[0]
 
-    # Clear collider state
     func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
 
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -280,7 +279,6 @@ def func_broad_phase_generate_candidates(
                         i_ga = collider_state.active_buffer[j, i_b]
                         i_gb = collider_state.sort_buffer.i_g[i, i_b]
 
-                        # Canonical ordering
                         if i_ga > i_gb:
                             i_ga, i_gb = i_gb, i_ga
 
@@ -317,7 +315,6 @@ def func_broad_phase_generate_candidates(
                             i_ga = collider_state.active_buffer_awake[j, i_b]
                             i_gb = collider_state.sort_buffer.i_g[i, i_b]
 
-                            # Canonical ordering
                             if i_ga > i_gb:
                                 i_ga, i_gb = i_gb, i_ga
 
@@ -332,7 +329,6 @@ def func_broad_phase_generate_candidates(
                                 i_ga = collider_state.active_buffer_hib[j, i_b]
                                 i_gb = collider_state.sort_buffer.i_g[i, i_b]
 
-                                # Canonical ordering
                                 if i_ga > i_gb:
                                     i_ga, i_gb = i_gb, i_ga
 
@@ -401,17 +397,14 @@ def func_broad_phase_validate_candidates(
     n_geoms, _B = collider_state.active_buffer.shape
     max_candidates = (n_geoms * (n_geoms - 1)) // 2
 
-    # Parallelize over environments × candidates
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b, i_cand in ti.ndrange(_B, max_candidates):
-        # Check if this candidate exists
         if i_cand >= collider_state.n_candidates[i_b]:
             continue
 
-        # Get candidate pair
         i_ga = collider_state.candidate_pairs[i_cand, i_b][0]
         i_gb = collider_state.candidate_pairs[i_cand, i_b][1]
 
-        # Validation check
         if not func_check_collision_valid(
             i_ga,
             i_gb,
@@ -427,15 +420,12 @@ def func_broad_phase_validate_candidates(
         ):
             continue
 
-        # AABB overlap check
         if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
-            # Clear collision normal cache if not in contact
             if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                 collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             continue
 
-        # Valid collision pair - write atomically
         idx = ti.atomic_add(collider_state.n_broad_pairs[i_b], 1)
         if idx >= collider_info.max_collision_pairs_broad[None]:
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
