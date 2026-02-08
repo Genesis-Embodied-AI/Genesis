@@ -15,7 +15,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.sdf as sdf
-import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
+import genesis._engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 from genesis.utils.sdf import SDF
 
@@ -34,8 +34,7 @@ from .broadphase import (
     func_find_intersect_midpoint,
     func_check_collision_valid,
     func_collision_clear,
-    func_broad_phase_generate_candidates,
-    func_broad_phase_validate_candidates,
+    func_broad_phase,
 )
 
 from .contact import (
@@ -436,9 +435,29 @@ class Collider:
         )
 
     def detection(self) -> None:
+        rigid_solver.kernel_update_geom_aabbs(
+            self._solver.geoms_state,
+            self._solver.geoms_init_AABB,
+            self._solver._static_rigid_sim_config,
+        )
 
+        if self._n_possible_pairs == 0:
+            return
 
-        # Narrowphase: compute actual contacts from broad pairs
+        self._contact_data_cache.clear()
+        func_broad_phase(
+            self._solver.links_state,
+            self._solver.links_info,
+            self._solver.geoms_state,
+            self._solver.geoms_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._solver.constraint_solver.constraint_state,
+            self._collider_state,
+            self._solver.equalities_info,
+            self._collider_info,
+            self._solver._errno,
+        )
         if self._collider_static_config.has_convex_convex:
             func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
@@ -464,7 +483,6 @@ class Collider:
                 self._gjk._gjk_state.diff_contact_input,
                 self._solver._errno,
             )
-
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,

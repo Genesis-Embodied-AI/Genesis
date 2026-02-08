@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
+    from genesis._engine.scene import Scene
     from genesis.ext.pyrender.node import Node
     from genesis.ext.pyrender.viewer import Viewer
 
