@@ -1036,16 +1036,20 @@ def test_draw_debug(renderer, show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
+def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 2.0, 2.0),
             camera_lookat=(0.0, 0.0, 0.2),
             # Force screen-independent low-quality resolution when running unit tests for consistency
-            res=(640, 480),
+            res=(480, 320),
             # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
+        ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -1143,19 +1147,13 @@ def test_sensors_draw_debug(n_envs, renderer, png_snapshot):
         if renderer == "Apple Software Renderer":
             pytest.xfail("Tile ground colors are altered on Apple Software Renderer.")
 
-    try:
-        assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
-    except AssertionError:
-        # TODO: Need to investigate root cause and either fix rendering consistency
-        if sys.platform == "linux" and gs.use_ndarray:
-            pytest.xfail("Sensor debug drawing produces inconsistent results on Linux with static array mode.")
-        raise
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snapshot):
+def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
     # Mock 'get_save_filename' to avoid poping up an interactive dialog
@@ -1180,13 +1178,18 @@ def test_interactive_viewer_key_press(tmp_path, monkeypatch, renderer, png_snaps
     # Create a scene
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            # Force screen-independent low-quality resolution when running unit tests for consistency
+            # Force screen-independent low-quality resolution when running unit tests for consistency.
+            # Still, it must be large enough since rendering text involved alpha blending, which is platform-dependent.
             res=(640, 480),
             # Enable running in background thread if supported by the platform.
             # Note that windows is not supported because it would trigger the following exception if some previous tests
             # was only using rasterizer without interactive viewer:
             # 'EventLoop.run() must be called from the same thread that imports pyglet.app'.
             run_in_thread=(sys.platform == "linux"),
+        ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         renderer=renderer,
         show_viewer=True,
@@ -1242,7 +1245,11 @@ def test_camera_gimbal_lock_singularity(renderer, show_viewer):
     """
 
     # Minimal scene
-    scene = gs.Scene(renderer=renderer, show_viewer=False, show_FPS=False)
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
     cam = scene.add_camera(pos=(0.0, -1.5, 5.0), lookat=(0.0, 0.0, 0.0))
     scene.build()
 
