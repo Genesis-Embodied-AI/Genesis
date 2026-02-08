@@ -464,9 +464,6 @@ class Collider:
             self._solver._static_rigid_sim_config,
         )
 
-        # TODO: move this fill into some kernel, probably generate_candidates
-        self._collider_state.n_broad_pairs.fill(0)
-
         # Kernel 2: Validate candidates in parallel
         func_broad_phase_validate_candidates(
             self._solver.links_state,
