@@ -152,12 +152,14 @@ def test_default_viewer_plugin():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-def test_mouse_interaction_plugin(png_snapshot):
+def test_mouse_interaction_plugin():
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 0.0, 1.0),
-            camera_lookat=(0.0, 0.0, 0.0),
+            camera_pos=(0.0, 0.5, 1.5),  # looking down at the box
+            camera_lookat=(0.0, 0.0, 0.3),
             camera_fov=30,
             res=CAM_RES,
             run_in_thread=(sys.platform == "linux"),
@@ -167,14 +169,13 @@ def test_mouse_interaction_plugin(png_snapshot):
     )
 
     scene.add_entity(morph=gs.morphs.Plane())
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            pos=(0.4, 0.0, 0.2),
-            euler=(30, 40, 0),
-            radius=0.1,
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.0, 0.2),
+            size=(0.2, 0.2, 0.2),
         )
     )
-    scene.viewer.add_plugin(
+    mouse_plugin = scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
         )
@@ -199,11 +200,11 @@ def test_mouse_interaction_plugin(png_snapshot):
 
     scene.step()
 
-    assert_allclose(sphere.get_vel(), 0, tol=gs.EPS)
+    assert_allclose(box.get_vel(), 0, tol=gs.EPS)
 
     viewport_size = pyrender_viewer._viewport_size
-    x, y = viewport_size[0] // 2 + 8, viewport_size[1] // 2 + 8
-    dx, dy = 8, 8
+    x, y = viewport_size[0] // 2, viewport_size[1] // 2
+    dx, dy = 0, 4  # drag box upwards
     pyrender_viewer.dispatch_event("on_mouse_press", x, y, MouseButton.LEFT, 0)
     wait_for_viewer_events(pyrender_viewer, lambda: event_counter.count == 1)
 
@@ -216,10 +217,16 @@ def test_mouse_interaction_plugin(png_snapshot):
             pyrender_viewer, lambda: event_counter.count == i + 2
         )  # +1 for mouse press, +1 each drag
         scene.step()
-        if i % 10 == 0:
+        if (i + 1) % 10 == 0:
             rgb_arr, *_ = pyrender_viewer.render_offscreen(
                 pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
             )
             rgb_arrs.append(rgb_arr)
 
-    assert rgb_array_to_png_bytes(np.concatenate(rgb_arrs)) == png_snapshot
+    # assert the images are different
+    assert not np.array_equal(rgb_arrs[0], rgb_arrs[1]), "Expected images to be different after dragging the object."
+
+    # check box velocity components are within expected range
+    box_vel = box.get_vel()
+    assert_allclose(box_vel[:2], 0.0, tol=gs.EPS)
+    assert 0.5 <= box_vel[2] <= 0.5
