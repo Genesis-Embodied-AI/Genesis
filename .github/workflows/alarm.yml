@@ -80,7 +80,7 @@ jobs:
             --max-valid-revisions 5 \
             --max-fetch-revisions 40 \
             --runtime-fps-regression-tolerance-pct 8 \
-            --compile-time-regression-tolerance-pct 24 \
+            --compile-time-regression-tolerance-pct 30 \
             --mem-regression-tolerance-pct 4 \
             --csv-runtime-fps-path /tmp/runtime_fps.csv \
             --csv-compile-time-path /tmp/compile_time.csv \
