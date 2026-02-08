@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
-from genesis.engine.bvh import LBVH, AABB
+from genesis._engine.bvh import LBVH, AABB
 
 from .utils import assert_allclose
 

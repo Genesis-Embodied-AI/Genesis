@@ -11,7 +11,7 @@ import genesis.utils.geom as gu
 from genesis.utils import array_class
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+    from genesis._engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 class PathPlanner(ABC):

@@ -124,7 +124,7 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
-    from genesis.engine.solvers.rigid.collider import func_narrow_phase_convex_vs_convex
+    from genesis._engine.solvers.rigid.collider import func_narrow_phase_convex_vs_convex
 
     assert (
         func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_key_generated
@@ -223,7 +223,7 @@ def gs_num_envs_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     ti.sync()
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
+    from genesis._engine.solvers.rigid.rigid_solver import kernel_step_1
 
     assert kernel_step_1._primal.fe_ll_cache_observations.cache_hit == args.expected_fe_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
@@ -330,7 +330,7 @@ def change_scene(args: list[str]):
     z = qpos.reshape((*qpos.shape[:-1], args.n_objs, 7))[..., 2]
     assert_allclose(z, 0.2, atol=1e-3)
 
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
+    from genesis._engine.solvers.rigid.rigid_solver import kernel_step_1
 
     assert kernel_step_1._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
     assert kernel_step_1._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit

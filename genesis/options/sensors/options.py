@@ -14,7 +14,7 @@ Matrix3x3Type = tuple[tuple[float, float, float], tuple[float, float, float], tu
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeTuple3FType
 
 if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
+    from genesis._engine.scene import Scene
 
 
 class SensorOptions(Options):
@@ -74,7 +74,7 @@ class RigidSensorOptionsMixin:
     euler_offset: Tuple3FType = (0.0, 0.0, 0.0)
 
     def validate(self, scene: "Scene"):
-        from genesis.engine.entities import RigidEntity
+        from genesis._engine.entities import RigidEntity
 
         super().validate(scene)
         if self.entity_idx is not None and self.entity_idx >= len(scene.entities):

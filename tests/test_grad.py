@@ -221,8 +221,8 @@ def test_diff_contact():
 @pytest.mark.required
 @pytest.mark.precision("64")
 def test_diff_solver(monkeypatch):
-    from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
+    from genesis._engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
+    from genesis._engine.solvers.rigid.rigid_solver import kernel_step_1
 
     RTOL = 1e-4
 
