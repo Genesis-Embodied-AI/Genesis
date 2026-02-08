@@ -493,9 +493,8 @@ class RasterizerContext:
     def on_mpm(self):
         if self.sim.mpm_solver.is_active:
             for mpm_entity in self.sim.mpm_solver.entities:
-                if mpm_entity.surface.vis_mode == "recon":
+                if mpm_entity.surface.vis_mode in ("recon", "visual"):
                     self.add_dynamic_node(mpm_entity, None)
-
                 elif mpm_entity.surface.vis_mode == "particle":
                     for idx in self.rendered_envs_idx:
                         mesh = mu.create_sphere(
@@ -508,13 +507,6 @@ class RasterizerContext:
                         self.add_static_node(
                             mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs), i_b=idx
                         )
-
-                elif mpm_entity.surface.vis_mode == "visual":
-                    # self.add_static_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=mpm_entity.surface.smooth))
-                    self.add_dynamic_node(
-                        mpm_entity,
-                        pyrender.Mesh.from_trimesh(mpm_entity.vmesh.trimesh, smooth=mpm_entity.surface.smooth),
-                    )
 
             # boundary
             if self.visualize_mpm_boundary:
@@ -550,7 +542,6 @@ class RasterizerContext:
                         )
                         mesh.visual = mu.surface_uvs_to_trimesh_visual(mpm_entity.surface, n_verts=len(mesh.vertices))
                         self.add_dynamic_node(mpm_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True))
-
                     elif mpm_entity.surface.vis_mode == "particle":
                         tfs = np.tile(np.eye(4), (mpm_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[mpm_entity.particle_start : mpm_entity.particle_end, idx]
@@ -572,7 +563,6 @@ class RasterizerContext:
             for sph_entity in self.sim.sph_solver.entities:
                 if sph_entity.surface.vis_mode == "recon":
                     self.add_dynamic_node(sph_entity, None)
-
                 elif sph_entity.surface.vis_mode == "particle":
                     for idx in self.rendered_envs_idx:
                         mesh = mu.create_sphere(
@@ -620,7 +610,6 @@ class RasterizerContext:
                         )
                         mesh.visual = mu.surface_uvs_to_trimesh_visual(sph_entity.surface, n_verts=len(mesh.vertices))
                         self.add_dynamic_node(sph_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True))
-
                     elif sph_entity.surface.vis_mode == "particle":
                         tfs = np.tile(np.eye(4), (sph_entity.n_particles, 1, 1))
                         tfs[:, :3, 3] = particles_all[sph_entity.particle_start : sph_entity.particle_end, idx]
@@ -636,11 +625,9 @@ class RasterizerContext:
                     pbd_entity.vmesh.trimesh.visual = mu.surface_uvs_to_trimesh_visual(
                         pbd_entity.surface, uvs=pbd_entity.vmesh.uvs, n_verts=len(pbd_entity.vmesh.trimesh.vertices)
                     )
-
                 for idx in self.rendered_envs_idx:
                     if pbd_entity.surface.vis_mode == "recon":
                         self.add_dynamic_node(pbd_entity, None)
-
                     elif pbd_entity.surface.vis_mode == "particle":
                         if self.render_particle_as == "sphere":
                             mesh = mu.create_sphere(
@@ -654,7 +641,6 @@ class RasterizerContext:
                             self.add_static_node(
                                 pbd_entity, pyrender.Mesh.from_trimesh(mesh, smooth=True, poses=tfs), i_b=idx
                             )
-
                         elif self.render_particle_as == "tet":
                             mesh = mu.create_tets_mesh(
                                 pbd_entity.n_particles, self.sim.pbd_solver.particle_radius * self.particle_size_scale
@@ -664,7 +650,6 @@ class RasterizerContext:
                             )
                             pbd_entity._tets_mesh = mesh
                             self.add_static_node(pbd_entity, pyrender.Mesh.from_trimesh(mesh, smooth=False), i_b=idx)
-
                     elif pbd_entity.surface.vis_mode == "visual":
                         self.add_static_node(
                             pbd_entity,

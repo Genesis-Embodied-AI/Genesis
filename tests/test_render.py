@@ -1290,7 +1290,6 @@ def test_camera_gimbal_lock_singularity(renderer, show_viewer):
     [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER],
 )
 def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
-    CAM_RES = (256, 256)
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
     for test_idx, (plane_size, tile_size) in enumerate(
@@ -1322,11 +1321,11 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
                 cutoff=45.0,
                 intensity=0.5,
             )
-        plane = scene.add_entity(
+        scene.add_entity(
             gs.morphs.Plane(plane_size=plane_size, tile_size=tile_size),
         )
         camera = scene.add_camera(
-            res=CAM_RES,
+            res=(256, 256),
             pos=(0.0, 0.0, 8),
             lookat=(0.0, 0.0, 0.0),
             fov=45,
@@ -1348,14 +1347,12 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 def test_batch_deformable_render(monkeypatch, png_snapshot):
-    CAM_RES = (640, 480)
+    # Having many particles in the scene creates artifacts that are not deterministic between different hardware
+    png_snapshot.extension._std_err_threshold = 2.0
+    png_snapshot.extension._blurred_kernel_size = 3
 
     # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
     monkeypatch.setattr("genesis.ext.pyrender.renderer.Renderer.render_texts", lambda *args, **kwargs: None)
-
-    # Increase pixel matching tolerance.
-    # We don't care about "perfect" match here and it is changing when particules are involved.
-    png_snapshot.extension._std_err_threshold = 10.0
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1378,8 +1375,8 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             camera_pos=(6.0, 0.0, 4.0),
             camera_lookat=(0.0, 0.0, 0.0),
             camera_fov=40,
-            res=CAM_RES,
-            run_in_thread=(sys.platform == "linux"),
+            res=(640, 480),
+            run_in_thread=False,
         ),
         vis_options=gs.options.VisOptions(
             show_world_frame=True,
@@ -1454,6 +1451,8 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
+
+    scene.visualizer.viewer.update(auto_refresh=True, force=True)
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
         pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
@@ -1518,7 +1517,6 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
 
     # Render from add_camera
     add_cam_rgb, *_ = camera.render(rgb=True)
-    add_cam_rgb = tensor_to_array(add_cam_rgb)
 
     # Compare brightness (mean pixel value)
     viewer_brightness = viewer_rgb.mean()
@@ -1533,11 +1531,11 @@ def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, sh
 
 
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER, RENDERER_TYPE.RAYTRACER])
-def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, png_snapshot):
-    CAM_RES = (256, 256)
-
-    # Increase tolerance for deformable rendering
-    png_snapshot.extension._std_err_threshold = 15.0
+def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
+    # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
+    # without denoiser.
+    png_snapshot.extension._std_err_threshold = 3.0
+    png_snapshot.extension._blurred_kernel_size = 3
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -1545,11 +1543,13 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
             substeps=6,
         ),
         pbd_options=gs.options.PBDOptions(
-            particle_size=1e-2,
+            particle_size=0.01,
         ),
         fem_options=gs.options.FEMOptions(
-            use_implicit_solver=True,  # Implicit solver allows for larger timestep without failure on GPU backend
-            n_pcg_iterations=40,  # Reduce number of iterations to speedup runtime
+            # Implicit solver allows for larger timestep without failure on GPU backend
+            use_implicit_solver=True,
+            # Reduce number of iterations to speedup runtime
+            n_pcg_iterations=40,
         ),
         renderer=renderer,
         show_viewer=show_viewer,
@@ -1588,7 +1588,10 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
             scale=0.1,
             pos=(0.2, 0.0, 0.2),
         ),
-        material=gs.materials.FEM.Elastic(E=1e5, nu=0.4),
+        material=gs.materials.FEM.Elastic(
+            E=1e5,
+            nu=0.4,
+        ),
         surface=gs.surfaces.Default(
             diffuse_texture=gs.textures.ImageTexture(
                 image_path="textures/checker.png",
@@ -1598,12 +1601,13 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
     )
 
     camera = scene.add_camera(
-        res=CAM_RES,
+        res=(256, 256),
         pos=(1.5, 1.5, 1),
         lookat=(0.0, 0.0, 0.3),
         fov=45,
+        spp=64,
+        denoise=False,
         GUI=show_viewer,
-        spp=64 if renderer_type == RENDERER_TYPE.RAYTRACER else 1,
     )
 
     scene.build()
@@ -1614,9 +1618,6 @@ def test_deformable_uv_textures(renderer_type, renderer, backend, show_viewer, p
 
     # Render and verify
     rgb_arr, *_ = camera.render(rgb=True)
-    rgb_arr = tensor_to_array(rgb_arr)
-
-    # Snapshot test for visual regression
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
