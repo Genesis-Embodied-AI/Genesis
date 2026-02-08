@@ -101,6 +101,11 @@ class SensorManager:
             buffered_data.rotate()
 
         for sensor_cls in self._sensors_by_type.keys():
+            # Skip sensors that update on read (lazy evaluation)
+            # unless delay is configured (delay needs per-step buffer updates)
+            if getattr(sensor_cls, "_update_on_read", False) and not self._has_delay_configured(sensor_cls):
+                continue
+
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             sensor_cls._update_shared_ground_truth_cache(
@@ -117,6 +122,40 @@ class SensorManager:
                 key = (is_ground_truth, dtype)
                 self._is_last_cache_cloned[key] = False
                 self._cloned_cache[key] = torch.tensor([], dtype=dtype, device=gs.device)
+
+    def _has_delay_configured(self, sensor_cls: type["Sensor"]) -> bool:
+        """Check if any sensor of this type has delay configured."""
+        metadata = self._sensors_metadata.get(sensor_cls)
+        if metadata is None:
+            return False
+        delays_ts = getattr(metadata, "delays_ts", None)
+        if delays_ts is None:
+            return False
+        return bool(torch.any(delays_ts > 0))
+
+    def update_sensor_type_cache(self, sensor_cls: type["Sensor"]):
+        """
+        Update the cache for a specific sensor type on demand.
+
+        This is used by sensors with lazy evaluation (_update_on_read=True) to trigger
+        cache updates when read() is called.
+        """
+        dtype = sensor_cls._get_cache_dtype()
+        cache_slice = self._cache_slices_by_type[sensor_cls]
+        sensor_cls._update_shared_ground_truth_cache(
+            self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice]
+        )
+        if self._should_update_cache_by_type[sensor_cls]:
+            sensor_cls._update_shared_cache(
+                self._sensors_metadata[sensor_cls],
+                self._ground_truth_cache[dtype][:, cache_slice],
+                self._cache[dtype][:, cache_slice],
+                self._buffered_data[dtype][:, cache_slice],
+            )
+        for is_ground_truth in (False, True):
+            key = (is_ground_truth, dtype)
+            self._is_last_cache_cloned[key] = False
+            self._cloned_cache[key] = torch.tensor([], dtype=dtype, device=gs.device)
 
     def draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         for sensor in self.sensors:
