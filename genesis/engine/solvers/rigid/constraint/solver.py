@@ -2039,7 +2039,13 @@ def func_ls_point_fn_opt(
     only friction, contact, and joint-limit constraints. Equality constraints (weld, connect, joint-equality) are
     skipped entirely by initializing the accumulators from quad_gauss + eq_sum, where eq_sum was pre-computed by
     func_ls_init_and_eval_p0_opt during initialization. The benefit scales with the ratio of equality constraints to
-    total constraints."""
+    total constraints.
+
+    The original implementation uses a single loop over all constraints with if/elif branching to classify each
+    constraint by type (equality, friction, or contact). This function instead uses separate loops per type with
+    range-based indexing (range(ne, nef) for friction, range(nef, n_con) for contact), which eliminates the per-
+    iteration type-classification branches. On GPU, removing divergent branches within a constraint loop improves warp
+    execution efficiency, as all threads in a warp follow the same code path."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
