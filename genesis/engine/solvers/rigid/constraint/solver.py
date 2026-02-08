@@ -2016,14 +2016,14 @@ def func_ls_init_and_eval_p0_opt(
 
     # Return p0 result (alpha=0)
     cost = quad_total_0
-    deriv_0 = quad_total_1
-    deriv_1 = 2 * quad_total_2
-    if deriv_1 <= 0.0:
-        deriv_1 = rigid_global_info.EPS[None]
+    grad = quad_total_1
+    hess = 2 * quad_total_2
+    if hess <= 0.0:
+        hess = rigid_global_info.EPS[None]
 
     constraint_state.ls_it[i_b] = 1
 
-    return gs.ti_float(0.0), cost, deriv_0, deriv_1
+    return gs.ti_float(0.0), cost, grad, hess
 
 
 @ti.func
@@ -2088,14 +2088,14 @@ def func_ls_point_fn_opt(
         quad_total_2 = quad_total_2 + qf_2 * active
 
     cost = alpha * alpha * quad_total_2 + alpha * quad_total_1 + quad_total_0
-    deriv_0 = 2 * alpha * quad_total_2 + quad_total_1
-    deriv_1 = 2 * quad_total_2
-    if deriv_1 <= 0.0:
-        deriv_1 = rigid_global_info.EPS[None]
+    grad = 2 * alpha * quad_total_2 + quad_total_1
+    hess = 2 * quad_total_2
+    if hess <= 0.0:
+        hess = rigid_global_info.EPS[None]
 
     constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
 
-    return alpha, cost, deriv_0, deriv_1
+    return alpha, cost, grad, hess
 
 
 @ti.func
@@ -2203,78 +2203,65 @@ def func_ls_point_fn_3alphas_opt(
 
     EPS = rigid_global_info.EPS[None]
 
-    c0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
-    d0_0 = 2 * alpha_0 * t0_2 + t0_1
-    d0_1 = 2 * t0_2
-    if d0_1 <= 0.0:
-        d0_1 = EPS
+    # Evaluate cost, gradient (1st derivative), and hessian (2nd derivative) for each alpha
+    cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
+    grad_0 = 2 * alpha_0 * t0_2 + t0_1
+    hess_0 = 2 * t0_2
+    if hess_0 <= 0.0:
+        hess_0 = EPS
 
-    c1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
-    d1_0 = 2 * alpha_1 * t1_2 + t1_1
-    d1_1 = 2 * t1_2
-    if d1_1 <= 0.0:
-        d1_1 = EPS
+    cost_1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
+    grad_1 = 2 * alpha_1 * t1_2 + t1_1
+    hess_1 = 2 * t1_2
+    if hess_1 <= 0.0:
+        hess_1 = EPS
 
-    c2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
-    d2_0 = 2 * alpha_2 * t2_2 + t2_1
-    d2_1 = 2 * t2_2
-    if d2_1 <= 0.0:
-        d2_1 = EPS
+    cost_2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
+    grad_2 = 2 * alpha_2 * t2_2 + t2_1
+    hess_2 = 2 * t2_2
+    if hess_2 <= 0.0:
+        hess_2 = EPS
 
     constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 3
 
-    return alpha_0, c0, d0_0, d0_1, alpha_1, c1, d1_0, d1_1, alpha_2, c2, d2_0, d2_1
+    costs = ti.Vector([cost_0, cost_1, cost_2])
+    grads = ti.Vector([grad_0, grad_1, grad_2])
+    hess = ti.Vector([hess_0, hess_1, hess_2])
+    return costs, grads, hess
 
 
 @ti.func
 def update_bracket_no_eval_local(
     p_alpha,
     p_cost,
-    p_deriv_0,
-    p_deriv_1,
-    c0_alpha,
-    c0_cost,
-    c0_d0,
-    c0_d1,
-    c1_alpha,
-    c1_cost,
-    c1_d0,
-    c1_d1,
-    c2_alpha,
-    c2_cost,
-    c2_d0,
-    c2_d1,
+    p_grad,
+    p_hess,
+    alphas,
+    costs,
+    grads,
+    hess,
 ):
-    """Bracket update using local candidate values. No global memory access or func_ls_point_fn call."""
+    """Bracket update using local candidate values. No global memory access or func_ls_point_fn call.
+
+    Args:
+        p_alpha, p_cost, p_grad, p_hess: current bracket point (scalar).
+        alphas, costs, grads, hess: ti.Vector(3) of candidate values.
+    """
     flag = 0
 
-    # Candidate 0
-    if p_deriv_0 < 0 and c0_d0 < 0 and p_deriv_0 < c0_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
-        flag = 1
-    elif p_deriv_0 > 0 and c0_d0 > 0 and p_deriv_0 > c0_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c0_alpha, c0_cost, c0_d0, c0_d1
-        flag = 2
-    # Candidate 1
-    if p_deriv_0 < 0 and c1_d0 < 0 and p_deriv_0 < c1_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
-        flag = 1
-    elif p_deriv_0 > 0 and c1_d0 > 0 and p_deriv_0 > c1_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c1_alpha, c1_cost, c1_d0, c1_d1
-        flag = 2
-    # Candidate 2
-    if p_deriv_0 < 0 and c2_d0 < 0 and p_deriv_0 < c2_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
-        flag = 1
-    elif p_deriv_0 > 0 and c2_d0 > 0 and p_deriv_0 > c2_d0:
-        p_alpha, p_cost, p_deriv_0, p_deriv_1 = c2_alpha, c2_cost, c2_d0, c2_d1
-        flag = 2
+    for i in ti.static(range(3)):
+        if p_grad < 0 and grads[i] < 0 and p_grad < grads[i]:
+            p_alpha, p_cost, p_grad, p_hess = alphas[i], costs[i], grads[i], hess[i]
+            flag = 1
+        elif p_grad > 0 and grads[i] > 0 and p_grad > grads[i]:
+            p_alpha, p_cost, p_grad, p_hess = alphas[i], costs[i], grads[i], hess[i]
+            flag = 2
 
     p_next_alpha = p_alpha
     if flag > 0:
-        p_next_alpha = p_alpha - p_deriv_0 / p_deriv_1
+        p_next_alpha = p_alpha - p_grad / p_hess
 
-    return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha
+    return flag, p_alpha, p_cost, p_grad, p_hess, p_next_alpha
 
 
 @ti.func
@@ -2364,43 +2351,24 @@ def func_linesearch_batch(
                     alpha_2 = (p1_alpha + p2_alpha) * 0.5  # midpoint
 
                     while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                        # Batch evaluate all 3 in one constraint loop
-                        (
-                            _a0,
-                            c0,
-                            c0_d0,
-                            c0_d1,
-                            _a1,
-                            c1,
-                            c1_d0,
-                            c1_d1,
-                            _a2,
-                            c2,
-                            c2_d0,
-                            c2_d1,
-                        ) = func_ls_point_fn_3alphas_opt(
+                        # Batch evaluate cost, gradient, hessian for all 3 alphas in one constraint loop
+                        costs, grads, hess = func_ls_point_fn_3alphas_opt(
                             i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
                         )
+                        alphas = ti.Vector([alpha_0, alpha_1, alpha_2])
 
-                        # Check convergence among 3 candidates using local variables
+                        # Check convergence among 3 candidates
                         p1_next_alpha = alpha_0
                         p2_next_alpha = alpha_1
 
                         best_alpha = gs.ti_float(0.0)
                         best_cost = gs.ti_float(0.0)
                         best_found = False
-                        if ti.abs(c0_d0) < gtol:
-                            best_alpha = alpha_0
-                            best_cost = c0
-                            best_found = True
-                        if ti.abs(c1_d0) < gtol and (not best_found or c1 < best_cost):
-                            best_alpha = alpha_1
-                            best_cost = c1
-                            best_found = True
-                        if ti.abs(c2_d0) < gtol and (not best_found or c2 < best_cost):
-                            best_alpha = alpha_2
-                            best_cost = c2
-                            best_found = True
+                        for i in ti.static(range(3)):
+                            if ti.abs(grads[i]) < gtol and (not best_found or costs[i] < best_cost):
+                                best_alpha = alphas[i]
+                                best_cost = costs[i]
+                                best_found = True
 
                         if best_found:
                             res_alpha = best_alpha
@@ -2418,18 +2386,10 @@ def func_linesearch_batch(
                                 p1_cost,
                                 p1_deriv_0,
                                 p1_deriv_1,
-                                alpha_0,
-                                c0,
-                                c0_d0,
-                                c0_d1,
-                                alpha_1,
-                                c1,
-                                c1_d0,
-                                c1_d1,
-                                alpha_2,
-                                c2,
-                                c2_d0,
-                                c2_d1,
+                                alphas,
+                                costs,
+                                grads,
+                                hess,
                             )
                             (
                                 b2,
@@ -2443,22 +2403,14 @@ def func_linesearch_batch(
                                 p2_cost,
                                 p2_deriv_0,
                                 p2_deriv_1,
-                                alpha_0,
-                                c0,
-                                c0_d0,
-                                c0_d1,
-                                alpha_1,
-                                c1,
-                                c1_d0,
-                                c1_d1,
-                                alpha_2,
-                                c2,
-                                c2_d0,
-                                c2_d1,
+                                alphas,
+                                costs,
+                                grads,
+                                hess,
                             )
 
                             if b1 == 0 and b2 == 0:
-                                if c2 < p0_cost:
+                                if costs[2] < p0_cost:
                                     constraint_state.ls_result[i_b] = 0
                                 else:
                                     constraint_state.ls_result[i_b] = 7
