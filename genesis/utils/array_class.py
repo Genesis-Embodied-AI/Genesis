@@ -579,7 +579,8 @@ def get_collider_state(
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
 
     # Calculate max possible candidate pairs (n*(n-1)/2)
-    max_candidates = (n_geoms * (n_geoms - 1)) // 2
+    # Ensure at least 1 to avoid zero-sized fields
+    max_candidates = max(1, (n_geoms * (n_geoms - 1)) // 2)
 
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
