@@ -240,6 +240,13 @@ def _func_support_capsule(
     quat: ti.types.vector(4, dtype=gs.ti_float),
     shrink,
 ):
+    """
+    Support function for capsule geometry.
+    
+    Thread-safety note: Fully migrated to use explicit pos/quat parameters.
+    The i_g parameter is only used for read-only metadata access (radius, halflength)
+    from geoms_info, which is thread-safe. Does not access geoms_state.
+    """
     res = gs.ti_vec3(0, 0, 0)
     capsule_center = pos
     capsule_radius = geoms_info.data[i_g][0]
@@ -261,7 +268,6 @@ def _func_support_capsule(
 def _func_support_prism(
     collider_state: array_class.ColliderState,
     d,
-    i_g,
     i_b,
 ):
     istart = 3
