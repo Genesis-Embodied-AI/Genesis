@@ -347,20 +347,26 @@ def func_contact_orthogonals(
 
 @ti.func
 def func_rotate_frame(
-    i_g,
-    contact_pos: ti.types.vector(3),
-    qrot: ti.types.vector(4),
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    contact_pos: ti.types.vector(3, dtype=gs.ti_float),
+    qrot: ti.types.vector(4, dtype=gs.ti_float),
+) -> ti.types.struct(
+    pos=ti.types.vector(3, dtype=gs.ti_float),
+    quat=ti.types.vector(4, dtype=gs.ti_float),
 ):
-    geoms_state.quat[i_g, i_b] = gu.ti_transform_quat_by_quat(geoms_state.quat[i_g, i_b], qrot)
+    """
+    Instead of modifying geoms_state in place, this function takes thread-local
+    pos/quat and returns the updated values.
+    """
+    new_quat = gu.ti_transform_quat_by_quat(quat, qrot)
 
-    rel = contact_pos - geoms_state.pos[i_g, i_b]
+    rel = contact_pos - pos
     vec = gu.ti_transform_by_quat(rel, qrot)
     vec = vec - rel
-    geoms_state.pos[i_g, i_b] = geoms_state.pos[i_g, i_b] - vec
+    new_pos = pos - vec
 
+    return ti.Struct(pos=new_pos, quat=new_quat)
 
 @ti.kernel
 def func_set_upstream_grad(
