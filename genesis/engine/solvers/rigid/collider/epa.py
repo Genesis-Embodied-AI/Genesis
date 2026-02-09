@@ -977,7 +977,6 @@ def func_replace_simplex_3(
 
 @ti.func
 def func_safe_epa(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -989,6 +988,10 @@ def func_safe_epa(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
@@ -1040,20 +1043,23 @@ def func_safe_epa(
         lower = ti.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            dir,
-            1.0,
+            geoms_info=geoms_info,
+            verts_info=verts_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            collider_state=collider_state,
+            collider_static_config=collider_static_config,
+            gjk_state=gjk_state,
+            gjk_info=gjk_info,
+            support_field_info=support_field_info,
+            i_ga=i_ga,
+            i_gb=i_gb,
+            pos_a=pos_a,
+            quat_a=quat_a,
+            pos_b=pos_b,
+            quat_b=quat_b,
+            i_b=i_b,
+            dir=dir,
+            dir_norm=1.0,
         )
         w = gjk_state.polytope_verts.mink[i_b, wi]
 
