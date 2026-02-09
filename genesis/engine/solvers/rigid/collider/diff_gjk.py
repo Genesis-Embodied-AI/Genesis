@@ -8,7 +8,6 @@ from . import gjk as GJK, contact
 @ti.func
 def func_gjk_contact(
     links_state: array_class.LinksState,
-    links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,

@@ -723,7 +723,6 @@ def func_convex_convex_contact(
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     links_state,
-                                    links_info,
                                     geoms_state,
                                     geoms_info,
                                     geoms_init_AABB,
