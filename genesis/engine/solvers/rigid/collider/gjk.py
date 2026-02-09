@@ -361,12 +361,6 @@ def func_gjk_contact(
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:
-        # Load geometry states into thread-local variables
-        ga_pos = geoms_state.pos[i_ga, i_b]
-        ga_quat = geoms_state.quat[i_ga, i_b]
-        gb_pos = geoms_state.pos[i_gb, i_b]
-        gb_quat = geoms_state.quat[i_gb, i_b]
-        
         gjk_flag = func_safe_gjk(
             geoms_info=geoms_info,
             verts_info=verts_info,
@@ -379,10 +373,10 @@ def func_gjk_contact(
             support_field_info=support_field_info,
             i_ga=i_ga,
             i_gb=i_gb,
-            pos_a=ga_pos,
-            quat_a=ga_quat,
-            pos_b=gb_pos,
-            quat_b=gb_quat,
+            pos_a=pos_a,
+            quat_a=quat_a,
+            pos_b=pos_b,
+            quat_b=quat_b,
             i_b=i_b,
         )
         if gjk_flag == GJK_RETURN_CODE.INTERSECT:
@@ -408,10 +402,10 @@ def func_gjk_contact(
                 support_field_info=support_field_info,
                 i_ga=i_ga,
                 i_gb=i_gb,
-                pos_a=ga_pos,
-                quat_a=ga_quat,
-                pos_b=gb_pos,
-                quat_b=gb_quat,
+                pos_a=pos_a,
+                quat_a=quat_a,
+                pos_b=pos_b,
+                quat_b=quat_b,
                 i_b=i_b,
             )
 
