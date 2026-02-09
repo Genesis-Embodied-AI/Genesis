@@ -2,7 +2,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import gjk as GJK
+from . import gjk as GJK, contact
 
 
 @ti.func
@@ -100,15 +100,13 @@ def func_gjk_contact(
             qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
 
             # Apply perturbation starting from original state
-            from .contact import func_rotate_frame
-
-            ga_result = func_rotate_frame(
+            ga_result = contact.func_rotate_frame(
                 pos=ga_pos_original, quat=ga_quat_original, contact_pos=default_contact_pos, qrot=qrot
             )
             ga_pos_current = ga_result.pos
             ga_quat_current = ga_result.quat
 
-            gb_result = func_rotate_frame(
+            gb_result = contact.func_rotate_frame(
                 pos=gb_pos_original, quat=gb_quat_original, contact_pos=default_contact_pos, qrot=gu.ti_inv_quat(qrot)
             )
             gb_pos_current = gb_result.pos
