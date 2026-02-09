@@ -53,7 +53,8 @@ dependencies = [
     "rtree",
     # Constraint Satisfaction Solver.
     # Used to compute contype and conaffinity bitmasks from complete list of excluded collision pairs.
-    "z3-solver",
+    # * >= 4.15.5.0 does not provide pre-compiled wheels on Linux
+    "z3-solver<4.15.5.0",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
