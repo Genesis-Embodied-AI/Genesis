@@ -256,9 +256,32 @@ def func_multi_contact(
                     normal_face_idx = gjk_state.contact_faces[i_b, j].id2
 
                 if geom_type == gs.GEOM_TYPE.BOX:
-                    nface = func_box_face(geoms_state, geoms_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    pos = pos_a if k == 0 else pos_b
+                    quat = quat_a if k == 0 else quat_b
+                    nface = func_box_face(
+                        geoms_info=geoms_info,
+                        gjk_state=gjk_state,
+                        i_g=i_g,
+                        pos=pos,
+                        quat=quat,
+                        i_b=i_b,
+                        i_o=k,
+                        face_idx=normal_face_idx,
+                    )
                 elif geom_type == gs.GEOM_TYPE.MESH:
-                    nface = func_mesh_face(geoms_state, verts_info, faces_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    pos = pos_a if k == 0 else pos_b
+                    quat = quat_a if k == 0 else quat_b
+                    nface = func_mesh_face(
+                        verts_info=verts_info,
+                        faces_info=faces_info,
+                        gjk_state=gjk_state,
+                        i_g=i_g,
+                        pos=pos,
+                        quat=quat,
+                        i_b=i_b,
+                        i_o=k,
+                        face_idx=normal_face_idx,
+                    )
 
             if k == 0:
                 nface1 = nface
