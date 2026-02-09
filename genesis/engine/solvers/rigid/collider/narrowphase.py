@@ -932,12 +932,6 @@ def func_convex_convex_contact(
                         )
                         n_con = n_con + 1
 
-            if multi_contact and is_col_0:
-                geoms_state.pos[i_ga, i_b] = ga_pos
-                geoms_state.quat[i_ga, i_b] = ga_quat
-                geoms_state.pos[i_gb, i_b] = gb_pos
-                geoms_state.quat[i_gb, i_b] = gb_quat
-
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_vs_convex(
