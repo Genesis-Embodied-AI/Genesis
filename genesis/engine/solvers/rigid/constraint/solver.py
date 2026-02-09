@@ -17,6 +17,8 @@ from ..collider.contact_island import ContactIsland
 
 USE_LS_BLOCK = os.environ.get("GS_SOLVER_LS_BLOCK", "0") == "1"
 
+# TODO: set to true for running benchmark
+USE_LS_BLOCK = 1
 # Block-based linesearch constants
 LS_BLOCK_DIM = 64
 LS_MAX_ITER = 50
