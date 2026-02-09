@@ -242,7 +242,7 @@ def _func_support_capsule(
 ):
     """
     Support function for capsule geometry.
-    
+
     Thread-safety note: Fully migrated to use explicit pos/quat parameters.
     The i_g parameter is only used for read-only metadata access (radius, halflength)
     from geoms_info, which is thread-safe. Does not access geoms_state.
