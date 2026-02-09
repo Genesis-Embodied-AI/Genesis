@@ -60,6 +60,9 @@ except ImportError:
 # Forcibly disable Mujoco OpenGL to avoid conflicts with Genesis
 os.environ["MUJOCO_GL"] = "0"
 
+# Forcibly disable tqdm to avoid random crashes on the MacOS CI
+os.environ["TQDM_DISABLE"] = "1"
+
 # pyglet must be configured in headless mode before importing Genesis if necessary.
 # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
 if not has_display and has_egl:
