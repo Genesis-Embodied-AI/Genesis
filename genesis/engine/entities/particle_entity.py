@@ -1,4 +1,5 @@
 import functools
+from pathlib import Path
 
 import numpy as np
 import gstaichi as ti
@@ -69,8 +70,9 @@ class ParticleEntity(Entity):
         vvert_start=None,
         vface_start=None,
         need_skinning=True,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._particle_size = particle_size
         self._particle_start = particle_start
@@ -279,7 +281,7 @@ class ParticleEntity(Entity):
 
         if isinstance(self._morph, gs.options.morphs.Nowhere):
             self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-            self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+            self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = gu.nowhere()
         elif isinstance(self._morph, gs.options.morphs.MeshSet):
             for i in range(len(self._morph.files)):
@@ -314,10 +316,10 @@ class ParticleEntity(Entity):
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
-                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)
             else:
                 self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-                self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+                self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = np.mean(self._morph.poss, dtype=gs.np_float)
         else:
             # transform vmesh
@@ -341,10 +343,10 @@ class ParticleEntity(Entity):
 
             if self._need_skinning:
                 self._vverts = np.asarray(self._vmesh.verts, dtype=gs.np_float)
-                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_float)
+                self._vfaces = np.asarray(self._vmesh.faces, dtype=gs.np_int)
             else:
                 self._vverts = np.zeros((0, 3), dtype=gs.np_float)
-                self._vfaces = np.zeros((0, 3), dtype=gs.np_float)
+                self._vfaces = np.zeros((0, 3), dtype=gs.np_int)
             origin = np.asarray(self._morph.pos, dtype=gs.np_float)
 
         self._particles = np.asarray(particles, dtype=gs.np_float, order="C")
@@ -738,6 +740,25 @@ class ParticleEntity(Entity):
         if self._scene.n_envs == 0:
             closest_idx = closest_idx[0]
         return closest_idx
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Nowhere):
+            return "emitter"
+        return "particle"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

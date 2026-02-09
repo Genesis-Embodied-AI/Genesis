@@ -124,7 +124,7 @@ def kernel_solve_adjoint_u(
                 for i_d in range(n_dofs):
                     num += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
                     den += constraint_state.bw_p[i_d, i_b] * constraint_state.bw_Ap[i_d, i_b]
-                alpha = num / ti.max(den, gs.EPS)
+                alpha = num / ti.max(den, rigid_global_info.EPS[None])
 
                 # u += alpha p ; r -= alpha Hp
                 for i_d in range(n_dofs):
@@ -133,14 +133,14 @@ def kernel_solve_adjoint_u(
 
                 # check tol (optional: per-batch)
                 # TODO: Might need lower tolerance?
-                if num < gs.EPS:
+                if num < rigid_global_info.EPS[None]:
                     break
 
                 # beta = (r_new,r_new)/(r_old,r_old)
                 num_new = gs.ti_float(0.0)
                 for i_d in range(n_dofs):
                     num_new += constraint_state.bw_r[i_d, i_b] * constraint_state.bw_r[i_d, i_b]
-                beta = num_new / ti.max(num, gs.EPS)
+                beta = num_new / ti.max(num, rigid_global_info.EPS[None])
 
                 # p = r + beta p
                 for i_d in range(n_dofs):

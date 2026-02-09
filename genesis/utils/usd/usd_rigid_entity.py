@@ -94,11 +94,6 @@ def _parse_link(
         l_info["inertial_quat"] = usd_quat_to_numpy(mass_api.GetPrincipalAxesAttr().Get())
         l_info["inertial_i"] = np.diag(usd_pos_to_numpy(mass_api.GetDiagonalInertiaAttr().Get()))
         l_info["inertial_mass"] = float(mass_api.GetMassAttr().Get() or 0.0)
-    else:
-        l_info["inertial_pos"] = gu.zero_pos()
-        l_info["inertial_quat"] = gu.identity_quat()
-        l_info["inertial_i"] = None
-        l_info["inertial_mass"] = None
 
     j_infos = []
     for joint_prim, parent_idx, is_body1 in joints:
@@ -310,10 +305,11 @@ def _parse_link(
 
     if abs(1.0 - morph.scale) > gs.EPS:
         l_info["pos"] *= morph.scale
-        l_info["inertial_pos"] *= morph.scale
-        if l_info["inertial_mass"] is not None:
+        if l_info.get("inertial_pos") is not None:
+            l_info["inertial_pos"] *= morph.scale
+        if l_info.get("inertial_mass") is not None:
             l_info["inertial_mass"] *= morph.scale**3
-        if l_info["inertial_i"] is not None:
+        if l_info.get("inertial_i") is not None:
             l_info["inertial_i"] *= morph.scale**5
         l_info["invweight"][:] = -1.0
         for j_info in j_infos:

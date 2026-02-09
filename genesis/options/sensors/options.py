@@ -226,15 +226,15 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     mag_random_walk : tuple[float, float, float]
         The standard deviation of the bias drift for each axis of the magnetometer.
     debug_acc_color : float, optional
-        The rgba color of the debug acceleration arrow. Defaults to (0.0, 1.0, 1.0, 0.5).
+        The rgba color of the debug acceleration arrow. Defaults to (1.0, 0.0, 0.0, 0.6).
     debug_acc_scale: float, optional
         The scale factor for the debug acceleration arrow. Defaults to 0.01.
     debug_gyro_color : float, optional
-        The rgba color of the debug gyroscope arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
+        The rgba color of the debug gyroscope arrow. Defaults to (0.0, 1.0, 0.0, 0.6).
     debug_gyro_scale: float, optional
         The scale factor for the debug gyroscope arrow. Defaults to 0.01.
     debug_mag_color : float, optional
-        The rgba color of the debug magnetometer arrow. Defaults to (1.0, 1.0, 0.0, 0.5).
+        The rgba color of the debug magnetometer arrow. Defaults to (0.0, 0.0, 1.0, 0.6).
     debug_mag_scale: float, optional
         The scale factor for the debug magnetometer arrow. Defaults to 0.01.
     """
@@ -261,12 +261,12 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     mag_random_walk: MaybeTuple3FType = 0.0
     magnetic_field: MaybeTuple3FType = (0.0, 0.0, 0.5)
 
-    debug_acc_color: tuple[float, float, float, float] = (0.0, 1.0, 1.0, 0.5)
+    debug_acc_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.6)
     debug_acc_scale: float = 0.01
-    debug_gyro_color: tuple[float, float, float, float] = (1.0, 1.0, 0.0, 0.5)
+    debug_gyro_color: tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.6)
     debug_gyro_scale: float = 0.01
-    debug_mag_color: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.5)
-    debug_mag_scale: float = 2.0
+    debug_mag_color: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 0.6)
+    debug_mag_scale: float = 0.5
 
     def model_post_init(self, _):
         self._validate_cross_axis_coupling(self.acc_cross_axis_coupling)

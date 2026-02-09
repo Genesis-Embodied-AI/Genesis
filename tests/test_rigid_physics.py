@@ -970,7 +970,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
-    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
+    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
@@ -2711,11 +2711,12 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_urdf_color_overwrite(overwrite):
-    scene = gs.Scene()
+def test_urdf_color_overwrite(overwrite, show_viewer):
+    scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
+            convexify=False,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
@@ -2724,17 +2725,32 @@ def test_urdf_color_overwrite(overwrite):
     axis = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
+            convexify=False,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    asset_path = get_hf_dataset(pattern="work_table.glb")
+    table = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/work_table.glb",
+            convexify=False,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
+    if show_viewer:
+        scene.build()
     for vgeom in box.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
     for vgeom in axis.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
@@ -2742,8 +2758,16 @@ def test_urdf_color_overwrite(overwrite):
             assert_array_equal(color, (255, 0, 0, 255))
         else:
             assert_array_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+    for vgeom in table.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        if overwrite:
+            color = np.unique(visual.vertex_colors, axis=0)
+            assert_array_equal(color, (255, 0, 0, 255))
     for entity in scene.entities:
         for geom in entity.geoms:
+            assert geom.mesh.metadata["is_visual_overwritten"]
             visual = geom.mesh.trimesh.visual
             assert visual.defined
             color = np.unique(visual.vertex_colors, axis=0)

@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 from itertools import chain
 from pathlib import Path
 
@@ -11,6 +12,41 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from .misc import get_assets_dir
+
+
+def get_robot_name(file_path):
+    """
+    Extract the robot name from a URDF file.
+
+    The name is extracted from the ``<robot name="...">`` attribute, which is
+    required by the URDF specification.
+
+    Reference: https://wiki.ros.org/urdf/XML/robot
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the URDF file.
+
+    Returns
+    -------
+    str
+        The robot name.
+
+    Raises
+    ------
+    ValueError
+        If the robot name attribute is missing or empty.
+    """
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "robot":
+        name = root.attrib.get("name")
+        if name:
+            return name
+        raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
+    raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):
@@ -117,6 +153,7 @@ def parse_urdf(morph, surface):
                     scale *= geometry.scale
 
                 # Overwrite surface color by original color specified in URDF file only if necessary
+                is_urdf_material = False
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
@@ -125,6 +162,7 @@ def parse_urdf(morph, surface):
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or surface.color is None)
                 ):
+                    is_urdf_material = True
                     geom_surface = surface.copy()
                     geom_surface.color = geom_prop.material.color
                 else:
@@ -145,6 +183,9 @@ def parse_urdf(morph, surface):
                         is_mesh_zup=morph.file_meshes_are_zup,
                         metadata={"mesh_path": mesh_path},
                     )
+                    if is_urdf_material:
+                        # Material color defined in URDF are not considered as visual overwrite
+                        mesh.metadata["is_visual_overwritten"] = False
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)

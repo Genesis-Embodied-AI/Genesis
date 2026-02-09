@@ -50,7 +50,18 @@ class MPMEntity(ParticleEntity):
     """
 
     def __init__(
-        self, scene, solver, material, morph, surface, particle_size, idx, particle_start, vvert_start, vface_start
+        self,
+        scene,
+        solver,
+        material,
+        morph,
+        surface,
+        particle_size,
+        idx,
+        particle_start,
+        vvert_start,
+        vface_start,
+        name: str | None = None,
     ):
         need_skinning = not isinstance(
             material, (gs.materials.MPM.Liquid, gs.materials.MPM.Sand, gs.materials.MPM.Snow)
@@ -67,6 +78,7 @@ class MPMEntity(ParticleEntity):
             vvert_start,
             vface_start,
             need_skinning=need_skinning,
+            name=name,
         )
 
     def init_tgt_keys(self):
@@ -676,3 +688,10 @@ class MPMEntity(ParticleEntity):
             particles_mask = torch.ones((self._sim._B, self.n_particles), dtype=torch.bool, device=gs.device)
 
         self._solver._kernel_remove_particle_constraints(particles_mask, self._particle_start)
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        return f"mpm_{super()._get_morph_identifier()}"

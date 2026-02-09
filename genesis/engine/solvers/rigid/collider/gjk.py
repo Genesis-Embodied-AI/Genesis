@@ -223,10 +223,10 @@ def func_gjk_contact(
             )
 
             if shrink_sphere:
-                # If we shrinked the sphere and capsule to point and line and the distance is larger than the
-                # collision epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and
-                # the capsule to get the actual distance. If the distance is smaller than the collision epsilon, it
-                # means a deep penetration, which requires the default GJK handling.
+                # If we shrunk the sphere and capsule to point and line and the distance is larger than the collision
+                # epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and the capsule to
+                # get the actual distance. If the distance is smaller than the collision epsilon, it means a deep
+                # penetration, which requires the default GJK handling.
                 if distance > gjk_info.collision_eps[None]:
                     radius_a, radius_b = 0.0, 0.0
                     if is_sphere_swept_geom_a:

@@ -1,5 +1,6 @@
 import math
 import dataclasses
+from enum import IntEnum
 from functools import partial
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
@@ -71,6 +72,18 @@ def V_SCALAR_FROM(dtype, value):
     data = V(dtype=dtype, shape=())
     data.fill(value)
     return data
+
+
+# =========================================== ErrorCode ===========================================
+
+
+class ErrorCode(IntEnum):
+    SUCCESS = 0b000000000000000000000000000000000
+    OVERFLOW_CANDIDATE_CONTACTS = 0b00000000000000000000000000000001
+    OVERFLOW_COLLISION_PAIRS = 0b00000000000000000000000000000010
+    OVERFLOW_HIBERNATION_ISLANDS = 0b00000000000000000000000000000100
+    INVALID_FORCE_NAN = 0b00000000000000000000000000001000
+    INVALID_ACC_NAN = 0b00000000000000000000000000010000
 
 
 # =========================================== RigidGlobalInfo ===========================================
@@ -208,6 +221,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     quad_gauss: V_ANNOTATION
     quad: V_ANNOTATION
     candidates: V_ANNOTATION
+    eq_sum: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
     # Optional CG fields
@@ -282,6 +296,7 @@ def get_constraint_state(constraint_solver, solver):
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
         candidates=V(dtype=gs.ti_float, shape=(12, _B)),
+        eq_sum=V(dtype=gs.ti_float, shape=(3, _B)),
         Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),

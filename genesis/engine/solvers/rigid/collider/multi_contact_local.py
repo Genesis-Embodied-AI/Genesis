@@ -358,7 +358,6 @@ def func_potential_box_edge_normals_local(
     Returns:
         Number of edge normals found
     """
-    # note: original code missing [i_g]
     g_size_x = geoms_info.data[i_g][0] * 0.5
     g_size_y = geoms_info.data[i_g][1] * 0.5
     g_size_z = geoms_info.data[i_g][2] * 0.5

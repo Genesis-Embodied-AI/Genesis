@@ -41,7 +41,7 @@ class ToolSolver(Solver):
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self.floor_height)
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         entity = ToolEntity(
             scene=self._scene,
             idx=idx,
@@ -49,6 +49,7 @@ class ToolSolver(Solver):
             material=material,
             morph=morph,
             surface=surface,
+            name=name,
         )
         self._entities.append(entity)
         return entity

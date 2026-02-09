@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.geom import trans_to_T
 
-from .utils import assert_allclose, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
 
 
 try:
@@ -420,10 +420,70 @@ def test_raytracer_destroy():
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+def test_raytracer_attached_without_offset_T():
+    """Test that RaytracerCameraSensor works when attached without explicit offset_T.
+
+    Also checks consistency with a scene-level camera (scene.add_camera) using the same
+    pose and attachment, to make sure both camera APIs produce matching output.
+    """
+    CAM_RES = (128, 64)
+    CAM_POS = (0.0, 0.0, 2.0)
+
+    scene = gs.Scene(renderer=gs.renderers.RayTracer())
+    scene.add_entity(morph=gs.morphs.Plane())
+    sphere = scene.add_entity(morph=gs.morphs.Sphere())
+
+    # Sensor camera attached WITHOUT offset_T - should use pos as offset
+    camera_common_options = dict(
+        res=CAM_RES,
+        lookat=(0.0, 0.0, 0.0),
+        up=(0.0, 1.0, 0.0),
+        fov=30.0,
+        spp=64,
+        denoise=False,
+    )
+    sensor_camera = scene.add_sensor(
+        gs.sensors.RaytracerCameraOptions(
+            **camera_common_options,
+            pos=CAM_POS,
+            entity_idx=sphere.idx,
+        )
+    )
+
+    # Scene-level camera with the same pose, attached with explicit offset_T
+    scene_camera = scene.add_camera(
+        **camera_common_options,
+    )
+
+    scene.build()
+
+    # Attach scene-level camera with equivalent offset_T
+    scene_camera.attach(sphere.base_link, offset_T=trans_to_T(np.array(CAM_POS)))
+
+    scene.step()
+
+    sensor_data = sensor_camera.read()
+    assert sensor_data.rgb.shape == (CAM_RES[1], CAM_RES[0], 3)
+    assert sensor_data.rgb.float().std() > 1.0, "Sensor camera RGB std too low, image may be blank"
+
+    scene_camera.move_to_attach()
+    scene_rgb, *_ = scene_camera.render(rgb=True, force_render=True)
+    scene_rgb = tensor_to_array(scene_rgb, dtype=np.int32)
+    sensor_rgb = tensor_to_array(sensor_data.rgb, dtype=np.int32)
+
+    # Both cameras should produce the same image
+    assert_array_equal(sensor_rgb, scene_rgb)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 1])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer(n_envs, png_snapshot):
-    CAM_RES = (128, 256)
+    # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
+    # without denoiser.
+    png_snapshot.extension._blurred_kernel_size = 3
 
     scene = gs.Scene(
         renderer=gs.renderers.RayTracer(
@@ -450,7 +510,7 @@ def test_raytracer(n_envs, png_snapshot):
     )
 
     camera_common_options = dict(
-        res=CAM_RES,
+        res=(128, 256),
         pos=(-2.0, 0.0, 1.5),
         lookat=(0.0, 0.0, 1.0),
         up=(0.0, 0.0, 1.5),

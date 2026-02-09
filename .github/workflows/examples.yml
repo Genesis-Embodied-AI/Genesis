@@ -52,9 +52,9 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade pip setuptools wheel
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e '.[dev,usd]' pynput
+          pip install --prefer-binary '.[dev,usd]'
 
       - name: Get gstaichi version
         id: gstaichi_version
