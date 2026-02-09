@@ -585,11 +585,20 @@ def func_convex_convex_contact(
         )
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
-        # Backup state before local perturbation
-        ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-        gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+        # Load original geometry state into thread-local variables
+        # These are the UNPERTURBED states used as reference point for each independent perturbation
+        ga_pos_original = geoms_state.pos[i_ga, i_b]
+        ga_quat_original = geoms_state.quat[i_ga, i_b]
+        gb_pos_original = geoms_state.pos[i_gb, i_b]
+        gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-        # Pre-allocate some buffers
+        # Current (possibly perturbed) state - initialized to original, updated during perturbations
+        ga_pos_current = ga_pos_original
+        ga_quat_current = ga_quat_original
+        gb_pos_current = gb_pos_original
+        gb_quat_current = gb_quat_original
+
+        # Pre-allocate buffers
         is_col_0 = False
         penetration_0 = gs.ti_float(0.0)
         normal_0 = ti.Vector.zero(gs.ti_float, 3)
@@ -612,34 +621,46 @@ def func_convex_convex_contact(
                 or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
             )
 
+            # Apply perturbations to thread-local state
             if multi_contact and is_col_0:
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
                 # otherwise it would be more sensitive to ill-conditioning.
                 axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-                func_rotate_frame(i_ga, contact_pos_0, qrot, i_b, geoms_state, geoms_info)
-                func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
+
+                # Apply perturbation starting from original state
+                ga_result = func_rotate_frame(
+                    pos=ga_pos_original, quat=ga_quat_original, contact_pos=contact_pos_0, qrot=qrot
+                )
+                ga_pos_current = ga_result.pos
+                ga_quat_current = ga_result.quat
+
+                gb_result = func_rotate_frame(
+                    pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.ti_inv_quat(qrot)
+                )
+                gb_pos_current = gb_result.pos
+                gb_quat_current = gb_result.quat
 
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
                     )
-                    plane_dir = gu.ti_transform_by_quat(plane_dir, geoms_state.quat[i_ga, i_b])
+                    plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat_current)
                     normal = -plane_dir.normalized()
 
                     v1 = mpr.support_driver(
-                        geoms_state,
-                        geoms_info,
-                        collider_state,
-                        collider_info,
-                        collider_static_config,
-                        support_field_info,
-                        normal,
-                        i_gb,
-                        i_b,
+                        geoms_info=geoms_info,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        support_field_info=support_field_info,
+                        direction=normal,
+                        i_g=i_gb,
+                        i_b=i_b,
+                        pos=gb_pos_current,
+                        quat=gb_quat_current,
                     )
-                    penetration = normal.dot(v1 - geoms_state.pos[i_ga, i_b])
+                    penetration = normal.dot(v1 - ga_pos_current)
                     contact_pos = v1 - 0.5 * penetration * normal
                     is_col = penetration > 0.0
                 else:
@@ -666,21 +687,23 @@ def func_convex_convex_contact(
 
                             if not is_mpr_updated:
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                    geoms_state,
-                                    geoms_info,
-                                    geoms_init_AABB,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_info,
-                                    collider_static_config,
-                                    mpr_state,
-                                    mpr_info,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    normal_ws,
+                                    geoms_info=geoms_info,
+                                    geoms_init_AABB=geoms_init_AABB,
+                                    rigid_global_info=rigid_global_info,
+                                    static_rigid_sim_config=static_rigid_sim_config,
+                                    collider_state=collider_state,
+                                    collider_static_config=collider_static_config,
+                                    mpr_state=mpr_state,
+                                    mpr_info=mpr_info,
+                                    support_field_info=support_field_info,
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    normal_ws=normal_ws,
+                                    pos_a=ga_pos_current,
+                                    quat_a=ga_quat_current,
+                                    pos_b=gb_pos_current,
+                                    quat_b=gb_quat_current,
                                 )
                                 is_mpr_updated = True
 
