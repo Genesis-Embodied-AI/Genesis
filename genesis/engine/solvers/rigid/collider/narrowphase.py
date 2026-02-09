@@ -390,15 +390,15 @@ def func_contact_mpr_terrain(
             else:
                 direction[i_axis] = -1.0
             v1 = mpr.support_driver(
-                geoms_state,
-                geoms_info,
-                collider_state,
-                collider_info,
-                collider_static_config,
-                support_field_info,
-                direction,
-                i_ga,
-                i_b,
+                geoms_info=geoms_info,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                support_field_info=support_field_info,
+                direction=direction,
+                i_g=i_ga,
+                i_b=i_b,
+                pos=geoms_state.pos[i_ga, i_b],
+                quat=geoms_state.quat[i_ga, i_b],
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
@@ -448,20 +448,22 @@ def func_contact_mpr_terrain(
                                 center_b = center_b / 6.0
 
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
-                                    geoms_state,
-                                    geoms_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_info,
-                                    collider_static_config,
-                                    mpr_state,
-                                    mpr_info,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    center_a,
-                                    center_b,
+                                    geoms_info=geoms_info,
+                                    static_rigid_sim_config=static_rigid_sim_config,
+                                    collider_state=collider_state,
+                                    collider_static_config=collider_static_config,
+                                    mpr_state=mpr_state,
+                                    mpr_info=mpr_info,
+                                    support_field_info=support_field_info,
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    center_a=center_a,
+                                    center_b=center_b,
+                                    pos_a=geoms_state.pos[i_ga, i_b],
+                                    quat_a=geoms_state.quat[i_ga, i_b],
+                                    pos_b=geoms_state.pos[i_gb, i_b],
+                                    quat_b=geoms_state.quat[i_gb, i_b],
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
