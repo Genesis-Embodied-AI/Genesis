@@ -368,6 +368,7 @@ def func_rotate_frame(
 
     return ti.Struct(pos=new_pos, quat=new_quat)
 
+
 @ti.kernel
 def func_set_upstream_grad(
     dL_dposition: ti.types.ndarray(),

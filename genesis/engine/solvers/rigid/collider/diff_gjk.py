@@ -101,6 +101,7 @@ def func_gjk_contact(
 
             # Apply perturbation starting from original state
             from .contact import func_rotate_frame
+
             ga_result = func_rotate_frame(
                 pos=ga_pos_original, quat=ga_quat_original, contact_pos=default_contact_pos, qrot=qrot
             )
