@@ -375,7 +375,7 @@ def go2(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal_c(solver, n_envs, gjk):
+def anymal(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -424,11 +424,12 @@ def anymal_c(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _franka(solver, n_envs, gjk, is_collision_free, accessors):
+def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
+                enable_neutral_collision=True,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
@@ -449,22 +450,27 @@ def _franka(solver, n_envs, gjk, is_collision_free, accessors):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    ctrl = torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device)
+    qpos0 = torch.tensor([0, 0, 0, -1.0, 0, 1.0, 0, 0.02, 0.02], dtype=gs.tc_float, device=gs.device)
     if n_envs > 0:
-        ctrl = torch.tile(ctrl, (n_envs, 1))
+        qpos0 = torch.tile(qpos0, (n_envs, 1))
     if is_collision_free:
-        franka.set_qpos(ctrl)
-        franka.control_dofs_position(ctrl)
+        franka.set_qpos(qpos0)
+        franka.control_dofs_position(qpos0)
 
-    vel0 = torch.zeros((franka.n_qs,), dtype=gs.tc_float, device=gs.device)
-    if n_envs > 0:
-        n_reset_envs = int(0.02 * n_envs)
-        reset_envs_idx = torch.randperm(n_envs)[:n_reset_envs]
-        vel0 = torch.tile(vel0, (n_reset_envs, 1))
-        qpos0 = ctrl[reset_envs_idx]
+    if n_envs > 0 and is_randomized:
+        vel0 = 0.5 * torch.rand((n_envs, franka.n_qs), dtype=gs.tc_float, device=gs.device)
     else:
-        reset_envs_idx = None
-        qpos0 = ctrl
+        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_qs), dtype=gs.tc_float, device=gs.device)
+    franka.set_dofs_velocity(vel0)
+
+    if n_envs > 0:
+        n_reset_envs = max(int(0.02 * n_envs), 1)
+        reset_envs_idx = torch.randperm(n_envs, dtype=gs.tc_int, device=gs.device)[:n_reset_envs]
+        reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
+        qpos0 = qpos0[reset_envs_mask]
+        vel0 = vel0[reset_envs_mask]
+    else:
+        reset_envs_mask = None
 
     dofs_stiffness = franka.get_dofs_stiffness()
     dofs_damping = franka.get_dofs_damping()
@@ -483,11 +489,11 @@ def _franka(solver, n_envs, gjk, is_collision_free, accessors):
             franka.get_links_quat()
             franka.get_links_vel()
             franka.get_contacts()
-            franka.control_dofs_position(ctrl)
+            franka.control_dofs_position(qpos0)
             franka.set_dofs_stiffness(dofs_stiffness)
             franka.set_dofs_damping(dofs_damping)
-            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_idx, skip_forward=True)
-            franka.set_qpos(qpos0, envs_idx=reset_envs_idx, zero_velocity=False, skip_forward=True)
+            franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
+            franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
 
         time_elapsed = time.time() - time_start
         if is_recording:
@@ -505,17 +511,22 @@ def _franka(solver, n_envs, gjk, is_collision_free, accessors):
 
 @pytest.fixture
 def franka(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=False, accessors=False)
+    return _franka(solver, n_envs, gjk, is_collision_free=False, is_randomized=False, accessors=False)
+
+
+@pytest.fixture
+def franka_random(solver, n_envs, gjk):
+    return _franka(solver, n_envs, gjk, is_collision_free=False, is_randomized=True, accessors=False)
 
 
 @pytest.fixture
 def franka_free(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=True, accessors=False)
+    return _franka(solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=False)
 
 
 @pytest.fixture
 def franka_accessors(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=True, accessors=True)
+    return _franka(solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=True)
 
 
 def _duck_in_box(solver, n_envs, gjk, hard):
@@ -592,7 +603,7 @@ def duck_in_box_hard(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def random(solver, n_envs, gjk):
+def anymal_random(solver, n_envs, gjk):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -809,20 +820,21 @@ def g1_fall(solver, n_envs, gjk):
         ("duck_in_box_hard", None, True, 30000, gs.gpu),
         ("duck_in_box_hard", None, False, 30000, gs.gpu),
         ("duck_in_box_hard", None, None, 0, gs.cpu),
-        ("anymal_c", None, None, 30000, gs.gpu),
-        ("anymal_c", None, None, 0, gs.cpu),
+        ("anymal_random", None, None, 30000, gs.gpu),
+        ("anymal", None, None, 30000, gs.gpu),
+        ("anymal", None, None, 0, gs.cpu),
         ("go2", None, True, 4096, gs.gpu),
         ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
         ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
         ("franka_accessors", None, None, 0, gs.cpu),
         ("franka_accessors", None, None, 30000, gs.gpu),
         ("franka_free", None, None, 30000, gs.gpu),
-        ("franka", None, False, 30000, gs.gpu),
-        ("franka", None, True, 30000, gs.gpu),
-        ("franka", gs.constraint_solver.CG, None, 30000, gs.gpu),
-        ("franka", gs.constraint_solver.Newton, None, 30000, gs.gpu),
-        ("franka", None, None, 0, gs.cpu),
-        ("random", None, None, 30000, gs.gpu),
+        ("franka", None, None, 30000, gs.gpu),
+        ("franka_random", None, False, 30000, gs.gpu),
+        ("franka_random", None, True, 30000, gs.gpu),
+        ("franka_random", gs.constraint_solver.CG, None, 30000, gs.gpu),
+        ("franka_random", gs.constraint_solver.Newton, None, 30000, gs.gpu),
+        ("franka_random", None, None, 0, gs.cpu),
         ("box_pyramid_3", None, None, 4096, gs.gpu),
         ("box_pyramid_4", None, None, 4096, gs.gpu),
         ("box_pyramid_5", None, None, 4096, gs.gpu),

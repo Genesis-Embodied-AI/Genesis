@@ -49,8 +49,11 @@ jobs:
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
-               --container-mounts=${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+          SRUN_CONTAINER_OPTS="\
+               --container-name=${CONTAINER_NAME} \
+               --container-mounts=\
+          ${{ github.workspace }}:/root/workspace,\
+          ${HOME}/.cache:/root/.cache \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
@@ -126,8 +129,12 @@ jobs:
         run: |
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
-          SRUN_CONTAINER_OPTS="--container-name=${CONTAINER_NAME} \
-               --container-mounts=/mnt/data/artifacts:/mnt/data/artifacts,${{ github.workspace }}:/root/workspace,${HOME}/.cache/uv:/root/.cache/uv \
+          SRUN_CONTAINER_OPTS="\
+               --container-name=${CONTAINER_NAME} \
+               --container-mounts=\
+          /mnt/data/artifacts:/mnt/data/artifacts,\
+          ${{ github.workspace }}:/root/workspace,\
+          ${HOME}/.cache:/root/.cache \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
