@@ -320,8 +320,6 @@ def _func_count_supports_world(
 
 @ti.func
 def _func_count_supports_mesh(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d_mesh,
     i_g,
