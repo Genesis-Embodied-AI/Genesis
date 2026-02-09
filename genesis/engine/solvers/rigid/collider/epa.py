@@ -39,7 +39,6 @@ from .gjk import (
 
 @ti.func
 def func_epa(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
@@ -50,6 +49,10 @@ def func_epa(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
@@ -101,7 +104,6 @@ def func_epa(
         lower = ti.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -112,6 +114,10 @@ def func_epa(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             lower,
@@ -436,7 +442,6 @@ def func_epa_insert_vertex_to_polytope(
 
 @ti.func
 def func_epa_init_polytope_2d(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -448,6 +453,10 @@ def func_epa_init_polytope_2d(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
@@ -508,7 +517,6 @@ def func_epa_init_polytope_2d(
             di = d3
         di_norm = di.norm()
         vi[i + 2] = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -519,6 +527,10 @@ def func_epa_init_polytope_2d(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             di,
             di_norm,
@@ -580,7 +592,6 @@ def func_epa_init_polytope_2d(
 
 @ti.func
 def func_epa_init_polytope_3d(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
@@ -591,6 +602,10 @@ def func_epa_init_polytope_3d(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
@@ -636,7 +651,6 @@ def func_epa_init_polytope_3d(
     for i in range(2):
         dir = n if i == 0 else n_neg
         vi[i + 3] = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -647,6 +661,10 @@ def func_epa_init_polytope_3d(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             n_norm,
@@ -799,7 +817,6 @@ def func_epa_init_polytope_4d(
 
 @ti.func
 def func_epa_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
@@ -810,6 +827,10 @@ def func_epa_support(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dir,
     dir_norm,
@@ -835,7 +856,6 @@ def func_epa_support(
         support_point_id_obj2,
         support_point_minkowski,
     ) = func_support(
-        geoms_state,
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -848,6 +868,10 @@ def func_epa_support(
         i_gb,
         i_b,
         d,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
         False,
     )
 
