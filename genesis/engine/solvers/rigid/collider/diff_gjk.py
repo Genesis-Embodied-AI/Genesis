@@ -13,7 +13,6 @@ def func_gjk_contact(
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
@@ -228,8 +227,6 @@ def func_gjk_contact(
                             normal=normal / penetration,
                             i_b=i_b,
                             links_state=links_state,
-                            links_info=links_info,
-                            geoms_state=geoms_state,
                             geoms_info=geoms_info,
                             geoms_init_AABB=geoms_init_AABB,
                             rigid_global_info=rigid_global_info,
@@ -648,7 +645,7 @@ def func_add_diff_contact_input(
     is_face_degenerate = normal_norm < gjk_info.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
-    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
+    proj_o = func_project_origin_to_plane(mink1, normal)
     origin_dist = proj_o.norm()
     is_origin_close_to_face = origin_dist < gjk_info.diff_contact_min_penetration[None]
 
@@ -699,8 +696,6 @@ def func_contact_orthogonals(
     normal: ti.types.vector(3),
     i_b,
     links_state: array_class.LinksState,
-    links_info: array_class.LinksInfo,
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -819,7 +814,7 @@ def func_differentiable_contact(
 
     # Project the origin onto the affine plane of the face: This operation is guaranteed to be numerically stable, as
     # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_info].
-    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
+    proj_o = func_project_origin_to_plane(mink1, normal)
 
     # Compute the affine coordinates of the origin's projection on the face: This operation is also guaranteed to be
     # numerically stable, as the normal length is guaranteed to be larger than the minimum normal norm in
@@ -884,12 +879,22 @@ def func_plane_normal(v1, v2, v3):
 
 
 @ti.func
-def func_project_origin_to_plane(v1, v2, v3, normal):
+def func_project_origin_to_plane(v1, normal):
     """
-    Project the origin onto the plane defined by the simplex vertices.
+    Project the origin onto the plane defined by a point on the plane and its normal.
 
-    @ normal: The face normal computed as (v2 - v1) x (v3 - v1). Its length should be guaranteed to be larger than the
-    minimum normal norm in [gjk_info], but we do not check it here.
+    Parameters
+    ----------
+    v1 : ti.types.vector(3)
+        A point on the plane.
+    normal : ti.types.vector(3)
+        The face normal (perpendicular to the plane). Its length should be guaranteed to be larger than the
+        minimum normal norm in [gjk_info], but we do not check it here.
+
+    Returns
+    -------
+    ti.types.vector(3)
+        The projection of the origin onto the plane.
     """
     # Since normal norm is guaranteed to be larger than sqrt(10 * EPS), [nn] is guaranteed to be larger than 10 * EPS.
     v = v1

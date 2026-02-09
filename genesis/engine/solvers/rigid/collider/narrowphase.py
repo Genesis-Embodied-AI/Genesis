@@ -728,7 +728,6 @@ def func_convex_convex_contact(
                                     geoms_info,
                                     geoms_init_AABB,
                                     verts_info,
-                                    faces_info,
                                     rigid_global_info,
                                     static_rigid_sim_config,
                                     collider_state,
