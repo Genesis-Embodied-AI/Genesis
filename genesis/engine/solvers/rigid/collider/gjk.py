@@ -348,16 +348,19 @@ def func_gjk_contact(
                         # (3) [enable_mujoco_multi_contact] should be True. Default to False.
                         if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
                             func_multi_contact(
-                                geoms_state,
-                                geoms_info,
-                                verts_info,
-                                faces_info,
-                                gjk_state,
-                                gjk_info,
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                i_f,
+                                geoms_info=geoms_info,
+                                verts_info=verts_info,
+                                faces_info=faces_info,
+                                gjk_state=gjk_state,
+                                gjk_info=gjk_info,
+                                i_ga=i_ga,
+                                i_gb=i_gb,
+                                pos_a=pos_a,
+                                quat_a=quat_a,
+                                pos_b=pos_b,
+                                quat_b=quat_b,
+                                i_b=i_b,
+                                i_f=i_f,
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:

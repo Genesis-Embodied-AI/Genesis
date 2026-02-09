@@ -18,7 +18,6 @@ from .gjk import func_is_equal_vec, RETURN_CODE
 
 @ti.func
 def func_multi_contact(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
@@ -26,6 +25,10 @@ def func_multi_contact(
     gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     i_f,
 ):
@@ -88,23 +91,35 @@ def func_multi_contact(
 
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
+            quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_box_normals(
-                geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1i, v2i, v3i, t_dir
+                geoms_info=geoms_info,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                i_g=i_g,
+                quat=quat,
+                i_b=i_b,
+                dim=nface,
+                v1=v1i,
+                v2=v2i,
+                v3=v3i,
+                dir=t_dir,
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
+            quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_mesh_normals(
-                geoms_state,
-                geoms_info,
-                verts_info,
-                faces_info,
-                gjk_state,
-                gjk_info,
-                i_g,
-                i_b,
-                nface,
-                v1i,
-                v2i,
-                v3i,
+                geoms_info=geoms_info,
+                verts_info=verts_info,
+                faces_info=faces_info,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                i_g=i_g,
+                quat=quat,
+                i_b=i_b,
+                dim=nface,
+                v1=v1i,
+                v2=v2i,
+                v3=v3i,
             )
 
         for i_n in range(nnorms):
@@ -140,24 +155,40 @@ def func_multi_contact(
 
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
+                pos = pos_a if is_edge_face else pos_b
+                quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_box_edge_normals(
-                    geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1, v2, v1i, v2i
+                    geoms_info=geoms_info,
+                    gjk_state=gjk_state,
+                    gjk_info=gjk_info,
+                    i_g=i_g,
+                    pos=pos,
+                    quat=quat,
+                    i_b=i_b,
+                    dim=nface,
+                    v1=v1,
+                    v2=v2,
+                    v1i=v1i,
+                    v2i=v2i,
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
+                pos = pos_a if is_edge_face else pos_b
+                quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_mesh_edge_normals(
-                    geoms_state,
-                    geoms_info,
-                    verts_info,
-                    faces_info,
-                    gjk_state,
-                    gjk_info,
-                    i_g,
-                    i_b,
-                    nface,
-                    v1,
-                    v2,
-                    v1i,
-                    v2i,
+                    geoms_info=geoms_info,
+                    verts_info=verts_info,
+                    faces_info=faces_info,
+                    gjk_state=gjk_state,
+                    gjk_info=gjk_info,
+                    i_g=i_g,
+                    pos=pos,
+                    quat=quat,
+                    i_b=i_b,
+                    dim=nface,
+                    v1=v1,
+                    v2=v2,
+                    v1i=v1i,
+                    v2i=v2i,
                 )
 
             if is_edge_face:
