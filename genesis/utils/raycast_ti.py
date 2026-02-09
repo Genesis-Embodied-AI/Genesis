@@ -229,7 +229,7 @@ def update_aabbs(
     fixed_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    aabb_state: array_class.V_ANNOTATION,
+    aabb_state: ti.template(),
 ):
     for i_b, i_f in ti.ndrange(free_verts_state.pos.shape[1], faces_info.verts_idx.shape[0]):
         aabb_state.aabbs[i_b, i_f].min.fill(ti.math.inf)
@@ -257,7 +257,7 @@ def kernel_update_verts_and_aabbs(
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     static_rigid_sim_config: ti.template(),
-    aabb_state: array_class.V_ANNOTATION,
+    aabb_state: ti.template(),
 ):
     func_update_all_verts(
         geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
