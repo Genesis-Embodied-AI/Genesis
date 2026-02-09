@@ -1,5 +1,6 @@
+from functools import wraps
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Any, Type
 
 import numpy as np
 from typing_extensions import override
@@ -19,6 +20,15 @@ if TYPE_CHECKING:
     from genesis.ext.pyrender.node import Node
 
 
+def with_lock(fun: Callable[..., Any]) -> Callable[..., Any]:
+    @wraps(fun)
+    def fun_safe(self: MouseInteractionPlugin, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return fun(self, *args, **kwargs)
+
+    return fun_safe
+
+
 class MouseInteractionPlugin(RaycasterViewerPlugin):
     """
     Basic interactive viewer plugin that enables using mouse to apply spring force on rigid entities.
@@ -36,6 +46,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self.color = tuple(color)
         self.plane_color = (color[0], color[1], color[2], color[3] * 0.5)
 
+        self._lock: Lock = Lock()
         self._held_link: "RigidLink | None" = None
         self._held_point_local: np.ndarray | None = None  # Held point in link-local frame
         self._mouse_drag_plane: tuple[np.ndarray, float] | None = None
@@ -52,12 +63,14 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         self._prev_mouse_screen_pos = (x, y)
 
+    @with_lock
     @override
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int) -> EVENT_HANDLE_STATE:
         self._prev_mouse_screen_pos = (x, y)
         if self._held_link:
             return EVENT_HANDLED
 
+    @with_lock
     @override
     def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> EVENT_HANDLE_STATE:
         if self._held_link and self._surface_normal is not None:
@@ -66,6 +79,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             self._update_drag_plane()
             return EVENT_HANDLED
 
+    @with_lock
     @override
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if button == MouseButton.LEFT:  # left mouse button
@@ -98,6 +112,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 link_quat = tensor_to_array(link.get_quat())
                 self._held_point_local = gu.inv_transform_by_trans_quat(ray_hit.position, link_pos, link_quat)
 
+    @with_lock
     @override
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if button == MouseButton.LEFT:
@@ -108,6 +123,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             self._surface_normal = None
             self._plane_rotation_angle = 0.0
 
+    @with_lock
     @override
     def update_on_sim_step(self) -> None:
         super().update_on_sim_step()
@@ -134,6 +150,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 pos = pos + delta_3d_pos
                 self._held_link.entity.set_pos(pos)
 
+    @with_lock
     @override
     def on_draw(self) -> None:
         if self.scene._visualizer is not None and self.scene._visualizer.is_built:
@@ -164,7 +181,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                         color=self.color,
                     )
                     # draw the mouse drag plane as a flat box around the mouse position
-                    plane_normal, plane_dist = self._mouse_drag_plane
+                    plane_normal, _plane_dist = self._mouse_drag_plane
                     self._draw_plane(
                         plane_normal,
                         plane_hit.position,
