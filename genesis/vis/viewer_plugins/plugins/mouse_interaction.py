@@ -1,6 +1,6 @@
 from functools import wraps
 from threading import Lock
-from typing import TYPE_CHECKING, Callable, Any, Type
+from typing import TYPE_CHECKING, Any, Callable, Type
 
 import numpy as np
 from typing_extensions import override
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 def with_lock(fun: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(fun)
-    def fun_safe(self: MouseInteractionPlugin, *args: Any, **kwargs: Any) -> Any:
+    def fun_safe(self: "MouseInteractionPlugin", *args: Any, **kwargs: Any) -> Any:
         with self._lock:
             return fun(self, *args, **kwargs)
 
