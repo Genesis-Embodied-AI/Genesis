@@ -163,7 +163,6 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
 
 @ti.func
 def func_gjk_contact(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
@@ -177,6 +176,10 @@ def func_gjk_contact(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
@@ -207,19 +210,22 @@ def func_gjk_contact(
         # Run GJK
         for _ in range(2 if shrink_sphere else 1):
             distance = func_gjk(
-                geoms_state,
-                geoms_info,
-                verts_info,
-                static_rigid_sim_config,
-                collider_state,
-                collider_static_config,
-                gjk_state,
-                gjk_info,
-                support_field_info,
-                i_ga,
-                i_gb,
-                i_b,
-                shrink_sphere,
+                geoms_info=geoms_info,
+                verts_info=verts_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                support_field_info=support_field_info,
+                i_ga=i_ga,
+                i_gb=i_gb,
+                i_b=i_b,
+                pos_a=pos_a,
+                quat_a=quat_a,
+                pos_b=pos_b,
+                quat_b=quat_b,
+                shrink_sphere=shrink_sphere,
             )
 
             if shrink_sphere:
@@ -271,19 +277,22 @@ def func_gjk_contact(
                 polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
                 if nsimplex == 2:
                     polytope_flag = func_epa_init_polytope_2d(
-                        geoms_state,
-                        geoms_info,
-                        verts_info,
-                        rigid_global_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        i_b,
+                        geoms_info=geoms_info,
+                        verts_info=verts_info,
+                        rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        gjk_state=gjk_state,
+                        gjk_info=gjk_info,
+                        support_field_info=support_field_info,
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        pos_a=pos_a,
+                        quat_a=quat_a,
+                        pos_b=pos_b,
+                        quat_b=quat_b,
+                        i_b=i_b,
                     )
                 elif nsimplex == 4:
                     polytope_flag = func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
@@ -295,35 +304,41 @@ def func_gjk_contact(
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
                 ):
                     polytope_flag = func_epa_init_polytope_3d(
-                        geoms_state,
-                        geoms_info,
-                        verts_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        i_b,
+                        geoms_info=geoms_info,
+                        verts_info=verts_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        gjk_state=gjk_state,
+                        gjk_info=gjk_info,
+                        support_field_info=support_field_info,
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        pos_a=pos_a,
+                        quat_a=quat_a,
+                        pos_b=pos_b,
+                        quat_b=quat_b,
+                        i_b=i_b,
                     )
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
                     i_f = func_epa(
-                        geoms_state,
-                        geoms_info,
-                        verts_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        i_b,
+                        geoms_info=geoms_info,
+                        verts_info=verts_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                        collider_state=collider_state,
+                        collider_static_config=collider_static_config,
+                        gjk_state=gjk_state,
+                        gjk_info=gjk_info,
+                        support_field_info=support_field_info,
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        pos_a=pos_a,
+                        quat_a=quat_a,
+                        pos_b=pos_b,
+                        quat_b=quat_b,
+                        i_b=i_b,
                     )
 
                     if ti.static(gjk_static_config.enable_mujoco_multi_contact):
@@ -346,20 +361,29 @@ def func_gjk_contact(
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:
+        # Load geometry states into thread-local variables
+        ga_pos = geoms_state.pos[i_ga, i_b]
+        ga_quat = geoms_state.quat[i_ga, i_b]
+        gb_pos = geoms_state.pos[i_gb, i_b]
+        gb_quat = geoms_state.quat[i_gb, i_b]
+        
         gjk_flag = func_safe_gjk(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            rigid_global_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
+            geoms_info=geoms_info,
+            verts_info=verts_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            collider_state=collider_state,
+            collider_static_config=collider_static_config,
+            gjk_state=gjk_state,
+            gjk_info=gjk_info,
+            support_field_info=support_field_info,
+            i_ga=i_ga,
+            i_gb=i_gb,
+            pos_a=ga_pos,
+            quat_a=ga_quat,
+            pos_b=gb_pos,
+            quat_b=gb_quat,
+            i_b=i_b,
         )
         if gjk_flag == GJK_RETURN_CODE.INTERSECT:
             # Initialize polytope
@@ -373,19 +397,22 @@ def func_gjk_contact(
 
             # Run EPA from the polytope
             func_safe_epa(
-                geoms_state,
-                geoms_info,
-                verts_info,
-                rigid_global_info,
-                static_rigid_sim_config,
-                collider_state,
-                collider_static_config,
-                gjk_state,
-                gjk_info,
-                support_field_info,
-                i_ga,
-                i_gb,
-                i_b,
+                geoms_info=geoms_info,
+                verts_info=verts_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                support_field_info=support_field_info,
+                i_ga=i_ga,
+                i_gb=i_gb,
+                pos_a=ga_pos,
+                quat_a=ga_quat,
+                pos_b=gb_pos,
+                quat_b=gb_quat,
+                i_b=i_b,
             )
 
     # Compute the final contact points and normals.
