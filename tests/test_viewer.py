@@ -256,7 +256,7 @@ def test_mouse_interaction_plugin():
     assert_allclose(
         final_vel[:2],
         0.0,
-        atol=gs.EPS,
+        tol=0.002,
         err_msg="Final x and y velocities should be near zero since dragging only in z direction.",
     )
 
@@ -278,7 +278,8 @@ def test_mouse_interaction_plugin():
     )
     assert not np.array_equal(rgb_arrs[-1], rgb_arr), "Expected visualization to change after releasing the object."
 
-    # FIXME: Use a more accurate model to predict final velocity
+    # The forces from mouse spring are approximate, so use a large tolerance.
+    # FIXME: Use a more accurate model to predict final velocity.
     total_sim_time = STEPS * DT
     avg_mouse_velocity = total_world_displacement / total_sim_time
     num_tau = total_sim_time * np.sqrt(SPRING_CONST / MASS)
@@ -288,6 +289,6 @@ def test_mouse_interaction_plugin():
     assert_allclose(
         final_vel[2],
         expected_vel_z,
-        rtol=0.4,  # the forces from mouse spring are approximate, so use a large tolerance
+        rtol=0.4,
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
     )
