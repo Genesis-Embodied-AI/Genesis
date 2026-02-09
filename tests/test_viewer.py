@@ -278,6 +278,7 @@ def test_mouse_interaction_plugin():
     )
     assert not np.array_equal(rgb_arrs[-1], rgb_arr), "Expected visualization to change after releasing the object."
 
+    # FIXME: Use a more accurate model to predict final velocity
     total_sim_time = STEPS * DT
     avg_mouse_velocity = total_world_displacement / total_sim_time
     num_tau = total_sim_time * np.sqrt(SPRING_CONST / MASS)
