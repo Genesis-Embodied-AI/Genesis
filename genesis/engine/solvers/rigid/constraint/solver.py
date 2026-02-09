@@ -17,9 +17,6 @@ from ..collider.contact_island import ContactIsland
 
 USE_LS_BLOCK = os.environ.get("GS_SOLVER_LS_BLOCK", "0") == "1"
 
-# TODO: set to True for debug
-USE_LS_BLOCK = 1
-
 # Block-based linesearch constants
 LS_BLOCK_DIM = 64
 LS_MAX_ITER = 50
@@ -223,6 +220,22 @@ class ConstraintSolver:
         )
 
     def _resolve_body_block_ls(self):
+        """Block-based linesearch solver loop — alternative to func_solve_body.
+
+        Motivation:
+            The default func_solve_body runs the entire solver iteration loop (linesearch + state update) inside a
+            single Taichi kernel, with one CUDA thread per batch. The linesearch within each thread loops sequentially
+            over all constraints. For scenes with high constraint counts per batch (e.g. dense contact piles), this
+            sequential constraint loop can become a bottleneck.
+
+        Optimization:
+            Splits each solver iteration into 3 separate kernel launches:
+              1. kernel_ls_init_block:     Compute linesearch-invariant quantities (mv, jv, quad, etc.)
+              2. kernel_linesearch_block:   Block-based parallel linesearch — distributes the constraint evaluation
+                                            loop across LS_BLOCK_DIM (64) threads per batch using shared memory and
+                                            tree reduction, replacing the sequential constraint loop.
+              3. kernel_apply_update_block: Apply the step and update solver state (gradient, Hessian, descent).
+        """
         for _ in range(self.iterations):
             kernel_ls_init_block(
                 self._solver.entities_info,
@@ -2921,6 +2934,26 @@ def func_solve_init(
 # =====================================================================================================================
 # =========================================== Block-Based Linesearch Kernels ==========================================
 # =====================================================================================================================
+#
+# These three kernels decompose func_solve_body into per-iteration steps so that the linesearch constraint evaluation
+# can be parallelized across threads within a CUDA block (shared memory + block-local sync).
+#
+# Architecture:
+#   Python loop (per solver iteration):
+#     kernel_ls_init_block   → compute mv, jv, quad, quad_gauss, eq_sum, snorm, gtol
+#     kernel_linesearch_block → block-based parallel linesearch (1 block = 1 batch, 64 threads = 64-way constraint eval)
+#     kernel_apply_update_block → apply alpha, recompute Hessian/gradient/descent direction
+#
+# vs. the original single-kernel approach:
+#   func_solve_body → 1 thread per batch, sequential constraint loop inside linesearch
+#
+# The block-based approach trades kernel launch overhead for intra-batch constraint parallelism. Beneficial when
+# batch count B is small (GPU not saturated) and constraint count per batch is large (sequential loop is slow).
+# Not beneficial when B is large (>= ~4096): batch-level parallelism already saturates the GPU, and the extra
+# kernel launches + host sync per iteration add overhead without reducing total work.
+#
+# See _resolve_body_block_ls() docstring for full analysis.
+# =====================================================================================================================
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -2933,7 +2966,8 @@ def kernel_ls_init_block(
 ):
     """Compute linesearch-invariant quantities: mv, jv, quad, quad_gauss, eq_sum, snorm, gtol.
 
-    Runs once per solver iteration, before the block-based linesearch kernel."""
+    Runs once per solver iteration, before the block-based linesearch kernel. Extracts the init portion of
+    func_ls_init_and_eval_p0_opt into a standalone kernel so it can be called independently of the linesearch."""
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.search.shape[0]
     n_entities = entities_info.dof_start.shape[0]
@@ -2967,7 +3001,9 @@ def kernel_ls_init_block(
         # Compute snorm and gtol
         snorm = ti.sqrt(snorm)
         scale = rigid_global_info.meaninertia[i_b] * ti.max(1, n_dofs)
-        constraint_state.gtol[i_b] = rigid_global_info.tolerance[None] * rigid_global_info.ls_tolerance[None] * snorm * scale
+        constraint_state.gtol[i_b] = (
+            rigid_global_info.tolerance[None] * rigid_global_info.ls_tolerance[None] * snorm * scale
+        )
 
         # Init ls state
         constraint_state.ls_it[i_b] = 0
@@ -3026,11 +3062,36 @@ def kernel_linesearch_block(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    """Block-based parallel linesearch. One CUDA block per batch, LS_BLOCK_DIM threads per block.
+    """Block-based parallel linesearch. One CUDA block per batch, LS_BLOCK_DIM (64) threads per block.
 
-    The full linesearch state machine runs within a block using block-local shared memory and sync.
-    This parallelizes the constraint evaluation loop across threads, which is the main bottleneck
-    for high-constraint-count scenes."""
+    Motivation:
+        In the original func_linesearch_batch, each linesearch evaluation (func_ls_point_fn_opt) loops sequentially
+        over all non-equality constraints to compute cost/gradient/hessian. For high-constraint-count scenes (e.g.
+        dense contact piles with 500+ constraints per batch), this sequential loop dominates the linesearch time.
+
+    Optimization:
+        Distributes the constraint evaluation loop across 64 threads using a strided access pattern:
+          thread tid processes constraints tid, tid+64, tid+128, ... accumulating into partial[tid, 0:9]
+        After all threads finish, a tree reduction (log2(64) = 6 sync steps) sums the partial results.
+        Thread 0 then runs the state machine logic (same as func_linesearch_batch) using the reduced totals.
+
+        Key data structures in shared memory (~2.5 KB per block):
+          partial[64, 9]  — partial sums for tree reduction (3 quad coeffs × up to 3 alphas)
+          sh_p0/p1/p2[4]  — bracket points [alpha, cost, grad, hess]
+          sh_phase[1]     — state machine phase (EVAL_P0 → EVAL_P1 → BRACKET → REFINE → DONE)
+          sh_alphas[3]    — alpha value(s) to evaluate next
+
+    State machine phases (mirrors func_linesearch_batch logic):
+        EVAL_P0:  Evaluate cost at alpha=0, compute Newton step → EVAL_P1
+        EVAL_P1:  Compare p0/p1, check convergence → DONE or BRACKET
+        BRACKET:  Expand bracket until derivative changes sign → REFINE or DONE
+        REFINE:   3-alpha evaluation with bracket updates → DONE
+
+    Note on BRACKET phase:
+        The original uses a while loop that checks the condition BEFORE evaluating. In this state machine,
+        evaluation happens first (all threads participate), then thread 0 checks the condition using the OLD p1
+        gradient from shared memory. If the condition no longer holds, the wasted evaluation is discarded and
+        p1 retains its previous value."""
     BLOCK_DIM = ti.static(LS_BLOCK_DIM)
     MAX_ITER = ti.static(LS_MAX_ITER)
 
@@ -3304,7 +3365,10 @@ def kernel_linesearch_block(
                         old_p1_grad = sh_p1[2]
                         direction = sh_direction[0]
 
-                        if old_p1_grad * direction <= -gtol and constraint_state.ls_it[i_b] <= rigid_global_info.ls_iterations[None]:
+                        if (
+                            old_p1_grad * direction <= -gtol
+                            and constraint_state.ls_it[i_b] <= rigid_global_info.ls_iterations[None]
+                        ):
                             # While condition holds: save old p1 as p2, new eval becomes p1
                             sh_p2[0] = sh_p1[0]
                             sh_p2[1] = sh_p1[1]
@@ -3498,7 +3562,10 @@ def kernel_linesearch_block(
                             sh_alphas[2] = (p1_alpha + p2_alpha) * 0.5
 
                     # Check if we hit iteration limit in REFINE without convergence
-                    if sh_phase[0] != PHASE_DONE and constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+                    if (
+                        sh_phase[0] != PHASE_DONE
+                        and constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]
+                    ):
                         p1_cost_v = sh_p1[1]
                         p1_alpha_v = sh_p1[0]
                         p2_cost_v = sh_p2[1]
@@ -3531,7 +3598,11 @@ def kernel_apply_update_block(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: ti.template(),
 ):
-    """Apply linesearch result and update solver state for next iteration. Parallel over batches."""
+    """Apply linesearch result and update solver state for next iteration. Parallel over batches.
+
+    Reads the linesearch result alpha from candidates[0, i_b] (written by kernel_linesearch_block) and performs
+    the same post-linesearch updates as func_solve_iter: apply alpha to qacc/Ma/Jaref, recompute constraints,
+    Hessian/Cholesky (Newton only), gradient, and descent direction."""
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.qacc.shape[0]
 
