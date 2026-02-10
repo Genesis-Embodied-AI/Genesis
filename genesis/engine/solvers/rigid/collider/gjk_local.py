@@ -10,7 +10,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import epa, epa_local, gjk, support_field, support_field_local
+from genesis.engine.solvers.rigid.collider import epa, epa_local, gjk, multi_contact, support_field, support_field_local
 from genesis.utils import array_class
 
 
@@ -1377,7 +1377,7 @@ def func_gjk_contact_local(
 
                     wa = gjk_state.witness.point_obj1[i_b, 0]
                     wb = gjk_state.witness.point_obj2[i_b, 0]
-                    n = gjk.func_safe_normalize(gjk_info, wb - wa)
+                    n = multi_contact.func_safe_normalize(gjk_info, wb - wa)
 
                     gjk_state.distance[i_b] = distance - (radius_a + radius_b)
                     gjk_state.witness.point_obj1[i_b, 0] = wa + (radius_a * n)
