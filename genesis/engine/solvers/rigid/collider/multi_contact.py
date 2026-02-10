@@ -31,6 +31,10 @@ def func_multi_contact(
     i_gb,
     i_b,
     i_f,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Multi-contact detection algorithm based on Sutherland-Hodgman polygon clipping algorithm. For the two geometric
@@ -41,6 +45,10 @@ def func_multi_contact(
     ----------
     i_f: int
         Index of the face in the EPA polytope where the minimum distance is found.
+    pos_a, quat_a: ti.Vector
+        Pose of geometry A (passed as parameters instead of reading from geoms_state)
+    pos_b, quat_b: ti.Vector
+        Pose of geometry B (passed as parameters instead of reading from geoms_state)
 
     .. seealso::
     MuJoCo's original implementation:
@@ -89,8 +97,8 @@ def func_multi_contact(
         v3i = v13i if i_g0 == 0 else v23i
         t_dir = dir_neg if i_g0 == 0 else dir
 
-        # Extract local quat for thread-local calls
-        quat_g = geoms_state.quat[i_g, i_b]
+        # Use pose parameters instead of reading from geoms_state
+        quat_g = quat_a if i_g == i_ga else quat_b
 
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
@@ -154,9 +162,9 @@ def func_multi_contact(
             v1i = v11i if is_edge_face else v21i
             v2i = v12i if is_edge_face else v22i
 
-            # Extract local pos/quat for thread-local calls
-            pos_g = geoms_state.pos[i_g, i_b]
-            quat_g = geoms_state.quat[i_g, i_b]
+            # Use pose parameters instead of reading from geoms_state
+            pos_g = pos_a if i_g == i_ga else pos_b
+            quat_g = quat_a if i_g == i_ga else quat_b
 
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
@@ -234,9 +242,9 @@ def func_multi_contact(
             geom_type = geom_type_a if k == 0 else geom_type_b
             i_g = i_ga if k == 0 else i_gb
 
-            # Extract local pos/quat for thread-local calls
-            pos_g = geoms_state.pos[i_g, i_b]
-            quat_g = geoms_state.quat[i_g, i_b]
+            # Use pose parameters instead of reading from geoms_state
+            pos_g = pos_a if i_g == i_ga else pos_b
+            quat_g = quat_a if i_g == i_ga else quat_b
 
             nface = 0
             if edgecon:

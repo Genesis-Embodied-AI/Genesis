@@ -1477,21 +1477,8 @@ def func_gjk_contact_local(
                     )
 
                     if ti.static(gjk_static_config.enable_mujoco_multi_contact):
-                        # To use MuJoCo's multi-contact detection algorithm
-                        # Note: Multi-contact still needs geoms_state temporarily
-                        # TODO: Create multi_contact_local version
+                        # Use MuJoCo's multi-contact detection algorithm
                         if i_f >= 0 and gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
-                            # Temporarily write to geoms_state for multi_contact
-                            pos_a_backup = geoms_state.pos[i_ga, i_b]
-                            quat_a_backup = geoms_state.quat[i_ga, i_b]
-                            pos_b_backup = geoms_state.pos[i_gb, i_b]
-                            quat_b_backup = geoms_state.quat[i_gb, i_b]
-                            
-                            geoms_state.pos[i_ga, i_b] = pos_a
-                            geoms_state.quat[i_ga, i_b] = quat_a
-                            geoms_state.pos[i_gb, i_b] = pos_b
-                            geoms_state.quat[i_gb, i_b] = quat_b
-                            
                             gjk.func_multi_contact(
                                 geoms_state,
                                 geoms_info,
@@ -1503,14 +1490,12 @@ def func_gjk_contact_local(
                                 i_gb,
                                 i_b,
                                 i_f,
+                                pos_a,
+                                quat_a,
+                                pos_b,
+                                quat_b,
                             )
                             gjk_state.multi_contact_flag[i_b] = True
-                            
-                            # Restore original state
-                            geoms_state.pos[i_ga, i_b] = pos_a_backup
-                            geoms_state.quat[i_ga, i_b] = quat_a_backup
-                            geoms_state.pos[i_gb, i_b] = pos_b_backup
-                            geoms_state.quat[i_gb, i_b] = quat_b_backup
     else:
         gjk_flag = func_safe_gjk_local(
             geoms_info=geoms_info,
