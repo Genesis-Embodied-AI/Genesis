@@ -10,7 +10,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import support_field
+from genesis.engine.solvers.rigid.collider import func_check_weld_constraint, func_point_in_geom_aabb, mpr
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.geom import transform_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
@@ -34,12 +34,25 @@ if TYPE_CHECKING:
 
 
 class KinematicContactProbeData(NamedTuple):
-    """Data returned by the kinematic contact probe."""
+    """
+    Data returned by the kinematic contact probe.
 
-    penetration: torch.Tensor  # (n_envs, n_probes) or (n_probes,) - depth in meters (0 if no contact)
-    position: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - contact position in link frame
-    normal: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - contact normal in link frame
-    force: torch.Tensor  # (n_envs, n_probes, 3) or (n_probes, 3) - estimated force (not physical, see options)
+    Parameters
+    ----------
+    penetration: torch.Tensor, shape ([n_envs,] n_probes)
+        Depth of penetration in meters (0 if no contact).
+    position: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Contact position in the link frame.
+    normal: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Contact normal in the link frame.
+    force: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Estimated contact force based on penetration and stiffness (non-physical) in the link frame.
+    """
+
+    penetration: torch.Tensor
+    position: torch.Tensor
+    normal: torch.Tensor
+    force: torch.Tensor
 
 
 @dataclass
@@ -184,6 +197,9 @@ class KinematicContactProbe(
             rigid_global_info=solver._rigid_global_info,
             constraint_state=solver.constraint_solver.constraint_state,
             equalities_info=solver.equalities_info,
+            collider_state=solver.collider._collider_state,
+            collider_info=solver.collider._collider_info,
+            collider_static_config=solver.collider._collider_static_config,
             support_field_info=solver.collider._support_field._support_field_info,
             output=shared_ground_truth_cache,
         )
@@ -256,97 +272,46 @@ class KinematicContactProbe(
 
 
 @ti.func
-def _func_point_in_expanded_aabb(
+def func_check_collision_filter(
     i_g: ti.i32,
     i_b: ti.i32,
-    geoms_state: array_class.GeomsState,
-    point: ti.types.vector(3, gs.ti_float),
-    expansion: gs.ti_float,
-):
-    aabb_min = geoms_state.aabb_min[i_g, i_b] - expansion
-    aabb_max = geoms_state.aabb_max[i_g, i_b] + expansion
-    return (point >= aabb_min).all() and (point <= aabb_max).all()
-
-
-@ti.func
-def _func_check_collision_filter(
-    i_g: ti.i32,
-    i_b: ti.i32,
-    sensor_link_idx: ti.i32,
-    sensor_contype: ti.i32,
-    sensor_conaffinity: ti.i32,
+    other_link_idx: ti.i32,
+    other_contype: ti.i32,
+    other_conaffinity: ti.i32,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
 ):
-    """Check collision filter: self-detection, contype/conaffinity bitmasks, weld constraints."""
+    """Check collision filtering for kinematic contact probe."""
     is_valid = True
 
+    # Self-link filtering
     geom_link_idx = geoms_info.link_idx[i_g]
-    if geom_link_idx == sensor_link_idx:
+    if geom_link_idx == other_link_idx:
         is_valid = False
 
+    # Contype and conaffinity bitmask filtering
     if is_valid:
         geom_contype = geoms_info.contype[i_g]
         geom_conaffinity = geoms_info.conaffinity[i_g]
-        cond1 = (geom_contype & sensor_conaffinity) != 0
-        cond2 = (sensor_contype & geom_conaffinity) != 0
+        cond1 = (geom_contype & other_conaffinity) != 0
+        cond2 = (other_contype & geom_conaffinity) != 0
         if not (cond1 and cond2):
             is_valid = False
 
+    # Weld constraint filtering
     if is_valid:
-        for i_eq in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
-            if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
-                weld_link_a = equalities_info.eq_obj1id[i_eq, i_b]
-                weld_link_b = equalities_info.eq_obj2id[i_eq, i_b]
-                if (weld_link_a == sensor_link_idx and weld_link_b == geom_link_idx) or (
-                    weld_link_a == geom_link_idx and weld_link_b == sensor_link_idx
-                ):
-                    is_valid = False
-                    break
-
-    return is_valid
-
-
-@ti.func
-def _func_support_point_for_probe(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    direction: gs.ti_vec3,
-    i_g: ti.i32,
-    i_b: ti.i32,
-):
-    """Get support point on a geom in the given direction."""
-    geom_type = geoms_info.type[i_g]
-    g_pos = geoms_state.pos[i_g, i_b]
-
-    support_world = ti.Vector.zero(gs.ti_float, 3)
-
-    if geom_type == gs.GEOM_TYPE.SPHERE:
-        sphere_radius = geoms_info.data[i_g][0]
-        dir_norm = direction.norm()
-        if dir_norm > 1e-10:
-            support_world = g_pos + sphere_radius * (direction / dir_norm)
-        else:
-            support_world = g_pos
-
-    elif geom_type == gs.GEOM_TYPE.PLANE:
-        support_world = g_pos
-
-    elif geom_type == gs.GEOM_TYPE.BOX:
-        support_world, _, _ = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
-
-    elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        support_world = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, False)
-
-    else:
-        support_world, _, _ = support_field._func_support_world(
-            geoms_state, geoms_info, support_field_info, direction, i_g, i_b
+        is_valid = func_check_weld_constraint(
+            geom_link_idx,
+            other_link_idx,
+            i_b,
+            rigid_global_info,
+            constraint_state,
+            equalities_info,
         )
 
-    return support_world
+    return is_valid
 
 
 @ti.kernel
@@ -369,6 +334,9 @@ def _kernel_kinematic_contact_probe_support_query(
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    collider_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     output: ti.types.ndarray(),
 ):
@@ -408,7 +376,7 @@ def _kernel_kinematic_contact_probe_support_query(
             if geom_type == gs.GEOM_TYPE.TERRAIN:
                 continue
 
-            if not _func_check_collision_filter(
+            if not func_check_collision_filter(
                 i_g,
                 i_b,
                 sensor_link_idx,
@@ -421,23 +389,20 @@ def _kernel_kinematic_contact_probe_support_query(
             ):
                 continue
 
-            if not _func_point_in_expanded_aabb(i_g, i_b, geoms_state, probe_pos, radius):
+            if not func_point_in_geom_aabb(i_g, i_b, geoms_state, probe_pos, radius):
                 continue
 
-            support_pos = ti.Vector.zero(gs.ti_float, 3)
-
-            if geom_type == gs.GEOM_TYPE.PLANE:
-                g_pos = geoms_state.pos[i_g, i_b]
-                g_quat = geoms_state.quat[i_g, i_b]
-                geom_data = geoms_info.data[i_g]
-                plane_normal_local = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
-                plane_normal_world = gu.ti_transform_by_quat(plane_normal_local, g_quat)
-                dist_to_plane = (probe_pos - g_pos).dot(plane_normal_world)
-                support_pos = probe_pos - dist_to_plane * plane_normal_world
-            else:
-                support_pos = _func_support_point_for_probe(
-                    geoms_state, geoms_info, support_field_info, support_dir, i_g, i_b
-                )
+            support_pos = mpr.support_driver(
+                geoms_state,
+                geoms_info,
+                collider_state,
+                collider_info,
+                collider_static_config,
+                support_field_info,
+                support_dir,
+                i_g,
+                i_b,
+            )
 
             dist_to_probe = (probe_pos - support_pos).norm()
             if dist_to_probe <= radius:
