@@ -2351,7 +2351,7 @@ def func_gjk_contact(
             quat_b=quat_b,
             i_b=i_b,
         )
-        if gjk_flag == gjk.GJK_RETURN_CODE.INTERSECT:
+        if gjk_flag == GJK_RETURN_CODE.INTERSECT:
             # Initialize polytope
             gjk_state.polytope.nverts[i_b] = 0
             gjk_state.polytope.nfaces[i_b] = 0
