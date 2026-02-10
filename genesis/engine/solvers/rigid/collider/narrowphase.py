@@ -75,46 +75,6 @@ def func_contact_sphere_sdf(
 
 
 @ti.func
-def func_contact_vertex_sdf(
-    i_ga,
-    i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: ti.template(),
-    sdf_info: array_class.SDFInfo,
-):
-    """
-    Detect collision between vertex-based geometry and SDF-based geometry.
-    
-    This is a wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    ga_pos = geoms_state.pos[i_ga, i_b]
-    ga_quat = geoms_state.quat[i_ga, i_b]
-    gb_pos = geoms_state.pos[i_gb, i_b]
-    gb_quat = geoms_state.quat[i_gb, i_b]
-    
-    return narrowphase_local.func_contact_vertex_sdf_local(
-        i_ga=i_ga,
-        i_gb=i_gb,
-        i_b=i_b,
-        ga_pos=ga_pos,
-        ga_quat=ga_quat,
-        gb_pos=gb_pos,
-        gb_quat=gb_quat,
-        geoms_state=geoms_state,
-        geoms_info=geoms_info,
-        verts_info=verts_info,
-        rigid_global_info=rigid_global_info,
-        collider_static_config=collider_static_config,
-        sdf_info=sdf_info,
-    )
-
-
-@ti.func
 def func_contact_edge_sdf(
     i_ga,
     i_gb,
@@ -860,16 +820,26 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         normal_i = ti.Vector.zero(gs.ti_float, 3)
                         contact_pos_i = ti.Vector.zero(gs.ti_float, 3)
                         if not is_col:
-                            is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                geoms_state,
-                                geoms_info,
-                                verts_info,
-                                rigid_global_info,
-                                collider_static_config,
-                                sdf_info,
+                            # Extract poses for thread-local computation
+                            ga_pos = geoms_state.pos[i_ga, i_b]
+                            ga_quat = geoms_state.quat[i_ga, i_b]
+                            gb_pos = geoms_state.pos[i_gb, i_b]
+                            gb_quat = geoms_state.quat[i_gb, i_b]
+                            
+                            is_col_i, normal_i, penetration_i, contact_pos_i = narrowphase_local.func_contact_vertex_sdf_local(
+                                i_ga=i_ga,
+                                i_gb=i_gb,
+                                i_b=i_b,
+                                ga_pos=ga_pos,
+                                ga_quat=ga_quat,
+                                gb_pos=gb_pos,
+                                gb_quat=gb_quat,
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                verts_info=verts_info,
+                                rigid_global_info=rigid_global_info,
+                                collider_static_config=collider_static_config,
+                                sdf_info=sdf_info,
                             )
                             if is_col_i:
                                 contact.func_add_contact(
