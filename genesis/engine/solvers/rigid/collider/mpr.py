@@ -32,11 +32,6 @@ def clear(mpr_state: ti.template()):
 
 
 @ti.func
-def func_point_in_geom_aabb(geoms_state: array_class.GeomsState, point, i_g, i_b):
-    return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
-
-
-@ti.func
 def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
     return not (
         (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()

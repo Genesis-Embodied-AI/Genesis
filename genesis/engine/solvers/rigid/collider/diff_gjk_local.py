@@ -249,7 +249,7 @@ def func_gjk_contact_local(
                 if not found_default_epa:
                     break
             else:
-                i_f = GJK.epa_local.func_safe_epa_local(
+                i_f = epa_local.func_safe_epa_local(
                     geoms_info,
                     verts_info,
                     rigid_global_info,

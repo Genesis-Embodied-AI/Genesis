@@ -16,7 +16,6 @@ def func_point_in_geom_aabb(
     i_g,
     i_b,
     geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     point: ti.types.vector(3),
 ):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
