@@ -1158,6 +1158,7 @@ def func_safe_epa(
                 gjk_state.polytope.nfaces_map[i_b] += 1
 
         if attach_flag != RETURN_CODE.SUCCESS:
+            nearest_i_f = -1
             break
 
         # Clear the horizon data for the next iteration
@@ -1165,6 +1166,7 @@ def func_safe_epa(
 
         if (gjk_state.polytope.nfaces_map[i_b] == 0) or (nearest_i_f == -1):
             # No face candidate left
+            nearest_i_f = -1
             break
 
     if nearest_i_f != -1:
@@ -1178,6 +1180,7 @@ def func_safe_epa(
             # Failed to compute witness points, so the objects are not colliding
             gjk_state.n_witness[i_b] = 0
             gjk_state.distance[i_b] = 0.0
+            nearest_i_f = -1
     else:
         # No face found, so the objects are not colliding
         gjk_state.n_witness[i_b] = 0
