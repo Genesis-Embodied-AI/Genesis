@@ -188,18 +188,6 @@ def _func_support_prism(
 
 
 @ti.func
-def _func_support_box(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    d,
-    i_g,
-    i_b,
-):
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return support_field_local._func_support_box_local(geoms_info, d, i_g, pos, quat)
-
-
 @ti.func
 def _func_count_supports_mesh(
     support_field_info: array_class.SupportFieldInfo,

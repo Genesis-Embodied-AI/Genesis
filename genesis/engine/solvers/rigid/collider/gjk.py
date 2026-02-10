@@ -981,32 +981,6 @@ def func_safe_gjk_triangle_info(
     return normal, sdist
 
 
-@ti.func
-def count_support_driver(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    d,
-    i_g,
-    i_b,
-):
-    """
-    Count the number of possible support points in the given direction.
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return gjk_local.count_support_driver_local(
-        geoms_info,
-        support_field_info,
-        d,
-        i_g,
-        quat,
-    )
-
-
-
 # Import EPA functions (circular import resolved by importing after all gjk functions are defined)
 from .epa import (
     func_epa_witness,

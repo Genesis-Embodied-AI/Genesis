@@ -11,7 +11,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
+from . import support_field, support_field_local
 
 from .contact import (
     func_add_contact,
@@ -45,7 +45,13 @@ def func_plane_box_contact(
     plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(geoms_state, geoms_info, normal, i_gb, i_b)
+    v1, _, _ = support_field_local._func_support_box_local(
+        geoms_info=geoms_info,
+        d=normal,
+        i_g=i_gb,
+        pos=gb_pos,
+        quat=gb_quat,
+    )
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
