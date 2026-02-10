@@ -1727,6 +1727,9 @@ from .epa import (
     func_plane_normal,
 )
 
+# Import EPA local functions for thread-safe multi-contact
+from .epa_local import func_safe_epa_local
+
 # Import multi-contact functions
 from .multi_contact import (
     func_multi_contact,

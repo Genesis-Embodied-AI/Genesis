@@ -33,6 +33,10 @@ def func_gjk_contact(
     Detect multiple possible contact points between two geometries using GJK and EPA algorithms, and compute weights
     of the contact points for differentiability.
 
+    This is a thin wrapper that extracts geometry poses from global state and delegates
+    to the thread-local version for the actual computation, enabling race-free parallelization
+    across collision pairs within the same environment.
+
     We first run the GJK algorithm to find the minimum distance between the two geometries. If the distance is
     smaller than the collision epsilon, we consider the geometries colliding. If they are colliding, we run the extended
     EPA algorithm in the original configuration and the original EPA algorithm for multiple perturbed configurations.
@@ -56,297 +60,42 @@ def func_gjk_contact(
     Note that these terms can be computed from the non-differentiable contact data in a differentiable way. Therefore,
     we store the non-differentiable contact data along with the differentiable contact data for the backward pass.
     """
-    EPS = rigid_global_info.EPS[None]
+    # Import here to avoid circular dependency
+    from genesis.engine.solvers.rigid.collider import diff_gjk_local
 
-    # Clear the cache to prepare for this GJK-EPA run.
-    GJK.clear_cache(gjk_state, i_b)
+    # Extract geometry poses from global state
+    ga_pos = geoms_state.pos[i_ga, i_b]
+    ga_quat = geoms_state.quat[i_ga, i_b]
+    gb_pos = geoms_state.pos[i_gb, i_b]
+    gb_quat = geoms_state.quat[i_gb, i_b]
 
-    gjk_state.n_diff_contact_input[i_b] = 0
-
-    # Backup state before local perturbation
-    ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-    gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
-
-    # Axis to rotate the geometry for perturbation
-    axis_0 = ti.Vector.zero(gs.ti_float, 3)
-    axis_1 = ti.Vector.zero(gs.ti_float, 3)
-
-    # Default contact point and penetration in the original configuration
-    default_contact_pos = gs.ti_vec3(0.0, 0.0, 0.0)
-    default_penetration = gs.ti_float(0.0)
-    found_default_epa = False
-
-    # 4 (small) + 4 (large) perturbated configurations
-    num_perturb = 8
-
-    ### Detect multiple possible contact points and gather the non-differentiable contact data.
-    for i in range(1 + num_perturb):
-        # First iteration: Detect contact in default configuration.
-        # 2,3,4,5: Detect contacts in slightly perturbed configuration.
-        # 6,7,8,9: Detect contacts in more perturbed configuration.
-        if i > 0:
-            # Convert back to the default configuration
-            geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-            geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
-
-            # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
-            # otherwise it would be more sensitive to ill-conditionning.
-            axis = (2 * (i % 2) - 1) * axis_0 + (1 - 2 * ((i // 2) % 2)) * axis_1
-            rotang = 1e-2 * (100 ** ((i - 1) // 4))
-            qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
-            func_rotate_frame(i_ga, default_contact_pos, qrot, i_b, geoms_state, geoms_info)
-            func_rotate_frame(i_gb, default_contact_pos, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
-
-        gjk_flag = GJK.func_safe_gjk(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            rigid_global_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-        )
-
-        if gjk_flag == GJK.GJK_RETURN_CODE.INTERSECT:
-            # Initialize polytope
-            gjk_state.polytope.nverts[i_b] = 0
-            gjk_state.polytope.nfaces[i_b] = 0
-            gjk_state.polytope.nfaces_map[i_b] = 0
-            gjk_state.polytope.horizon_nedges[i_b] = 0
-
-            # Construct the initial polytope from the GJK simplex
-            GJK.func_safe_epa_init(
-                gjk_state,
-                gjk_info,
-                i_ga,
-                i_gb,
-                i_b,
-            )
-
-            if i == 0:
-                # In default configuration, we use the extended EPA algorithm to find multiple contact points.
-                max_epa_iter = gjk_info.epa_max_iterations[None]
-                while max_epa_iter > 0:
-                    i_f, num_iter = func_extended_epa(
-                        geoms_state,
-                        geoms_info,
-                        verts_info,
-                        rigid_global_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        max_epa_iter,
-                    )
-                    max_epa_iter -= num_iter
-
-                    if i_f == -1:
-                        break
-
-                    # Mark the face as visited
-                    gjk_state.polytope_faces.visited[i_b, i_f] = 1
-
-                    # Compute penetration depth
-                    witness1 = gjk_state.witness.point_obj1[i_b, 0]
-                    witness2 = gjk_state.witness.point_obj2[i_b, 0]
-
-                    normal = witness2 - witness1
-                    penetration = normal.norm()
-
-                    # If the penetration depth is larger than the (default EPA depth + eps), we can ignore this contact
-                    # because the weight of the contact point would be 0.
-                    if found_default_epa and (
-                        penetration > default_penetration + gjk_info.diff_contact_eps_distance[None]
-                    ):
-                        continue
-
-                    # Add input data for differentiable contact detection
-                    func_add_diff_contact_input(
-                        geoms_state,
-                        geoms_info,
-                        verts_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        i_f,
-                    )
-
-                    if not found_default_epa:
-                        # If the default contact is already numerically unstable, we do not add any contact point.
-                        if gjk_state.diff_contact_input.valid[i_b, 0] == 0:
-                            gjk_state.n_diff_contact_input[i_b] = 0
-                            break
-                        default_contact_pos = 0.5 * (witness1 + witness2)
-                        default_penetration = penetration
-
-                        axis_0, axis_1 = func_contact_orthogonals(
-                            i_ga,
-                            i_gb,
-                            normal / penetration,
-                            i_b,
-                            links_state,
-                            links_info,
-                            geoms_state,
-                            geoms_info,
-                            geoms_init_AABB,
-                            rigid_global_info,
-                        )
-
-                        found_default_epa = True
-
-                    # Break the loop if we found enough contact points for default configuration. As we can find at most
-                    # 8 contact points for perturbed configurations, we can find at most max_contacts_per_pair - 8
-                    # contact points for default configuration.
-                    if gjk_state.n_diff_contact_input[i_b] >= (gjk_info.max_contacts_per_pair[None] - num_perturb):
-                        break
-
-                # If we failed to find the default contact point, we do not add any contact point.
-                if not found_default_epa:
-                    break
-            else:
-                i_f = GJK.func_safe_epa(
-                    geoms_state,
-                    geoms_info,
-                    verts_info,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                    collider_state,
-                    collider_static_config,
-                    gjk_state,
-                    gjk_info,
-                    support_field_info,
-                    i_ga,
-                    i_gb,
-                    i_b,
-                )
-                if i_f == -1:
-                    continue
-
-                # Convert back to the default configuration
-                geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-                geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
-
-                # Add input data for differentiable contact detection
-                func_add_diff_contact_input(
-                    geoms_state,
-                    geoms_info,
-                    verts_info,
-                    static_rigid_sim_config,
-                    collider_state,
-                    collider_static_config,
-                    gjk_state,
-                    gjk_info,
-                    support_field_info,
-                    i_ga,
-                    i_gb,
-                    i_b,
-                    i_f,
-                )
-
-        elif i == 0:
-            # If there was no intersection at the default configuration, we do not add any contact point.
-            break
-
-    # Convert back to the default configuration
-    geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-    geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
-
-    ### Compute the differentiable contact data from the non-differentiable data.
-    n_contacts = 0
-    for i_c in range(gjk_state.n_diff_contact_input[i_b]):
-        # We ignore the contact point if it is not numerically stable.
-        if gjk_state.diff_contact_input.valid[i_b, i_c] == 0:
-            continue
-
-        # Compute the differentiable contact data.
-        ref_penetration = -1.0
-        if i_c > 0:
-            ref_penetration = default_penetration
-        contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
-            geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-        )
-        if i_c == 0:
-            default_penetration = penetration
-
-        # We ignore the contact point if the weight is 0.
-        if weight == 0.0:
-            if i_c == 0:
-                # This will not happen, but we keep this for safety.
-                break
-            else:
-                continue
-
-        diff_penetration = penetration * weight
-
-        # Check if there is any duplicate contact point.
-        duplicate_id = -1
-        for i_c2 in range(n_contacts):
-            prev_contact_pos = gjk_state.contact_pos[i_b, i_c2]
-            prev_contact_normal = gjk_state.normal[i_b, i_c2]
-
-            if (contact_pos - prev_contact_pos).norm() > pos_tol:
-                continue
-            if contact_normal.dot(prev_contact_normal) < (1.0 - normal_tol):
-                continue
-            duplicate_id = i_c2
-            break
-
-        insert_id = n_contacts
-        if duplicate_id != -1:
-            # If it is duplicate and the prev. penetration depth is smaller, we replace the duplicate contact point.
-            if gjk_state.diff_penetration[i_b, duplicate_id] < diff_penetration:
-                insert_id = duplicate_id
-            else:
-                continue
-
-        if i_c > 0 and insert_id == 0:
-            # We keep the first contact point as the reference contact point.
-            continue
-
-        # Update the differentiable contact data.
-        gjk_state.contact_pos[i_b, insert_id] = contact_pos
-        gjk_state.normal[i_b, insert_id] = contact_normal
-        gjk_state.diff_penetration[i_b, insert_id] = diff_penetration
-
-        # Update the non-differentiable contact data for the backward pass.
-        gjk_state.diff_contact_input.local_pos1_a[i_b, insert_id] = gjk_state.diff_contact_input.local_pos1_a[i_b, i_c]
-        gjk_state.diff_contact_input.local_pos1_b[i_b, insert_id] = gjk_state.diff_contact_input.local_pos1_b[i_b, i_c]
-        gjk_state.diff_contact_input.local_pos1_c[i_b, insert_id] = gjk_state.diff_contact_input.local_pos1_c[i_b, i_c]
-        gjk_state.diff_contact_input.local_pos2_a[i_b, insert_id] = gjk_state.diff_contact_input.local_pos2_a[i_b, i_c]
-        gjk_state.diff_contact_input.local_pos2_b[i_b, insert_id] = gjk_state.diff_contact_input.local_pos2_b[i_b, i_c]
-        gjk_state.diff_contact_input.local_pos2_c[i_b, insert_id] = gjk_state.diff_contact_input.local_pos2_c[i_b, i_c]
-        gjk_state.diff_contact_input.w_local_pos1[i_b, insert_id] = gjk_state.diff_contact_input.w_local_pos1[i_b, i_c]
-        gjk_state.diff_contact_input.w_local_pos2[i_b, insert_id] = gjk_state.diff_contact_input.w_local_pos2[i_b, i_c]
-        gjk_state.diff_contact_input.ref_id[i_b, insert_id] = 0
-        if insert_id == 0:
-            gjk_state.diff_contact_input.ref_penetration[i_b, insert_id] = penetration
-
-        if insert_id == n_contacts:
-            n_contacts += 1
-
-        if n_contacts >= gjk_info.max_contacts_per_pair[None]:
-            break
-
-    gjk_state.n_contacts[i_b] = n_contacts
-    gjk_state.is_col[i_b] = n_contacts > 0
-    gjk_state.multi_contact_flag[i_b] = True
+    # Delegate to thread-local version
+    diff_gjk_local.func_gjk_contact_local(
+        links_state,
+        links_info,
+        geoms_state,
+        geoms_info,
+        geoms_init_AABB,
+        verts_info,
+        faces_info,
+        rigid_global_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        diff_contact_input,
+        i_ga,
+        i_gb,
+        i_b,
+        ga_pos,
+        ga_quat,
+        gb_pos,
+        gb_quat,
+        pos_tol,
+        normal_tol,
+    )
 
 
 @ti.func

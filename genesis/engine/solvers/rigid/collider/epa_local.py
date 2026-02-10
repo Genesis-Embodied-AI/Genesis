@@ -618,3 +618,220 @@ def func_epa_support_local(
     )
 
     return v_index
+
+
+@ti.func
+def func_safe_epa_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+    i_b,
+):
+    """
+    Thread-local version of func_safe_epa.
+
+    Safe EPA algorithm to find the exact penetration depth and contact normal using the simplex
+    constructed by GJK. Uses thread-local pos/quat instead of reading from geoms_state.
+
+    This implementation is more robust than the one based on MuJoCo's implementation for the following reasons:
+    1) It guarantees that the lower bound of the depth is always smaller than the upper bound, within the tolerance.
+    2) This is because we acknowledge that polytope face normal could be unstable when the face is degenerate. Even
+    in that case, we can robustly estimate the lower bound of the depth, which gives us more robust results.
+    3) In determining the normal direction of a polytope face, we use origin and the polytope vertices altogether
+    to get a more stable normal direction, rather than just the origin.
+
+    Returns:
+        nearest_i_f: Index of the nearest face (-1 if none found)
+    """
+    upper = gjk_info.FLOAT_MAX[None]
+    upper2 = gjk_info.FLOAT_MAX_SQ[None]
+    lower = gs.ti_float(0.0)
+    tolerance = gjk_info.tolerance[None]
+    EPS = rigid_global_info.EPS[None]
+
+    # Index of the nearest face
+    nearest_i_f = gs.ti_int(-1)
+    prev_nearest_i_f = gs.ti_int(-1)
+
+    discrete = epa.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    if discrete:
+        # If the objects are discrete, we do not use tolerance.
+        tolerance = rigid_global_info.EPS[None]
+
+    k_max = gjk_info.epa_max_iterations[None]
+    for k in range(k_max):
+        prev_nearest_i_f = nearest_i_f
+
+        # Find the polytope face with the smallest distance to the origin
+        lower2 = gjk_info.FLOAT_MAX_SQ[None]
+
+        for i in range(gjk_state.polytope.nfaces_map[i_b]):
+            i_f = gjk_state.polytope_faces_map[i_b, i]
+            face_dist2 = gjk_state.polytope_faces.dist2[i_b, i_f]
+
+            if face_dist2 < lower2:
+                lower2 = face_dist2
+                nearest_i_f = i_f
+
+        if lower2 > upper2 or nearest_i_f == -1:
+            # Invalid face found, stop the algorithm (lower bound of depth is larger than upper bound)
+            nearest_i_f = prev_nearest_i_f
+            break
+
+        # Find a new support point w from the nearest face's normal
+        lower = ti.sqrt(lower2)
+        dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
+        wi = func_epa_support_local(
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            i_b,
+            dir,
+            1.0,
+        )
+        w = gjk_state.polytope_verts.mink[i_b, wi]
+
+        # The upper bound of depth at k-th iteration
+        upper_k = w.dot(dir)
+        if upper_k < upper:
+            upper = upper_k
+            upper2 = upper**2
+
+        # If the upper bound and lower bound are close enough, we can stop the algorithm
+        if (upper - lower) < tolerance:
+            break
+
+        if discrete:
+            repeated = False
+            for i in range(gjk_state.polytope.nverts[i_b]):
+                if i == wi:
+                    continue
+                elif (
+                    gjk_state.polytope_verts.id1[i_b, i] == gjk_state.polytope_verts.id1[i_b, wi]
+                    and gjk_state.polytope_verts.id2[i_b, i] == gjk_state.polytope_verts.id2[i_b, wi]
+                ):
+                    # The vertex w is already in the polytope, so we do not need to add it again.
+                    repeated = True
+                    break
+            if repeated:
+                break
+
+        gjk_state.polytope.horizon_w[i_b] = w
+
+        # Compute horizon
+        horizon_flag = epa.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+
+        if horizon_flag:
+            # There was an error in the horizon construction, so the horizon edge is not a closed loop.
+            nearest_i_f = -1
+            break
+
+        if gjk_state.polytope.horizon_nedges[i_b] < 3:
+            # Should not happen, because at least three edges should be in the horizon from one deleted face.
+            nearest_i_f = -1
+            break
+
+        # Check if the memory space is enough for attaching new faces
+        nfaces = gjk_state.polytope.nfaces[i_b]
+        nedges = gjk_state.polytope.horizon_nedges[i_b]
+        if nfaces + nedges >= gjk_info.polytope_max_faces[None]:
+            # If the polytope is full, we cannot insert new faces
+            break
+
+        # Attach the new faces
+        attach_flag = gjk.RETURN_CODE.SUCCESS
+        for i in range(nedges):
+            # Face id of the current face to attach
+            i_f0 = nfaces + i
+            # Face id of the next face to attach
+            i_f1 = nfaces + (i + 1) % nedges
+
+            horizon_i_f = gjk_state.polytope_horizon_data.face_idx[i_b, i]
+            horizon_i_e = gjk_state.polytope_horizon_data.edge_idx[i_b, i]
+
+            horizon_v1 = gjk_state.polytope_faces.verts_idx[i_b, horizon_i_f][horizon_i_e]
+            horizon_v2 = gjk_state.polytope_faces.verts_idx[i_b, horizon_i_f][(horizon_i_e + 1) % 3]
+
+            # Change the adjacent face index of the existing face
+            gjk_state.polytope_faces.adj_idx[i_b, horizon_i_f][horizon_i_e] = i_f0
+
+            # Attach the new face.
+            # If this if the first face, will be adjacent to the face that will be attached last.
+            adj_i_f_0 = i_f0 - 1 if (i > 0) else nfaces + nedges - 1
+            adj_i_f_1 = horizon_i_f
+            adj_i_f_2 = i_f1
+
+            attach_flag = epa.func_safe_attach_face_to_polytope(
+                gjk_state,
+                gjk_info,
+                i_b,
+                wi,
+                horizon_v2,
+                horizon_v1,
+                adj_i_f_2,  # Previous face id
+                adj_i_f_1,
+                adj_i_f_0,  # Next face id
+            )
+            if attach_flag != gjk.RETURN_CODE.SUCCESS:
+                # Unrecoverable numerical issue
+                break
+
+            # Store face in the map
+            nfaces_map = gjk_state.polytope.nfaces_map[i_b]
+            gjk_state.polytope_faces_map[i_b, nfaces_map] = i_f0
+            gjk_state.polytope_faces.map_idx[i_b, i_f0] = nfaces_map
+            gjk_state.polytope.nfaces_map[i_b] += 1
+
+        if attach_flag != gjk.RETURN_CODE.SUCCESS:
+            nearest_i_f = -1
+            break
+
+        # Clear the horizon data for the next iteration
+        gjk_state.polytope.horizon_nedges[i_b] = 0
+
+        if (gjk_state.polytope.nfaces_map[i_b] == 0) or (nearest_i_f == -1):
+            # No face candidate left
+            nearest_i_f = -1
+            break
+
+    # Nearest face found
+    if nearest_i_f != -1:
+        dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
+        flag = epa.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
+        if flag == gjk.RETURN_CODE.SUCCESS:
+            gjk_state.n_witness[i_b] = 1
+            gjk_state.distance[i_b] = -ti.sqrt(dist2)
+        else:
+            # Failed to compute witness points, so the objects are not colliding
+            gjk_state.n_witness[i_b] = 0
+            gjk_state.distance[i_b] = 0.0
+            nearest_i_f = -1
+    else:
+        # No face found, so the objects are not colliding
+        gjk_state.n_witness[i_b] = 0
+        gjk_state.distance[i_b] = 0.0
+
+    return nearest_i_f
