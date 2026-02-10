@@ -162,8 +162,6 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
 
 
 @ti.func
-@ti.func
-@ti.func
 def func_gjk_intersect(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
