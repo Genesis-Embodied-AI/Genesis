@@ -21,6 +21,8 @@ dependencies = [
     "moviepy>=2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
+    # * 2.0.15 <= 2.1.8 breaks old-style option overwrite for string literal.
+    # * 2.1.10 changes default DPI scaling behavior.
     "pyglet>=1.5,!=2.1.8",
     # Used by `pyrender` to load fonts
     "freetype-py",
