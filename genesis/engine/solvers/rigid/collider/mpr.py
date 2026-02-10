@@ -165,25 +165,6 @@ def mpr_portal_reach_tolerance(
 
 
 @ti.func
-def support_driver(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
-    support_field_info: array_class.SupportFieldInfo,
-    direction,
-    i_g,
-    i_b,
-):
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return mpr_local.support_driver_local(
-        geoms_info, collider_state, collider_static_config, support_field_info, direction, i_g, i_b, pos, quat
-    )
-
-
-@ti.func
 def mpr_find_pos(
     static_rigid_sim_config: ti.template(),
     mpr_state: array_class.MPRState,

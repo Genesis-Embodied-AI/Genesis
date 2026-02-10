@@ -390,16 +390,21 @@ def func_contact_mpr_terrain(
                 direction[i_axis] = 1.0
             else:
                 direction[i_axis] = -1.0
-            v1 = mpr.support_driver(
-                geoms_state,
-                geoms_info,
-                collider_state,
-                collider_info,
-                collider_static_config,
-                support_field_info,
-                direction,
-                i_ga,
-                i_b,
+            
+            # Extract local pos/quat for thread-local support call
+            pos_ga = geoms_state.pos[i_ga, i_b]
+            quat_ga = geoms_state.quat[i_ga, i_b]
+            
+            v1 = mpr_local.support_driver_local(
+                geoms_info=geoms_info,
+                collider_state=collider_state,
+                collider_static_config=collider_static_config,
+                support_field_info=support_field_info,
+                direction=direction,
+                i_g=i_ga,
+                i_b=i_b,
+                pos=pos_ga,
+                quat=quat_ga,
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
