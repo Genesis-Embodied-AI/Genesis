@@ -208,11 +208,6 @@ class KinematicContactProbe(
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
-    @gs.assert_built
-    def read_ground_truth(self, envs_idx=None):
-        """Read ground truth sensor data without noise."""
-        return self._read_internal(envs_idx, is_ground_truth=True)
-
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
@@ -379,7 +374,7 @@ def _kernel_kinematic_contact_probe_support_query(
 ):
     """Compute contact probe readings using support functions."""
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = links_state.pos.shape[-1]
+    n_batches = output.shape[0]
 
     for i_b, i_p in ti.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
