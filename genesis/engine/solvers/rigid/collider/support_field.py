@@ -188,7 +188,6 @@ def _func_support_prism(
 
 
 @ti.func
-@ti.func
 def _func_count_supports_mesh(
     support_field_info: array_class.SupportFieldInfo,
     d_mesh,
