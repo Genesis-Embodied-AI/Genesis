@@ -218,7 +218,6 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     mv: V_ANNOTATION
     jv: V_ANNOTATION
     quad_gauss: V_ANNOTATION
-    quad: V_ANNOTATION
     candidates: V_ANNOTATION
     eq_sum: V_ANNOTATION
     ls_it: V_ANNOTATION
@@ -321,7 +320,6 @@ def get_constraint_state(constraint_solver, solver):
         efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
         jac=V(dtype=gs.ti_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
