@@ -89,8 +89,91 @@ from genesis.engine.solvers.rigid.collider.contact import (
 )
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.engine.solvers.rigid.collider import narrowphase
-from genesis.utils import array_class
+from genesis.utils import array_class, sdf_local
 import genesis.utils.geom as gu
+
+
+@ti.func
+def func_contact_vertex_sdf_local(
+    i_ga,
+    i_gb,
+    i_b,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: ti.template(),
+    sdf_info: array_class.SDFInfo,
+):
+    """
+    Thread-local version of func_contact_vertex_sdf.
+    
+    Detects collision between a vertex-based geometry (geom A) and an SDF-based geometry (geom B),
+    using provided thread-local geometry poses instead of reading from geoms_state.
+    
+    Args:
+        i_ga: Geometry A index
+        i_gb: Geometry B index
+        i_b: Batch index
+        ga_pos: Thread-local geometry A position
+        ga_quat: Thread-local geometry A quaternion
+        gb_pos: Thread-local geometry B position
+        gb_quat: Thread-local geometry B quaternion
+        geoms_state: Global geometry state (for AABB only)
+        geoms_info: Geometry information
+        verts_info: Vertex information
+        rigid_global_info: Global rigid body information
+        collider_static_config: Collider static configuration
+        sdf_info: SDF information
+    
+    Returns:
+        is_col: Whether collision is detected
+        normal: Contact normal
+        penetration: Penetration depth
+        contact_pos: Contact position
+    """
+    is_col = False
+    penetration = gs.ti_float(0.0)
+    normal = ti.Vector.zero(gs.ti_float, 3)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+
+    for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
+        vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
+        if narrowphase.func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
+            new_penetration = -sdf_local.sdf_func_world_local(
+                geoms_info=geoms_info,
+                sdf_info=sdf_info,
+                pos_world=vertex_pos,
+                geom_idx=i_gb,
+                geom_pos=gb_pos,
+                geom_quat=gb_quat,
+            )
+            if new_penetration > penetration:
+                is_col = True
+                contact_pos = vertex_pos
+                penetration = new_penetration
+
+    if is_col:
+        # Compute contact normal only once, and only in case of contact
+        normal = sdf_local.sdf_func_normal_world_local(
+            geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
+            collider_static_config=collider_static_config,
+            sdf_info=sdf_info,
+            pos_world=contact_pos,
+            geom_idx=i_gb,
+            geom_pos=gb_pos,
+            geom_quat=gb_quat,
+        )
+
+        # The contact point must be offsetted by half the penetration depth
+        contact_pos = contact_pos + 0.5 * penetration * normal
+
+    return is_col, normal, penetration, contact_pos
 
 
 @ti.func
