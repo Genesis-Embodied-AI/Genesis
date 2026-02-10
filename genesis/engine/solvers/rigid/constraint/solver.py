@@ -20,10 +20,8 @@ if TYPE_CHECKING:
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
-USE_LS_PACK = os.environ.get("GS_SOLVER_LS_PACK", "0") == "1"
-# TODO: set default to True for test on CI benchmarks
-USE_LS_PACK = 1
-
+USE_LS_RECOMPUTE = os.environ.get("GS_SOLVER_LS_RECOMPUTE", "0") == "1"
+USE_LS_RECOMPUTE = 1
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -1927,35 +1925,16 @@ def func_ls_init_and_eval_p0_opt(
                 mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
             constraint_state.mv[i_d1, i_b] = mv
 
-    if ti.static(USE_LS_PACK):
-        # Compute jv and pack all fields into ls_pack for subsequent evaluation calls
-        for i_c in range(n_con):
-            jv = gs.ti_float(0.0)
-            if ti.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            constraint_state.jv[i_c, i_b] = jv
-            Jaref_c = constraint_state.Jaref[i_c, i_b]
-            constraint_state.ls_pack[i_c, 0, i_b] = Jaref_c
-            constraint_state.ls_pack[i_c, 1, i_b] = jv
-            constraint_state.ls_pack[i_c, 2, i_b] = constraint_state.efc_D[i_c, i_b]
-            constraint_state.ls_pack[i_c, 3, i_b] = constraint_state.efc_frictionloss[i_c, i_b]
-            constraint_state.ls_pack[i_c, 4, i_b] = constraint_state.diag[i_c, i_b]
-    else:
-        for i_c in range(n_con):
-            jv = gs.ti_float(0.0)
-            if ti.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            constraint_state.jv[i_c, i_b] = jv
+    for i_c in range(n_con):
+        jv = gs.ti_float(0.0)
+        if ti.static(static_rigid_sim_config.sparse_solve):
+            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        else:
+            for i_d in range(n_dofs):
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+        constraint_state.jv[i_c, i_b] = jv
 
     # -- quad_gauss (same as original func_ls_init) --
     quad_gauss_1 = gs.ti_float(0.0)
@@ -1978,12 +1957,12 @@ def func_ls_init_and_eval_p0_opt(
     eq_sum_1 = gs.ti_float(0.0)
     eq_sum_2 = gs.ti_float(0.0)
 
-    if ti.static(USE_LS_PACK):
-        # Fused loop: compute quad on the fly from ls_pack, accumulate by type
+    if ti.static(USE_LS_RECOMPUTE):
+        # Fused loop: read from original arrays, recompute quad on the fly, no quad writes
         for i_c in range(n_con):
-            Jaref_c = constraint_state.ls_pack[i_c, 0, i_b]
-            jv_c = constraint_state.ls_pack[i_c, 1, i_b]
-            D = constraint_state.ls_pack[i_c, 2, i_b]
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
             qf_0 = D * (0.5 * Jaref_c * Jaref_c)
             qf_1 = D * (jv_c * Jaref_c)
             qf_2 = D * (0.5 * jv_c * jv_c)
@@ -1998,8 +1977,8 @@ def func_ls_init_and_eval_p0_opt(
                 quad_total_2 = quad_total_2 + qf_2
             elif i_c < nef:
                 # Friction: check linear regime at x=Jaref (alpha=0)
-                f = constraint_state.ls_pack[i_c, 3, i_b]
-                r = constraint_state.ls_pack[i_c, 4, i_b]
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
                 rf = r * f
                 linear_neg = Jaref_c <= -rf
                 linear_pos = Jaref_c >= rf
@@ -2017,7 +1996,7 @@ def func_ls_init_and_eval_p0_opt(
                 quad_total_1 = quad_total_1 + qf_1 * active
                 quad_total_2 = quad_total_2 + qf_2 * active
     else:
-        # Compute quad for all constraints and write to global
+        # Baseline: precompute quad, write to global, read back per type
         for i_c in range(n_con):
             qf_0 = constraint_state.efc_D[i_c, i_b] * (
                 0.5 * constraint_state.Jaref[i_c, i_b] * constraint_state.Jaref[i_c, i_b]
@@ -2121,14 +2100,14 @@ def func_ls_point_fn_opt(
     quad_total_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
     quad_total_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
 
-    if ti.static(USE_LS_PACK):
-        # Friction constraints [ne, nef): load from ls_pack, recompute quad on the fly
+    if ti.static(USE_LS_RECOMPUTE):
+        # Friction constraints [ne, nef): read from original arrays, recompute quad on the fly
         for i_c in range(ne, nef):
-            Jaref_c = constraint_state.ls_pack[i_c, 0, i_b]
-            jv_c = constraint_state.ls_pack[i_c, 1, i_b]
-            D = constraint_state.ls_pack[i_c, 2, i_b]
-            f = constraint_state.ls_pack[i_c, 3, i_b]
-            r = constraint_state.ls_pack[i_c, 4, i_b]
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = constraint_state.diag[i_c, i_b]
             qf_0 = D * (0.5 * Jaref_c * Jaref_c)
             qf_1 = D * (jv_c * Jaref_c)
             qf_2 = D * (0.5 * jv_c * jv_c)
@@ -2144,21 +2123,21 @@ def func_ls_point_fn_opt(
             quad_total_1 = quad_total_1 + qf_1
             quad_total_2 = quad_total_2 + qf_2
 
-        # Contact constraints [nef, n_con): load from ls_pack, recompute quad on the fly
+        # Contact constraints [nef, n_con): read from original arrays, recompute quad on the fly
         for i_c in range(nef, n_con):
-            Jaref_c = constraint_state.ls_pack[i_c, 0, i_b]
-            jv_c = constraint_state.ls_pack[i_c, 1, i_b]
-            D = constraint_state.ls_pack[i_c, 2, i_b]
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
+            x = Jaref_c + alpha * jv_c
+            active = x < 0
             qf_0 = D * (0.5 * Jaref_c * Jaref_c)
             qf_1 = D * (jv_c * Jaref_c)
             qf_2 = D * (0.5 * jv_c * jv_c)
-            x = Jaref_c + alpha * jv_c
-            active = x < 0
             quad_total_0 = quad_total_0 + qf_0 * active
             quad_total_1 = quad_total_1 + qf_1 * active
             quad_total_2 = quad_total_2 + qf_2 * active
     else:
-        # Friction constraints [ne, nef)
+        # Baseline: read precomputed quad from global memory
         for i_c in range(ne, nef):
             x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
             qf_0 = constraint_state.quad[i_c, 0, i_b]
@@ -2181,7 +2160,6 @@ def func_ls_point_fn_opt(
             quad_total_1 = quad_total_1 + qf_1
             quad_total_2 = quad_total_2 + qf_2
 
-        # Contact constraints [nef, n_con)
         for i_c in range(nef, n_con):
             x = constraint_state.Jaref[i_c, i_b] + alpha * constraint_state.jv[i_c, i_b]
             active = x < 0
@@ -2235,14 +2213,14 @@ def func_ls_point_fn_3alphas_opt(
     t1_0, t1_1, t1_2 = base_0, base_1, base_2
     t2_0, t2_1, t2_2 = base_0, base_1, base_2
 
-    if ti.static(USE_LS_PACK):
-        # Friction constraints [ne, nef): load from ls_pack, recompute quad on the fly
+    if ti.static(USE_LS_RECOMPUTE):
+        # Friction constraints [ne, nef): read from original arrays, recompute quad on the fly
         for i_c in range(ne, nef):
-            Jaref_c = constraint_state.ls_pack[i_c, 0, i_b]
-            jv_c = constraint_state.ls_pack[i_c, 1, i_b]
-            D = constraint_state.ls_pack[i_c, 2, i_b]
-            f = constraint_state.ls_pack[i_c, 3, i_b]
-            r = constraint_state.ls_pack[i_c, 4, i_b]
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
+            f = constraint_state.efc_frictionloss[i_c, i_b]
+            r = constraint_state.diag[i_c, i_b]
             qf_0 = D * (0.5 * Jaref_c * Jaref_c)
             qf_1 = D * (jv_c * Jaref_c)
             qf_2 = D * (0.5 * jv_c * jv_c)
@@ -2284,11 +2262,11 @@ def func_ls_point_fn_3alphas_opt(
             t2_1 = t2_1 + a2_qf_1
             t2_2 = t2_2 + a2_qf_2
 
-        # Contact constraints [nef, n_con): load from ls_pack, recompute quad on the fly
+        # Contact constraints [nef, n_con): read from original arrays, recompute quad on the fly
         for i_c in range(nef, n_con):
-            Jaref_c = constraint_state.ls_pack[i_c, 0, i_b]
-            jv_c = constraint_state.ls_pack[i_c, 1, i_b]
-            D = constraint_state.ls_pack[i_c, 2, i_b]
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            jv_c = constraint_state.jv[i_c, i_b]
+            D = constraint_state.efc_D[i_c, i_b]
             qf_0 = D * (0.5 * Jaref_c * Jaref_c)
             qf_1 = D * (jv_c * Jaref_c)
             qf_2 = D * (0.5 * jv_c * jv_c)
@@ -2309,7 +2287,7 @@ def func_ls_point_fn_3alphas_opt(
             t2_1 = t2_1 + qf_1 * act2
             t2_2 = t2_2 + qf_2 * act2
     else:
-        # Friction constraints [ne, nef)
+        # Baseline: read precomputed quad from global memory
         for i_c in range(ne, nef):
             Jaref_c = constraint_state.Jaref[i_c, i_b]
             jv_c = constraint_state.jv[i_c, i_b]
@@ -2356,7 +2334,6 @@ def func_ls_point_fn_3alphas_opt(
             t2_1 = t2_1 + a2_qf_1
             t2_2 = t2_2 + a2_qf_2
 
-        # Contact constraints [nef, n_con)
         for i_c in range(nef, n_con):
             Jaref_c = constraint_state.Jaref[i_c, i_b]
             jv_c = constraint_state.jv[i_c, i_b]

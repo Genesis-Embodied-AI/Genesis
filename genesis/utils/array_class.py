@@ -217,7 +217,6 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     gtol: V_ANNOTATION
     mv: V_ANNOTATION
     jv: V_ANNOTATION
-    ls_pack: V_ANNOTATION
     quad_gauss: V_ANNOTATION
     quad: V_ANNOTATION
     candidates: V_ANNOTATION
@@ -322,11 +321,6 @@ def get_constraint_state(constraint_solver, solver):
         efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        # Packed linesearch data: [Jaref, jv, efc_D, efc_frictionloss, diag] in a single contiguous array.
-        # Replaces 5 separate global memory reads with 1 contiguous load per constraint, and allows quad
-        # coefficients to be recomputed on the fly (~8 FLOPs) instead of read from the quad array (3 loads),
-        # reducing per-evaluation bandwidth by 40% (contacts) / 29% (friction). Gated by GS_SOLVER_LS_PACK=1.
-        ls_pack=V(dtype=gs.ti_float, shape=(len_constraints_, 5, _B)),
         quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
         jac=V(dtype=gs.ti_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
