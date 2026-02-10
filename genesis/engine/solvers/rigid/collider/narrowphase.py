@@ -14,10 +14,8 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.utils.sdf as sdf
-from . import mpr, mpr_local
-from . import gjk
+from . import mpr_local
 from . import diff_gjk
-from . import support_field
 from . import narrowphase_local
 
 from .broadphase import func_point_in_geom_aabb
@@ -43,7 +41,6 @@ class CCD_ALGORITHM_CODE(IntEnum):
     MJ_GJK = 3
 
 
-
 @ti.func
 def func_contact_mpr_terrain(
     i_ga,
@@ -66,7 +63,9 @@ def func_contact_mpr_terrain(
     margin = gs.ti_float(0.0)
 
     is_return = False
-    tolerance = contact.func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = contact.func_compute_tolerance(
+        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+    )
 
     if not is_return:
         # Transform to terrain's frame (using local variables, not modifying global state)
@@ -78,9 +77,7 @@ def func_contact_mpr_terrain(
         )
         gb_pos_terrain_frame = ti.Vector.zero(gs.ti_float, 3)
         gb_quat_terrain_frame = gu.ti_identity_quat()
-        center_a = gu.ti_transform_by_trans_quat(
-            geoms_info.center[i_ga], ga_pos_terrain_frame, ga_quat_terrain_frame
-        )
+        center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos_terrain_frame, ga_quat_terrain_frame)
 
         for i_axis, i_m in ti.ndrange(3, 2):
             direction = ti.Vector.zero(gs.ti_float, 3)
@@ -88,7 +85,7 @@ def func_contact_mpr_terrain(
                 direction[i_axis] = 1.0
             else:
                 direction[i_axis] = -1.0
-            
+
             # Use terrain frame poses for support calculation
             v1 = mpr_local.support_driver_local(
                 geoms_info=geoms_info,
@@ -149,23 +146,25 @@ def func_contact_mpr_terrain(
                                 center_b = center_b / 6.0
 
                                 # Use terrain frame poses for MPR collision detection
-                                is_col, normal, penetration, contact_pos = mpr_local.func_mpr_contact_from_centers_local(
-                                    geoms_info=geoms_info,
-                                    static_rigid_sim_config=static_rigid_sim_config,
-                                    collider_state=collider_state,
-                                    collider_static_config=collider_static_config,
-                                    mpr_state=mpr_state,
-                                    mpr_info=mpr_info,
-                                    support_field_info=support_field_info,
-                                    i_ga=i_ga,
-                                    i_gb=i_gb,
-                                    i_b=i_b,
-                                    center_a=center_a,
-                                    center_b=center_b,
-                                    pos_a=ga_pos_terrain_frame,
-                                    quat_a=ga_quat_terrain_frame,
-                                    pos_b=gb_pos_terrain_frame,
-                                    quat_b=gb_quat_terrain_frame,
+                                is_col, normal, penetration, contact_pos = (
+                                    mpr_local.func_mpr_contact_from_centers_local(
+                                        geoms_info=geoms_info,
+                                        static_rigid_sim_config=static_rigid_sim_config,
+                                        collider_state=collider_state,
+                                        collider_static_config=collider_static_config,
+                                        mpr_state=mpr_state,
+                                        mpr_info=mpr_info,
+                                        support_field_info=support_field_info,
+                                        i_ga=i_ga,
+                                        i_gb=i_gb,
+                                        i_b=i_b,
+                                        center_a=center_a,
+                                        center_b=center_b,
+                                        pos_a=ga_pos_terrain_frame,
+                                        quat_a=ga_quat_terrain_frame,
+                                        pos_b=gb_pos_terrain_frame,
+                                        quat_b=gb_quat_terrain_frame,
+                                    )
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -332,9 +331,7 @@ def func_narrow_phase_diff_convex_vs_convex(
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
-    gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
-    gjk_static_config: ti.template(),
     # FIXME: Passing nested data structure as input argument is not supported for now.
     diff_contact_input: array_class.DiffContactInput,
 ):
@@ -458,7 +455,6 @@ def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
@@ -559,21 +555,23 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             ga_quat = geoms_state.quat[i_ga, i_b]
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
-                            
-                            is_col_i, normal_i, penetration_i, contact_pos_i = narrowphase_local.func_contact_vertex_sdf_local(
-                                i_ga=i_ga,
-                                i_gb=i_gb,
-                                i_b=i_b,
-                                ga_pos=ga_pos,
-                                ga_quat=ga_quat,
-                                gb_pos=gb_pos,
-                                gb_quat=gb_quat,
-                                geoms_state=geoms_state,
-                                geoms_info=geoms_info,
-                                verts_info=verts_info,
-                                rigid_global_info=rigid_global_info,
-                                collider_static_config=collider_static_config,
-                                sdf_info=sdf_info,
+
+                            is_col_i, normal_i, penetration_i, contact_pos_i = (
+                                narrowphase_local.func_contact_vertex_sdf_local(
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    ga_pos=ga_pos,
+                                    ga_quat=ga_quat,
+                                    gb_pos=gb_pos,
+                                    gb_quat=gb_quat,
+                                    geoms_state=geoms_state,
+                                    geoms_info=geoms_info,
+                                    verts_info=verts_info,
+                                    rigid_global_info=rigid_global_info,
+                                    collider_static_config=collider_static_config,
+                                    sdf_info=sdf_info,
+                                )
                             )
                             if is_col_i:
                                 contact.func_add_contact(
@@ -592,8 +590,14 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 
                         if ti.static(static_rigid_sim_config.enable_multi_contact):
                             if not is_col and is_col_i:
-                                ga_pos_original, ga_quat_original = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-                                gb_pos_original, gb_quat_original = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+                                ga_pos_original, ga_quat_original = (
+                                    geoms_state.pos[i_ga, i_b],
+                                    geoms_state.quat[i_ga, i_b],
+                                )
+                                gb_pos_original, gb_quat_original = (
+                                    geoms_state.pos[i_gb, i_b],
+                                    geoms_state.quat[i_gb, i_b],
+                                )
 
                                 # Perturb geom_a around two orthogonal axes to find multiple contacts
                                 axis_0, axis_1 = contact.func_contact_orthogonals(
@@ -615,7 +619,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
                                     qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-                                    
+
                                     # Apply perturbations to local variables (no global state modification)
                                     ga_result = contact_local.func_rotate_frame_local(
                                         pos=ga_pos_original,
@@ -625,7 +629,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     )
                                     ga_pos_perturbed = ga_result.pos
                                     ga_quat_perturbed = ga_result.quat
-                                    
+
                                     gb_result = contact_local.func_rotate_frame_local(
                                         pos=gb_pos_original,
                                         quat=gb_quat_original,
@@ -635,20 +639,22 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     gb_pos_perturbed = gb_result.pos
                                     gb_quat_perturbed = gb_result.quat
 
-                                    is_col, normal, penetration, contact_pos = narrowphase_local.func_contact_vertex_sdf_local(
-                                        i_ga=i_ga,
-                                        i_gb=i_gb,
-                                        i_b=i_b,
-                                        ga_pos=ga_pos_perturbed,
-                                        ga_quat=ga_quat_perturbed,
-                                        gb_pos=gb_pos_perturbed,
-                                        gb_quat=gb_quat_perturbed,
-                                        geoms_state=geoms_state,
-                                        geoms_info=geoms_info,
-                                        verts_info=verts_info,
-                                        rigid_global_info=rigid_global_info,
-                                        collider_static_config=collider_static_config,
-                                        sdf_info=sdf_info,
+                                    is_col, normal, penetration, contact_pos = (
+                                        narrowphase_local.func_contact_vertex_sdf_local(
+                                            i_ga=i_ga,
+                                            i_gb=i_gb,
+                                            i_b=i_b,
+                                            ga_pos=ga_pos_perturbed,
+                                            ga_quat=ga_quat_perturbed,
+                                            gb_pos=gb_pos_perturbed,
+                                            gb_quat=gb_quat_perturbed,
+                                            geoms_state=geoms_state,
+                                            geoms_info=geoms_info,
+                                            verts_info=verts_info,
+                                            rigid_global_info=rigid_global_info,
+                                            collider_static_config=collider_static_config,
+                                            sdf_info=sdf_info,
+                                        )
                                     )
 
                                     if is_col:
@@ -716,7 +722,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             ga_quat = geoms_state.quat[i_ga, i_b]
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
-                            
+
                             is_col, normal, penetration, contact_pos = narrowphase_local.func_contact_edge_sdf_local(
                                 i_ga=i_ga,
                                 i_gb=i_gb,

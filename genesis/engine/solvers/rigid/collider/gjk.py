@@ -4,9 +4,7 @@ from enum import IntEnum
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import gjk_local, support_field
 
 
 class RETURN_CODE(IntEnum):
@@ -633,19 +631,17 @@ def func_is_discrete_geoms(
     geoms_info: array_class.GeomsInfo,
     i_ga,
     i_gb,
-    i_b,
 ):
     """
     Check if the given geoms are discrete geometries.
     """
-    return func_is_discrete_geom(geoms_info, i_ga, i_b) and func_is_discrete_geom(geoms_info, i_gb, i_b)
+    return func_is_discrete_geom(geoms_info, i_ga) and func_is_discrete_geom(geoms_info, i_gb)
 
 
 @ti.func
 def func_is_discrete_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Check if the given geom is a discrete geometry.
@@ -658,7 +654,6 @@ def func_is_discrete_geom(
 def func_is_sphere_swept_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Check if the given geoms are sphere-swept geometries.
@@ -936,7 +931,6 @@ def func_is_coplanar(
 def func_num_discrete_geom_vertices(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Count the number of discrete vertices in the geometry.

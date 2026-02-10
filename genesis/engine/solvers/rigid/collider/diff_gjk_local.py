@@ -414,7 +414,7 @@ def func_extended_epa_local(
     tolerance = gjk_info.tolerance[None]
     nearest_i_f = gs.ti_int(-1)
 
-    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = rigid_global_info.EPS[None]

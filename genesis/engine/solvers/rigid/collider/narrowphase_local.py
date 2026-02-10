@@ -79,7 +79,11 @@ import sys
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.collider import diff_gjk, diff_gjk_local, gjk_local, mpr_local, multi_contact_local, gjk
+from genesis.engine.solvers.rigid.collider import (
+    diff_gjk_local,
+    gjk_local,
+    mpr_local,
+)
 from genesis.engine.solvers.rigid.collider.box_contact import func_plane_box_contact
 from genesis.engine.solvers.rigid.collider.contact import (
     func_add_contact,

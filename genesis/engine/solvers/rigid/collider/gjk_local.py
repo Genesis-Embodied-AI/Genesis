@@ -88,7 +88,7 @@ def func_gjk_local(
 
     # Epsilon for convergence check.
     epsilon = gs.ti_float(0.0)
-    if not gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+    if not gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb):
         # If the objects are smooth, finite convergence is not guaranteed, so we need to set some epsilon
         # to determine convergence.
         epsilon = 0.5 * (gjk_info.tolerance[None] ** 2)
@@ -959,10 +959,10 @@ def func_search_valid_simplex_vertex_local(
     flag = gjk.RETURN_CODE.FAIL
 
     # If both geometries are discrete, we can use a brute-force search to find a valid simplex vertex.
-    if gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+    if gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb):
         geom_nverts = gs.ti_ivec2(0, 0)
         for i in range(2):
-            geom_nverts[i] = gjk.func_num_discrete_geom_vertices(geoms_info, i_ga if i == 0 else i_gb, i_b)
+            geom_nverts[i] = gjk.func_num_discrete_geom_vertices(geoms_info, i_ga if i == 0 else i_gb)
 
         num_cases = geom_nverts[0] * geom_nverts[1]
         for k in range(num_cases):
@@ -1305,11 +1305,11 @@ def func_gjk_contact_local(
 ):
     """
     Thread-local version of func_gjk_contact.
-    
+
     Detect (possibly multiple) contact between two geometries using GJK and EPA algorithms.
     This version accepts pos/quat as direct parameters instead of reading from geoms_state,
     enabling race-free multi-contact detection.
-    
+
     Args:
         geoms_state: Geometry state (still needed for EPA support functions)
         geoms_info: Geometry information
@@ -1339,8 +1339,8 @@ def func_gjk_contact_local(
         # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives,
         # we can shrink them to a point or line to detect shallow penetration faster
         is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
-            gjk.func_is_sphere_swept_geom(geoms_info, i_ga, i_b),
-            gjk.func_is_sphere_swept_geom(geoms_info, i_gb, i_b),
+            gjk.func_is_sphere_swept_geom(geoms_info, i_ga),
+            gjk.func_is_sphere_swept_geom(geoms_info, i_gb),
         )
         shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
 
