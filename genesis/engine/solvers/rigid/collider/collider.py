@@ -60,7 +60,6 @@ from .narrowphase import (
     func_contact_mpr_terrain,
     func_add_prism_vert,
     func_plane_box_contact,
-    func_convex_convex_contact,
     func_box_box_contact,
     func_narrow_phase_convex_vs_convex,
     func_narrow_phase_diff_convex_vs_convex,
@@ -172,7 +171,6 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
-        use_multicontact_local = os.environ.get("GS_MULTICONTACT_LOCAL", "1") == "1"
 
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_any_vs_terrain,
@@ -181,7 +179,6 @@ class Collider:
             has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
-            use_multicontact_local=use_multicontact_local,
         )
 
     def _init_collision_fields(self) -> None:
