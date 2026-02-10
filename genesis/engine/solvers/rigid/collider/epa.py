@@ -12,10 +12,6 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from . import gjk
 
-# Note: Previously imported specific functions from gjk, but that caused circular import
-# when gjk -> gjk_local -> epa_local -> epa -> gjk
-# Now we import the module and access functions via gjk.function_name
-
 
 @ti.func
 def func_epa_witness(
