@@ -429,7 +429,14 @@ def _get_model_mappings(
     mj_motors_idx: list[int] = []
     for joint_name in joints_name:
         if joint_name:
-            mj_joint = mj_sim.model.joint(joint_name)
+            try:
+                mj_joint = mj_sim.model.joint(joint_name)
+            except KeyError:
+                for entity in gs_sim.entities:
+                    for joint in entity.joints:
+                        if joint.name == joint_name:
+                            mj_joint = mj_sim.model.joint(joint.idx)
+                            break
         else:
             # Must rely on exhaustive search if the joint has empty name
             for j in range(mj_sim.model.njoint):
@@ -785,6 +792,7 @@ def check_mujoco_data_consistency(
     *,
     qvel_prev: np.ndarray | None = None,
     tol: float,
+    ignore_constraints: bool = False,
 ):
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
@@ -831,7 +839,7 @@ def check_mujoco_data_consistency(
     mj_n_constraints = mj_sim.data.nefc
     assert gs_n_constraints == mj_n_constraints
 
-    if gs_n_constraints:
+    if gs_n_constraints and not ignore_constraints:
         gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
         # Sort based on the axis with the largest variation
@@ -895,7 +903,6 @@ def check_mujoco_data_consistency(
         mj_efc_force = mj_sim.data.efc_force
         assert_allclose(gs_efc_force[gs_sidx], mj_efc_force[mj_sidx], tol=tol)
 
-    if gs_n_constraints:
         mj_iter = mj_sim.data.solver_niter[0] - 1
         if gs_n_constraints and mj_iter >= 0:
             gs_scale = 1.0 / (gs_meaninertia * max(1, gs_sim.rigid_solver.n_dofs))
@@ -1016,7 +1023,7 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_cinr_mass[gs_bodies_idx], mj_cinr_mass[mj_bodies_idx], tol=tol)
 
 
-def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps):
+def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints):
     # Get mapping between Mujoco and Genesis
     _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
@@ -1031,7 +1038,9 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
 
     for i in range(num_steps):
         # Make sure that all "dynamic" quantities are matching before stepping
-        check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, tol=tol)
+        check_mujoco_data_consistency(
+            gs_sim, mj_sim, qvel_prev=qvel_prev, tol=tol, ignore_constraints=ignore_constraints
+        )
 
         # Keep Mujoco and Genesis simulation in sync to avoid drift over time
         mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]

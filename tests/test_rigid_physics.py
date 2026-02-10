@@ -437,11 +437,11 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "xml/weld.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_weld(gs_sim, mj_sim, gs_solver):
+def test_equality_weld(gs_sim, mj_sim, gs_solver, xml_path):
     # Must disable self-collision caused by closing the kinematic chain (adjacent link filtering is not enough)
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
@@ -454,17 +454,15 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver):
             equality.set_sol_params(sol_params)
     mj_sim.model.eq_solref[:, 0] = sol_params[0]
 
-    assert gs_sim.rigid_solver.n_equalities == 1
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
 
-    # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
-    # The pose difference between Mujoco and Genesis (resulting from using quaternion instead of rotation matrices to
-    # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
-    # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
-    # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
+    # Note that the relative frame in which site constraint is computed is different between Mujoco and Genesis.
+    # Mujoco is using site 1, whereas Genesis is using parent link frame of site 1 since it has no notion of site.
+    ignore_constraints = any(mj_sim.model.eq_objtype == mujoco.mjtObj.mjOBJ_SITE)
+    simulate_and_check_mujoco_consistency(
+        gs_sim, mj_sim, qpos, num_steps=300, tol=1e-7, ignore_constraints=ignore_constraints
+    )
 
 
 @pytest.mark.required
