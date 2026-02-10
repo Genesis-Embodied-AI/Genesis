@@ -69,17 +69,17 @@ def func_contact_mpr_terrain(
     tolerance = contact.func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
 
     if not is_return:
-        # move to terrain's frame
-        geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
-            ga_pos - geoms_state.pos[i_gb, i_b],
+        # Transform to terrain's frame (using local variables, not modifying global state)
+        ga_pos_terrain_frame, ga_quat_terrain_frame = gu.ti_transform_pos_quat_by_trans_quat(
+            ga_pos - gb_pos,
             ga_quat,
             ti.Vector.zero(gs.ti_float, 3),
-            gu.ti_inv_quat(geoms_state.quat[i_gb, i_b]),
+            gu.ti_inv_quat(gb_quat),
         )
-        geoms_state.pos[i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
-        geoms_state.quat[i_gb, i_b] = gu.ti_identity_quat()
+        gb_pos_terrain_frame = ti.Vector.zero(gs.ti_float, 3)
+        gb_quat_terrain_frame = gu.ti_identity_quat()
         center_a = gu.ti_transform_by_trans_quat(
-            geoms_info.center[i_ga], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
+            geoms_info.center[i_ga], ga_pos_terrain_frame, ga_quat_terrain_frame
         )
 
         for i_axis, i_m in ti.ndrange(3, 2):
@@ -89,10 +89,7 @@ def func_contact_mpr_terrain(
             else:
                 direction[i_axis] = -1.0
             
-            # Extract local pos/quat for thread-local support call
-            pos_ga = geoms_state.pos[i_ga, i_b]
-            quat_ga = geoms_state.quat[i_ga, i_b]
-            
+            # Use terrain frame poses for support calculation
             v1 = mpr_local.support_driver_local(
                 geoms_info=geoms_info,
                 collider_state=collider_state,
@@ -101,8 +98,8 @@ def func_contact_mpr_terrain(
                 direction=direction,
                 i_g=i_ga,
                 i_b=i_b,
-                pos=pos_ga,
-                quat=quat_ga,
+                pos=ga_pos_terrain_frame,
+                quat=ga_quat_terrain_frame,
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
@@ -151,12 +148,7 @@ def func_contact_mpr_terrain(
                                     center_b = center_b + collider_state.prism[i_p, i_b]
                                 center_b = center_b / 6.0
 
-                                # Extract local pos/quat for thread-local MPR call
-                                pos_a = geoms_state.pos[i_ga, i_b]
-                                quat_a = geoms_state.quat[i_ga, i_b]
-                                pos_b = geoms_state.pos[i_gb, i_b]
-                                quat_b = geoms_state.quat[i_gb, i_b]
-
+                                # Use terrain frame poses for MPR collision detection
                                 is_col, normal, penetration, contact_pos = mpr_local.func_mpr_contact_from_centers_local(
                                     geoms_info=geoms_info,
                                     static_rigid_sim_config=static_rigid_sim_config,
@@ -170,10 +162,10 @@ def func_contact_mpr_terrain(
                                     i_b=i_b,
                                     center_a=center_a,
                                     center_b=center_b,
-                                    pos_a=pos_a,
-                                    quat_a=quat_a,
-                                    pos_b=pos_b,
-                                    quat_b=quat_b,
+                                    pos_a=ga_pos_terrain_frame,
+                                    quat_a=ga_quat_terrain_frame,
+                                    pos_b=gb_pos_terrain_frame,
+                                    quat_b=gb_quat_terrain_frame,
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -204,9 +196,6 @@ def func_contact_mpr_terrain(
                                             errno,
                                         )
                                         n_con = n_con + 1
-
-    geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-    geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
 
 @ti.func
