@@ -9,12 +9,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-
-# Import the shared SDF helper functions that don't depend on geoms_state
-from genesis.utils.sdf import (
-    sdf_func_sdf,
-    sdf_func_grad,
-)
+from genesis.utils import sdf
 
 
 @ti.func
@@ -57,7 +52,7 @@ def sdf_func_world_local(
     else:
         pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         pos_sdf = gu.ti_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        sd = sdf_func_sdf(sdf_info, pos_sdf, geom_idx)
+        sd = sdf.sdf_func_sdf(sdf_info, pos_sdf, geom_idx)
     
     return sd
 
@@ -107,7 +102,7 @@ def sdf_func_grad_world_local(
     else:
         pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         pos_sdf = gu.ti_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        grad_sdf = sdf_func_grad(geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
+        grad_sdf = sdf.sdf_func_grad(geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
         
         grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
         grad_world = gu.ti_transform_by_quat(grad_mesh, geom_quat)
