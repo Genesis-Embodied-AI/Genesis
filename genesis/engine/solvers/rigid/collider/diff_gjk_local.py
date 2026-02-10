@@ -11,9 +11,19 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import gjk as GJK
+from genesis.engine.solvers.rigid.collider import gjk as GJK, gjk_local
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.utils import array_class
+
+# Import helper functions from diff_gjk that we'll use
+# These are imported at module level to avoid Taichi's restriction on imports inside @ti.func
+from genesis.engine.solvers.rigid.collider.diff_gjk import (
+    func_contact_orthogonals,
+    func_differentiable_contact,
+    func_compute_minkowski_point,
+    func_plane_normal,
+    func_project_origin_to_plane,
+)
 
 
 @ti.func
@@ -223,9 +233,6 @@ def func_gjk_contact_local(
                             break
                         default_contact_pos = 0.5 * (witness1 + witness2)
                         default_penetration = penetration
-
-                        # Import here to avoid circular dependency
-                        from genesis.engine.solvers.rigid.collider.diff_gjk import func_contact_orthogonals
 
                         axis_0, axis_1 = func_contact_orthogonals(
                             i_ga,
