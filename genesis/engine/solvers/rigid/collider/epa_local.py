@@ -665,7 +665,7 @@ def func_safe_epa_local(
     nearest_i_f = gs.ti_int(-1)
     prev_nearest_i_f = gs.ti_int(-1)
 
-    discrete = epa.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = rigid_global_info.EPS[None]

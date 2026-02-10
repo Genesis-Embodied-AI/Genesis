@@ -346,40 +346,28 @@ def func_convex_convex_contact_local(
                                     diff_normal_tolerance,
                                 )
                             else:
-                                # Use thread-local GJK function
-                                # TODO: Implement thread-local gjk_contact_local wrapper
-                                # For now, write to global state temporarily
-                                geoms_state.pos[i_ga, i_b] = ga_pos_current
-                                geoms_state.quat[i_ga, i_b] = ga_quat_current
-                                geoms_state.pos[i_gb, i_b] = gb_pos_current
-                                geoms_state.quat[i_gb, i_b] = gb_quat_current
-
-                                # Use original GJK for now
-                                # TODO: Create gjk_local.func_gjk_contact_local
-
-                                gjk.func_gjk_contact(
-                                    geoms_state,
-                                    geoms_info,
-                                    verts_info,
-                                    faces_info,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_static_config,
-                                    gjk_state,
-                                    gjk_info,
-                                    gjk_static_config,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
+                                # Use thread-local non-differentiable GJK function
+                                gjk_local.func_gjk_contact_local(
+                                    geoms_state=geoms_state,
+                                    geoms_info=geoms_info,
+                                    verts_info=verts_info,
+                                    faces_info=faces_info,
+                                    rigid_global_info=rigid_global_info,
+                                    static_rigid_sim_config=static_rigid_sim_config,
+                                    collider_state=collider_state,
+                                    collider_static_config=collider_static_config,
+                                    gjk_state=gjk_state,
+                                    gjk_info=gjk_info,
+                                    gjk_static_config=gjk_static_config,
+                                    support_field_info=support_field_info,
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    pos_a=ga_pos_current,
+                                    quat_a=ga_quat_current,
+                                    pos_b=gb_pos_current,
+                                    quat_b=gb_quat_current,
                                 )
-
-                                # Restore original state
-                                geoms_state.pos[i_ga, i_b] = ga_pos_original
-                                geoms_state.quat[i_ga, i_b] = ga_quat_original
-                                geoms_state.pos[i_gb, i_b] = gb_pos_original
-                                geoms_state.quat[i_gb, i_b] = gb_quat_original
 
                             is_col = gjk_state.is_col[i_b] == 1
                             penetration = gjk_state.penetration[i_b]
