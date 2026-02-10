@@ -437,7 +437,7 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "xml/weld.xml", "xml/connect.xml"])
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "weld.xml", "connect.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -595,47 +595,12 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
 @pytest.mark.required
 @pytest.mark.multi_contact(False)
+@pytest.mark.parametrize("xml_path", ["linear_deformable.urdf"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_urdf_rope(
-    gs_solver,
-    gs_integrator,
-    merge_fixed_links,
-    multi_contact,
-    mujoco_compatibility,
-    adjacent_collision,
-    gjk_collision,
-    dof_damping,
-    show_viewer,
-):
-    asset_path = get_hf_dataset(pattern="linear_deformable.urdf")
-    xml_path = os.path.join(asset_path, "linear_deformable.urdf")
-
-    mj_sim = build_mujoco_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        adjacent_collision,
-        dof_damping,
-        gjk_collision,
-    )
-    gs_sim = build_genesis_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        mujoco_compatibility,
-        adjacent_collision,
-        gjk_collision,
-        show_viewer,
-        mj_sim,
-    )
-
+def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     # Must increase sol params to improve numerical stability
     sol_params = gu.default_solver_params()
     sol_params[0] = 0.02
@@ -1434,7 +1399,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
 
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
-            quat_delta /= torch.linalg.norm(quat_delta)
+            quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
             entity.set_quat(quat_delta, relative=relative)
             quat = entity.get_quat()
             if relative:

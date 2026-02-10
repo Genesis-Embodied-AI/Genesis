@@ -36,7 +36,7 @@ from genesis.utils.misc import tensor_to_array
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "ca29b66018b449a37738257a3a76a78529d29bcc"
+HUGGINGFACE_ASSETS_REVISION = "83792c5cdab2683af11421dbeb40649c49db3e0b"
 HUGGINGFACE_SNAPSHOT_REVISION = "63afb805efb70350a983dcafee27fbd74a7a9286"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
@@ -507,9 +507,13 @@ def build_mujoco_sim(
     else:
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
-    xml_path = os.path.join(get_assets_dir(), xml_path)
+    file = os.path.join(get_assets_dir(), xml_path)
+    if not os.path.exists(file):
+        asset_path = get_hf_dataset(pattern=xml_path)
+        file = os.path.join(asset_path, xml_path)
+
     model = mju.build_model(
-        xml_path, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
+        file, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
     )
 
     model.opt.solver = mj_solver
@@ -579,8 +583,13 @@ def build_genesis_sim(
         show_FPS=False,
     )
 
+    file = os.path.join(get_assets_dir(), xml_path)
+    if not os.path.exists(file):
+        asset_path = get_hf_dataset(pattern=xml_path)
+        file = os.path.join(asset_path, xml_path)
+
     morph_kwargs = dict(
-        file=xml_path,
+        file=file,
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
         default_armature=None,
@@ -594,7 +603,7 @@ def build_genesis_sim(
             links_to_keep=(),
             **morph_kwargs,
         )
-    gs_robot = scene.add_entity(
+    scene.add_entity(
         morph,
         visualize_contact=True,
     )
@@ -1023,7 +1032,9 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_cinr_mass[gs_bodies_idx], mj_cinr_mass[mj_bodies_idx], tol=tol)
 
 
-def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints):
+def simulate_and_check_mujoco_consistency(
+    gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints=False
+):
     # Get mapping between Mujoco and Genesis
     _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
