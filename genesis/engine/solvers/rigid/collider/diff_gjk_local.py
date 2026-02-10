@@ -120,7 +120,7 @@ def func_gjk_contact_local(
             gb_pos_local = result_b.pos
             gb_quat_local = result_b.quat
 
-        gjk_flag = GJK.func_safe_gjk_local(
+        gjk_flag = gjk_local.func_safe_gjk_local(
             geoms_info,
             verts_info,
             rigid_global_info,
@@ -253,7 +253,7 @@ def func_gjk_contact_local(
                 if not found_default_epa:
                     break
             else:
-                i_f = GJK.func_safe_epa_local(
+                i_f = GJK.epa_local.func_safe_epa_local(
                     geoms_info,
                     verts_info,
                     rigid_global_info,
