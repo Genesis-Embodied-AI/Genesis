@@ -162,54 +162,6 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
 
 
 @ti.func
-def func_gjk_intersect(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
-    """
-    Check if two objects intersect using the GJK algorithm.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-
-    This function refines the simplex until it contains the origin or it is determined
-    that the objects are separated. It is used to check if objects intersect, not to
-    find the minimum distance between them.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return gjk_local.func_gjk_intersect_local(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        i_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-    )
-
-
-@ti.func
 def func_gjk_triangle_info(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -1327,20 +1279,16 @@ def func_count_support(
 
 # Import EPA functions (circular import resolved by importing after all gjk functions are defined)
 from .epa import (
-    func_epa,
     func_epa_witness,
     func_epa_horizon,
     func_add_edge_to_horizon,
     func_get_edge_idx,
     func_delete_face_from_polytope,
     func_epa_insert_vertex_to_polytope,
-    func_epa_init_polytope_2d,
-    func_epa_init_polytope_3d,
     func_epa_init_polytope_4d,
     func_epa_support,
     func_attach_face_to_polytope,
     func_replace_simplex_3,
-    func_safe_epa,
     func_safe_epa_witness,
     func_safe_epa_init,
     func_safe_attach_face_to_polytope,
