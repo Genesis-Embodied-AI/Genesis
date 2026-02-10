@@ -181,6 +181,133 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
             gs.raise_exception(f"resolution must be a float or tuple of 3 floats, got: {self.resolution}")
 
 
+class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+    """
+    Kinematic contact probe for detecting contact without affecting physics simulation.
+
+    This is a purely kinematic sensor that queries geometric proximity using support functions.
+    It does NOT use the simulator's actual contact model - it provides independent contact
+    measurements for applications like tactile sensing on robot fingertips.
+
+    Mechanism
+    ---------
+    For each probe, the sensor:
+    1. Transforms probe_pos and probe_normal from link-local to world frame
+    2. For each nearby geom, computes support point in direction -probe_normal
+       (the point on the geom furthest in the opposite direction of the probe normal)
+    3. Checks if the support point falls within the probe's sensing radius
+    4. Computes penetration = dot(support_pos - probe_pos, probe_normal)
+
+    The penetration measures how far the geom's closest point (in the -normal direction)
+    penetrates past the probe's tangent plane. Positive values indicate contact.
+
+    Force Estimation (Not Physical)
+    -------------------------------
+    The returned "force" is a user-defined estimate: F = stiffness * penetration * probe_normal.
+    This is NOT derived from the simulator's contact solver. Genesis uses impulse-based contact
+    resolution, not a mass-spring model. The stiffness parameter is purely for user convenience
+    to convert penetration depth into a force-like quantity for downstream applications.
+
+    Parameters
+    ----------
+    probe_local_pos : list[tuple[float, float, float]]
+        Probe positions in link-local frame. One (x, y, z) tuple per probe.
+    probe_local_normal : list[tuple[float, float, float]]
+        Probe sensing directions in link-local frame. Penetration is measured along this axis.
+    radius : float
+        Sensing radius in meters. Objects within this distance are detected. Default: 0.005.
+    stiffness : float
+        User-defined coefficient for force estimation. Default: 1000.0.
+    contype : int
+        Collision type bitmask. Default: 1.
+    conaffinity : int
+        Collision affinity bitmask. Default: 0x7FFFFFFF.
+
+    Returns (from read())
+    ---------------------
+    KinematicContactProbeData NamedTuple with fields:
+        penetration : torch.Tensor
+            Shape (n_envs, n_probes) or (n_probes,). Penetration depth in meters.
+            Positive when contact detected, zero otherwise.
+        position : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact point in link-local frame.
+            The point on the contacting geom closest to the probe (in the -normal direction).
+        normal : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact normal in link-local frame.
+            Same as probe_local_normal when contact detected, zero otherwise.
+        force : torch.Tensor
+            Shape (n_envs, n_probes, 3) or (n_probes, 3). Estimated force in link-local frame.
+            Computed as stiffness * penetration * probe_normal (NOT physical, see above).
+    """
+
+    probe_local_pos: list[Tuple3FType] = [(0.0, 0.0, 0.0)]
+    probe_local_normal: list[Tuple3FType] = [(0.0, 0.0, 1.0)]
+    radius: float = 0.005
+    stiffness: float = 1000.0
+    contype: int = 1
+    conaffinity: int = 0x7FFFFFFF  # All bits set except sign bit (max positive int32)
+
+    debug_sphere_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.5)
+    debug_contact_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.8)
+
+    def model_post_init(self, _):
+        import math
+
+        if self.radius <= 0:
+            gs.raise_exception(f"radius must be positive, got: {self.radius}")
+        if self.stiffness < 0:
+            gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
+        if self.contype < 0:
+            gs.raise_exception(f"contype must be non-negative, got: {self.contype}")
+        if self.conaffinity < 0:
+            gs.raise_exception(f"conaffinity must be non-negative, got: {self.conaffinity}")
+
+        # Validate probe_local_pos is a list
+        if not isinstance(self.probe_local_pos, list):
+            gs.raise_exception(f"probe_local_pos must be a list of tuples, got: {type(self.probe_local_pos)}")
+        if len(self.probe_local_pos) == 0:
+            gs.raise_exception("probe_local_pos must have at least one probe position")
+
+        # Validate probe_local_normal is a list
+        if not isinstance(self.probe_local_normal, list):
+            gs.raise_exception(f"probe_local_normal must be a list of tuples, got: {type(self.probe_local_normal)}")
+        if len(self.probe_local_normal) == 0:
+            gs.raise_exception("probe_local_normal must have at least one probe normal")
+
+        # Validate each position
+        for i, pos in enumerate(self.probe_local_pos):
+            if not (isinstance(pos, (tuple, list)) and len(pos) == 3):
+                gs.raise_exception(f"probe_local_pos[{i}] must be a tuple of 3 floats, got: {pos}")
+
+        # Validate each normal
+        for i, normal in enumerate(self.probe_local_normal):
+            if not (isinstance(normal, (tuple, list)) and len(normal) == 3):
+                gs.raise_exception(f"probe_local_normal[{i}] must be a tuple of 3 floats, got: {normal}")
+            norm = math.sqrt(sum(x * x for x in normal))
+            if norm < 1e-6:
+                gs.raise_exception(f"probe_local_normal[{i}] must be non-zero, got: {normal}")
+
+        # Validate lengths match
+        if len(self.probe_local_pos) != len(self.probe_local_normal):
+            gs.raise_exception(
+                f"probe_local_pos and probe_local_normal must have the same length. "
+                f"Got {len(self.probe_local_pos)} positions and {len(self.probe_local_normal)} normals."
+            )
+
+    @property
+    def n_probes(self) -> int:
+        """Return the number of probes defined for this sensor."""
+        return len(self.probe_local_pos)
+
+    def get_probe_positions(self) -> list[Tuple3FType]:
+        """Return probe positions as a list of tuples."""
+        return [tuple(pos) for pos in self.probe_local_pos]
+
+    def get_probe_normals(self) -> list[Tuple3FType]:
+        """Return probe normals as a list of tuples."""
+        return [tuple(normal) for normal in self.probe_local_normal]
+
+
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)

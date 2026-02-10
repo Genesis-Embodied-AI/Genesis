@@ -6,11 +6,10 @@ import OpenGL.error
 import pytest
 
 import genesis as gs
-from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose
+from .utils import assert_allclose, rgb_array_to_png_bytes
 
 CAM_RES = (480, 320)
 
@@ -169,12 +168,10 @@ def test_mouse_interaction_plugin():
             gravity=(0.0, 0.0, 0.0),
         ),
         viewer_options=gs.options.ViewerOptions(
-            # Forces odd resolution so that mouse clicks are centered on pixels
-            res=(2 * (CAM_RES[0] // 2) + 1, 2 * (CAM_RES[0] // 2) + 1),
             camera_pos=CAM_POS,
-            # looking to the top of the box
-            camera_lookat=(0.0, 0.0, BOX_LENGTH),
+            camera_lookat=(0.0, 0.0, BOX_LENGTH),  # looking to the top of the box
             camera_fov=CAM_FOV,
+            res=(CAM_RES[0] + 1, CAM_RES[1] + 1),  # odd resolution so that mouse clicks are centered on pixels
             run_in_thread=(sys.platform == "linux"),
         ),
         show_viewer=True,
@@ -191,7 +188,7 @@ def test_mouse_interaction_plugin():
             rho=MASS / (BOX_LENGTH**3),
         ),
     )
-    _mouse_plugin = scene.viewer.add_plugin(
+    mouse_plugin = scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
             spring_const=SPRING_CONST,
@@ -259,11 +256,11 @@ def test_mouse_interaction_plugin():
     assert_allclose(
         final_vel[:2],
         0.0,
-        tol=0.002,
+        atol=gs.EPS,
         err_msg="Final x and y velocities should be near zero since dragging only in z direction.",
     )
 
-    distance_to_box = np.linalg.norm(tensor_to_array(initial_pos) - CAM_POS)
+    distance_to_box = np.linalg.norm(np.array(CAM_POS) - initial_pos.numpy())
     pixels_to_world = 2.0 * distance_to_box * np.tan(np.radians(CAM_FOV) / 2.0) / viewport_size[1]
     total_world_displacement = STEPS * DRAG_DY * pixels_to_world
 
@@ -281,8 +278,6 @@ def test_mouse_interaction_plugin():
     )
     assert not np.array_equal(rgb_arrs[-1], rgb_arr), "Expected visualization to change after releasing the object."
 
-    # The forces from mouse spring are approximate, so use a large tolerance.
-    # FIXME: Use a more accurate model to predict final velocity.
     total_sim_time = STEPS * DT
     avg_mouse_velocity = total_world_displacement / total_sim_time
     num_tau = total_sim_time * np.sqrt(SPRING_CONST / MASS)
@@ -292,6 +287,6 @@ def test_mouse_interaction_plugin():
     assert_allclose(
         final_vel[2],
         expected_vel_z,
-        rtol=0.5,
+        rtol=0.4,  # the forces from mouse spring are approximate, so use a large tolerance
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
     )
