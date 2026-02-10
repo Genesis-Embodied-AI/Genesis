@@ -45,18 +45,11 @@ Already thread-safe, so both local and non-local code call it directly from
 support_field.py without issues.
 """
 
-import math
-
 import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-
-# Import shared helper functions that operate purely in local/mesh coordinates
-# These don't need pos/quat so they're shared with the non-local version
-# This is safe because support_field.py imports support_field_local as a module,
-# not specific functions, so there's no circular dependency
 from genesis.engine.solvers.rigid.collider import support_field
 
 

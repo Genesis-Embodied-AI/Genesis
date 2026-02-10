@@ -975,42 +975,6 @@ def func_safe_gjk_triangle_info(
     return normal, sdist
 
 
-# Import EPA functions (circular import resolved by importing after all gjk functions are defined)
-from .epa import (
-    func_epa_witness,
-    func_epa_horizon,
-    func_add_edge_to_horizon,
-    func_get_edge_idx,
-    func_delete_face_from_polytope,
-    func_epa_insert_vertex_to_polytope,
-    func_epa_init_polytope_4d,
-    func_attach_face_to_polytope,
-    func_replace_simplex_3,
-    func_safe_epa_witness,
-    func_safe_epa_init,
-    func_safe_attach_face_to_polytope,
-    func_plane_normal,
-)
-
-# Import EPA local and GJK local modules for thread-safe multi-contact
-from . import epa_local, gjk_local
-
-# Import multi-contact functions
-from .multi_contact import (
-    func_multi_contact,
-    func_simplex_dim,
-    func_cmp_bit,
-    func_find_aligned_faces,
-    func_safe_normalize,
-    func_find_aligned_edge_face,
-    func_clip_polygon,
-    func_halfspace,
-    func_plane_intersect,
-    func_approximate_polygon_with_quad,
-    func_quadrilateral_area,
-)
-
-
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
 
 create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.gjk_decomp")

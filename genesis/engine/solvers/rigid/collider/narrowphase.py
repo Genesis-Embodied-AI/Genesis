@@ -13,12 +13,10 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-import genesis.utils.sdf as sdf
 from . import mpr_local
 from . import diff_gjk
 from . import narrowphase_local
 
-from .broadphase import func_point_in_geom_aabb
 from . import contact
 from . import contact_local
 

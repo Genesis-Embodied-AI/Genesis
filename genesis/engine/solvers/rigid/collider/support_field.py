@@ -5,9 +5,7 @@ import gstaichi as ti
 import numpy as np
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from genesis.engine.solvers.rigid.collider import support_field_local
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver

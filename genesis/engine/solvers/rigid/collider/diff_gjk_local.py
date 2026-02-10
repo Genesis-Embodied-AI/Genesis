@@ -11,13 +11,9 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import gjk as GJK, gjk_local
+from genesis.engine.solvers.rigid.collider import diff_gjk, gjk as GJK, gjk_local
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.utils import array_class
-
-# Import diff_gjk module to access helper functions
-# Import as module to avoid circular dependency issues
-from genesis.engine.solvers.rigid.collider import diff_gjk
 
 
 @ti.func

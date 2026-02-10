@@ -9,9 +9,8 @@ Includes both standard and numerically robust ("safe") variants.
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import epa_local, gjk, support_field
+from . import gjk
 
 # Note: Previously imported specific functions from gjk, but that caused circular import
 # when gjk -> gjk_local -> epa_local -> epa -> gjk

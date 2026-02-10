@@ -11,11 +11,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-
-# Import helper functions from gjk
 from .gjk import func_is_equal_vec, RETURN_CODE
-
-# Import thread-local versions
 from . import multi_contact_local
 
 
