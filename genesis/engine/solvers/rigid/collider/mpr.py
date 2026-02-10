@@ -240,7 +240,6 @@ def mpr_expand_portal(mpr_state: array_class.MPRState, v, v1, v2, i_ga, i_gb, i_
     mpr_state.simplex_support.v[i_s, i_b] = v
 
 
-
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
 
 create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.mpr_decomp")

@@ -111,10 +111,10 @@ def func_contact_vertex_sdf_local(
 ):
     """
     Thread-local version of func_contact_vertex_sdf.
-    
+
     Detects collision between a vertex-based geometry (geom A) and an SDF-based geometry (geom B),
     using provided thread-local geometry poses instead of reading from geoms_state.
-    
+
     Args:
         i_ga: Geometry A index
         i_gb: Geometry B index
@@ -129,7 +129,7 @@ def func_contact_vertex_sdf_local(
         rigid_global_info: Global rigid body information
         collider_static_config: Collider static configuration
         sdf_info: SDF information
-    
+
     Returns:
         is_col: Whether collision is detected
         normal: Contact normal
@@ -648,7 +648,7 @@ def func_contact_edge_sdf_local(
 ):
     """
     Thread-local version: Detect collision between edge-based geometry and SDF-based geometry.
-    
+
     This function accepts geometry poses as explicit parameters instead of reading from global state,
     enabling thread-safe perturbations for multi-contact detection.
     """

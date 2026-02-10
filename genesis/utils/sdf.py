@@ -83,13 +83,13 @@ def sdf_func_world(
 ):
     """
     sdf value from world coordinate
-    
+
     This is a wrapper that extracts geometry pose from global state
     and delegates to the thread-local version for the actual computation.
     """
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
-    
+
     return sdf_local.sdf_func_world_local(
         geoms_info=geoms_info,
         sdf_info=sdf_info,
@@ -173,13 +173,13 @@ def sdf_func_grad_world(
 ):
     """
     sdf gradient in world coordinates
-    
+
     This is a wrapper that extracts geometry pose from global state
     and delegates to the thread-local version for the actual computation.
     """
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
-    
+
     return sdf_local.sdf_func_grad_world_local(
         geoms_info=geoms_info,
         rigid_global_info=rigid_global_info,
@@ -280,13 +280,13 @@ def sdf_func_normal_world(
 ):
     """
     Normalized sdf gradient (surface normal) in world coordinates
-    
+
     This is a wrapper that extracts geometry pose from global state
     and delegates to the thread-local version for the actual computation.
     """
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
-    
+
     return sdf_local.sdf_func_normal_world_local(
         geoms_info=geoms_info,
         rigid_global_info=rigid_global_info,

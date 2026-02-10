@@ -395,7 +395,6 @@ def func_cmp_bit(
 
 
 @ti.func
-
 @ti.func
 def func_find_aligned_faces(
     gjk_state: array_class.GJKState,
@@ -420,7 +419,6 @@ def func_find_aligned_faces(
             break
 
     return res, flag
-
 
 
 @ti.func

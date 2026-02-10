@@ -6,9 +6,6 @@ from . import gjk as GJK
 from . import diff_gjk_local
 
 
-
-
-
 @ti.func
 def func_contact_orthogonals(
     i_ga,
@@ -54,7 +51,6 @@ def func_contact_orthogonals(
     axis_1 = normal.cross(axis_0)
 
     return axis_0, axis_1
-
 
 
 @ti.func
