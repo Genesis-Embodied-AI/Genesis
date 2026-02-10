@@ -769,10 +769,11 @@ def parse_equalities(mj, scale):
                 objs_idx[i] = mj.site_bodyid[site_idx]
                 sites_pos.append(mj.site_pos[site_idx])
                 sites_quat.append(mj.site_quat[site_idx])
-            eq_info["data"][:3] = sites_pos[1]
-            eq_info["data"][3:6] = sites_pos[0]
             if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[1], sites_pos[0])
                 eq_info["data"][6:10] = gu.transform_quat_by_quat(sites_quat[0], gu.inv_quat(sites_quat[1]))
+            else:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[0], sites_pos[1])
         elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_JOINT:
             name_objadr = mj.name_jntadr
         elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_BODY:

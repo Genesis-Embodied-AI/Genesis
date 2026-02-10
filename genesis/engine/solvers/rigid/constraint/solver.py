@@ -618,16 +618,16 @@ def func_equality_connect(
     link_b_maybe_batch = [link2_idx, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else link2_idx
     anchor1_pos = gs.ti_vec3(
         [
-            equalities_info.eq_data[i_e, i_b][3],
-            equalities_info.eq_data[i_e, i_b][4],
-            equalities_info.eq_data[i_e, i_b][5],
+            equalities_info.eq_data[i_e, i_b][0],
+            equalities_info.eq_data[i_e, i_b][1],
+            equalities_info.eq_data[i_e, i_b][2],
         ]
     )
     anchor2_pos = gs.ti_vec3(
         [
-            equalities_info.eq_data[i_e, i_b][0],
-            equalities_info.eq_data[i_e, i_b][1],
-            equalities_info.eq_data[i_e, i_b][2],
+            equalities_info.eq_data[i_e, i_b][3],
+            equalities_info.eq_data[i_e, i_b][4],
+            equalities_info.eq_data[i_e, i_b][5],
         ]
     )
     sol_params = equalities_info.sol_params[i_e, i_b]
