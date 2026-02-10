@@ -184,39 +184,6 @@ def support_driver(
 
 
 @ti.func
-def compute_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
-    support_field_info: array_class.SupportFieldInfo,
-    direction,
-    i_ga,
-    i_gb,
-    i_b,
-):
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return mpr_local.compute_support_local(
-        geoms_info,
-        collider_state,
-        collider_static_config,
-        support_field_info,
-        direction,
-        i_ga,
-        i_gb,
-        i_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-    )
-
-
-@ti.func
 def mpr_find_pos(
     static_rigid_sim_config: ti.template(),
     mpr_state: array_class.MPRState,
@@ -274,49 +241,6 @@ def mpr_find_penetr_segment(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 
 
 @ti.func
-def mpr_find_penetration(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    static_rigid_sim_config: ti.template(),
-    support_field_info: array_class.SupportFieldInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
-    mpr_state: array_class.MPRState,
-    mpr_info: array_class.MPRInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
-    """
-    Finds the penetration depth and contact information after portal refinement.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return mpr_local.mpr_find_penetration_local(
-        geoms_info,
-        static_rigid_sim_config,
-        support_field_info,
-        collider_state,
-        collider_static_config,
-        mpr_state,
-        mpr_info,
-        i_ga,
-        i_gb,
-        i_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-    )
-
-
-@ti.func
 def mpr_expand_portal(mpr_state: array_class.MPRState, v, v1, v2, i_ga, i_gb, i_b):
     v4v0 = v.cross(mpr_state.simplex_support.v[0, i_b])
     dot = mpr_state.simplex_support.v[1, i_b].dot(v4v0)
@@ -334,109 +258,6 @@ def mpr_expand_portal(mpr_state: array_class.MPRState, v, v1, v2, i_ga, i_gb, i_
     mpr_state.simplex_support.v2[i_s, i_b] = v2
     mpr_state.simplex_support.v[i_s, i_b] = v
 
-
-@ti.func
-def mpr_discover_portal(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
-    mpr_state: array_class.MPRState,
-    mpr_info: array_class.MPRInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    center_a,
-    center_b,
-):
-    """
-    Discovers the initial portal (simplex) for MPR algorithm.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return mpr_local.mpr_discover_portal_local(
-        geoms_info,
-        support_field_info,
-        collider_state,
-        collider_static_config,
-        mpr_state,
-        mpr_info,
-        i_ga,
-        i_gb,
-        i_b,
-        center_a,
-        center_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-    )
-
-
-@ti.func
-def guess_geoms_center(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-    mpr_info: array_class.MPRInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    normal_ws,
-):
-    # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
-    # proposed to extend its application to collision detection as it can provide the contact normal and penetration
-    # depth in some cases, i.e. when the original of the Minkowski difference can be projected inside the refined
-    # portal. Beyond this specific scenario, it only provides an approximation, that gets worst and worst as the
-    # ray casting and portal normal are misaligned.
-    # For convex shape, one can show that everything should be fine for low penetration-to-size ratio for each
-    # geometry, and the probability to accurately estimate the contact point decreases as this ratio increases.
-    #
-    # This issue can be avoided by initializing the algorithm with the good seach direction, basically the one
-    # from the previous simulation timestep would do fine, as the penetration was smaller at that time and so the
-    # likely for this direction to be valid was larger. Alternatively, the direction of the linear velocity would
-    # be a good option.
-    #
-    # Enforcing a specific search direction to vanilla MPR is not straightforward, because the direction of the ray
-    # control by v0, which is defined as the difference between the respective centers of each geometry.
-    # The only option is to change the way the center of each geometry are defined, so as to make the ray casting
-    # from origin to v0 as colinear as possible with the direction we are interested, while remaining included in
-    # their respective geometry.
-    # The idea is to offset the original centers of each geometry by a ratio that corresponds to their respective
-    # (rotated) bounding box size along each axe. Each center cannot be moved more than half of its bound-box size
-    # along each axe. This could lead to a center that is outside the geometries if they do not collide, but
-    # should be fine otherwise. Anyway, this is not a big deal in practice and MPR is robust enough to converge to
-    # a meaningful solution and if the center is slightly off of each geometry. Nevertheless, if it turns out this
-    # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
-    # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
-    # signed distance is computed once again until to find a valid point. This procedure should be cheap.
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return mpr_local.guess_geoms_center_local(
-        geoms_info,
-        geoms_init_AABB,
-        rigid_global_info,
-        static_rigid_sim_config,
-        mpr_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        normal_ws,
-    )
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module

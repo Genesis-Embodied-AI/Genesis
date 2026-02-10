@@ -668,56 +668,6 @@ def func_is_sphere_swept_geom(
 
 
 @ti.func
-def func_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    dir,
-    shrink_sphere,
-):
-    """
-    Find support points on the two objects using [dir].
-
-    Parameters:
-    ----------
-    dir: gs.ti_vec3
-        The direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return gjk_local.func_support_local(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        i_b,
-        dir,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        shrink_sphere,
-    )
-
-
-@ti.func
 def func_project_origin_to_plane(
     gjk_info: array_class.GJKInfo,
     v1,
@@ -860,71 +810,6 @@ def func_det3(
 
 
 @ti.func
-def support_mesh(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    direction,
-    i_g,
-    i_b,
-    i_o,
-):
-    """
-    Find the support point on a mesh in the given direction.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return gjk_local.support_mesh_local(
-        geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, pos, quat, i_b, i_o
-    )
-
-
-@ti.func
-def support_driver(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    direction,
-    i_g,
-    i_b,
-    i_o,
-    shrink_sphere,
-):
-    """
-    @ shrink_sphere: If True, use point and line support for sphere and capsule.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return gjk_local.support_driver_local(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        direction,
-        i_g,
-        pos,
-        quat,
-        i_b,
-        i_o,
-        shrink_sphere,
-    )
-
-
-@ti.func
-
-@ti.func
 def func_is_new_simplex_vertex_valid(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -1063,26 +948,6 @@ def func_num_discrete_geom_vertices(
 
 
 @ti.func
-def func_get_discrete_geom_vertex(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    i_g,
-    i_b,
-    i_v,
-):
-    """
-    Get the discrete vertex of the geometry for the given index [i_v].
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return gjk_local.func_get_discrete_geom_vertex_local(geoms_info, verts_info, i_g, pos, quat, i_v)
-
-
-@ti.func
 def func_safe_gjk_triangle_info(
     gjk_state: array_class.GJKState,
     i_b,
@@ -1151,7 +1016,6 @@ from .epa import (
     func_delete_face_from_polytope,
     func_epa_insert_vertex_to_polytope,
     func_epa_init_polytope_4d,
-    func_epa_support,
     func_attach_face_to_polytope,
     func_replace_simplex_3,
     func_safe_epa_witness,

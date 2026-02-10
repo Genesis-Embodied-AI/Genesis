@@ -307,59 +307,6 @@ def func_epa_init_polytope_4d(
 
 
 @ti.func
-def func_epa_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    dir,
-    dir_norm,
-):
-    """
-    Find support points on the two objects using [dir] and insert them into the polytope.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-
-    Parameters
-    ----------
-    dir: gs.ti_vec3
-        Vector from [ga] (obj1) to [gb] (obj2).
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return epa_local.func_epa_support_local(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        i_b,
-        dir,
-        dir_norm,
-    )
-
-
-@ti.func
 def func_attach_face_to_polytope(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
