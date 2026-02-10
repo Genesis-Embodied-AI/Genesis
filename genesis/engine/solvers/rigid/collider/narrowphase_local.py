@@ -79,7 +79,7 @@ import sys
 import gstaichi as ti
 
 import genesis as gs
-from genesis.engine.solvers.rigid.collider import diff_gjk, gjk_local, mpr_local, multi_contact_local, gjk
+from genesis.engine.solvers.rigid.collider import diff_gjk, diff_gjk_local, gjk_local, mpr_local, multi_contact_local, gjk
 from genesis.engine.solvers.rigid.collider.box_contact import func_plane_box_contact
 from genesis.engine.solvers.rigid.collider.contact import (
     func_add_contact,
@@ -318,14 +318,8 @@ def func_convex_convex_contact_local(
                     if ti.static(collider_static_config.ccd_algorithm != narrowphase.CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
                             if ti.static(static_rigid_sim_config.requires_grad):
-                                # TODO: Implement thread-local diff_gjk version if needed
-                                # For now, fall back to writing to global state
-                                geoms_state.pos[i_ga, i_b] = ga_pos_current
-                                geoms_state.quat[i_ga, i_b] = ga_quat_current
-                                geoms_state.pos[i_gb, i_b] = gb_pos_current
-                                geoms_state.quat[i_gb, i_b] = gb_quat_current
-
-                                diff_gjk.func_gjk_contact(
+                                # Use thread-local differentiable GJK function directly
+                                diff_gjk_local.func_gjk_contact_local(
                                     links_state,
                                     links_info,
                                     geoms_state,
@@ -344,15 +338,13 @@ def func_convex_convex_contact_local(
                                     i_ga,
                                     i_gb,
                                     i_b,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                     diff_pos_tolerance,
                                     diff_normal_tolerance,
                                 )
-
-                                # Restore original state
-                                geoms_state.pos[i_ga, i_b] = ga_pos_original
-                                geoms_state.quat[i_ga, i_b] = ga_quat_original
-                                geoms_state.pos[i_gb, i_b] = gb_pos_original
-                                geoms_state.quat[i_gb, i_b] = gb_quat_original
                             else:
                                 # Use thread-local GJK function
                                 # TODO: Implement thread-local gjk_contact_local wrapper
