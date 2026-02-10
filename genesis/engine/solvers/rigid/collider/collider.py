@@ -52,9 +52,6 @@ from .contact import (
 
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
-    func_contact_sphere_sdf,
-    func_contact_edge_sdf,
-    func_contact_convex_convex_sdf,
     func_contact_mpr_terrain,
     func_add_prism_vert,
     func_plane_box_contact,
