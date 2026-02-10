@@ -437,11 +437,11 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "xml/weld.xml"])
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "xml/weld.xml", "xml/connect.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_weld(gs_sim, mj_sim, gs_solver, xml_path):
+def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
     # Must disable self-collision caused by closing the kinematic chain (adjacent link filtering is not enough)
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
@@ -457,9 +457,11 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver, xml_path):
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
 
-    # Note that the relative frame in which site constraint is computed is different between Mujoco and Genesis.
+    # Note that the world frame in which weld constraint is computed is different between Mujoco and Genesis for sites.
     # Mujoco is using site 1, whereas Genesis is using parent link frame of site 1 since it has no notion of site.
-    ignore_constraints = any(mj_sim.model.eq_objtype == mujoco.mjtObj.mjOBJ_SITE)
+    ignore_constraints = np.any(
+        (mj_sim.model.eq_objtype == mujoco.mjtObj.mjOBJ_SITE) & (mj_sim.model.eq_type == mujoco.mjtEq.mjEQ_WELD)
+    )
     simulate_and_check_mujoco_consistency(
         gs_sim, mj_sim, qpos, num_steps=300, tol=1e-7, ignore_constraints=ignore_constraints
     )
