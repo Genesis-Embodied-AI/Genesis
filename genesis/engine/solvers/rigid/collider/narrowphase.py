@@ -711,14 +711,20 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                 n_con = n_con + 1
 
                         if not is_col:  # check edge-edge if vertex-face is not detected
+                            # Extract current poses for initial collision detection
+                            ga_pos = geoms_state.pos[i_ga, i_b]
+                            ga_quat = geoms_state.quat[i_ga, i_b]
+                            gb_pos = geoms_state.pos[i_gb, i_b]
+                            gb_quat = geoms_state.quat[i_gb, i_b]
+                            
                             is_col, normal, penetration, contact_pos = narrowphase_local.func_contact_edge_sdf_local(
                                 i_ga=i_ga,
                                 i_gb=i_gb,
                                 i_b=i_b,
-                                ga_pos=ga_pos_perturbed,
-                                ga_quat=ga_quat_perturbed,
-                                gb_pos=gb_pos_perturbed,
-                                gb_quat=gb_quat_perturbed,
+                                ga_pos=ga_pos,
+                                ga_quat=ga_quat,
+                                gb_pos=gb_pos,
+                                gb_quat=gb_quat,
                                 geoms_state=geoms_state,
                                 geoms_info=geoms_info,
                                 verts_info=verts_info,
