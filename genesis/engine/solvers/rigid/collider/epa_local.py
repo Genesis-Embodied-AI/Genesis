@@ -257,7 +257,7 @@ def func_epa_init_polytope_2d_local(
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = epa.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+    flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
     v1 = gjk_state.simplex_vertex.mink[i_b, 0]
@@ -362,13 +362,13 @@ def func_epa_init_polytope_2d_local(
             < gjk_info.FLOAT_MIN_SQ[None]
         ):
             epa.func_replace_simplex_3(gjk_state, i_b, i_v1, i_v2, i_v3)
-            flag = epa.EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
+            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
             break
 
     if flag == gjk.RETURN_CODE.SUCCESS:
         if not gjk.func_ray_triangle_intersection(v1, v2, v3, v4, v5):
             # The hexahedron should be convex by definition, but somehow if it is not, we return non-convex flag
-            flag = epa.EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
+            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
 
     if flag == gjk.RETURN_CODE.SUCCESS:
         # Initialize face map
@@ -413,7 +413,7 @@ def func_epa_init_polytope_3d_local(
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = epa.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+    flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
     v1 = gjk_state.simplex_vertex.mink[i_b, 0]
@@ -424,7 +424,7 @@ def func_epa_init_polytope_3d_local(
     n = (v2 - v1).cross(v3 - v1)
     n_norm = n.norm()
     if n_norm < gjk_info.FLOAT_MIN[None]:
-        flag = epa.EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
+        flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
     n_neg = -n
 
     # Save vertices in the polytope
@@ -475,11 +475,11 @@ def func_epa_init_polytope_3d_local(
         v = v4 if i == 0 else v5
         if gjk.func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
             flag = (
-                epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else epa.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
+                gjk.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else gjk.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
             )
             break
 
-    if flag == epa.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # If origin does not lie inside the triangle, we need to
         # check if the hexahedron contains the origin.
 
@@ -498,7 +498,7 @@ def func_epa_init_polytope_3d_local(
             and (not tets_has_origin[0])
             and (not tets_has_origin[1])
         ):
-            flag = epa.EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
+            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
         else:
             # Build hexahedron (6 faces) from the five vertices.
             for i in range(6):
@@ -524,10 +524,10 @@ def func_epa_init_polytope_3d_local(
 
                 dist2 = epa.func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
                 if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
-                    flag = epa.EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
+                    flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
                     break
 
-    if flag == epa.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(6)):
             gjk_state.polytope_faces_map[i_b, i] = i
