@@ -446,14 +446,14 @@ def test_equality_weld(gs_sim, mj_sim, gs_solver, xml_path):
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
-    # Must increase sol params to improve numerical stability
-    sol_params = gu.default_solver_params()
-    sol_params[0] = 0.02
+    # Must the time constant of the constraints to improve numerical stability
+    TIME_CONSTANT = 0.02
     for entity in gs_sim.entities:
         for equality in entity.equalities:
-            equality.set_sol_params(sol_params)
-    mj_sim.model.eq_solref[:, 0] = sol_params[0]
+            equality.set_sol_params((TIME_CONSTANT, *tensor_to_array(equality.sol_params)[1:]))
+    mj_sim.model.eq_solref[:, 0] = TIME_CONSTANT
 
+    # Randomize the initial condition for force convergence of the constraints
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
 
