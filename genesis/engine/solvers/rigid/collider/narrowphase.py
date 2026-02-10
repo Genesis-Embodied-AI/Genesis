@@ -17,7 +17,7 @@ import genesis.utils.sdf as sdf
 from . import mpr
 from . import gjk
 from . import diff_gjk
-from . import support_field
+from . import sdf_local
 
 from .broadphase import func_point_in_geom_aabb
 from .contact import (
@@ -95,7 +95,6 @@ def func_contact_vertex_sdf(
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
-
     is_col = False
     penetration = gs.ti_float(0.0)
     normal = ti.Vector.zero(gs.ti_float, 3)
@@ -132,99 +131,6 @@ def func_contact_vertex_sdf(
 
         # The contact point must be offsetted by half the penetration depth
         contact_pos = contact_pos + 0.5 * penetration * normal
-
-    return is_col, normal, penetration, contact_pos
-
-
-@ti.func
-def func_contact_edge_sdf(
-    i_ga,
-    i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    edges_info: array_class.EdgesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: ti.template(),
-    sdf_info: array_class.SDFInfo,
-):
-    EPS = rigid_global_info.EPS[None]
-
-    is_col = False
-    penetration = gs.ti_float(0.0)
-    normal = ti.Vector.zero(gs.ti_float, 3)
-    contact_pos = ti.Vector.zero(gs.ti_float, 3)
-
-    ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
-
-    for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
-        cur_length = edges_info.length[i_e]
-        if cur_length > ga_sdf_cell_size:
-            i_v0 = edges_info.v0[i_e]
-            i_v1 = edges_info.v1[i_e]
-
-            p_0 = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v0], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-            )
-            p_1 = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v1], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-            )
-            vec_01 = gu.ti_normalize(p_1 - p_0, EPS)
-
-            sdf_grad_0_b = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_gb, i_b
-            )
-            sdf_grad_1_b = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_gb, i_b
-            )
-
-            # check if the edge on a is facing towards mesh b (I am not 100% sure about this, subject to removal)
-            sdf_grad_0_a = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_ga, i_b
-            )
-            sdf_grad_1_a = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_ga, i_b
-            )
-            normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
-            normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
-
-            if normal_edge_0.dot(sdf_grad_0_b) < 0 or normal_edge_1.dot(sdf_grad_1_b) < 0:
-                # check if closest point is between the two points
-                if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
-                    while cur_length > ga_sdf_cell_size:
-                        p_mid = 0.5 * (p_0 + p_1)
-                        if (
-                            sdf.sdf_func_grad_world(
-                                geoms_state,
-                                geoms_info,
-                                rigid_global_info,
-                                collider_static_config,
-                                sdf_info,
-                                p_mid,
-                                i_gb,
-                                i_b,
-                            ).dot(vec_01)
-                            < 0
-                        ):
-                            p_0 = p_mid
-                        else:
-                            p_1 = p_mid
-                        cur_length = 0.5 * cur_length
-
-                    p = 0.5 * (p_0 + p_1)
-                    new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, p, i_gb, i_b)
-
-                    if new_penetration > penetration:
-                        is_col = True
-                        normal = sdf.sdf_func_normal_world(
-                            geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p, i_gb, i_b
-                        )
-                        contact_pos = p
-                        penetration = new_penetration
-
-    # The contact point must be offsetted by half the penetration depth, for consistency with MPR
-    contact_pos = contact_pos + 0.5 * penetration * normal
 
     return is_col, normal, penetration, contact_pos
 

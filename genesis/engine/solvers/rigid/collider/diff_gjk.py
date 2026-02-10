@@ -644,7 +644,6 @@ def func_epa_support(
     return i_v
 
 
-
 @ti.func
 def func_add_diff_contact_input(
     geoms_info: array_class.GeomsInfo,

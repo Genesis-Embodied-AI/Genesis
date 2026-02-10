@@ -2315,7 +2315,7 @@ def func_gjk_contact(
                     if ti.static(gjk_static_config.enable_mujoco_multi_contact):
                         # Use MuJoCo's multi-contact detection algorithm
                         if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
-                            func_multi_contact(
+                            multi_contact.func_multi_contact(
                                 geoms_state,
                                 geoms_info,
                                 verts_info,

@@ -169,7 +169,6 @@ def sdf_func_grad_world(
     geom_idx,
     batch_idx,
 ):
-
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 

@@ -461,7 +461,8 @@ def func_potential_box_normals(
     if is_degenerate_simplex:
         n_normals = (
             1
-            if func_box_normal_from_collision_normal(gjk_state, gjk_info, i_g, quat, i_b, dir) == RETURN_CODE.SUCCESS
+            if func_box_normal_from_collision_normal(gjk_state, gjk_info, i_g, quat, i_b, dir)
+            == gjk.RETURN_CODE.SUCCESS
             else 0
         )
 
