@@ -19,7 +19,7 @@ env:
   # Note that secrets are not passed to workflows that are triggered by a pull request from a fork
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_HUB_DOWNLOAD_TIMEOUT: 60
-  GENESIS_IMAGE_VER: "1_21"
+  GENESIS_IMAGE_VER: "1_22"
   TIMEOUT_MINUTES: 60
   FORCE_COLOR: 1
   PY_COLORS: 1
@@ -53,16 +53,20 @@ jobs:
                --container-name=${CONTAINER_NAME} \
                --container-mounts=\
           ${{ github.workspace }}:/root/workspace,\
-          ${HOME}/.cache:/root/.cache \
+          ${HOME}/.cache/uv:/root/.cache/uv,\
+          ${HOME}/.cache/genesis:/root/.cache/genesis,\
+          ${HOME}/.cache/huggingface:/root/.cache/huggingface \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
+
+          mkdir -p ${HOME}/.cache/uv ${HOME}/.cache/genesis ${HOME}/.cache/huggingface
 
           JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
+                 --partition=rtx-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
@@ -134,7 +138,9 @@ jobs:
                --container-mounts=\
           /mnt/data/artifacts:/mnt/data/artifacts,\
           ${{ github.workspace }}:/root/workspace,\
-          ${HOME}/.cache:/root/.cache \
+          ${HOME}/.cache/uv:/root/.cache/uv,\
+          ${HOME}/.cache/genesis:/root/.cache/genesis,\
+          ${HOME}/.cache/huggingface:/root/.cache/huggingface \
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
@@ -146,7 +152,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=hpc-high --nodes=1 --gpus=8 --exclusive \
+                 --partition=rtx-high --nodes=1 --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
