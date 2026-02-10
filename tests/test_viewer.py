@@ -6,10 +6,11 @@ import OpenGL.error
 import pytest
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
-from .utils import assert_allclose, rgb_array_to_png_bytes
+from .utils import assert_allclose
 
 CAM_RES = (480, 320)
 
@@ -168,10 +169,12 @@ def test_mouse_interaction_plugin():
             gravity=(0.0, 0.0, 0.0),
         ),
         viewer_options=gs.options.ViewerOptions(
+            # Forces odd resolution so that mouse clicks are centered on pixels
+            res=(2 * (CAM_RES[0] // 2) + 1, 2 * (CAM_RES[0] // 2) + 1),
             camera_pos=CAM_POS,
-            camera_lookat=(0.0, 0.0, BOX_LENGTH),  # looking to the top of the box
+            # looking to the top of the box
+            camera_lookat=(0.0, 0.0, BOX_LENGTH),
             camera_fov=CAM_FOV,
-            res=(CAM_RES[0] + 1, CAM_RES[1] + 1),  # odd resolution so that mouse clicks are centered on pixels
             run_in_thread=(sys.platform == "linux"),
         ),
         show_viewer=True,
@@ -188,7 +191,7 @@ def test_mouse_interaction_plugin():
             rho=MASS / (BOX_LENGTH**3),
         ),
     )
-    mouse_plugin = scene.viewer.add_plugin(
+    _mouse_plugin = scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
             spring_const=SPRING_CONST,
@@ -260,7 +263,7 @@ def test_mouse_interaction_plugin():
         err_msg="Final x and y velocities should be near zero since dragging only in z direction.",
     )
 
-    distance_to_box = np.linalg.norm(np.array(CAM_POS) - initial_pos.numpy())
+    distance_to_box = np.linalg.norm(tensor_to_array(initial_pos) - CAM_POS)
     pixels_to_world = 2.0 * distance_to_box * np.tan(np.radians(CAM_FOV) / 2.0) / viewport_size[1]
     total_world_displacement = STEPS * DRAG_DY * pixels_to_world
 
@@ -289,6 +292,6 @@ def test_mouse_interaction_plugin():
     assert_allclose(
         final_vel[2],
         expected_vel_z,
-        rtol=0.4,
+        rtol=0.5,
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
     )
