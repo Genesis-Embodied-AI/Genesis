@@ -6,7 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
+from . import support_field, epa
 
 
 class RETURN_CODE(IntEnum):
@@ -159,286 +159,6 @@ def clear_cache(gjk_state: array_class.GJKState, i_b):
     gjk_state.support_mesh_prev_vertex_id[i_b, 1] = -1
     gjk_state.multi_contact_flag[i_b] = False
     gjk_state.last_searched_simplex_vertex_id[i_b] = 0
-
-
-@ti.func
-def func_gjk_contact(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    gjk_static_config: ti.template(),
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    pos_a: ti.types.vector(3, dtype=gs.ti_float),
-    quat_a: ti.types.vector(4, dtype=gs.ti_float),
-    pos_b: ti.types.vector(3, dtype=gs.ti_float),
-    quat_b: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
-):
-    """
-    Detect (possibly multiple) contact between two geometries using GJK and EPA algorithms.
-
-    We first run the GJK algorithm to find the minimum distance between the two geometries. If the distance is
-    smaller than the collision epsilon, we consider the geometries colliding. If they are colliding, we run the EPA
-    algorithm to find the exact contact points and normals.
-
-    .. seealso::
-    MuJoCo's implementation:
-    https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L2259
-    """
-    # Clear the cache to prepare for this GJK-EPA run.
-    clear_cache(gjk_state, i_b)
-
-    # We use MuJoCo's GJK implementation when the compatibility mode is enabled. When it is disabled, we use more
-    # robust GJK implementation which has the same overall structure as MuJoCo.
-    if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
-        # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives, we can shrink them
-        # to a point or line to detect shallow penetration faster.
-        is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
-            func_is_sphere_swept_geom(geoms_info, i_ga, i_b),
-            func_is_sphere_swept_geom(geoms_info, i_gb, i_b),
-        )
-        shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
-
-        # Run GJK
-        for _ in range(2 if shrink_sphere else 1):
-            distance = func_gjk(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                i_b=i_b,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                shrink_sphere=shrink_sphere,
-            )
-
-            if shrink_sphere:
-                # If we shrunk the sphere and capsule to point and line and the distance is larger than the collision
-                # epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and the capsule to
-                # get the actual distance. If the distance is smaller than the collision epsilon, it means a deep
-                # penetration, which requires the default GJK handling.
-                if distance > gjk_info.collision_eps[None]:
-                    radius_a, radius_b = 0.0, 0.0
-                    if is_sphere_swept_geom_a:
-                        radius_a = geoms_info.data[i_ga][0]
-                    if is_sphere_swept_geom_b:
-                        radius_b = geoms_info.data[i_gb][0]
-
-                    wa = gjk_state.witness.point_obj1[i_b, 0]
-                    wb = gjk_state.witness.point_obj2[i_b, 0]
-                    n = func_safe_normalize(gjk_info, wb - wa)
-
-                    gjk_state.distance[i_b] = distance - (radius_a + radius_b)
-                    gjk_state.witness.point_obj1[i_b, 0] = wa + (radius_a * n)
-                    gjk_state.witness.point_obj2[i_b, 0] = wb - (radius_b * n)
-
-                    break
-
-            # Only try shrinking the sphere once
-            shrink_sphere = False
-
-            distance = gjk_state.distance[i_b]
-            nsimplex = gjk_state.nsimplex[i_b]
-            collided = distance < gjk_info.collision_eps[None]
-
-            # To run EPA, we need following conditions:
-            # 1. We did not find min. distance with shrink_sphere flag
-            # 2. We have a valid GJK simplex (nsimplex > 0)
-            # 3. We have a collision (distance < collision_epsilon)
-            do_epa = (not shrink_sphere) and collided and (nsimplex > 0)
-
-            if do_epa:
-                # Assume touching
-                gjk_state.distance[i_b] = 0
-
-                # Initialize polytope
-                gjk_state.polytope.nverts[i_b] = 0
-                gjk_state.polytope.nfaces[i_b] = 0
-                gjk_state.polytope.nfaces_map[i_b] = 0
-                gjk_state.polytope.horizon_nedges[i_b] = 0
-
-                # Construct the initial polytope from the GJK simplex
-                polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
-                if nsimplex == 2:
-                    polytope_flag = func_epa_init_polytope_2d(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
-                    )
-                elif nsimplex == 4:
-                    polytope_flag = func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
-
-                # Polytope 3D could be used as a fallback for 2D and 4D cases, but it is not necessary
-                if (
-                    nsimplex == 3
-                    or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
-                    or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
-                ):
-                    polytope_flag = func_epa_init_polytope_3d(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
-                    )
-
-                # Run EPA from the polytope
-                if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-                    i_f = func_epa(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
-                    )
-
-                    if ti.static(gjk_static_config.enable_mujoco_multi_contact):
-                        # To use MuJoCo's multi-contact detection algorithm,
-                        # (1) [i_f] should be a valid face index in the polytope (>= 0),
-                        # (2) Both of the geometries should be discrete,
-                        # (3) [enable_mujoco_multi_contact] should be True. Default to False.
-                        if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
-                            func_multi_contact(
-                                geoms_info=geoms_info,
-                                verts_info=verts_info,
-                                faces_info=faces_info,
-                                gjk_state=gjk_state,
-                                gjk_info=gjk_info,
-                                i_ga=i_ga,
-                                i_gb=i_gb,
-                                pos_a=pos_a,
-                                quat_a=quat_a,
-                                pos_b=pos_b,
-                                quat_b=quat_b,
-                                i_b=i_b,
-                                i_f=i_f,
-                            )
-                            gjk_state.multi_contact_flag[i_b] = True
-    else:
-        gjk_flag = func_safe_gjk(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            i_b=i_b,
-        )
-        if gjk_flag == GJK_RETURN_CODE.INTERSECT:
-            # Initialize polytope
-            gjk_state.polytope.nverts[i_b] = 0
-            gjk_state.polytope.nfaces[i_b] = 0
-            gjk_state.polytope.nfaces_map[i_b] = 0
-            gjk_state.polytope.horizon_nedges[i_b] = 0
-
-            # Construct the initial polytope from the GJK simplex
-            func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
-
-            # Run EPA from the polytope
-            func_safe_epa(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                i_b=i_b,
-            )
-
-    # Compute the final contact points and normals.
-    n_contacts = 0
-    gjk_state.is_col[i_b] = gjk_state.distance[i_b] < 0.0
-    gjk_state.penetration[i_b] = -gjk_state.distance[i_b] if gjk_state.is_col[i_b] else 0.0
-
-    if gjk_state.is_col[i_b]:
-        for i in range(gjk_state.n_witness[i_b]):
-            w1 = gjk_state.witness.point_obj1[i_b, i]
-            w2 = gjk_state.witness.point_obj2[i_b, i]
-            contact_pos = 0.5 * (w1 + w2)
-
-            normal = w2 - w1
-            normal_len = normal.norm()
-            if normal_len < gjk_info.FLOAT_MIN[None]:
-                continue
-
-            normal = normal / normal_len
-
-            gjk_state.contact_pos[i_b, n_contacts] = contact_pos
-            gjk_state.normal[i_b, n_contacts] = normal
-            n_contacts += 1
-
-    gjk_state.n_contacts[i_b] = n_contacts
-    # If there are no contacts, we set the penetration and is_col to 0.
-    # FIXME: When we use if statement here, it leads to a bug in some backends (e.g. x86 cpu). Need to investigate.
-    gjk_state.is_col[i_b] = False if n_contacts == 0 else gjk_state.is_col[i_b]
-    gjk_state.penetration[i_b] = 0.0 if n_contacts == 0 else gjk_state.penetration[i_b]
 
 
 @ti.func
@@ -2398,7 +2118,7 @@ def func_count_support(
 
 
 @ti.func
-def func_gjk_contact_local(
+def func_gjk_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -2448,21 +2168,21 @@ def func_gjk_contact_local(
         quat_b: Quaternion of geometry B (thread-local)
     """
     # Clear the cache to prepare for this GJK-EPA run
-    gjk.clear_cache(gjk_state, i_b)
+    clear_cache(gjk_state, i_b)
 
     # We use MuJoCo's GJK implementation when the compatibility mode is enabled
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
         # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives,
         # we can shrink them to a point or line to detect shallow penetration faster
         is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
-            gjk.func_is_sphere_swept_geom(geoms_info, i_ga),
-            gjk.func_is_sphere_swept_geom(geoms_info, i_gb),
+            func_is_sphere_swept_geom(geoms_info, i_ga),
+            func_is_sphere_swept_geom(geoms_info, i_gb),
         )
         shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
 
         # Run GJK
         for _ in range(2 if shrink_sphere else 1):
-            distance = func_gjk_local(
+            distance = func_gjk(
                 geoms_info=geoms_info,
                 verts_info=verts_info,
                 static_rigid_sim_config=static_rigid_sim_config,
@@ -2525,9 +2245,9 @@ def func_gjk_contact_local(
                 gjk_state.polytope.horizon_nedges[i_b] = 0
 
                 # Construct the initial polytope from the GJK simplex
-                polytope_flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+                polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
                 if nsimplex == 2:
-                    polytope_flag = epa_local.func_epa_init_polytope_2d_local(
+                    polytope_flag = epa.func_epa_init_polytope_2d(
                         geoms_info=geoms_info,
                         verts_info=verts_info,
                         rigid_global_info=rigid_global_info,
@@ -2551,10 +2271,10 @@ def func_gjk_contact_local(
                 # Polytope 3D could be used as a fallback for 2D and 4D cases
                 if (
                     nsimplex == 3
-                    or (polytope_flag == gjk.EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
-                    or (polytope_flag == gjk.EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
+                    or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
+                    or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
                 ):
-                    polytope_flag = epa_local.func_epa_init_polytope_3d_local(
+                    polytope_flag = epa.func_epa_init_polytope_3d_local(
                         geoms_info=geoms_info,
                         verts_info=verts_info,
                         static_rigid_sim_config=static_rigid_sim_config,
@@ -2573,8 +2293,8 @@ def func_gjk_contact_local(
                     )
 
                 # Run EPA from the polytope
-                if polytope_flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-                    i_f = epa_local.func_epa_local(
+                if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+                    i_f = epa.func_epa_local(
                         geoms_info=geoms_info,
                         verts_info=verts_info,
                         static_rigid_sim_config=static_rigid_sim_config,
@@ -2594,8 +2314,8 @@ def func_gjk_contact_local(
 
                     if ti.static(gjk_static_config.enable_mujoco_multi_contact):
                         # Use MuJoCo's multi-contact detection algorithm
-                        if i_f >= 0 and gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
-                            gjk.func_multi_contact(
+                        if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+                            func_multi_contact(
                                 geoms_state,
                                 geoms_info,
                                 verts_info,
@@ -2613,7 +2333,7 @@ def func_gjk_contact_local(
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:
-        gjk_flag = func_safe_gjk_local(
+        gjk_flag = func_safe_gjk(
             geoms_info=geoms_info,
             verts_info=verts_info,
             rigid_global_info=rigid_global_info,
@@ -2642,7 +2362,7 @@ def func_gjk_contact_local(
             epa.func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             # Run EPA from the polytope (use local version)
-            epa_local.func_safe_epa_local(
+            epa.func_safe_epa(
                 geoms_info=geoms_info,
                 verts_info=verts_info,
                 rigid_global_info=rigid_global_info,
@@ -2687,8 +2407,6 @@ def func_gjk_contact_local(
     # If there are no contacts, we set the penetration and is_col to 0
     gjk_state.is_col[i_b] = False if n_contacts == 0 else gjk_state.is_col[i_b]
     gjk_state.penetration[i_b] = 0.0 if n_contacts == 0 else gjk_state.penetration[i_b]
-
-
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
