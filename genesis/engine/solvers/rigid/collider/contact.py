@@ -284,7 +284,6 @@ def func_compute_tolerance(
 
 
 @ti.func
-@ti.func
 def func_contact_orthogonals(
     i_ga,
     i_gb,
