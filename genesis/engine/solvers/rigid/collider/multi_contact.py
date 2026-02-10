@@ -89,25 +89,38 @@ def func_multi_contact(
         v3i = v13i if i_g0 == 0 else v23i
         t_dir = dir_neg if i_g0 == 0 else dir
 
+        # Extract local quat for thread-local calls
+        quat_g = geoms_state.quat[i_g, i_b]
+
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
-            nnorms = func_potential_box_normals(
-                geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1i, v2i, v3i, t_dir
+            nnorms = multi_contact_local.func_potential_box_normals_local(
+                geoms_info=geoms_info,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                i_g=i_g,
+                quat=quat_g,
+                i_b=i_b,
+                dim=nface,
+                v1=v1i,
+                v2=v2i,
+                v3=v3i,
+                dir=t_dir,
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
-            nnorms = func_potential_mesh_normals(
-                geoms_state,
-                geoms_info,
-                verts_info,
-                faces_info,
-                gjk_state,
-                gjk_info,
-                i_g,
-                i_b,
-                nface,
-                v1i,
-                v2i,
-                v3i,
+            nnorms = multi_contact_local.func_potential_mesh_normals_local(
+                geoms_info=geoms_info,
+                verts_info=verts_info,
+                faces_info=faces_info,
+                gjk_state=gjk_state,
+                gjk_info=gjk_info,
+                i_g=i_g,
+                quat=quat_g,
+                i_b=i_b,
+                dim=nface,
+                v1=v1i,
+                v2=v2i,
+                v3=v3i,
             )
 
         for i_n in range(nnorms):
@@ -141,26 +154,42 @@ def func_multi_contact(
             v1i = v11i if is_edge_face else v21i
             v2i = v12i if is_edge_face else v22i
 
+            # Extract local pos/quat for thread-local calls
+            pos_g = geoms_state.pos[i_g, i_b]
+            quat_g = geoms_state.quat[i_g, i_b]
+
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
-                nnorms = func_potential_box_edge_normals(
-                    geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1, v2, v1i, v2i
+                nnorms = multi_contact_local.func_potential_box_edge_normals_local(
+                    geoms_info=geoms_info,
+                    gjk_state=gjk_state,
+                    gjk_info=gjk_info,
+                    i_g=i_g,
+                    pos=pos_g,
+                    quat=quat_g,
+                    i_b=i_b,
+                    dim=nface,
+                    v1=v1,
+                    v2=v2,
+                    v1i=v1i,
+                    v2i=v2i,
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
-                nnorms = func_potential_mesh_edge_normals(
-                    geoms_state,
-                    geoms_info,
-                    verts_info,
-                    faces_info,
-                    gjk_state,
-                    gjk_info,
-                    i_g,
-                    i_b,
-                    nface,
-                    v1,
-                    v2,
-                    v1i,
-                    v2i,
+                nnorms = multi_contact_local.func_potential_mesh_edge_normals_local(
+                    geoms_info=geoms_info,
+                    verts_info=verts_info,
+                    faces_info=faces_info,
+                    gjk_state=gjk_state,
+                    gjk_info=gjk_info,
+                    i_g=i_g,
+                    pos=pos_g,
+                    quat=quat_g,
+                    i_b=i_b,
+                    dim=nface,
+                    v1=v1,
+                    v2=v2,
+                    v1i=v1i,
+                    v2i=v2i,
                 )
 
             if is_edge_face:
@@ -205,6 +234,10 @@ def func_multi_contact(
             geom_type = geom_type_a if k == 0 else geom_type_b
             i_g = i_ga if k == 0 else i_gb
 
+            # Extract local pos/quat for thread-local calls
+            pos_g = geoms_state.pos[i_g, i_b]
+            quat_g = geoms_state.quat[i_g, i_b]
+
             nface = 0
             if edgecon:
                 if k == 0:
@@ -228,9 +261,28 @@ def func_multi_contact(
                     normal_face_idx = gjk_state.contact_faces[i_b, j].id2
 
                 if geom_type == gs.GEOM_TYPE.BOX:
-                    nface = func_box_face(geoms_state, geoms_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    nface = multi_contact_local.func_box_face_local(
+                        geoms_info=geoms_info,
+                        gjk_state=gjk_state,
+                        i_g=i_g,
+                        pos=pos_g,
+                        quat=quat_g,
+                        i_b=i_b,
+                        i_o=k,
+                        face_idx=normal_face_idx,
+                    )
                 elif geom_type == gs.GEOM_TYPE.MESH:
-                    nface = func_mesh_face(geoms_state, verts_info, faces_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    nface = multi_contact_local.func_mesh_face_local(
+                        verts_info=verts_info,
+                        faces_info=faces_info,
+                        gjk_state=gjk_state,
+                        i_g=i_g,
+                        pos=pos_g,
+                        quat=quat_g,
+                        i_b=i_b,
+                        i_o=k,
+                        face_idx=normal_face_idx,
+                    )
 
             if k == 0:
                 nface1 = nface
@@ -295,49 +347,6 @@ def func_simplex_dim(
 
 
 @ti.func
-def func_potential_box_normals(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_g,
-    i_b,
-    dim,
-    v1,
-    v2,
-    v3,
-    dir,
-):
-    """
-    For a simplex defined on a box with three vertices [v1, v2, v3], we find which face normals are potentially
-    related to the simplex.
-
-    If the simplex is a triangle, at most one face normal is related.
-    If the simplex is a line, at most two face normals are related.
-    If the simplex is a point, at most three face normals are related.
-
-    We identify related face normals to the simplex by checking the vertex indices of the simplex.
-
-    This is a thin wrapper that extracts geometry quaternion from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_potential_box_normals_local(
-        geoms_info,
-        gjk_state,
-        gjk_info,
-        i_g,
-        quat,
-        i_b,
-        dim,
-        v1,
-        v2,
-        v3,
-        dir,
-    )
-
-
-@ti.func
 def func_cmp_bit(
     v1,
     v2,
@@ -378,76 +387,6 @@ def func_cmp_bit(
 
 
 @ti.func
-def func_box_normal_from_collision_normal(
-    geoms_state: array_class.GeomsState,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_g,
-    i_b,
-    dir,
-):
-    """
-    Among the 6 faces of the box, find the one of which normal is closest to the [dir].
-
-    This is a thin wrapper that extracts geometry quaternion from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_box_normal_from_collision_normal_local(
-        gjk_state,
-        gjk_info,
-        i_g,
-        quat,
-        i_b,
-        dir,
-    )
-
-
-@ti.func
-def func_potential_mesh_normals(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_g,
-    i_b,
-    dim,
-    v1,
-    v2,
-    v3,
-):
-    """
-    For a simplex defined on a mesh with three vertices [v1, v2, v3],
-    we find which face normals are potentially related to the simplex.
-
-    If the simplex is a triangle, at most one face normal is related.
-    If the simplex is a line, at most two face normals are related.
-    If the simplex is a point, multiple faces that are adjacent to the point
-    could be related.
-
-    We identify related face normals to the simplex by checking the vertex indices of the simplex.
-
-    This is a thin wrapper that extracts geometry quaternion from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_potential_mesh_normals_local(
-        geoms_info,
-        verts_info,
-        faces_info,
-        gjk_state,
-        gjk_info,
-        i_g,
-        quat,
-        i_b,
-        dim,
-        v1,
-        v2,
-        v3,
-    )
-
 
 @ti.func
 def func_find_aligned_faces(
@@ -474,97 +413,6 @@ def func_find_aligned_faces(
 
     return res, flag
 
-
-@ti.func
-def func_potential_box_edge_normals(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_g,
-    i_b,
-    dim,
-    v1,
-    v2,
-    v1i,
-    v2i,
-):
-    """
-    For a simplex defined on a box with two vertices [v1, v2],
-    we find which edge normals are potentially related to the simplex.
-
-    If the simplex is a line, at most one edge normal are related.
-    If the simplex is a point, at most three edge normals are related.
-
-    We identify related edge normals to the simplex by checking the vertex indices of the simplex.
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_potential_box_edge_normals_local(
-        geoms_info,
-        gjk_state,
-        gjk_info,
-        i_g,
-        pos,
-        quat,
-        i_b,
-        dim,
-        v1,
-        v2,
-        v1i,
-        v2i,
-    )
-
-
-@ti.func
-def func_potential_mesh_edge_normals(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_g,
-    i_b,
-    dim,
-    v1,
-    v2,
-    v1i,
-    v2i,
-):
-    """
-    For a simplex defined on a mesh with two vertices [v1, v2],
-    we find which edge normals are potentially related to the simplex.
-
-    If the simplex is a line, at most one edge normal are related.
-    If the simplex is a point, multiple edges that are adjacent to the point could be related.
-
-    We identify related edge normals to the simplex by checking the vertex indices of the simplex.
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_potential_mesh_edge_normals_local(
-        geoms_info,
-        verts_info,
-        faces_info,
-        gjk_state,
-        gjk_info,
-        i_g,
-        pos,
-        quat,
-        i_b,
-        dim,
-        v1,
-        v2,
-        v1i,
-        v2i,
-    )
 
 
 @ti.func
@@ -622,68 +470,6 @@ def func_find_aligned_edge_face(
             break
 
     return res, flag
-
-
-@ti.func
-def func_box_face(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    gjk_state: array_class.GJKState,
-    i_g,
-    i_b,
-    i_o,
-    face_idx,
-):
-    """
-    Get the face vertices of the box geometry.
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_box_face_local(
-        geoms_info,
-        gjk_state,
-        i_g,
-        pos,
-        quat,
-        i_b,
-        i_o,
-        face_idx,
-    )
-
-
-@ti.func
-def func_mesh_face(
-    geoms_state: array_class.GeomsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    gjk_state: array_class.GJKState,
-    i_g,
-    i_b,
-    i_o,
-    face_idx,
-):
-    """
-    Get the face vertices of the mesh.
-
-    This is a thin wrapper that extracts geometry pose from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos = geoms_state.pos[i_g, i_b]
-    quat = geoms_state.quat[i_g, i_b]
-    return multi_contact_local.func_mesh_face_local(
-        verts_info,
-        faces_info,
-        gjk_state,
-        i_g,
-        pos,
-        quat,
-        i_b,
-        i_o,
-        face_idx,
-    )
 
 
 @ti.func
