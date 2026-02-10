@@ -1048,52 +1048,6 @@ def func_is_coplanar(
 
 
 @ti.func
-def func_search_valid_simplex_vertex(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
-    """
-    Search for a valid simplex vertex (non-duplicate, non-degenerate) in the Minkowski difference.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return gjk_local.func_search_valid_simplex_vertex_local(
-        geoms_info,
-        verts_info,
-        rigid_global_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        i_b,
-    )
-
-
-@ti.func
 def func_num_discrete_geom_vertices(
     geoms_info: array_class.GeomsInfo,
     i_g,
@@ -1163,63 +1117,6 @@ def func_safe_gjk_triangle_info(
 
 
 @ti.func
-def func_safe_gjk_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    dir,
-):
-    """
-    Find support points on the two objects using [dir] to use in the [safe_gjk] algorithm.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-
-    This is a more robust version of the support function that finds only one pair of support points, because this
-    function perturbs the support direction to find the best support points that guarantee non-degenerate simplex
-    in the GJK algorithm.
-
-    Parameters:
-    ----------
-    dir: gs.ti_vec3
-        The unit direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return gjk_local.func_safe_gjk_support_local(
-        geoms_info,
-        verts_info,
-        rigid_global_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        i_b,
-        dir,
-    )
-
-
-@ti.func
 def count_support_driver(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1243,38 +1140,6 @@ def count_support_driver(
         quat,
     )
 
-
-@ti.func
-def func_count_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    dir,
-):
-    """
-    Count the number of possible pairs of support points on the two objects in the given direction [d].
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return gjk_local.func_count_support_local(
-        geoms_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        dir,
-    )
 
 
 # Import EPA functions (circular import resolved by importing after all gjk functions are defined)
