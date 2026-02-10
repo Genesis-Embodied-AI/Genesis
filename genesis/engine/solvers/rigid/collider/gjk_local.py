@@ -10,7 +10,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import epa_local, gjk, support_field, support_field_local
+from genesis.engine.solvers.rigid.collider import epa, epa_local, gjk, support_field, support_field_local
 from genesis.utils import array_class
 
 
@@ -1523,7 +1523,7 @@ def func_gjk_contact_local(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            gjk.func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
+            epa.func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             # Run EPA from the polytope (use local version)
             epa_local.func_safe_epa_local(
