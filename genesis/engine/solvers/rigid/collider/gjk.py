@@ -1290,19 +1290,17 @@ def func_is_discrete_geoms(
     geoms_info: array_class.GeomsInfo,
     i_ga,
     i_gb,
-    i_b,
 ):
     """
     Check if the given geoms are discrete geometries.
     """
-    return func_is_discrete_geom(geoms_info, i_ga, i_b) and func_is_discrete_geom(geoms_info, i_gb, i_b)
+    return func_is_discrete_geom(geoms_info, i_ga) and func_is_discrete_geom(geoms_info, i_gb)
 
 
 @ti.func
 def func_is_discrete_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Check if the given geom is a discrete geometry.
@@ -1315,7 +1313,6 @@ def func_is_discrete_geom(
 def func_is_sphere_swept_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Check if the given geoms are sphere-swept geometries.
@@ -2059,7 +2056,7 @@ def func_search_valid_simplex_vertex(
     flag = RETURN_CODE.FAIL
 
     # If both geometries are discrete, we can use a brute-force search to find a valid simplex vertex.
-    if func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+    if func_is_discrete_geoms(geoms_info, i_ga, i_gb):
         geom_nverts = gs.ti_ivec2(0, 0)
         for i in range(2):
             geom_nverts[i] = func_num_discrete_geom_vertices(geoms_info, i_ga if i == 0 else i_gb)
@@ -2139,7 +2136,6 @@ def func_search_valid_simplex_vertex(
 def func_num_discrete_geom_vertices(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Count the number of discrete vertices in the geometry.

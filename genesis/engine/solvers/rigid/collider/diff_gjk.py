@@ -2,7 +2,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import gjk as GJK, contact
+from . import gjk as GJK, contact, epa
 
 
 @ti.func
@@ -104,11 +104,11 @@ def func_gjk_contact(
             qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
 
             # Apply perturbation to local variables
-            result_a = func_rotate_frame(ga_pos_local, ga_quat_local, default_contact_pos, qrot)
+            result_a = contact.func_rotate_frame(ga_pos_local, ga_quat_local, default_contact_pos, qrot)
             ga_pos_local = result_a.pos
             ga_quat_local = result_a.quat
 
-            result_b = func_rotate_frame(gb_pos_local, gb_quat_local, default_contact_pos, gu.ti_inv_quat(qrot))
+            result_b = contact.func_rotate_frame(gb_pos_local, gb_quat_local, default_contact_pos, gu.ti_inv_quat(qrot))
             gb_pos_local = result_b.pos
             gb_quat_local = result_b.quat
 
@@ -139,7 +139,7 @@ def func_gjk_contact(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            GJK.func_safe_epa_init(
+            epa.func_safe_epa_init(
                 gjk_state=gjk_state,
                 gjk_info=gjk_info,
                 i_ga=i_ga,
@@ -245,7 +245,7 @@ def func_gjk_contact(
                 if not found_default_epa:
                     break
             else:
-                i_f = GJK.func_safe_epa(
+                i_f = epa.func_safe_epa(
                     geoms_info=geoms_info,
                     verts_info=verts_info,
                     rigid_global_info=rigid_global_info,
@@ -432,7 +432,7 @@ def func_extended_epa(
         # Find a new support point w from the nearest face's normal
         lower = ti.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
-        wi = GJK.func_epa_support(
+        wi = epa.func_epa_support(
             geoms_info=geoms_info,
             verts_info=verts_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -480,7 +480,7 @@ def func_extended_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = GJK.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+        horizon_flag = epa.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -523,7 +523,7 @@ def func_extended_epa(
             adj_i_f_1 = horizon_i_f
             adj_i_f_2 = i_f1
 
-            attach_flag = GJK.func_safe_attach_face_to_polytope(
+            attach_flag = epa.func_safe_attach_face_to_polytope(
                 gjk_state,
                 gjk_info,
                 i_b,
@@ -565,7 +565,7 @@ def func_extended_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = GJK.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
+        flag = epa.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == GJK.RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -ti.sqrt(dist2)
@@ -611,7 +611,7 @@ def func_epa_support_local(
     Returns:
         i_v: Index of the newly added vertex in the polytope
     """
-    obj1, obj2, localpos1, localpos2, id1, id2, mink = gjk_local.func_support_local(
+    obj1, obj2, localpos1, localpos2, id1, id2, mink = GJK.func_support(
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -662,7 +662,6 @@ def func_add_diff_contact_input(
     quat_a: ti.types.vector(4, dtype=gs.ti_float),
     pos_b: ti.types.vector(3, dtype=gs.ti_float),
     quat_b: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
     i_f,
 ):
     """
@@ -761,6 +760,8 @@ def func_contact_orthogonals(
     normal: ti.types.vector(3),
     i_b,
     links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -879,7 +880,7 @@ def func_differentiable_contact(
 
     # Project the origin onto the affine plane of the face: This operation is guaranteed to be numerically stable, as
     # the normal length is guaranteed to be larger than the minimum normal norm in [gjk_info].
-    proj_o = func_project_origin_to_plane(mink1, normal)
+    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
 
     # Compute the affine coordinates of the origin's projection on the face: This operation is also guaranteed to be
     # numerically stable, as the normal length is guaranteed to be larger than the minimum normal norm in
@@ -944,22 +945,12 @@ def func_plane_normal(v1, v2, v3):
 
 
 @ti.func
-def func_project_origin_to_plane(v1, normal):
+def func_project_origin_to_plane(v1, v2, v3, normal):
     """
     Project the origin onto the plane defined by a point on the plane and its normal.
 
-    Parameters
-    ----------
-    v1 : ti.types.vector(3)
-        A point on the plane.
-    normal : ti.types.vector(3)
-        The face normal (perpendicular to the plane). Its length should be guaranteed to be larger than the
-        minimum normal norm in [gjk_info], but we do not check it here.
-
-    Returns
-    -------
-    ti.types.vector(3)
-        The projection of the origin onto the plane.
+    @ normal: The face normal computed as (v2 - v1) x (v3 - v1). Its length should be guaranteed to be larger than the
+    minimum normal norm in [gjk_info], but we do not check it here.
     """
     # Since normal norm is guaranteed to be larger than sqrt(10 * EPS), [nn] is guaranteed to be larger than 10 * EPS.
     v = v1
