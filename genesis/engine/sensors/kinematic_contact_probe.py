@@ -80,7 +80,8 @@ class KinematicContactProbe(
         sensor_manager: "SensorManager",
     ):
         # Store n_probes before super().__init__() since _get_return_format() is called there
-        self._n_probes = sensor_options.n_probes
+        self._n_probes = len(sensor_options.probe_local_pos)
+
         super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
 
         self.debug_sphere_objects: list["Mesh | None"] = []
@@ -89,32 +90,23 @@ class KinematicContactProbe(
     def build(self):
         super().build()
 
-        probe_positions = self._options.get_probe_positions()
-        probe_normals = self._options.get_probe_normals()
+        probe_positions = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
+        probe_normals = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
         n_probes = len(probe_positions)
         sensor_idx = self._idx
 
         self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
-            self._shared_metadata.n_probes_per_sensor,
-            torch.tensor([n_probes], dtype=torch.int32, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.n_probes_per_sensor, n_probes, expand=(1,), dim=0
         )
 
         current_cache_start = sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0
         self._shared_metadata.sensor_cache_start = concat_with_tensor(
-            self._shared_metadata.sensor_cache_start,
-            torch.tensor([current_cache_start], dtype=torch.int32, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
         )
 
         current_probe_start = self._shared_metadata.total_n_probes
         self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start,
-            torch.tensor([current_probe_start], dtype=torch.int32, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.sensor_probe_start, current_probe_start, expand=(1,), dim=0
         )
 
         self._shared_metadata.probe_sensor_idx = concat_with_tensor(
@@ -124,15 +116,14 @@ class KinematicContactProbe(
             dim=0,
         )
 
-        positions_tensor = torch.tensor(probe_positions, dtype=gs.tc_float, device=gs.device)
-        self._shared_metadata.probe_positions = torch.cat(
-            [self._shared_metadata.probe_positions, positions_tensor], dim=0
+        self._shared_metadata.probe_positions = concat_with_tensor(
+            self._shared_metadata.probe_positions, probe_positions, expand=(n_probes, 3), dim=0
         )
 
-        normals_tensor = torch.tensor(probe_normals, dtype=gs.tc_float, device=gs.device)
-        norms = normals_tensor.norm(dim=1, keepdim=True).clamp(min=1e-8)
-        normals_tensor = normals_tensor / norms
-        self._shared_metadata.probe_normals = torch.cat([self._shared_metadata.probe_normals, normals_tensor], dim=0)
+        norms = probe_normals.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
+        self._shared_metadata.probe_normals = concat_with_tensor(
+            self._shared_metadata.probe_normals, probe_normals / norms, expand=(n_probes, 3), dim=0
+        )
 
         self._shared_metadata.total_n_probes += n_probes
 
@@ -143,16 +134,10 @@ class KinematicContactProbe(
             self._shared_metadata.stiffness, self._options.stiffness, expand=(1,), dim=0
         )
         self._shared_metadata.contypes = concat_with_tensor(
-            self._shared_metadata.contypes,
-            torch.tensor([self._options.contype], dtype=torch.int32, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.contypes, self._options.contype, expand=(1,), dim=0
         )
         self._shared_metadata.conaffinities = concat_with_tensor(
-            self._shared_metadata.conaffinities,
-            torch.tensor([self._options.conaffinity], dtype=torch.int32, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.conaffinities, self._options.conaffinity, expand=(1,), dim=0
         )
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
@@ -178,32 +163,21 @@ class KinematicContactProbe(
         if n_sensors == 0 or total_n_probes == 0:
             return
 
-        links_pos = solver.get_links_pos(links_idx=shared_metadata.links_idx)
-        links_quat = solver.get_links_quat(links_idx=shared_metadata.links_idx)
-
-        if solver.n_envs == 0:
-            links_pos = links_pos[None]
-            links_quat = links_quat[None]
-
-        links_pos = links_pos.reshape(B, n_sensors, 3)
-        links_quat = links_quat.reshape(B, n_sensors, 4)
-
         shared_ground_truth_cache.zero_()
 
         _kernel_kinematic_contact_probe_support_query(
-            probe_positions_local=shared_metadata.probe_positions.contiguous(),
-            probe_normals_local=shared_metadata.probe_normals.contiguous(),
-            probe_sensor_idx=shared_metadata.probe_sensor_idx.contiguous(),
-            links_pos=links_pos.contiguous(),
-            links_quat=links_quat.contiguous(),
-            radii=shared_metadata.radii.contiguous(),
-            stiffness=shared_metadata.stiffness.contiguous(),
-            links_idx=shared_metadata.links_idx.contiguous(),
-            contypes=shared_metadata.contypes.contiguous(),
-            conaffinities=shared_metadata.conaffinities.contiguous(),
-            n_probes_per_sensor=shared_metadata.n_probes_per_sensor.contiguous(),
-            sensor_cache_start=shared_metadata.sensor_cache_start.contiguous(),
-            sensor_probe_start=shared_metadata.sensor_probe_start.contiguous(),
+            probe_positions_local=shared_metadata.probe_positions,
+            probe_normals_local=shared_metadata.probe_normals,
+            probe_sensor_idx=shared_metadata.probe_sensor_idx,
+            links_state=solver.links_state,
+            radii=shared_metadata.radii,
+            stiffness=shared_metadata.stiffness,
+            links_idx=shared_metadata.links_idx,
+            contypes=shared_metadata.contypes,
+            conaffinities=shared_metadata.conaffinities,
+            n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
+            sensor_cache_start=shared_metadata.sensor_cache_start,
+            sensor_probe_start=shared_metadata.sensor_probe_start,
             n_geoms=n_geoms,
             geoms_state=solver.geoms_state,
             geoms_info=solver.geoms_info,
@@ -211,7 +185,7 @@ class KinematicContactProbe(
             constraint_state=solver.constraint_solver.constraint_state,
             equalities_info=solver.equalities_info,
             support_field_info=solver.collider._support_field._support_field_info,
-            output=shared_ground_truth_cache.contiguous(),
+            output=shared_ground_truth_cache,
         )
 
     @classmethod
@@ -233,18 +207,6 @@ class KinematicContactProbe(
         )
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
-
-    def _read_internal(self, envs_idx=None, is_ground_truth=False):
-        if not self._manager._has_delay_configured(type(self)):
-            self._manager.update_sensor_type_cache(type(self))
-        return self._get_formatted_data(
-            self._manager.get_cloned_from_cache(self, is_ground_truth=is_ground_truth), envs_idx
-        )
-
-    @gs.assert_built
-    def read(self, envs_idx=None):
-        """Read sensor data with noise applied."""
-        return self._read_internal(envs_idx, is_ground_truth=False)
 
     @gs.assert_built
     def read_ground_truth(self, envs_idx=None):
@@ -397,8 +359,7 @@ def _kernel_kinematic_contact_probe_support_query(
     probe_positions_local: ti.types.ndarray(),
     probe_normals_local: ti.types.ndarray(),
     probe_sensor_idx: ti.types.ndarray(),
-    links_pos: ti.types.ndarray(),
-    links_quat: ti.types.ndarray(),
+    links_state: array_class.LinksState,
     radii: ti.types.ndarray(),
     stiffness: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
@@ -417,8 +378,8 @@ def _kernel_kinematic_contact_probe_support_query(
     output: ti.types.ndarray(),
 ):
     """Compute contact probe readings using support functions."""
-    n_batches = links_pos.shape[0]
     total_n_probes = probe_positions_local.shape[0]
+    n_batches = links_state.pos.shape[-1]
 
     for i_b, i_p in ti.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
@@ -436,10 +397,8 @@ def _kernel_kinematic_contact_probe_support_query(
         sensor_contype = contypes[i_s]
         sensor_conaffinity = conaffinities[i_s]
 
-        link_pos = ti.Vector([links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2]])
-        link_quat = ti.Vector(
-            [links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]]
-        )
+        link_pos = links_state.pos[sensor_link_idx, i_b]
+        link_quat = links_state.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.ti_transform_by_quat(probe_pos_local, link_quat)
         probe_normal = gu.ti_transform_by_quat(probe_normal_local, link_quat)

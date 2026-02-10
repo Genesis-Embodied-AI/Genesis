@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
+import torch
 from pydantic import Field
 
 import genesis as gs
@@ -210,9 +211,9 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
 
     Parameters
     ----------
-    probe_local_pos : list[tuple[float, float, float]]
+    probe_local_pos : Sequence[tuple[float, float, float]]
         Probe positions in link-local frame. One (x, y, z) tuple per probe.
-    probe_local_normal : list[tuple[float, float, float]]
+    probe_local_normal : Sequence[tuple[float, float, float]]
         Probe sensing directions in link-local frame. Penetration is measured along this axis.
     radius : float
         Sensing radius in meters. Objects within this distance are detected. Default: 0.005.
@@ -240,8 +241,8 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
             Computed as stiffness * penetration * probe_normal (NOT physical, see above).
     """
 
-    probe_local_pos: list[Tuple3FType] = [(0.0, 0.0, 0.0)]
-    probe_local_normal: list[Tuple3FType] = [(0.0, 0.0, 1.0)]
+    probe_local_pos: Sequence[Tuple3FType] = [(0.0, 0.0, 0.0)]
+    probe_local_normal: Sequence[Tuple3FType] = [(0.0, 0.0, 1.0)]
     radius: float = 0.005
     stiffness: float = 1000.0
     contype: int = 1
@@ -251,8 +252,6 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
     debug_contact_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.8)
 
     def model_post_init(self, _):
-        import math
-
         if self.radius <= 0:
             gs.raise_exception(f"radius must be positive, got: {self.radius}")
         if self.stiffness < 0:
@@ -262,50 +261,27 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         if self.conaffinity < 0:
             gs.raise_exception(f"conaffinity must be non-negative, got: {self.conaffinity}")
 
-        # Validate probe_local_pos is a list
-        if not isinstance(self.probe_local_pos, list):
-            gs.raise_exception(f"probe_local_pos must be a list of tuples, got: {type(self.probe_local_pos)}")
-        if len(self.probe_local_pos) == 0:
-            gs.raise_exception("probe_local_pos must have at least one probe position")
+        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
+        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
+        norms = np.linalg.norm(probe_local_normal, axis=1)
+        bad_idx = np.where(norms < gs.EPS)[0]
+        if bad_idx.size > 0:
+            idx = int(bad_idx[0])
+            gs.raise_exception(f"probe_local_normal[{idx}] must be non-zero, got: {probe_local_normal[idx].tolist()}")
 
-        # Validate probe_local_normal is a list
-        if not isinstance(self.probe_local_normal, list):
-            gs.raise_exception(f"probe_local_normal must be a list of tuples, got: {type(self.probe_local_normal)}")
-        if len(self.probe_local_normal) == 0:
-            gs.raise_exception("probe_local_normal must have at least one probe normal")
-
-        # Validate each position
-        for i, pos in enumerate(self.probe_local_pos):
-            if not (isinstance(pos, (tuple, list)) and len(pos) == 3):
-                gs.raise_exception(f"probe_local_pos[{i}] must be a tuple of 3 floats, got: {pos}")
-
-        # Validate each normal
-        for i, normal in enumerate(self.probe_local_normal):
-            if not (isinstance(normal, (tuple, list)) and len(normal) == 3):
-                gs.raise_exception(f"probe_local_normal[{i}] must be a tuple of 3 floats, got: {normal}")
-            norm = math.sqrt(sum(x * x for x in normal))
-            if norm < 1e-6:
-                gs.raise_exception(f"probe_local_normal[{i}] must be non-zero, got: {normal}")
-
-        # Validate lengths match
-        if len(self.probe_local_pos) != len(self.probe_local_normal):
+        if len(probe_local_pos) != len(probe_local_normal):
             gs.raise_exception(
-                f"probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(self.probe_local_pos)} positions and {len(self.probe_local_normal)} normals."
+                "probe_local_pos and probe_local_normal must have the same length. "
+                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
             )
 
-    @property
-    def n_probes(self) -> int:
-        """Return the number of probes defined for this sensor."""
-        return len(self.probe_local_pos)
-
-    def get_probe_positions(self) -> list[Tuple3FType]:
-        """Return probe positions as a list of tuples."""
-        return [tuple(pos) for pos in self.probe_local_pos]
-
-    def get_probe_normals(self) -> list[Tuple3FType]:
-        """Return probe normals as a list of tuples."""
-        return [tuple(normal) for normal in self.probe_local_normal]
+    def _validate_probe_arrays(self, values: Sequence[Tuple3FType]) -> np.ndarray:
+        array = np.array(values, dtype=float)
+        if array.ndim != 2 or array.shape[1] != 3:
+            gs.raise_exception(f"Probe locals array must have shape (N, 3), got: {array.shape}")
+        if array.shape[0] == 0:
+            gs.raise_exception("Probe locals array must have at least one entry")
+        return array
 
 
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
