@@ -51,7 +51,7 @@ def func_epa(
     nearest_i_f = -1
     prev_nearest_i_f = -1
 
-    discrete = gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = gjk_info.FLOAT_MIN[None]

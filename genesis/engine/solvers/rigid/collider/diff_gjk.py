@@ -583,7 +583,7 @@ def func_extended_epa(
 
 
 @ti.func
-def func_epa_support_local(
+def func_epa_support(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),

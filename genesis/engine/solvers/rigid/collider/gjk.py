@@ -6,7 +6,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field, epa
+from . import support_field, epa, multi_contact
 
 
 class RETURN_CODE(IntEnum):
@@ -2274,7 +2274,7 @@ def func_gjk_contact(
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
                 ):
-                    polytope_flag = epa.func_epa_init_polytope_3d_local(
+                    polytope_flag = epa.func_epa_init_polytope_3d(
                         geoms_info=geoms_info,
                         verts_info=verts_info,
                         static_rigid_sim_config=static_rigid_sim_config,
@@ -2294,7 +2294,7 @@ def func_gjk_contact(
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
-                    i_f = epa.func_epa_local(
+                    i_f = epa.func_epa(
                         geoms_info=geoms_info,
                         verts_info=verts_info,
                         static_rigid_sim_config=static_rigid_sim_config,

@@ -13,7 +13,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 # Import helper functions from gjk
-from .gjk import func_is_equal_vec, RETURN_CODE
+from . import gjk
 
 
 @ti.func
@@ -137,7 +137,7 @@ def func_multi_contact(
     no_multiple_contacts = False
     edgecon1, edgecon2 = False, False
 
-    if aligned_faces_flag == RETURN_CODE.FAIL:
+    if aligned_faces_flag == gjk.RETURN_CODE.FAIL:
         # No aligned faces found; check if there was edge-face collision
         # [is_edge_face]: geom1 is edge, geom2 is face
         # [is_face_edge]: geom1 is face, geom2 is edge
@@ -213,7 +213,7 @@ def func_multi_contact(
                 gjk_state, gjk_info, i_b, nedges, nfaces, is_edge_face
             )
 
-            if aligned_edge_face_flag == RETURN_CODE.FAIL:
+            if aligned_edge_face_flag == gjk.RETURN_CODE.FAIL:
                 no_multiple_contacts = True
             else:
                 if is_edge_face:
@@ -535,11 +535,11 @@ def func_box_normal_from_collision_normal(
     local_dir = local_dir.normalized()
 
     # Determine the closest face normal
-    flag = RETURN_CODE.FAIL
+    flag = gjk.RETURN_CODE.FAIL
     for i in range(6):
         n = gs.ti_vec3(normals[3 * i + 0], normals[3 * i + 1], normals[3 * i + 2])
         if local_dir.dot(n) > gjk_info.contact_face_tol[None]:
-            flag = RETURN_CODE.SUCCESS
+            flag = gjk.RETURN_CODE.SUCCESS
             gjk_state.contact_normals[i_b, 0].normal = n
             gjk_state.contact_normals[i_b, 0].id = i
             break
@@ -639,7 +639,7 @@ def func_find_aligned_faces(
     Find if any two faces from [contact_faces] are aligned.
     """
     res = gs.ti_ivec2(0, 0)
-    flag = RETURN_CODE.FAIL
+    flag = gjk.RETURN_CODE.FAIL
 
     for i, j in ti.ndrange(nv, nw):
         ni = gjk_state.contact_faces[i_b, i].normal1
@@ -647,7 +647,7 @@ def func_find_aligned_faces(
         if ni.dot(nj) < -gjk_info.contact_face_tol[None]:
             res[0] = i
             res[1] = j
-            flag = RETURN_CODE.SUCCESS
+            flag = gjk.RETURN_CODE.SUCCESS
             break
 
     return res, flag
@@ -829,7 +829,7 @@ def func_find_aligned_edge_face(
     Find if an edge and face from [contact_faces] are aligned.
     """
     res = gs.ti_ivec2(0, 0)
-    flag = RETURN_CODE.FAIL
+    flag = gjk.RETURN_CODE.FAIL
 
     for i, j in ti.ndrange(nedge, nface):
         ni = gjk_state.contact_faces[i_b, i].normal1
@@ -845,7 +845,7 @@ def func_find_aligned_edge_face(
         if ti.abs(ni.dot(nj)) < gjk_info.contact_edge_tol[None]:
             res[0] = i
             res[1] = j
-            flag = RETURN_CODE.SUCCESS
+            flag = gjk.RETURN_CODE.SUCCESS
             break
 
     return res, flag
@@ -1093,7 +1093,7 @@ def func_clip_polygon(
                     # Find if there were any duplicate contacts similar to [polygon_vert]
                     for j in range(n_witness):
                         prev_witness = gjk_state.witness[i_b, j].point_obj2
-                        skip = func_is_equal_vec(polygon_vert, prev_witness, gjk_info.FLOAT_MIN[None])
+                        skip = gjk.func_is_equal_vec(polygon_vert, prev_witness, gjk_info.FLOAT_MIN[None])
                         if skip:
                             break
 
