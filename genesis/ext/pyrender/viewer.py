@@ -57,15 +57,15 @@ from .trackball import Trackball
 if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
-
-pyglet.options["shadow_window"] = False
-pyglet.options["dpi_scaling"] = "real"
-
-
 MODULE_DIR = os.path.dirname(__file__)
 
 HELP_TEXT_KEY = Key.I
 HELP_TEXT_KEYBIND_NAME = "toggle_instructions"
+
+
+pyglet.options["shadow_window"] = False
+if pyglet.options.get("dpi_scaling") != "real":
+    pyglet.options["dpi_scaling"] = "real"
 
 
 class Viewer(pyglet.window.Window):
