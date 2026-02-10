@@ -8,8 +8,8 @@ and managing contact data including reset/clear operations.
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 
 
 @ti.func
