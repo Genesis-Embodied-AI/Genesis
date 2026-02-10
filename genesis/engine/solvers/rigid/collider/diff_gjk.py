@@ -8,10 +8,12 @@ from . import gjk as GJK, contact
 @ti.func
 def func_gjk_contact(
     links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
@@ -24,6 +26,10 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
     pos_tol,
     normal_tol,
 ):
@@ -61,18 +67,11 @@ def func_gjk_contact(
 
     gjk_state.n_diff_contact_input[i_b] = 0
 
-    # Load original geometry state into thread-local variables
-    # These are the UNPERTURBED states used as reference point for each independent perturbation
-    ga_pos_original = geoms_state.pos[i_ga, i_b]
-    ga_quat_original = geoms_state.quat[i_ga, i_b]
-    gb_pos_original = geoms_state.pos[i_gb, i_b]
-    gb_quat_original = geoms_state.quat[i_gb, i_b]
-
-    # Current (possibly perturbed) state - initialized to original, updated during perturbations
-    ga_pos_current = ga_pos_original
-    ga_quat_current = ga_quat_original
-    gb_pos_current = gb_pos_original
-    gb_quat_current = gb_quat_original
+    # Thread-local copies for perturbation (stored in registers, not global state)
+    ga_pos_local = ga_pos
+    ga_quat_local = ga_quat
+    gb_pos_local = gb_pos
+    gb_quat_local = gb_quat
 
     # Axis to rotate the geometry for perturbation
     axis_0 = ti.Vector.zero(gs.ti_float, 3)
@@ -92,24 +91,26 @@ def func_gjk_contact(
         # 2,3,4,5: Detect contacts in slightly perturbed configuration.
         # 6,7,8,9: Detect contacts in more perturbed configuration.
         if i > 0:
+            # Reset to the default configuration
+            ga_pos_local = ga_pos
+            ga_quat_local = ga_quat
+            gb_pos_local = gb_pos
+            gb_quat_local = gb_quat
+
             # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
             # otherwise it would be more sensitive to ill-conditionning.
             axis = (2 * (i % 2) - 1) * axis_0 + (1 - 2 * ((i // 2) % 2)) * axis_1
             rotang = 1e-2 * (100 ** ((i - 1) // 4))
             qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
 
-            # Apply perturbation starting from original state
-            ga_result = contact.func_rotate_frame(
-                pos=ga_pos_original, quat=ga_quat_original, contact_pos=default_contact_pos, qrot=qrot
-            )
-            ga_pos_current = ga_result.pos
-            ga_quat_current = ga_result.quat
+            # Apply perturbation to local variables
+            result_a = func_rotate_frame(ga_pos_local, ga_quat_local, default_contact_pos, qrot)
+            ga_pos_local = result_a.pos
+            ga_quat_local = result_a.quat
 
-            gb_result = contact.func_rotate_frame(
-                pos=gb_pos_original, quat=gb_quat_original, contact_pos=default_contact_pos, qrot=gu.ti_inv_quat(qrot)
-            )
-            gb_pos_current = gb_result.pos
-            gb_quat_current = gb_result.quat
+            result_b = func_rotate_frame(gb_pos_local, gb_quat_local, default_contact_pos, gu.ti_inv_quat(qrot))
+            gb_pos_local = result_b.pos
+            gb_quat_local = result_b.quat
 
         gjk_flag = GJK.func_safe_gjk(
             geoms_info=geoms_info,
@@ -123,10 +124,10 @@ def func_gjk_contact(
             support_field_info=support_field_info,
             i_ga=i_ga,
             i_gb=i_gb,
-            pos_a=ga_pos_current,
-            quat_a=ga_quat_current,
-            pos_b=gb_pos_current,
-            quat_b=gb_quat_current,
+            pos_a=ga_pos_local,
+            quat_a=ga_quat_local,
+            pos_b=gb_pos_local,
+            quat_b=gb_quat_local,
             i_b=i_b,
         )
 
@@ -162,11 +163,11 @@ def func_gjk_contact(
                         support_field_info=support_field_info,
                         i_ga=i_ga,
                         i_gb=i_gb,
-                        pos_a=ga_pos_current,
-                        quat_a=ga_quat_current,
-                        pos_b=gb_pos_current,
-                        quat_b=gb_quat_current,
                         i_b=i_b,
+                        pos_a=ga_pos_local,
+                        quat_a=ga_quat_local,
+                        pos_b=gb_pos_local,
+                        quat_b=gb_quat_local,
                         max_iter=max_epa_iter,
                     )
                     max_epa_iter -= num_iter
@@ -203,11 +204,11 @@ def func_gjk_contact(
                         support_field_info=support_field_info,
                         i_ga=i_ga,
                         i_gb=i_gb,
-                        pos_a=ga_pos_current,
-                        quat_a=ga_quat_current,
-                        pos_b=gb_pos_current,
-                        quat_b=gb_quat_current,
                         i_b=i_b,
+                        pos_a=ga_pos_local,
+                        quat_a=ga_quat_local,
+                        pos_b=gb_pos_local,
+                        quat_b=gb_quat_local,
                         i_f=i_f,
                     )
 
@@ -225,6 +226,8 @@ def func_gjk_contact(
                             normal=normal / penetration,
                             i_b=i_b,
                             links_state=links_state,
+                            links_info=links_info,
+                            geoms_state=geoms_state,
                             geoms_info=geoms_info,
                             geoms_init_AABB=geoms_init_AABB,
                             rigid_global_info=rigid_global_info,
@@ -254,10 +257,10 @@ def func_gjk_contact(
                     support_field_info=support_field_info,
                     i_ga=i_ga,
                     i_gb=i_gb,
-                    pos_a=ga_pos_current,
-                    quat_a=ga_quat_current,
-                    pos_b=gb_pos_current,
-                    quat_b=gb_quat_current,
+                    pos_a=ga_pos_local,
+                    quat_a=ga_quat_local,
+                    pos_b=gb_pos_local,
+                    quat_b=gb_quat_local,
                     i_b=i_b,
                 )
                 if i_f == -1:
@@ -275,11 +278,11 @@ def func_gjk_contact(
                     support_field_info=support_field_info,
                     i_ga=i_ga,
                     i_gb=i_gb,
-                    pos_a=ga_pos_current,
-                    quat_a=ga_quat_current,
-                    pos_b=gb_pos_current,
-                    quat_b=gb_quat_current,
                     i_b=i_b,
+                    pos_a=ga_pos,
+                    quat_a=ga_quat,
+                    pos_b=gb_pos,
+                    quat_b=gb_quat,
                     i_f=i_f,
                 )
 
@@ -381,11 +384,11 @@ def func_extended_epa(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    i_b,
     pos_a: ti.types.vector(3, dtype=gs.ti_float),
     quat_a: ti.types.vector(4, dtype=gs.ti_float),
     pos_b: ti.types.vector(3, dtype=gs.ti_float),
     quat_b: ti.types.vector(4, dtype=gs.ti_float),
-    i_b,
     max_iter,
 ):
     """
@@ -399,7 +402,7 @@ def func_extended_epa(
     tolerance = gjk_info.tolerance[None]
     nearest_i_f = gs.ti_int(-1)
 
-    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = rigid_global_info.EPS[None]
@@ -440,11 +443,11 @@ def func_extended_epa(
             support_field_info=support_field_info,
             i_ga=i_ga,
             i_gb=i_gb,
+            i_b=i_b,
             pos_a=pos_a,
             quat_a=quat_a,
             pos_b=pos_b,
             quat_b=quat_b,
-            i_b=i_b,
             dir=dir,
             dir_norm=1.0,
         )
@@ -580,6 +583,69 @@ def func_extended_epa(
 
 
 @ti.func
+def func_epa_support_local(
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    static_rigid_sim_config: ti.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: ti.template(),
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_ga,
+    i_gb,
+    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+    dir,
+    dir_scale,
+):
+    """
+    Thread-local version of func_epa_support.
+
+    Find a support point for EPA and add it to the polytope.
+    Uses thread-local pos/quat instead of reading from geoms_state.
+
+    Returns:
+        i_v: Index of the newly added vertex in the polytope
+    """
+    obj1, obj2, localpos1, localpos2, id1, id2, mink = gjk_local.func_support_local(
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        i_b,
+        dir * dir_scale,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        False,
+    )
+
+    i_v = gjk_state.polytope.nverts[i_b]
+    gjk_state.polytope_verts.obj1[i_b, i_v] = obj1
+    gjk_state.polytope_verts.obj2[i_b, i_v] = obj2
+    gjk_state.polytope_verts.local_obj1[i_b, i_v] = localpos1
+    gjk_state.polytope_verts.local_obj2[i_b, i_v] = localpos2
+    gjk_state.polytope_verts.mink[i_b, i_v] = mink
+    gjk_state.polytope_verts.id1[i_b, i_v] = id1
+    gjk_state.polytope_verts.id2[i_b, i_v] = id2
+    gjk_state.polytope.nverts[i_b] += 1
+
+    return i_v
+
+
+
+@ti.func
 def func_add_diff_contact_input(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -591,6 +657,7 @@ def func_add_diff_contact_input(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    i_b,
     pos_a: ti.types.vector(3, dtype=gs.ti_float),
     quat_a: ti.types.vector(4, dtype=gs.ti_float),
     pos_b: ti.types.vector(3, dtype=gs.ti_float),
@@ -643,7 +710,7 @@ def func_add_diff_contact_input(
     is_face_degenerate = normal_norm < gjk_info.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
-    proj_o = func_project_origin_to_plane(mink1, normal)
+    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
     origin_dist = proj_o.norm()
     is_origin_close_to_face = origin_dist < gjk_info.diff_contact_min_penetration[None]
 
