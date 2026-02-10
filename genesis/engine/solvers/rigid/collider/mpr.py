@@ -495,53 +495,6 @@ def guess_geoms_center(
 
 
 @ti.func
-def func_mpr_contact_from_centers(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
-    mpr_state: array_class.MPRState,
-    mpr_info: array_class.MPRInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    center_a,
-    center_b,
-):
-    """
-    Performs MPR collision detection given pre-computed geometry centers.
-
-    This is a thin wrapper that extracts geometry poses from global state
-    and delegates to the thread-local version for the actual computation.
-    """
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
-    return mpr_local.func_mpr_contact_from_centers_local(
-        geoms_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        mpr_state,
-        mpr_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        i_b,
-        center_a,
-        center_b,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-    )
-
-
-@ti.func
 def func_mpr_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,

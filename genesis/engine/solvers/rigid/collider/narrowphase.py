@@ -14,7 +14,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 import genesis.utils.sdf as sdf
-from . import mpr
+from . import mpr, mpr_local
 from . import gjk
 from . import diff_gjk
 from . import support_field
@@ -448,21 +448,29 @@ def func_contact_mpr_terrain(
                                     center_b = center_b + collider_state.prism[i_p, i_b]
                                 center_b = center_b / 6.0
 
-                                is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
-                                    geoms_state,
-                                    geoms_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_info,
-                                    collider_static_config,
-                                    mpr_state,
-                                    mpr_info,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    center_a,
-                                    center_b,
+                                # Extract local pos/quat for thread-local MPR call
+                                pos_a = geoms_state.pos[i_ga, i_b]
+                                quat_a = geoms_state.quat[i_ga, i_b]
+                                pos_b = geoms_state.pos[i_gb, i_b]
+                                quat_b = geoms_state.quat[i_gb, i_b]
+
+                                is_col, normal, penetration, contact_pos = mpr_local.func_mpr_contact_from_centers_local(
+                                    geoms_info=geoms_info,
+                                    static_rigid_sim_config=static_rigid_sim_config,
+                                    collider_state=collider_state,
+                                    collider_static_config=collider_static_config,
+                                    mpr_state=mpr_state,
+                                    mpr_info=mpr_info,
+                                    support_field_info=support_field_info,
+                                    i_ga=i_ga,
+                                    i_gb=i_gb,
+                                    i_b=i_b,
+                                    center_a=center_a,
+                                    center_b=center_b,
+                                    pos_a=pos_a,
+                                    quat_a=quat_a,
+                                    pos_b=pos_b,
+                                    quat_b=quat_b,
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
