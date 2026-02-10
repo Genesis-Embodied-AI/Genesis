@@ -11,7 +11,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import diff_gjk, gjk as GJK, gjk_local
+from genesis.engine.solvers.rigid.collider import diff_gjk, epa, gjk as GJK, gjk_local
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.utils import array_class
 
@@ -143,7 +143,7 @@ def func_gjk_contact_local(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            GJK.func_safe_epa_init(
+            epa.func_safe_epa_init(
                 gjk_state,
                 gjk_info,
                 i_ga,
