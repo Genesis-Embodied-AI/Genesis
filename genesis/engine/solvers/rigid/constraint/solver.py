@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 USE_LS_RECOMPUTE = os.environ.get("GS_SOLVER_LS_RECOMPUTE", "0") == "1"
+# TODO: set default to True for debug
 USE_LS_RECOMPUTE = 1
+
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
