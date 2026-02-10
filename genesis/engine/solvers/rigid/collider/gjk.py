@@ -1730,6 +1730,9 @@ from .epa import (
 # Import EPA local functions for thread-safe multi-contact
 from .epa_local import func_safe_epa_local
 
+# Import GJK local functions for thread-safe multi-contact
+from .gjk_local import func_safe_gjk_local
+
 # Import multi-contact functions
 from .multi_contact import (
     func_multi_contact,

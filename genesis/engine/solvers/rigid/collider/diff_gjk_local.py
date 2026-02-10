@@ -15,15 +15,9 @@ from genesis.engine.solvers.rigid.collider import gjk as GJK, gjk_local
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.utils import array_class
 
-# Import helper functions from diff_gjk that we'll use
-# These are imported at module level to avoid Taichi's restriction on imports inside @ti.func
-from genesis.engine.solvers.rigid.collider.diff_gjk import (
-    func_contact_orthogonals,
-    func_differentiable_contact,
-    func_compute_minkowski_point,
-    func_plane_normal,
-    func_project_origin_to_plane,
-)
+# Import diff_gjk module to access helper functions
+# Import as module to avoid circular dependency issues
+from genesis.engine.solvers.rigid.collider import diff_gjk
 
 
 @ti.func
@@ -234,7 +228,7 @@ def func_gjk_contact_local(
                         default_contact_pos = 0.5 * (witness1 + witness2)
                         default_penetration = penetration
 
-                        axis_0, axis_1 = func_contact_orthogonals(
+                        axis_0, axis_1 = diff_gjk.func_contact_orthogonals(
                             i_ga,
                             i_gb,
                             normal / penetration,
@@ -306,9 +300,6 @@ def func_gjk_contact_local(
             break
 
     ### Compute the differentiable contact data from the non-differentiable data.
-    # Import here to avoid circular dependency
-    from genesis.engine.solvers.rigid.collider.diff_gjk import func_differentiable_contact
-
     n_contacts = 0
     for i_c in range(gjk_state.n_diff_contact_input[i_b]):
         # We ignore the contact point if it is not numerically stable.
@@ -319,7 +310,7 @@ def func_gjk_contact_local(
         ref_penetration = -1.0
         if i_c > 0:
             ref_penetration = default_penetration
-        contact_pos, contact_normal, penetration, weight = func_differentiable_contact(
+        contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
             geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
         )
         if i_c == 0:
@@ -632,9 +623,6 @@ def func_epa_support_local(
     Returns:
         i_v: Index of the newly added vertex in the polytope
     """
-    # Import gjk_local to access support functions
-    from genesis.engine.solvers.rigid.collider import gjk_local
-
     obj1, obj2, localpos1, localpos2, id1, id2, mink = gjk_local.func_support_local(
         geoms_info,
         verts_info,
@@ -694,14 +682,6 @@ def func_add_diff_contact_input_local(
     the differentiable contact data later. Uses thread-local pos/quat instead of
     reading from geoms_state.
     """
-    # Import functions from diff_gjk
-    from genesis.engine.solvers.rigid.collider.diff_gjk import (
-        func_compute_minkowski_point,
-        func_plane_normal,
-        func_project_origin_to_plane,
-    )
-    from genesis.engine.solvers.rigid.collider import gjk_local
-
     n = gjk_state.n_diff_contact_input[i_b]
 
     i_v1 = gjk_state.polytope_faces.verts_idx[i_b, i_f][0]
@@ -720,7 +700,7 @@ def func_add_diff_contact_input_local(
         elif i == 2:
             curr_i_v = i_v3
 
-        mink = func_compute_minkowski_point(
+        mink = diff_gjk.func_compute_minkowski_point(
             pos_a,
             quat_a,
             pos_b,
@@ -738,12 +718,12 @@ def func_add_diff_contact_input_local(
     ### Check validity of this contact. The contact is valid if the contact information could be computed in numerically
     ### stable way in both the forward and backward pass.
     # (a) Check if the face is degenerate.
-    normal = func_plane_normal(mink1, mink2, mink3)
+    normal = diff_gjk.func_plane_normal(mink1, mink2, mink3)
     normal_norm = normal.norm()
     is_face_degenerate = normal_norm < gjk_info.diff_contact_min_normal_norm[None]
 
     # (b) Check if the origin is very close to the face (which means very small penetration depth).
-    proj_o = func_project_origin_to_plane(mink1, mink2, mink3, normal)
+    proj_o = diff_gjk.func_project_origin_to_plane(mink1, mink2, mink3, normal)
     origin_dist = proj_o.norm()
     is_origin_close_to_face = origin_dist < gjk_info.diff_contact_min_penetration[None]
 
