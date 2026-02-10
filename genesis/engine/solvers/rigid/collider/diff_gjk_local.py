@@ -488,7 +488,7 @@ def func_extended_epa_local(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = GJK.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+        horizon_flag = epa.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -531,7 +531,7 @@ def func_extended_epa_local(
             adj_i_f_1 = horizon_i_f
             adj_i_f_2 = i_f1
 
-            attach_flag = GJK.func_safe_attach_face_to_polytope(
+            attach_flag = epa.func_safe_attach_face_to_polytope(
                 gjk_state,
                 gjk_info,
                 i_b,
@@ -573,7 +573,7 @@ def func_extended_epa_local(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = GJK.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
+        flag = epa.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == GJK.RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -ti.sqrt(dist2)

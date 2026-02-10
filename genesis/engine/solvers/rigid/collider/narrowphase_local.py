@@ -80,6 +80,7 @@ import gstaichi as ti
 
 import genesis as gs
 from genesis.engine.solvers.rigid.collider import (
+    broadphase,
     diff_gjk_local,
     gjk_local,
     mpr_local,
@@ -147,7 +148,7 @@ def func_contact_vertex_sdf_local(
 
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-        if narrowphase.func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
+        if broadphase.func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
             new_penetration = -sdf_local.sdf_func_world_local(
                 geoms_info=geoms_info,
                 sdf_info=sdf_info,
