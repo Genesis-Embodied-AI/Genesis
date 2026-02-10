@@ -11,7 +11,7 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import diff_gjk, epa, gjk as GJK, gjk_local, multi_contact
+from genesis.engine.solvers.rigid.collider import diff_gjk, epa, epa_local, gjk as GJK, gjk_local
 from genesis.engine.solvers.rigid.collider.contact_local import func_rotate_frame_local
 from genesis.utils import array_class
 

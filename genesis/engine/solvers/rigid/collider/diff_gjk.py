@@ -2,8 +2,6 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import gjk as GJK
-from . import diff_gjk_local
 
 
 @ti.func

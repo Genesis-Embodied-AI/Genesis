@@ -9,7 +9,6 @@ between colliding geometric entities (face-face, edge-face pairs).
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from .gjk import func_is_equal_vec, RETURN_CODE
 from . import multi_contact_local
