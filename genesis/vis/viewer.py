@@ -322,7 +322,7 @@ class Viewer(RBC):
         """
         self._pyrender_viewer.remove_keybind(keybind_name)
 
-    def add_plugin(self, plugin: "ViewerPlugin") -> None:
+    def add_plugin(self, plugin: "ViewerPlugin") -> "ViewerPlugin":
         """
         Add a viewer plugin to the viewer.
 
@@ -334,6 +334,7 @@ class Viewer(RBC):
         self._viewer_plugins.append(plugin)
         if self.is_built:
             self._viewer.register_plugin(plugin)
+        return plugin
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
