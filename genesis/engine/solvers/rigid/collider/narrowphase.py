@@ -84,6 +84,10 @@ def func_contact_vertex_sdf(
     i_ga,
     i_gb,
     i_b,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -91,8 +95,6 @@ def func_contact_vertex_sdf(
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
-    ga_pos = geoms_state.pos[i_ga, i_b]
-    ga_quat = geoms_state.quat[i_ga, i_b]
 
     is_col = False
     penetration = gs.ti_float(0.0)
@@ -101,8 +103,15 @@ def func_contact_vertex_sdf(
 
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
-            new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, vertex_pos, i_gb, i_b)
+        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, vertex_pos):
+            new_penetration = -sdf.sdf_func_world(
+                geoms_info=geoms_info,
+                sdf_info=sdf_info,
+                pos_world=vertex_pos,
+                geom_idx=i_gb,
+                geom_pos=gb_pos,
+                geom_quat=gb_quat,
+            )
             if new_penetration > penetration:
                 is_col = True
                 contact_pos = vertex_pos
@@ -111,7 +120,14 @@ def func_contact_vertex_sdf(
     if is_col:
         # Compute contact normal only once, and only in case of contact
         normal = sdf.sdf_func_normal_world(
-            geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, i_b
+            geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
+            collider_static_config=collider_static_config,
+            sdf_info=sdf_info,
+            pos_world=contact_pos,
+            geom_idx=i_gb,
+            geom_pos=gb_pos,
+            geom_quat=gb_quat,
         )
 
         # The contact point must be offsetted by half the penetration depth
@@ -549,6 +565,7 @@ def func_convex_convex_contact(
     errno: array_class.V_ANNOTATION,
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+        # Plane-box collision doesn't use perturbations, so call original function
         if ti.static(sys.platform == "darwin"):
             func_plane_box_contact(
                 i_ga=i_ga,
@@ -725,10 +742,12 @@ def func_convex_convex_contact(
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     links_state,
+                                    links_info,
                                     geoms_state,
                                     geoms_info,
                                     geoms_init_AABB,
                                     verts_info,
+                                    faces_info,
                                     rigid_global_info,
                                     static_rigid_sim_config,
                                     collider_state,
@@ -740,11 +759,16 @@ def func_convex_convex_contact(
                                     i_ga,
                                     i_gb,
                                     i_b,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                     diff_pos_tolerance,
                                     diff_normal_tolerance,
                                 )
                             else:
                                 gjk.func_gjk_contact(
+                                    geoms_state=geoms_state,
                                     geoms_info=geoms_info,
                                     verts_info=verts_info,
                                     faces_info=faces_info,
@@ -867,9 +891,7 @@ def func_convex_convex_contact(
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col_0 > 0 and is_col > 0:
                 if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
+                    # Project contact points and correct for perturbation
                     contact_point_a = (
                         gu.ti_transform_by_quat(
                             (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
@@ -1430,3 +1452,138 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     collider_info,
                                     errno,
                                 )
+
+
+@ti.func
+def func_contact_edge_sdf(
+    i_ga,
+    i_gb,
+    i_b,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
+    geoms_state: array_class.GeomsState,  # For AABB only
+    geoms_info: array_class.GeomsInfo,
+    verts_info: array_class.VertsInfo,
+    edges_info: array_class.EdgesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: ti.template(),
+    sdf_info: array_class.SDFInfo,
+):
+    EPS = rigid_global_info.EPS[None]
+
+    is_col = False
+    penetration = gs.ti_float(0.0)
+    normal = ti.Vector.zero(gs.ti_float, 3)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+
+    ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
+
+    for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
+        cur_length = edges_info.length[i_e]
+        if cur_length > ga_sdf_cell_size:
+            i_v0 = edges_info.v0[i_e]
+            i_v1 = edges_info.v1[i_e]
+
+            p_0 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v0], ga_pos, ga_quat)
+            p_1 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v1], ga_pos, ga_quat)
+            vec_01 = gu.ti_normalize(p_1 - p_0, EPS)
+
+            sdf_grad_0_b = sdf_local.sdf_func_grad_world_local(
+                geoms_info=geoms_info,
+                rigid_global_info=rigid_global_info,
+                collider_static_config=collider_static_config,
+                sdf_info=sdf_info,
+                pos_world=p_0,
+                geom_idx=i_gb,
+                geom_pos=gb_pos,
+                geom_quat=gb_quat,
+            )
+            sdf_grad_1_b = sdf_local.sdf_func_grad_world_local(
+                geoms_info=geoms_info,
+                rigid_global_info=rigid_global_info,
+                collider_static_config=collider_static_config,
+                sdf_info=sdf_info,
+                pos_world=p_1,
+                geom_idx=i_gb,
+                geom_pos=gb_pos,
+                geom_quat=gb_quat,
+            )
+
+            # check if the edge on a is facing towards mesh b
+            sdf_grad_0_a = sdf_local.sdf_func_grad_world_local(
+                geoms_info=geoms_info,
+                rigid_global_info=rigid_global_info,
+                collider_static_config=collider_static_config,
+                sdf_info=sdf_info,
+                pos_world=p_0,
+                geom_idx=i_ga,
+                geom_pos=ga_pos,
+                geom_quat=ga_quat,
+            )
+            sdf_grad_1_a = sdf_local.sdf_func_grad_world_local(
+                geoms_info=geoms_info,
+                rigid_global_info=rigid_global_info,
+                collider_static_config=collider_static_config,
+                sdf_info=sdf_info,
+                pos_world=p_1,
+                geom_idx=i_ga,
+                geom_pos=ga_pos,
+                geom_quat=ga_quat,
+            )
+            normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
+            normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
+
+            if normal_edge_0.dot(sdf_grad_0_b) < 0 or normal_edge_1.dot(sdf_grad_1_b) < 0:
+                # check if closest point is between the two points
+                if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
+                    while cur_length > ga_sdf_cell_size:
+                        p_mid = 0.5 * (p_0 + p_1)
+                        if (
+                            sdf_local.sdf_func_grad_world_local(
+                                geoms_info=geoms_info,
+                                rigid_global_info=rigid_global_info,
+                                collider_static_config=collider_static_config,
+                                sdf_info=sdf_info,
+                                pos_world=p_mid,
+                                geom_idx=i_gb,
+                                geom_pos=gb_pos,
+                                geom_quat=gb_quat,
+                            ).dot(vec_01)
+                            < 0
+                        ):
+                            p_0 = p_mid
+                        else:
+                            p_1 = p_mid
+                        cur_length = 0.5 * cur_length
+
+                    p = 0.5 * (p_0 + p_1)
+                    new_penetration = -sdf_local.sdf_func_world_local(
+                        geoms_info=geoms_info,
+                        sdf_info=sdf_info,
+                        pos_world=p,
+                        geom_idx=i_gb,
+                        geom_pos=gb_pos,
+                        geom_quat=gb_quat,
+                    )
+
+                    if new_penetration > penetration:
+                        is_col = True
+                        normal = sdf_local.sdf_func_normal_world_local(
+                            geoms_info=geoms_info,
+                            rigid_global_info=rigid_global_info,
+                            collider_static_config=collider_static_config,
+                            sdf_info=sdf_info,
+                            pos_world=p,
+                            geom_idx=i_gb,
+                            geom_pos=gb_pos,
+                            geom_quat=gb_quat,
+                        )
+                        contact_pos = p
+                        penetration = new_penetration
+
+    # The contact point must be offsetted by half the penetration depth, for consistency with MPR
+    contact_pos = contact_pos + 0.5 * penetration * normal
+
+    return is_col, normal, penetration, contact_pos
