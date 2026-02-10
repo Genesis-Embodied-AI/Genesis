@@ -1430,7 +1430,7 @@ def func_gjk_contact_local(
                         i_b=i_b,
                     )
                 elif nsimplex == 4:
-                    polytope_flag = gjk.func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
+                    polytope_flag = epa.func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
                 # Polytope 3D could be used as a fallback for 2D and 4D cases
                 if (
