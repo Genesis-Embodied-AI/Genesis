@@ -3,6 +3,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import gjk as GJK
+from . import diff_gjk_local
 
 
 @ti.func
@@ -60,9 +61,6 @@ def func_gjk_contact(
     Note that these terms can be computed from the non-differentiable contact data in a differentiable way. Therefore,
     we store the non-differentiable contact data along with the differentiable contact data for the backward pass.
     """
-    # Import here to avoid circular dependency
-    from genesis.engine.solvers.rigid.collider import diff_gjk_local
-
     # Extract geometry poses from global state
     ga_pos = geoms_state.pos[i_ga, i_b]
     ga_quat = geoms_state.quat[i_ga, i_b]
