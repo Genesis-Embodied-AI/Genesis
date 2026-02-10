@@ -17,17 +17,10 @@ import genesis.utils.sdf as sdf
 from . import mpr
 from . import gjk
 from . import diff_gjk
-from . import sdf_local
+from genesis.utils import sdf_local
 
 from .broadphase import func_point_in_geom_aabb
-from .contact import (
-    func_add_contact,
-    func_set_contact,
-    func_add_diff_contact_input,
-    func_compute_tolerance,
-    func_contact_orthogonals,
-    func_rotate_frame,
-)
+from . import contact
 
 from .box_contact import (
     func_plane_box_contact,
@@ -289,7 +282,7 @@ def func_contact_mpr_terrain(
     margin = gs.ti_float(0.0)
 
     is_return = False
-    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = contact.func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
 
     if not is_return:
         # move to terrain's frame
@@ -554,13 +547,13 @@ def func_convex_convex_contact(
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                 # Apply perturbation starting from original state
-                ga_result = func_rotate_frame(
+                ga_result = contact.func_rotate_frame(
                     pos=ga_pos_original, quat=ga_quat_original, contact_pos=contact_pos_0, qrot=qrot
                 )
                 ga_pos_current = ga_result.pos
                 ga_quat_current = ga_result.quat
 
-                gb_result = func_rotate_frame(
+                gb_result = contact.func_rotate_frame(
                     pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.ti_inv_quat(qrot)
                 )
                 gb_pos_current = gb_result.pos
@@ -702,7 +695,7 @@ def func_convex_convex_contact(
                             if is_col:
                                 if ti.static(static_rigid_sim_config.requires_grad):
                                     for i_c in range(n_contacts):
-                                        func_add_diff_contact_input(
+                                        contact.func_add_diff_contact_input(
                                             i_ga,
                                             i_gb,
                                             i_b,
@@ -711,7 +704,7 @@ def func_convex_convex_contact(
                                             collider_state,
                                             collider_info,
                                         )
-                                        func_add_contact(
+                                        contact.func_add_contact(
                                             i_ga,
                                             i_gb,
                                             gjk_state.normal[i_b, i_c],
@@ -736,7 +729,7 @@ def func_convex_convex_contact(
                                                 normal = gjk_state.normal[i_b, i_c]
                                                 if ti.static(static_rigid_sim_config.requires_grad):
                                                     penetration = gjk_state.diff_penetration[i_b, i_c]
-                                                func_add_contact(
+                                                contact.func_add_contact(
                                                     i_ga,
                                                     i_gb,
                                                     normal,
@@ -758,7 +751,7 @@ def func_convex_convex_contact(
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
-                    func_add_contact(
+                    contact.func_add_contact(
                         i_ga,
                         i_gb,
                         normal_0,
@@ -773,7 +766,7 @@ def func_convex_convex_contact(
                     )
                     if multi_contact:
                         # Perturb geom_a around two orthogonal axes to find multiple contacts
-                        axis_0, axis_1 = func_contact_orthogonals(
+                        axis_0, axis_1 = contact.func_contact_orthogonals(
                             i_ga,
                             i_gb,
                             normal,
@@ -849,7 +842,7 @@ def func_convex_convex_contact(
                 if not repeated:
                     if penetration > -tolerance:
                         penetration = ti.max(penetration, 0.0)
-                        func_add_contact(
+                        contact.func_add_contact(
                             i_ga,
                             i_gb,
                             normal,
@@ -1001,7 +994,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
-                func_set_contact(
+                contact.func_set_contact(
                     i_ga,
                     i_gb,
                     contact_normal,
@@ -1029,7 +1022,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                     geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
                 )
 
-                func_set_contact(
+                contact.func_set_contact(
                     i_ga,
                     i_gb,
                     contact_normal,
@@ -1189,7 +1182,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                     and geoms_info.type[i_gb] != gs.GEOM_TYPE.TERRAIN
                 ):
                     is_col = False
-                    tolerance = func_compute_tolerance(
+                    tolerance = contact.func_compute_tolerance(
                         i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
                     )
                     for i in range(2):
@@ -1213,7 +1206,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col_i:
-                                func_add_contact(
+                                contact.func_add_contact(
                                     i_ga,
                                     i_gb,
                                     normal_i,
@@ -1233,7 +1226,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
                                 # Perturb geom_a around two orthogonal axes to find multiple contacts
-                                axis_0, axis_1 = func_contact_orthogonals(
+                                axis_0, axis_1 = contact.func_contact_orthogonals(
                                     i_ga,
                                     i_gb,
                                     normal_i,
@@ -1252,8 +1245,8 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
                                     qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-                                    func_rotate_frame(i_ga, contact_pos_i, qrot, i_b, geoms_state, geoms_info)
-                                    func_rotate_frame(
+                                    contact.func_rotate_frame(i_ga, contact_pos_i, qrot, i_b, geoms_state, geoms_info)
+                                    contact.func_rotate_frame(
                                         i_gb, contact_pos_i, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info
                                     )
 
@@ -1313,7 +1306,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         if not repeated:
                                             if penetration > -tolerance:
                                                 penetration = ti.max(penetration, 0.0)
-                                                func_add_contact(
+                                                contact.func_add_contact(
                                                     i_ga,
                                                     i_gb,
                                                     normal,
@@ -1345,7 +1338,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col:
-                                func_add_contact(
+                                contact.func_add_contact(
                                     i_ga,
                                     i_gb,
                                     normal,
