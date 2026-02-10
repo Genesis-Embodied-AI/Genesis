@@ -757,30 +757,53 @@ def parse_equalities(mj, scale):
         eq_info["data"] = mj.eq_data[i_e]
         eq_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
 
+        objs_idx = []
+        if mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_SITE:
+            # Must convert site into relative link position because Genesis does not implement site abstraction
+            name_objadr = mj.name_bodyadr
+            sites_pos, sites_quat = [], []
+            for site_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+                objs_idx.append(mj.site_bodyid[site_idx])
+                sites_pos.append(mj.site_pos[site_idx])
+                sites_quat.append(mj.site_quat[site_idx])
+            eq_info["data"][:3] = gu.transform_by_trans_quat(
+                pos=eq_info["data"][:3], trans=sites_pos[0], quat=sites_quat[0]
+            )
+            eq_info["data"][3:6] = gu.transform_by_trans_quat(
+                pos=eq_info["data"][3:6], trans=sites_pos[1], quat=sites_quat[1]
+            )
+            if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+                eq_info["data"][6:10] = gu.transform_quat_by_quat(
+                    sites_quat[0], gu.transform_quat_by_quat(eq_info["data"][6:10], gu.inv_quat(sites_quat[1]))
+                )
+        elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_JOINT:
+            name_objadr = mj.name_jntadr
+        elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_BODY:
+            name_objadr = mj.name_bodyadr
+        else:
+            gs.raise_exception(f"Unsupported MJCF equality object type: {mj.eq_objtype[i_e]}")
+
         if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
             eq_info["type"] = gs.EQUALITY_TYPE.CONNECT
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
             eq_info["type"] = gs.EQUALITY_TYPE.WELD
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
             # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
             eq_info["type"] = gs.EQUALITY_TYPE.JOINT
-            name_objadr = mj.name_jntadr
         else:
             gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
         objs_name = []
-        for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+        for obj_idx in objs_idx:
             if obj_idx < 0:
                 obj_name = None
             else:
                 name_start = name_objadr[obj_idx]
                 obj_name, *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
             objs_name.append(obj_name)
-        eq_info["objs_name"] = objs_name
+        eq_info["objs_name"] = tuple(objs_name)
 
         eqs_info.append(eq_info)
 

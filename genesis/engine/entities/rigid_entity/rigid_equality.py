@@ -112,14 +112,14 @@ class RigidEquality(RBC):
     @property
     def eq_obj1id(self):
         """
-        Returns the index of the first link.
+        Returns the index of the first object (joint for EQUALITY_TYPE.JOINT, link otherwise)
         """
         return self._eq_obj1id
 
     @property
     def eq_obj2id(self):
         """
-        Returns the index of the second link.
+        Returns the index of the second object (joint for EQUALITY_TYPE.JOINT, link otherwise)
         """
         return self._eq_obj2id
 
