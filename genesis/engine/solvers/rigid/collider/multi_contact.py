@@ -93,33 +93,12 @@ def func_multi_contact(
         if geom_type == gs.GEOM_TYPE.BOX:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_box_normals(
-                geoms_info=geoms_info,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                i_g=i_g,
-                quat=quat,
-                i_b=i_b,
-                dim=nface,
-                v1=v1i,
-                v2=v2i,
-                v3=v3i,
-                dir=t_dir,
+                geoms_info, gjk_state, gjk_info, i_g, quat, i_b, nface, v1i, v2i, v3i, t_dir
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
             quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_mesh_normals(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                faces_info=faces_info,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                i_g=i_g,
-                quat=quat,
-                i_b=i_b,
-                dim=nface,
-                v1=v1i,
-                v2=v2i,
-                v3=v3i,
+                geoms_info, verts_info, faces_info, gjk_state, gjk_info, i_g, quat, i_b, nface, v1i, v2i, v3i
             )
 
         for i_n in range(nnorms):
@@ -158,37 +137,26 @@ def func_multi_contact(
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_box_edge_normals(
-                    geoms_info=geoms_info,
-                    gjk_state=gjk_state,
-                    gjk_info=gjk_info,
-                    i_g=i_g,
-                    pos=pos,
-                    quat=quat,
-                    i_b=i_b,
-                    dim=nface,
-                    v1=v1,
-                    v2=v2,
-                    v1i=v1i,
-                    v2i=v2i,
+                    geoms_info, gjk_state, gjk_info, i_g, pos, quat, i_b, nface, v1, v2, v1i, v2i
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
                 pos = pos_a if is_edge_face else pos_b
                 quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_mesh_edge_normals(
-                    geoms_info=geoms_info,
-                    verts_info=verts_info,
-                    faces_info=faces_info,
-                    gjk_state=gjk_state,
-                    gjk_info=gjk_info,
-                    i_g=i_g,
-                    pos=pos,
-                    quat=quat,
-                    i_b=i_b,
-                    dim=nface,
-                    v1=v1,
-                    v2=v2,
-                    v1i=v1i,
-                    v2i=v2i,
+                    geoms_info,
+                    verts_info,
+                    faces_info,
+                    gjk_state,
+                    gjk_info,
+                    i_g,
+                    pos,
+                    quat,
+                    i_b,
+                    nface,
+                    v1,
+                    v2,
+                    v1i,
+                    v2i,
                 )
 
             if is_edge_face:
@@ -258,30 +226,11 @@ def func_multi_contact(
                 if geom_type == gs.GEOM_TYPE.BOX:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_box_face(
-                        geoms_info=geoms_info,
-                        gjk_state=gjk_state,
-                        i_g=i_g,
-                        pos=pos,
-                        quat=quat,
-                        i_b=i_b,
-                        i_o=k,
-                        face_idx=normal_face_idx,
-                    )
+                    nface = func_box_face(geoms_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
                 elif geom_type == gs.GEOM_TYPE.MESH:
                     pos = pos_a if k == 0 else pos_b
                     quat = quat_a if k == 0 else quat_b
-                    nface = func_mesh_face(
-                        verts_info=verts_info,
-                        faces_info=faces_info,
-                        gjk_state=gjk_state,
-                        i_g=i_g,
-                        pos=pos,
-                        quat=quat,
-                        i_b=i_b,
-                        i_o=k,
-                        face_idx=normal_face_idx,
-                    )
+                    nface = func_mesh_face(verts_info, faces_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
 
             if k == 0:
                 nface1 = nface
