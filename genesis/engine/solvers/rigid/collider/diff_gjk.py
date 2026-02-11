@@ -576,68 +576,6 @@ def func_extended_epa(
 
 
 @ti.func
-def func_epa_support(
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    pos_a: ti.types.vector(3, dtype=gs.ti_float),
-    quat_a: ti.types.vector(4, dtype=gs.ti_float),
-    pos_b: ti.types.vector(3, dtype=gs.ti_float),
-    quat_b: ti.types.vector(4, dtype=gs.ti_float),
-    dir,
-    dir_scale,
-):
-    """
-    Thread-local version of func_epa_support.
-
-    Find a support point for EPA and add it to the polytope.
-    Uses thread-local pos/quat instead of reading from geoms_state.
-
-    Returns:
-        i_v: Index of the newly added vertex in the polytope
-    """
-    obj1, obj2, localpos1, localpos2, id1, id2, mink = GJK.func_support(
-        geoms_info,
-        verts_info,
-        static_rigid_sim_config,
-        collider_state,
-        collider_static_config,
-        gjk_state,
-        gjk_info,
-        support_field_info,
-        i_ga,
-        i_gb,
-        i_b,
-        dir * dir_scale,
-        pos_a,
-        quat_a,
-        pos_b,
-        quat_b,
-        False,
-    )
-
-    i_v = gjk_state.polytope.nverts[i_b]
-    gjk_state.polytope_verts.obj1[i_b, i_v] = obj1
-    gjk_state.polytope_verts.obj2[i_b, i_v] = obj2
-    gjk_state.polytope_verts.local_obj1[i_b, i_v] = localpos1
-    gjk_state.polytope_verts.local_obj2[i_b, i_v] = localpos2
-    gjk_state.polytope_verts.mink[i_b, i_v] = mink
-    gjk_state.polytope_verts.id1[i_b, i_v] = id1
-    gjk_state.polytope_verts.id2[i_b, i_v] = id2
-    gjk_state.polytope.nverts[i_b] += 1
-
-    return i_v
-
-
-@ti.func
 def func_add_diff_contact_input(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
