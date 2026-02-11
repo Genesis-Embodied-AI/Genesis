@@ -442,11 +442,11 @@ def func_extended_epa(
             support_field_info=support_field_info,
             i_ga=i_ga,
             i_gb=i_gb,
-            i_b=i_b,
             pos_a=pos_a,
             quat_a=quat_a,
             pos_b=pos_b,
             quat_b=quat_b,
+            i_b=i_b,
             dir=dir,
             dir_norm=1.0,
         )
