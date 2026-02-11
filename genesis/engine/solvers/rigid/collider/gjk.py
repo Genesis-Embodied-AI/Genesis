@@ -7,7 +7,6 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from .constants import RETURN_CODE, GJK_RETURN_CODE, EPA_POLY_INIT_RETURN_CODE
 from .gjk_utils import (
-    func_det3,
     func_ray_triangle_intersection,
     func_triangle_affine_coords,
     func_point_triangle_intersection,
@@ -18,6 +17,7 @@ from .gjk_utils import (
 from .utils import (
     func_is_discrete_geoms,
     func_is_equal_vec,
+    func_det3,
 )
 from . import support_field
 

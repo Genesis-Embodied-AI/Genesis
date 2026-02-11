@@ -10,22 +10,7 @@ import gstaichi as ti
 import genesis as gs
 import genesis.utils.array_class as array_class
 from .constants import RETURN_CODE
-
-
-@ti.func
-def func_det3(
-    v1,
-    v2,
-    v3,
-):
-    """
-    Compute the determinant of a 3x3 matrix M = [v1 | v2 | v3].
-    """
-    return (
-        v1[0] * (v2[1] * v3[2] - v2[2] * v3[1])
-        - v1[1] * (v2[0] * v3[2] - v2[2] * v3[0])
-        + v1[2] * (v2[0] * v3[1] - v2[1] * v3[0])
-    )
+from .utils import func_det3
 
 
 @ti.func
