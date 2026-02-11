@@ -52,7 +52,9 @@ class Collider:
         self._mpr = mpr.MPR(rigid_solver, is_active=self._collider_static_config.has_terrain)
         self._sdf = SDF(rigid_solver, is_active=self._collider_static_config.has_nonconvex_nonterrain)
         self._gjk = gjk.GJK(rigid_solver, is_active=self._collider_static_config.has_convex_convex)
-        self._support_field = support_field.SupportField(rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active)
+        self._support_field = support_field.SupportField(
+            rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active
+        )
 
         if gs.use_zerocopy:
             self._contact_data: dict[str, torch.Tensor] = {}

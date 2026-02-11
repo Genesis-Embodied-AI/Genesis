@@ -282,7 +282,9 @@ def func_contact_mpr_terrain(
     margin = gs.ti_float(0.0)
 
     is_return = False
-    tolerance = contact.func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
+    tolerance = contact.func_compute_tolerance(
+        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+    )
 
     if not is_return:
         # move to terrain's frame
@@ -395,7 +397,7 @@ def func_contact_mpr_terrain(
                                             break
 
                                     if valid:
-                                        func_add_contact(
+                                        contact.func_add_contact(
                                             i_ga,
                                             i_gb,
                                             normal,
@@ -1197,22 +1199,20 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             ga_quat = geoms_state.quat[i_ga, i_b]
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
-                            is_col_i, normal_i, penetration_i, contact_pos_i = (
-                                func_contact_vertex_sdf(
-                                    i_ga=i_ga,
-                                    i_gb=i_gb,
-                                    i_b=i_b,
-                                    ga_pos=ga_pos,
-                                    ga_quat=ga_quat,
-                                    gb_pos=gb_pos,
-                                    gb_quat=gb_quat,
-                                    geoms_state=geoms_state,
-                                    geoms_info=geoms_info,
-                                    verts_info=verts_info,
-                                    rigid_global_info=rigid_global_info,
-                                    collider_static_config=collider_static_config,
-                                    sdf_info=sdf_info,
-                                )
+                            is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
+                                i_ga=i_ga,
+                                i_gb=i_gb,
+                                i_b=i_b,
+                                ga_pos=ga_pos,
+                                ga_quat=ga_quat,
+                                gb_pos=gb_pos,
+                                gb_quat=gb_quat,
+                                geoms_state=geoms_state,
+                                geoms_info=geoms_info,
+                                verts_info=verts_info,
+                                rigid_global_info=rigid_global_info,
+                                collider_static_config=collider_static_config,
+                                sdf_info=sdf_info,
                             )
                             if is_col_i:
                                 contact.func_add_contact(
@@ -1280,22 +1280,20 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     gb_pos_perturbed = gb_result.pos
                                     gb_quat_perturbed = gb_result.quat
 
-                                    is_col, normal, penetration, contact_pos = (
-                                        func_contact_vertex_sdf(
-                                            i_ga=i_ga,
-                                            i_gb=i_gb,
-                                            i_b=i_b,
-                                            ga_pos=ga_pos_perturbed,
-                                            ga_quat=ga_quat_perturbed,
-                                            gb_pos=gb_pos_perturbed,
-                                            gb_quat=gb_quat_perturbed,
-                                            geoms_state=geoms_state,
-                                            geoms_info=geoms_info,
-                                            verts_info=verts_info,
-                                            rigid_global_info=rigid_global_info,
-                                            collider_static_config=collider_static_config,
-                                            sdf_info=sdf_info,
-                                        )
+                                    is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
+                                        i_ga=i_ga,
+                                        i_gb=i_gb,
+                                        i_b=i_b,
+                                        ga_pos=ga_pos_perturbed,
+                                        ga_quat=ga_quat_perturbed,
+                                        gb_pos=gb_pos_perturbed,
+                                        gb_quat=gb_quat_perturbed,
+                                        geoms_state=geoms_state,
+                                        geoms_info=geoms_info,
+                                        verts_info=verts_info,
+                                        rigid_global_info=rigid_global_info,
+                                        collider_static_config=collider_static_config,
+                                        sdf_info=sdf_info,
                                     )
 
                                     if is_col:
