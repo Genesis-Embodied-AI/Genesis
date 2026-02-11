@@ -2,7 +2,6 @@
 Support function utilities for GJK algorithm.
 
 This module contains support point computation functions used by both GJK and EPA algorithms.
-Extracted to avoid circular dependencies.
 """
 
 import gstaichi as ti
