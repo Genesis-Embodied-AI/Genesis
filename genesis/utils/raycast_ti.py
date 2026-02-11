@@ -72,7 +72,7 @@ def bvh_ray_cast(
     n_triangles = faces_info.verts_idx.shape[0]
 
     hit_face = -1
-    closest_distance = max_range
+    closest_distance = gs.ti_float(max_range)
     hit_normal = ti.math.vec3(0.0, 0.0, 0.0)
 
     # Stack for non-recursive BVH traversal

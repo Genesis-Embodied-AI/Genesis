@@ -93,10 +93,17 @@ class Collider:
         self._init_static_config()
         self._init_collision_fields()
 
-        self._mpr = MPR(rigid_solver, is_active=self._collider_static_config.has_terrain)
-        self._sdf = SDF(rigid_solver, is_active=self._collider_static_config.has_nonconvex_nonterrain)
-        self._gjk = GJK(rigid_solver, is_active=self._collider_static_config.has_convex_convex)
-        self._support_field = SupportField(rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active)
+        self._sdf = SDF(rigid_solver)
+        self._mpr = MPR(rigid_solver)
+        self._gjk = GJK(rigid_solver)
+        self._support_field = SupportField(rigid_solver)
+
+        if self._collider_static_config.has_nonconvex_nonterrain:
+            self._sdf.activate()
+        if self._collider_static_config.has_convex_convex:
+            self._gjk.activate()
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_convex_convex:
+            self._support_field.activate()
 
         if gs.use_zerocopy:
             self._contact_data: dict[str, torch.Tensor] = {}
