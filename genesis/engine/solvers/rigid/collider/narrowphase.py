@@ -384,15 +384,15 @@ def func_contact_mpr_terrain(
             else:
                 direction[i_axis] = -1.0
             v1 = mpr.support_driver(
-                geoms_info=geoms_info,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                support_field_info=support_field_info,
-                direction=direction,
-                i_g=i_ga,
-                i_b=i_b,
-                pos=ga_pos_terrain_frame,
-                quat=ga_quat_terrain_frame,
+                geoms_info,
+                collider_state,
+                collider_static_config,
+                support_field_info,
+                direction,
+                i_ga,
+                i_b,
+                ga_pos_terrain_frame,
+                ga_quat_terrain_frame,
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
@@ -442,22 +442,22 @@ def func_contact_mpr_terrain(
                                 center_b = center_b / 6.0
 
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
-                                    geoms_info=geoms_info,
-                                    static_rigid_sim_config=static_rigid_sim_config,
-                                    collider_state=collider_state,
-                                    collider_static_config=collider_static_config,
-                                    mpr_state=mpr_state,
-                                    mpr_info=mpr_info,
-                                    support_field_info=support_field_info,
-                                    i_ga=i_ga,
-                                    i_gb=i_gb,
-                                    i_b=i_b,
-                                    center_a=center_a,
-                                    center_b=center_b,
-                                    pos_a=ga_pos_terrain_frame,
-                                    quat_a=ga_quat_terrain_frame,
-                                    pos_b=gb_pos_terrain_frame,
-                                    quat_b=gb_quat_terrain_frame,
+                                    geoms_info,
+                                    static_rigid_sim_config,
+                                    collider_state,
+                                    collider_static_config,
+                                    mpr_state,
+                                    mpr_info,
+                                    support_field_info,
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    center_a,
+                                    center_b,
+                                    ga_pos_terrain_frame,
+                                    ga_quat_terrain_frame,
+                                    gb_pos_terrain_frame,
+                                    gb_quat_terrain_frame,
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -639,15 +639,15 @@ def func_convex_convex_contact(
                     normal = -plane_dir.normalized()
 
                     v1 = mpr.support_driver(
-                        geoms_info=geoms_info,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        support_field_info=support_field_info,
-                        direction=normal,
-                        i_g=i_gb,
-                        i_b=i_b,
-                        pos=gb_pos_current,
-                        quat=gb_quat_current,
+                        geoms_info,
+                        collider_state,
+                        collider_static_config,
+                        support_field_info,
+                        normal,
+                        i_gb,
+                        i_b,
+                        gb_pos_current,
+                        gb_quat_current,
                     )
                     penetration = normal.dot(v1 - ga_pos_current)
                     contact_pos = v1 - 0.5 * penetration * normal
@@ -676,23 +676,23 @@ def func_convex_convex_contact(
 
                             if not is_mpr_updated:
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                    geoms_info=geoms_info,
-                                    geoms_init_AABB=geoms_init_AABB,
-                                    rigid_global_info=rigid_global_info,
-                                    static_rigid_sim_config=static_rigid_sim_config,
-                                    collider_state=collider_state,
-                                    collider_static_config=collider_static_config,
-                                    mpr_state=mpr_state,
-                                    mpr_info=mpr_info,
-                                    support_field_info=support_field_info,
-                                    i_ga=i_ga,
-                                    i_gb=i_gb,
-                                    i_b=i_b,
-                                    normal_ws=normal_ws,
-                                    pos_a=ga_pos_current,
-                                    quat_a=ga_quat_current,
-                                    pos_b=gb_pos_current,
-                                    quat_b=gb_quat_current,
+                                    geoms_info,
+                                    geoms_init_AABB,
+                                    rigid_global_info,
+                                    static_rigid_sim_config,
+                                    collider_state,
+                                    collider_static_config,
+                                    mpr_state,
+                                    mpr_info,
+                                    support_field_info,
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    normal_ws,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                 )
                                 is_mpr_updated = True
 
@@ -738,25 +738,25 @@ def func_convex_convex_contact(
                                 )
                             else:
                                 gjk.func_gjk_contact(
-                                    geoms_state=geoms_state,
-                                    geoms_info=geoms_info,
-                                    verts_info=verts_info,
-                                    faces_info=faces_info,
-                                    rigid_global_info=rigid_global_info,
-                                    static_rigid_sim_config=static_rigid_sim_config,
-                                    collider_state=collider_state,
-                                    collider_static_config=collider_static_config,
-                                    gjk_state=gjk_state,
-                                    gjk_info=gjk_info,
-                                    gjk_static_config=gjk_static_config,
-                                    support_field_info=support_field_info,
-                                    i_ga=i_ga,
-                                    i_gb=i_gb,
-                                    pos_a=ga_pos_current,
-                                    quat_a=ga_quat_current,
-                                    pos_b=gb_pos_current,
-                                    quat_b=gb_quat_current,
-                                    i_b=i_b,
+                                    geoms_state,
+                                    geoms_info,
+                                    verts_info,
+                                    faces_info,
+                                    rigid_global_info,
+                                    static_rigid_sim_config,
+                                    collider_state,
+                                    collider_static_config,
+                                    gjk_state,
+                                    gjk_info,
+                                    gjk_static_config,
+                                    support_field_info,
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                 )
 
                             is_col = gjk_state.is_col[i_b] == 1
@@ -1267,19 +1267,19 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_pos = geoms_state.pos[i_gb, i_b]
                             gb_quat = geoms_state.quat[i_gb, i_b]
                             is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
-                                i_ga=i_ga,
-                                i_gb=i_gb,
-                                i_b=i_b,
-                                ga_pos=ga_pos,
-                                ga_quat=ga_quat,
-                                gb_pos=gb_pos,
-                                gb_quat=gb_quat,
-                                geoms_state=geoms_state,
-                                geoms_info=geoms_info,
-                                verts_info=verts_info,
-                                rigid_global_info=rigid_global_info,
-                                collider_static_config=collider_static_config,
-                                sdf_info=sdf_info,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                ga_pos,
+                                ga_quat,
+                                gb_pos,
+                                gb_quat,
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                rigid_global_info,
+                                collider_static_config,
+                                sdf_info,
                             )
                             if is_col_i:
                                 contact.func_add_contact(
@@ -1330,32 +1330,26 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 
                                     # Apply perturbations to local variables (no global state modification)
                                     ga_pos_perturbed, ga_quat_perturbed = contact.func_rotate_frame(
-                                        pos=ga_pos_original,
-                                        quat=ga_quat_original,
-                                        contact_pos=contact_pos_i,
-                                        qrot=qrot,
+                                        ga_pos_original, ga_quat_original, contact_pos_i, qrot
                                     )
                                     gb_pos_perturbed, gb_quat_perturbed = contact.func_rotate_frame(
-                                        pos=gb_pos_original,
-                                        quat=gb_quat_original,
-                                        contact_pos=contact_pos_i,
-                                        qrot=gu.ti_inv_quat(qrot),
+                                        gb_pos_original, gb_quat_original, contact_pos_i, gu.ti_inv_quat(qrot)
                                     )
 
                                     is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
-                                        i_ga=i_ga,
-                                        i_gb=i_gb,
-                                        i_b=i_b,
-                                        ga_pos=ga_pos_perturbed,
-                                        ga_quat=ga_quat_perturbed,
-                                        gb_pos=gb_pos_perturbed,
-                                        gb_quat=gb_quat_perturbed,
-                                        geoms_state=geoms_state,
-                                        geoms_info=geoms_info,
-                                        verts_info=verts_info,
-                                        rigid_global_info=rigid_global_info,
-                                        collider_static_config=collider_static_config,
-                                        sdf_info=sdf_info,
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        ga_pos_perturbed,
+                                        ga_quat_perturbed,
+                                        gb_pos_perturbed,
+                                        gb_quat_perturbed,
+                                        geoms_state,
+                                        geoms_info,
+                                        verts_info,
+                                        rigid_global_info,
+                                        collider_static_config,
+                                        sdf_info,
                                     )
 
                                     if is_col:
@@ -1425,20 +1419,20 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_quat = geoms_state.quat[i_gb, i_b]
 
                             is_col, normal, penetration, contact_pos = func_contact_edge_sdf(
-                                i_ga=i_ga,
-                                i_gb=i_gb,
-                                i_b=i_b,
-                                ga_pos=ga_pos,
-                                ga_quat=ga_quat,
-                                gb_pos=gb_pos,
-                                gb_quat=gb_quat,
-                                geoms_state=geoms_state,
-                                geoms_info=geoms_info,
-                                verts_info=verts_info,
-                                edges_info=edges_info,
-                                rigid_global_info=rigid_global_info,
-                                collider_static_config=collider_static_config,
-                                sdf_info=sdf_info,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                ga_pos,
+                                ga_quat,
+                                gb_pos,
+                                gb_quat,
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                edges_info,
+                                rigid_global_info,
+                                collider_static_config,
+                                sdf_info,
                             )
                             if is_col:
                                 contact.func_add_contact(
