@@ -274,7 +274,7 @@ def func_broad_phase(
                         ):
                             continue
 
-                        if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                        if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                             # Clear collision normal cache if not in contact
                             if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
@@ -329,7 +329,7 @@ def func_broad_phase(
                             ):
                                 continue
 
-                            if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                            if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                 # Clear collision normal cache if not in contact
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
@@ -363,7 +363,7 @@ def func_broad_phase(
                                 ):
                                     continue
 
-                                if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                                if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                     # Clear collision normal cache if not in contact
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)

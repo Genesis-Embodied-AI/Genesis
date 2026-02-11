@@ -16,24 +16,6 @@ from .utils import (
     func_is_discrete_geoms,
 )
 from . import gjk
-from .gjk import (
-    func_support,
-    func_project_origin_to_plane,
-    func_project_origin_to_line,
-    func_simplex_vertex_linear_comb,
-    func_det3,
-    support_driver,
-    func_ray_triangle_intersection,
-    func_point_triangle_intersection,
-    func_triangle_affine_coords,
-    func_origin_tetra_intersection,
-    func_point_plane_same_side,
-    func_is_colinear,
-    func_is_coplanar,
-    func_safe_gjk_support,
-    count_support_driver,
-    func_count_support,
-)
 
 
 @ti.func

@@ -31,14 +31,6 @@ def func_point_in_geom_aabb(geoms_state: array_class.GeomsState, point, i_g, i_b
 
 
 @ti.func
-def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
-    return not (
-        (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
-        or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
-    )
-
-
-@ti.func
 def func_find_intersect_midpoint(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
     # return the center of the intersecting AABB of AABBs of two geoms
     intersect_lower = ti.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])
