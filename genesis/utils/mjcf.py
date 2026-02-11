@@ -233,7 +233,7 @@ def parse_link(mj, i_l, scale):
     l_info = dict()
 
     name_start = mj.name_bodyadr[i_l]
-    l_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+    l_info["name"], *_ = mj.names[name_start:].decode("utf-8").split("\x00")
 
     l_info["pos"] = mj.body_pos[i_l]
     l_info["quat"] = mj.body_quat[i_l]
@@ -284,7 +284,10 @@ def parse_link(mj, i_l, scale):
             j_info["pos"] = np.array([0.0, 0.0, 0.0])
         else:
             name_start = mj.name_jntadr[i_j]
-            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+            joint_name, *_ = mj.names[name_start:].decode("utf-8").split("\x00")
+            if not joint_name:
+                joint_name = l_info["name"]
+            j_info["name"] = joint_name
             j_info["pos"] = mj.jnt_pos[i_j]
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
         j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_qs)])
@@ -588,7 +591,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         geom_data = None
 
         mesh_path_start = mj.mesh_pathadr[mj_mesh.id]
-        metadata["mesh_path"], *_ = filter(None, mj.paths[mesh_path_start:].decode("utf-8").split("\x00"))
+        metadata["mesh_path"], *_ = mj.paths[mesh_path_start:].decode("utf-8").split("\x00")
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
@@ -757,30 +760,48 @@ def parse_equalities(mj, scale):
         eq_info["data"] = mj.eq_data[i_e]
         eq_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
 
+        objs_idx = [mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]]
+        if mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_SITE:
+            # Must convert site into relative link position because Genesis does not implement site abstraction
+            name_objadr = mj.name_bodyadr
+            sites_pos, sites_quat = [], []
+            for i, site_idx in enumerate(objs_idx):
+                objs_idx[i] = mj.site_bodyid[site_idx]
+                sites_pos.append(mj.site_pos[site_idx])
+                sites_quat.append(mj.site_quat[site_idx])
+            if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[1], sites_pos[0])
+                eq_info["data"][6:10] = gu.transform_quat_by_quat(sites_quat[0], gu.inv_quat(sites_quat[1]))
+            else:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[0], sites_pos[1])
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+            name_objadr = mj.name_jntadr
+        elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_BODY:
+            name_objadr = mj.name_bodyadr
+        else:
+            gs.raise_exception(f"Unsupported MJCF equality object type: {mj.eq_objtype[i_e]}")
+
         if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
             eq_info["type"] = gs.EQUALITY_TYPE.CONNECT
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
             eq_info["type"] = gs.EQUALITY_TYPE.WELD
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
             # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
             eq_info["type"] = gs.EQUALITY_TYPE.JOINT
-            name_objadr = mj.name_jntadr
         else:
             gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
         objs_name = []
-        for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+        for obj_idx in objs_idx:
             if obj_idx < 0:
                 obj_name = None
             else:
                 name_start = name_objadr[obj_idx]
-                obj_name, *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+                obj_name, *_ = mj.names[name_start:].decode("utf-8").split("\x00")
             objs_name.append(obj_name)
-        eq_info["objs_name"] = objs_name
+        eq_info["objs_name"] = tuple(objs_name)
 
         eqs_info.append(eq_info)
 

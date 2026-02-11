@@ -1004,10 +1004,10 @@ def func_equality_weld(
                     i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
                     cdof_ang = dofs_state.cdof_ang[i_d, i_b]
                     cdot_vel = dofs_state.cdof_vel[i_d, i_b]
-
-                    t_quat = gu.ti_identity_quat()
                     t_pos = pos_anchor - links_state.root_COM[link, i_b]
-                    _ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                    # t_quat = gu.ti_identity_quat()
+                    # _ang, vel = gu.ti_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                    vel = cdot_vel - t_pos.cross(cdof_ang)
                     diff = sign * vel
                     jac = diff[i]
                     jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
