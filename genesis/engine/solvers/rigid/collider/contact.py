@@ -351,10 +351,10 @@ def func_rotate_frame(
     quat: ti.types.vector(4, dtype=gs.ti_float),
     contact_pos: ti.types.vector(3, dtype=gs.ti_float),
     qrot: ti.types.vector(4, dtype=gs.ti_float),
-) -> ti.types.struct(
-    pos=ti.types.vector(3, dtype=gs.ti_float),
-    quat=ti.types.vector(4, dtype=gs.ti_float),
-):
+) -> tuple[
+    ti.types.vector(3, dtype=gs.ti_float),
+    ti.types.vector(4, dtype=gs.ti_float),
+]:
     """
     Instead of modifying geoms_state in place, this function takes thread-local
     pos/quat and returns the updated values.
@@ -366,7 +366,7 @@ def func_rotate_frame(
     vec = vec - rel
     new_pos = pos - vec
 
-    return ti.Struct(pos=new_pos, quat=new_quat)
+    return new_pos, new_quat
 
 
 @ti.kernel

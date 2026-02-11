@@ -544,17 +544,12 @@ def func_convex_convex_contact(
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                 # Apply perturbation starting from original state
-                ga_result = contact.func_rotate_frame(
+                ga_pos_current, ga_quat_current = contact.func_rotate_frame(
                     pos=ga_pos_original, quat=ga_quat_original, contact_pos=contact_pos_0, qrot=qrot
                 )
-                ga_pos_current = ga_result.pos
-                ga_quat_current = ga_result.quat
-
-                gb_result = contact.func_rotate_frame(
+                gb_pos_current, gb_quat_current = contact.func_rotate_frame(
                     pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.ti_inv_quat(qrot)
                 )
-                gb_pos_current = gb_result.pos
-                gb_quat_current = gb_result.quat
 
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
@@ -1255,23 +1250,18 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                                     # Apply perturbations to local variables (no global state modification)
-                                    ga_result = contact.func_rotate_frame(
+                                    ga_pos_perturbed, ga_quat_perturbed = contact.func_rotate_frame(
                                         pos=ga_pos_original,
                                         quat=ga_quat_original,
                                         contact_pos=contact_pos_i,
                                         qrot=qrot,
                                     )
-                                    ga_pos_perturbed = ga_result.pos
-                                    ga_quat_perturbed = ga_result.quat
-
-                                    gb_result = contact.func_rotate_frame(
+                                    gb_pos_perturbed, gb_quat_perturbed = contact.func_rotate_frame(
                                         pos=gb_pos_original,
                                         quat=gb_quat_original,
                                         contact_pos=contact_pos_i,
                                         qrot=gu.ti_inv_quat(qrot),
                                     )
-                                    gb_pos_perturbed = gb_result.pos
-                                    gb_quat_perturbed = gb_result.quat
 
                                     is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
                                         i_ga=i_ga,
