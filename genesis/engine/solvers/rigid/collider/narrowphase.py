@@ -154,36 +154,15 @@ def func_contact_edge_sdf(
                 geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_gb, gb_pos, gb_quat
             )
             sdf_grad_1_b = sdf_local.sdf_func_grad_world_local(
-                geoms_info=geoms_info,
-                rigid_global_info=rigid_global_info,
-                collider_static_config=collider_static_config,
-                sdf_info=sdf_info,
-                pos_world=p_1,
-                geom_idx=i_gb,
-                geom_pos=gb_pos,
-                geom_quat=gb_quat,
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_gb, gb_pos, gb_quat
             )
 
             # check if the edge on a is facing towards mesh b
             sdf_grad_0_a = sdf_local.sdf_func_grad_world_local(
-                geoms_info=geoms_info,
-                rigid_global_info=rigid_global_info,
-                collider_static_config=collider_static_config,
-                sdf_info=sdf_info,
-                pos_world=p_0,
-                geom_idx=i_ga,
-                geom_pos=ga_pos,
-                geom_quat=ga_quat,
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_ga, ga_pos, ga_quat
             )
             sdf_grad_1_a = sdf_local.sdf_func_grad_world_local(
-                geoms_info=geoms_info,
-                rigid_global_info=rigid_global_info,
-                collider_static_config=collider_static_config,
-                sdf_info=sdf_info,
-                pos_world=p_1,
-                geom_idx=i_ga,
-                geom_pos=ga_pos,
-                geom_quat=ga_quat,
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_ga, ga_pos, ga_quat
             )
             normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
             normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
@@ -195,14 +174,14 @@ def func_contact_edge_sdf(
                         p_mid = 0.5 * (p_0 + p_1)
                         if (
                             sdf_local.sdf_func_grad_world_local(
-                                geoms_info=geoms_info,
-                                rigid_global_info=rigid_global_info,
-                                collider_static_config=collider_static_config,
-                                sdf_info=sdf_info,
-                                pos_world=p_mid,
-                                geom_idx=i_gb,
-                                geom_pos=gb_pos,
-                                geom_quat=gb_quat,
+                                geoms_info,
+                                rigid_global_info,
+                                collider_static_config,
+                                sdf_info,
+                                p_mid,
+                                i_gb,
+                                gb_pos,
+                                gb_quat,
                             ).dot(vec_01)
                             < 0
                         ):
@@ -212,26 +191,12 @@ def func_contact_edge_sdf(
                         cur_length = 0.5 * cur_length
 
                     p = 0.5 * (p_0 + p_1)
-                    new_penetration = -sdf_local.sdf_func_world_local(
-                        geoms_info=geoms_info,
-                        sdf_info=sdf_info,
-                        pos_world=p,
-                        geom_idx=i_gb,
-                        geom_pos=gb_pos,
-                        geom_quat=gb_quat,
-                    )
+                    new_penetration = -sdf_local.sdf_func_world_local(geoms_info, sdf_info, p, i_gb, gb_pos, gb_quat)
 
                     if new_penetration > penetration:
                         is_col = True
                         normal = sdf_local.sdf_func_normal_world_local(
-                            geoms_info=geoms_info,
-                            rigid_global_info=rigid_global_info,
-                            collider_static_config=collider_static_config,
-                            sdf_info=sdf_info,
-                            pos_world=p,
-                            geom_idx=i_gb,
-                            geom_pos=gb_pos,
-                            geom_quat=gb_quat,
+                            geoms_info, rigid_global_info, collider_static_config, sdf_info, p, i_gb, gb_pos, gb_quat
                         )
                         contact_pos = p
                         penetration = new_penetration
