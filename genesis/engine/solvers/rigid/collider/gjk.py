@@ -7,6 +7,10 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field, epa, multi_contact
+from .utils import (
+        func_is_discrete_geoms,
+        func_is_equal_vec,
+)
 
 
 class RETURN_CODE(IntEnum):
@@ -133,14 +137,6 @@ class GJK:
     @property
     def is_active(self):
         return self._is_active
-
-
-@ti.func
-def func_is_equal_vec(a, b, eps):
-    """
-    Check if two vectors are equal within a small tolerance.
-    """
-    return (ti.abs(a - b) < eps).all()
 
 
 @ti.func
@@ -1291,30 +1287,6 @@ def func_point_plane_same_side(
     dot2 = normal.dot(diff2)
 
     return RETURN_CODE.SUCCESS if dot1 * dot2 > 0 else RETURN_CODE.FAIL
-
-
-@ti.func
-def func_is_discrete_geoms(
-    geoms_info: array_class.GeomsInfo,
-    i_ga,
-    i_gb,
-):
-    """
-    Check if the given geoms are discrete geometries.
-    """
-    return func_is_discrete_geom(geoms_info, i_ga) and func_is_discrete_geom(geoms_info, i_gb)
-
-
-@ti.func
-def func_is_discrete_geom(
-    geoms_info: array_class.GeomsInfo,
-    i_g,
-):
-    """
-    Check if the given geom is a discrete geometry.
-    """
-    geom_type = geoms_info.type[i_g]
-    return geom_type == gs.GEOM_TYPE.MESH or geom_type == gs.GEOM_TYPE.BOX
 
 
 @ti.func

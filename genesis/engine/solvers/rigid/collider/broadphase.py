@@ -9,6 +9,9 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+from .utils import (
+    func_is_geom_aabbs_overlap,
+)
 
 
 @ti.func
@@ -19,20 +22,6 @@ def func_point_in_geom_aabb(
     point: ti.types.vector(3),
 ):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
-
-
-@ti.func
-def func_is_geom_aabbs_overlap(
-    i_ga,
-    i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-):
-    return not (
-        (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
-        or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
-    )
 
 
 @ti.func

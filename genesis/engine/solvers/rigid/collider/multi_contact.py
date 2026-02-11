@@ -12,8 +12,10 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
-# Import helper functions from gjk
 from . import gjk
+from .utils import (
+    func_is_equal_vec,
+)
 
 
 @ti.func
@@ -1043,7 +1045,7 @@ def func_clip_polygon(
                     # Find if there were any duplicate contacts similar to [polygon_vert]
                     for j in range(n_witness):
                         prev_witness = gjk_state.witness[i_b, j].point_obj2
-                        skip = gjk.func_is_equal_vec(polygon_vert, prev_witness, gjk_info.FLOAT_MIN[None])
+                        skip = func_is_equal_vec(polygon_vert, prev_witness, gjk_info.FLOAT_MIN[None])
                         if skip:
                             break
 
