@@ -112,21 +112,8 @@ def sdf_func_world_local(
     geom_quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
-    Thread-local version of sdf_func_world.
-
     Computes SDF value from world coordinate, using provided geometry pose
     instead of reading from geoms_state.
-
-    Args:
-        geoms_info: Geometry information
-        sdf_info: SDF information
-        pos_world: World position to evaluate SDF at
-        geom_idx: Geometry index
-        geom_pos: Thread-local geometry position
-        geom_quat: Thread-local geometry quaternion
-
-    Returns:
-        Signed distance value
     """
     sd = gs.ti_float(0.0)
 
@@ -346,23 +333,8 @@ def sdf_func_normal_world_local(
     geom_quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
-    Thread-local version of sdf_func_normal_world.
-
     Computes normalized SDF gradient (surface normal) in world coordinates,
     using provided geometry pose instead of reading from geoms_state.
-
-    Args:
-        geoms_info: Geometry information
-        rigid_global_info: Global rigid body information
-        collider_static_config: Collider static configuration
-        sdf_info: SDF information
-        pos_world: World position to evaluate normal at
-        geom_idx: Geometry index
-        geom_pos: Thread-local geometry position
-        geom_quat: Thread-local geometry quaternion
-
-    Returns:
-        Normalized surface normal in world coordinates
     """
     return gu.ti_normalize(
         sdf_func_grad_world_local(
@@ -391,23 +363,8 @@ def sdf_func_grad_world_local(
     geom_quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
-    Thread-local version of sdf_func_grad_world.
-
     Computes SDF gradient in world coordinates, using provided geometry pose
     instead of reading from geoms_state.
-
-    Args:
-        geoms_info: Geometry information
-        rigid_global_info: Global rigid body information
-        collider_static_config: Collider static configuration
-        sdf_info: SDF information
-        pos_world: World position to evaluate gradient at
-        geom_idx: Geometry index
-        geom_pos: Thread-local geometry position
-        geom_quat: Thread-local geometry quaternion
-
-    Returns:
-        Gradient vector in world coordinates
     """
     EPS = rigid_global_info.EPS[None]
 
