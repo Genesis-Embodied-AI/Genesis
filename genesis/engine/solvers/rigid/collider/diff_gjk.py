@@ -104,8 +104,12 @@ def func_gjk_contact(
             qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
 
             # Apply perturbation to local variables
-            ga_pos_local, ga_quat_local = contact.func_rotate_frame(ga_pos_local, ga_quat_local, default_contact_pos, qrot)
-            gb_pos_local, gb_quat_local = contact.func_rotate_frame(gb_pos_local, gb_quat_local, default_contact_pos, gu.ti_inv_quat(qrot))
+            ga_pos_local, ga_quat_local = contact.func_rotate_frame(
+                ga_pos_local, ga_quat_local, default_contact_pos, qrot
+            )
+            gb_pos_local, gb_quat_local = contact.func_rotate_frame(
+                gb_pos_local, gb_quat_local, default_contact_pos, gu.ti_inv_quat(qrot)
+            )
 
         gjk_flag = GJK.func_safe_gjk(
             geoms_info=geoms_info,
