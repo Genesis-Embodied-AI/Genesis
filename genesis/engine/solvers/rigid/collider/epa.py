@@ -12,10 +12,20 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
+from .constants import RETURN_CODE, EPA_POLY_INIT_RETURN_CODE, GJK_RETURN_CODE
+from .gjk_utils import (
+    func_triangle_affine_coords,
+    func_ray_triangle_intersection,
+    func_point_triangle_intersection,
+    func_origin_tetra_intersection,
+    func_project_origin_to_plane,
+)
 from .utils import (
     func_is_discrete_geoms,
 )
-from . import gjk
+
+# Import func_support from gjk_support to avoid circular dependency
+from .gjk_support import func_support
 
 
 @ti.func
@@ -52,7 +62,7 @@ def func_epa(
     nearest_i_f = -1
     prev_nearest_i_f = -1
 
-    discrete = gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
+    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = gjk_info.FLOAT_MIN[None]
@@ -237,7 +247,7 @@ def func_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
     face_normal = gjk_state.polytope_faces.normal[i_b, i_f]
 
-    _lambda = gjk.func_triangle_affine_coords(
+    _lambda = func_triangle_affine_coords(
         face_normal,
         face_v1,
         face_v2,
@@ -279,7 +289,7 @@ def func_epa_horizon(
     top = 1
     is_first = True
 
-    flag = gjk.RETURN_CODE.SUCCESS
+    flag = RETURN_CODE.SUCCESS
     while top > 0:
         # Pop the top face from the stack
         i_f = gjk_state.polytope_horizon_stack.face_idx[i_b, top - 1]
@@ -345,7 +355,7 @@ def func_add_edge_to_horizon(
     gjk_state.polytope_horizon_data.face_idx[i_b, horizon_nedges] = i_f
     gjk_state.polytope.horizon_nedges[i_b] += 1
 
-    return gjk.RETURN_CODE.SUCCESS
+    return RETURN_CODE.SUCCESS
 
 
 @ti.func
@@ -448,7 +458,7 @@ def func_epa_init_polytope_2d(
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+    flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
     v1 = gjk_state.simplex_vertex.mink[i_b, 0]
@@ -553,15 +563,15 @@ def func_epa_init_polytope_2d(
             < gjk_info.FLOAT_MIN_SQ[None]
         ):
             func_replace_simplex_3(gjk_state, i_b, i_v1, i_v2, i_v3)
-            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
+            flag = EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3
             break
 
-    if flag == gjk.RETURN_CODE.SUCCESS:
-        if not gjk.func_ray_triangle_intersection(v1, v2, v3, v4, v5):
+    if flag == RETURN_CODE.SUCCESS:
+        if not func_ray_triangle_intersection(v1, v2, v3, v4, v5):
             # The hexahedron should be convex by definition, but somehow if it is not, we return non-convex flag
-            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
+            flag = EPA_POLY_INIT_RETURN_CODE.P2_NONCONVEX
 
-    if flag == gjk.RETURN_CODE.SUCCESS:
+    if flag == RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(6)):
             gjk_state.polytope_faces_map[i_b, i] = i
@@ -597,7 +607,7 @@ def func_epa_init_polytope_3d(
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+    flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Get the simplex vertices
     v1 = gjk_state.simplex_vertex.mink[i_b, 0]
@@ -608,7 +618,7 @@ def func_epa_init_polytope_3d(
     n = (v2 - v1).cross(v3 - v1)
     n_norm = n.norm()
     if n_norm < gjk_info.FLOAT_MIN[None]:
-        flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
+        flag = EPA_POLY_INIT_RETURN_CODE.P3_BAD_NORMAL
     n_neg = -n
 
     # Save vertices in the polytope
@@ -657,22 +667,18 @@ def func_epa_init_polytope_3d(
     # If so, we do not proceed anymore.
     for i in range(2):
         v = v4 if i == 0 else v5
-        if gjk.func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
-            flag = (
-                gjk.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else gjk.EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
-            )
+        if func_point_triangle_intersection(gjk_info, v, v1, v2, v3):
+            flag = EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V4 if i == 0 else EPA_POLY_INIT_RETURN_CODE.P3_INVALID_V5
             break
 
-    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # If origin does not lie inside the triangle, we need to
         # check if the hexahedron contains the origin.
 
         tets_has_origin = gs.ti_ivec2(0, 0)
         for i in range(2):
             v = v4 if i == 0 else v5
-            tets_has_origin[i] = (
-                1 if gjk.func_origin_tetra_intersection(v1, v2, v3, v) == gjk.RETURN_CODE.SUCCESS else 0
-            )
+            tets_has_origin[i] = 1 if func_origin_tetra_intersection(v1, v2, v3, v) == RETURN_CODE.SUCCESS else 0
 
         # @TODO: It's possible for GJK to return a triangle with origin not contained in it but within tolerance
         # from it. In that case, the hexahedron could possibly be constructed that does ont contain the origin, but
@@ -682,7 +688,7 @@ def func_epa_init_polytope_3d(
             and (not tets_has_origin[0])
             and (not tets_has_origin[1])
         ):
-            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
+            flag = EPA_POLY_INIT_RETURN_CODE.P3_MISSING_ORIGIN
         else:
             # Build hexahedron (6 faces) from the five vertices.
             for i in range(6):
@@ -708,10 +714,10 @@ def func_epa_init_polytope_3d(
 
                 dist2 = func_attach_face_to_polytope(gjk_state, gjk_info, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3)
                 if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
-                    flag = gjk.EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
+                    flag = EPA_POLY_INIT_RETURN_CODE.P3_ORIGIN_ON_FACE
                     break
 
-    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(6)):
             gjk_state.polytope_faces_map[i_b, i] = i
@@ -737,7 +743,7 @@ def func_epa_init_polytope_4d(
     int
         0 when successful, or a flag indicating an error.
     """
-    flag = gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS
+    flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Insert simplex vertices into the polytope
     vi = ti.Vector([0, 0, 0, 0], dt=ti.i32)
@@ -774,23 +780,23 @@ def func_epa_init_polytope_4d(
 
         if dist2 < gjk_info.FLOAT_MIN_SQ[None]:
             func_replace_simplex_3(gjk_state, i_b, v1, v2, v3)
-            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3
+            flag = EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3
             break
 
-    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # If the tetrahedron does not contain the origin, we do not proceed anymore.
         if (
-            gjk.func_origin_tetra_intersection(
+            func_origin_tetra_intersection(
                 gjk_state.polytope_verts.mink[i_b, vi[0]],
                 gjk_state.polytope_verts.mink[i_b, vi[1]],
                 gjk_state.polytope_verts.mink[i_b, vi[2]],
                 gjk_state.polytope_verts.mink[i_b, vi[3]],
             )
-            == gjk.RETURN_CODE.FAIL
+            == RETURN_CODE.FAIL
         ):
-            flag = gjk.EPA_POLY_INIT_RETURN_CODE.P4_MISSING_ORIGIN
+            flag = EPA_POLY_INIT_RETURN_CODE.P4_MISSING_ORIGIN
 
-    if flag == gjk.EPA_POLY_INIT_RETURN_CODE.SUCCESS:
+    if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
         for i in ti.static(range(4)):
             gjk_state.polytope_faces_map[i_b, i] = i
@@ -840,7 +846,7 @@ def func_epa_support(
         support_point_id_obj1,
         support_point_id_obj2,
         support_point_minkowski,
-    ) = gjk.func_support(
+    ) = func_support(
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -910,13 +916,13 @@ def func_attach_face_to_polytope(
     gjk_state.polytope.nfaces[i_b] += 1
 
     # Compute the squared distance of the face to the origin
-    gjk_state.polytope_faces.normal[i_b, n], ret = gjk.func_project_origin_to_plane(
+    gjk_state.polytope_faces.normal[i_b, n], ret = func_project_origin_to_plane(
         gjk_info,
         gjk_state.polytope_verts.mink[i_b, i_v3],
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
     )
-    if ret == gjk.RETURN_CODE.SUCCESS:
+    if ret == RETURN_CODE.SUCCESS:
         normal = gjk_state.polytope_faces.normal[i_b, n]
         gjk_state.polytope_faces.dist2[i_b, n] = normal.dot(normal)
         gjk_state.polytope_faces.map_idx[i_b, n] = -1  # No map index yet
@@ -999,7 +1005,7 @@ def func_safe_epa(
     nearest_i_f = gs.ti_int(-1)
     prev_nearest_i_f = gs.ti_int(-1)
 
-    discrete = gjk.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
+    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = rigid_global_info.EPS[None]
@@ -1097,7 +1103,7 @@ def func_safe_epa(
 
         # Attach the new faces
         # print("Attaching new faces to the polytope")
-        attach_flag = gjk.RETURN_CODE.SUCCESS
+        attach_flag = RETURN_CODE.SUCCESS
         for i in range(nedges):
             # Face id of the current face to attach
             i_f0 = nfaces + i
@@ -1130,7 +1136,7 @@ def func_safe_epa(
                 adj_i_f_1,
                 adj_i_f_0,  # Next face id
             )
-            if attach_flag != gjk.RETURN_CODE.SUCCESS:
+            if attach_flag != RETURN_CODE.SUCCESS:
                 # Unrecoverable numerical issue
                 break
 
@@ -1142,7 +1148,7 @@ def func_safe_epa(
                 gjk_state.polytope_faces.map_idx[i_b, i_f0] = nfaces_map
                 gjk_state.polytope.nfaces_map[i_b] += 1
 
-        if attach_flag != gjk.RETURN_CODE.SUCCESS:
+        if attach_flag != RETURN_CODE.SUCCESS:
             nearest_i_f = -1
             break
 
@@ -1158,7 +1164,7 @@ def func_safe_epa(
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
         flag = func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
-        if flag == gjk.RETURN_CODE.SUCCESS:
+        if flag == RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
             gjk_state.distance[i_b] = -ti.sqrt(dist2)
         else:
@@ -1186,7 +1192,7 @@ def func_safe_epa_witness(
     """
     Compute the witness points from the geometries for the face i_f of the polytope.
     """
-    flag = gjk.RETURN_CODE.SUCCESS
+    flag = RETURN_CODE.SUCCESS
 
     # Find the affine coordinates of the origin's projection on the face i_f
     face_iv1 = gjk_state.polytope_faces.verts_idx[i_b, i_f][0]
@@ -1197,8 +1203,8 @@ def func_safe_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
 
     # Project origin onto the face plane to get the barycentric coordinates
-    proj_o, _ = gjk.func_project_origin_to_plane(gjk_info, face_v1, face_v2, face_v3)
-    _lambda = gjk.func_triangle_affine_coords(proj_o, face_v1, face_v2, face_v3)
+    proj_o, _ = func_project_origin_to_plane(gjk_info, face_v1, face_v2, face_v3)
+    _lambda = func_triangle_affine_coords(proj_o, face_v1, face_v2, face_v3)
 
     # Check validity of affine coordinates through reprojection
     v1 = gjk_state.polytope_verts.mink[i_b, face_iv1]
@@ -1214,9 +1220,9 @@ def func_safe_epa_witness(
     )
     rel_reprojection_error = reprojection_error * max_edge_len_inv
     if rel_reprojection_error > gjk_info.polytope_max_reprojection_error[None]:
-        flag = gjk.RETURN_CODE.FAIL
+        flag = RETURN_CODE.FAIL
 
-    if flag == gjk.RETURN_CODE.SUCCESS:
+    if flag == RETURN_CODE.SUCCESS:
         # Point on geom 1
         v1 = gjk_state.polytope_verts.obj1[i_b, face_iv1]
         v2 = gjk_state.polytope_verts.obj1[i_b, face_iv2]
@@ -1325,7 +1331,7 @@ def func_safe_attach_face_to_polytope(
         gjk_state.polytope_verts.mink[i_b, i_v2],
         gjk_state.polytope_verts.mink[i_b, i_v1],
     )
-    if flag == gjk.RETURN_CODE.SUCCESS:
+    if flag == RETURN_CODE.SUCCESS:
         face_center = (
             gjk_state.polytope_verts.mink[i_b, i_v1]
             + gjk_state.polytope_verts.mink[i_b, i_v2]
@@ -1383,7 +1389,7 @@ def func_plane_normal(
     """
     Compute the reliable normal of the plane defined by three points.
     """
-    normal, flag = gs.ti_vec3(0.0, 0.0, 0.0), gjk.RETURN_CODE.FAIL
+    normal, flag = gs.ti_vec3(0.0, 0.0, 0.0), RETURN_CODE.FAIL
     finished = False
 
     d21 = v2 - v1
@@ -1405,11 +1411,11 @@ def func_plane_normal(
             nn = n.norm()
             if nn == 0:
                 # Zero normal, cannot project.
-                flag = gjk.RETURN_CODE.FAIL
+                flag = RETURN_CODE.FAIL
                 finished = True
             elif nn > gjk_info.FLOAT_MIN[None]:
                 normal = n.normalized()
-                flag = gjk.RETURN_CODE.SUCCESS
+                flag = RETURN_CODE.SUCCESS
                 finished = True
 
     return normal, flag

@@ -17,7 +17,6 @@ import genesis.utils.sdf as sdf
 from . import mpr
 from . import gjk
 from . import diff_gjk
-from genesis.utils import sdf_local
 
 from .broadphase import func_point_in_geom_aabb
 from .contact import (
@@ -103,7 +102,7 @@ def func_contact_vertex_sdf(
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
         if func_point_in_geom_aabb(i_gb, i_b, geoms_state, vertex_pos):
-            new_penetration = -sdf_local.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
+            new_penetration = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
             if new_penetration > penetration:
                 is_col = True
                 contact_pos = vertex_pos
@@ -111,7 +110,7 @@ def func_contact_vertex_sdf(
 
     if is_col:
         # Compute contact normal only once, and only in case of contact
-        normal = sdf_local.sdf_func_normal_world_local(
+        normal = sdf.sdf_func_normal_world_local(
             geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, gb_pos, gb_quat
         )
 
@@ -157,18 +156,18 @@ def func_contact_edge_sdf(
             p_1 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v1], ga_pos, ga_quat)
             vec_01 = gu.ti_normalize(p_1 - p_0, EPS)
 
-            sdf_grad_0_b = sdf_local.sdf_func_grad_world_local(
+            sdf_grad_0_b = sdf.sdf_func_grad_world_local(
                 geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_gb, gb_pos, gb_quat
             )
-            sdf_grad_1_b = sdf_local.sdf_func_grad_world_local(
+            sdf_grad_1_b = sdf.sdf_func_grad_world_local(
                 geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_gb, gb_pos, gb_quat
             )
 
             # check if the edge on a is facing towards mesh b
-            sdf_grad_0_a = sdf_local.sdf_func_grad_world_local(
+            sdf_grad_0_a = sdf.sdf_func_grad_world_local(
                 geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_ga, ga_pos, ga_quat
             )
-            sdf_grad_1_a = sdf_local.sdf_func_grad_world_local(
+            sdf_grad_1_a = sdf.sdf_func_grad_world_local(
                 geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_ga, ga_pos, ga_quat
             )
             normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
@@ -180,7 +179,7 @@ def func_contact_edge_sdf(
                     while cur_length > ga_sdf_cell_size:
                         p_mid = 0.5 * (p_0 + p_1)
                         if (
-                            sdf_local.sdf_func_grad_world_local(
+                            sdf.sdf_func_grad_world_local(
                                 geoms_info,
                                 rigid_global_info,
                                 collider_static_config,
@@ -198,11 +197,11 @@ def func_contact_edge_sdf(
                         cur_length = 0.5 * cur_length
 
                     p = 0.5 * (p_0 + p_1)
-                    new_penetration = -sdf_local.sdf_func_world_local(geoms_info, sdf_info, p, i_gb, gb_pos, gb_quat)
+                    new_penetration = -sdf.sdf_func_world_local(geoms_info, sdf_info, p, i_gb, gb_pos, gb_quat)
 
                     if new_penetration > penetration:
                         is_col = True
-                        normal = sdf_local.sdf_func_normal_world_local(
+                        normal = sdf.sdf_func_normal_world_local(
                             geoms_info, rigid_global_info, collider_static_config, sdf_info, p, i_gb, gb_pos, gb_quat
                         )
                         contact_pos = p
