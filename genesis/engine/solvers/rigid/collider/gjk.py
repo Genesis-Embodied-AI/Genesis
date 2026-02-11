@@ -2323,12 +2323,12 @@ def func_gjk_contact(
                                 gjk_info,
                                 i_ga,
                                 i_gb,
-                                i_b,
-                                i_f,
                                 pos_a,
                                 quat_a,
                                 pos_b,
                                 quat_b,
+                                i_b,
+                                i_f,
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:
