@@ -495,10 +495,10 @@ def func_convex_convex_contact(
             and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
         )
 
-        tolerance = func_compute_tolerance(
+        tolerance = contact.func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
         )
-        diff_pos_tolerance = func_compute_tolerance(
+        diff_pos_tolerance = contact.func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
         )
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
