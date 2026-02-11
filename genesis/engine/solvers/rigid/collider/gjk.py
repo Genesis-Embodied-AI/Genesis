@@ -8,8 +8,8 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field, epa, multi_contact
 from .utils import (
-        func_is_discrete_geoms,
-        func_is_equal_vec,
+    func_is_discrete_geoms,
+    func_is_equal_vec,
 )
 
 
