@@ -27,7 +27,7 @@ class Rasterizer(RBC):
         if self._offscreen:
             # Select PyOpenGL backend for `pyrender.OffscreenRenderer`.
             # If env variable is set, use specified platform if supported, otherwise some platform-specific default.
-            platform = os.environ.get("PYOPENGL_PLATFORM", "egl" if gs.platform == "Linux" else "pyglet")
+            platform = os.environ.get("PYOPENGL_PLATFORM", "egl" if sys.platform == "linux" else "pyglet")
             if platform not in ("osmesa", "pyglet", "egl"):
                 gs.logger.warning(f"PYOPENGL_PLATFORM='{platform}' not supported. Falling back to 'pyglet'.")
                 platform = "pyglet"

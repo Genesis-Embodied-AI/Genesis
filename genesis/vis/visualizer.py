@@ -1,3 +1,5 @@
+import sys
+
 import genesis as gs
 from genesis.repr_base import RBC
 
@@ -62,13 +64,13 @@ class Visualizer(RBC):
                 viewer_width = viewer_height / VIEWER_DEFAULT_ASPECT_RATIO
                 viewer_options.res = (int(viewer_width), int(viewer_height))
             if viewer_options.run_in_thread is None:
-                if gs.platform == "Linux":
+                if sys.platform == "linux":
                     viewer_options.run_in_thread = True
-                elif gs.platform == "macOS":
+                elif sys.platform == "darwin":
                     viewer_options.run_in_thread = False
-                elif gs.platform == "Windows":
+                elif sys.platform == "win32":
                     viewer_options.run_in_thread = True
-            if gs.platform == "macOS" and viewer_options.run_in_thread:
+            if sys.platform == "darwin" and viewer_options.run_in_thread:
                 gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
 
             self._viewer = Viewer(viewer_options, self._context)

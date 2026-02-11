@@ -141,7 +141,7 @@ docker run -it --network=host \
  genesis-amd
 ```
 
-サンプルは`/workspace/examples`からアクセス可能です。注意：AMDユーザーはVulkanバックエンドを使用してください。これは、Genesisを初期化するために`gs.init(vulkan)`を呼び出す必要があることを意味します。
+サンプルは`/workspace/examples`からアクセス可能です。注意：AMDユーザーはROCm (HIP)バックエンドを使用してください。これは、Genesisを初期化するために`gs.init(gs.amdgpu)`を呼び出す必要があることを意味します。
 
 ## ドキュメント
 

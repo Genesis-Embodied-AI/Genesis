@@ -6,7 +6,6 @@ import logging
 import math
 import numbers
 import os
-import platform
 import random
 import sys
 from dataclasses import field
@@ -24,7 +23,6 @@ from gstaichi.lang.util import to_pytorch_type, to_numpy_type
 from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
 
 import genesis as gs
-from genesis.constants import backend as gs_backend
 
 
 LOGGER = logging.getLogger(__name__)
@@ -162,69 +160,44 @@ def set_random_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def get_platform():
-    name = platform.platform()
-    # in python 3.8, platform.platform() uses mac_ver() on macOS
-    # it will return 'macOS-XXXX' instead of 'Darwin-XXXX'
-    if name.lower().startswith("darwin") or name.lower().startswith("macos"):
-        return "macOS"
+def get_device(backend: gs.constants.backend, device_idx: Optional[int] = None):
+    if backend == gs.gpu:
+        if torch.cuda.is_available():
+            if torch.version.hip:
+                backend = gs.amdgpu
+            else:  # torch.version.cuda:
+                backend = gs.cuda
+        elif sys.platform == "darwin":
+            backend = gs.metal
+        else:
+            gs.raise_exception("No Torch GPU device available.")
 
-    if name.lower().startswith("windows"):
-        return "Windows"
-
-    if name.lower().startswith("linux"):
-        return "Linux"
-
-    if "bsd" in name.lower():
-        return "Unix"
-
-    assert False, f"Unknown platform name {name}"
-
-
-def get_device(backend: gs_backend, device_idx: Optional[int] = None):
-    if backend == gs_backend.cpu:
-        cpu_info = cpuinfo.get_cpu_info()
-        device_name = next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw"))))
-        total_mem = psutil.virtual_memory().total / 1024**3
-        device = torch.device("cpu", device_idx)
-    elif backend == gs_backend.cuda:
-        if not torch.cuda.is_available():
-            gs.raise_exception("torch cuda not available")
+    if backend in (gs.cuda, gs.amdgpu):
+        if (
+            not torch.cuda.is_available()
+            or (backend == gs.cuda and not torch.version.cuda)
+            or (backend == gs.amdgpu and not torch.version.hip)
+        ):
+            gs.raise_exception(f"Torch device 'cuda' not available for backend '{backend}'.")
         if device_idx is None:
             device_idx = torch.cuda.current_device()
         device = torch.device("cuda", device_idx)
         device_property = torch.cuda.get_device_properties(device)
         device_name = device_property.name
         total_mem = device_property.total_memory / 1024**3
-    elif backend == gs_backend.metal:
+    elif backend == gs.metal:
         if not torch.backends.mps.is_available():
-            gs.raise_exception("Torch metal backend not available.")
+            gs.raise_exception("Torch device 'mps' not available.")
         # on mac, cpu and gpu are in the same physical hardware and sharing memory
-        _, device_name, total_mem, _ = get_device(gs_backend.cpu)
-        device = torch.device("mps", device_idx)
-    elif backend == gs_backend.vulkan:
-        if torch.cuda.is_available():
-            device, device_name, total_mem, _ = get_device(gs_backend.cuda)
-        elif torch.xpu.is_available():  # pytorch 2.5+ supports Intel XPU device
-            if device_idx is None:
-                device_idx = torch.xpu.current_device()
-            device = torch.device("xpu", device_idx)
-            device_property = torch.xpu.get_device_properties(device_idx)
-            device_name = device_property.name
-            total_mem = device_property.total_memory / 1024**3
-        else:  # pytorch tensors on cpu
-            # logger may not be configured at this point
-            logger = getattr(gs, "logger", None) or LOGGER
-            logger.warning("Torch GPU backend not available. Falling back to CPU device.")
-            device, device_name, total_mem, _ = get_device(gs_backend.cpu)
-    else:  # backend == gs_backend.gpu:
-        if torch.cuda.is_available():
-            return get_device(gs_backend.cuda)
-        elif get_platform() == "macOS":
-            return get_device(gs_backend.metal)
-        else:
-            return get_device(gs_backend.vulkan)
-
+        _, device_name, total_mem, _ = get_device(gs.cpu)
+        assert not device_idx, "Specifying device index other than 0 is not support for Torch Metal device."
+        device = torch.device("mps")
+    else:
+        cpu_info = cpuinfo.get_cpu_info()
+        device_name = next(filter(None, map(cpu_info.get, ("brand_raw", "hardware_raw", "vendor_id_raw"))))
+        total_mem = psutil.virtual_memory().total / 1024**3
+        assert not device_idx, "Specifying device index other than 0 is not support for Torch CPU device."
+        device = torch.device("cpu")
     return device, device_name, total_mem, backend
 
 
@@ -247,7 +220,7 @@ def get_cache_dir():
     if cache_dir is not None:
         return cache_dir
     root_cache_dir = None
-    if get_platform() == "Linux":
+    if sys.platform == "linux":
         root_cache_dir = os.environ.get("XDG_CACHE_HOME")
     if root_cache_dir is None:
         root_cache_dir = os.path.join(os.path.expanduser("~"), ".cache")

@@ -1,8 +1,7 @@
 import platform
+import sys
 
 import gstaichi as ti
-
-import genesis as gs
 
 from .base import Base
 
@@ -35,7 +34,7 @@ class Liquid(Base):
         viscosity_relaxation=0.01,
     ):
         if sampler is None:
-            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
+            sampler = "pbs" if (sys.platform == "linux" and platform.machine() == "x86_64") else "random"
 
         super().__init__()
 

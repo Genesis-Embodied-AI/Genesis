@@ -122,7 +122,6 @@ class MeshLight(ShapeLight):
 
 class Raytracer:
     def __init__(self, options, vis_options):
-        self.device_index = options.device_index
         self.logging_level = options.logging_level
         self.state_limit = options.state_limit
         self.tracing_depth = options.tracing_depth
@@ -162,11 +161,27 @@ class Raytracer:
             light_surface.update_texture()
             self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
 
+        # backend and device selection: aligning with genesis if possible
+        backend = gs.backend.name
+        device_index = options.device_index
+        if device_index is None:
+            # If no device index has been specified, use Torch GPU device ID if any, 0 otherwise
+            device_index = 0 if gs.device.type == "cpu" else gs.device.index
+        if backend == "amdgpu":
+            # Luisa does not support HIP for AMD GPU: using DirectX on Windows, falling back to CPU otherwise
+            if sys.platform == "win32":
+                backend = "dx"
+            else:
+                backend = "cpu"
+                device_index = 0
+        self.backend = backend
+        self.device_index = device_index
+
         LuisaRenderPy.init(
             context_path=os.path.dirname(LuisaRenderPy.__file__),
             context_id=str(gs.UID()),
-            backend="cuda" if gs.platform != "macOS" else "metal",
-            device_index=self.device_index,
+            backend=backend,
+            device_index=device_index,
             log_level=logging_class[self.logging_level],
         )
 

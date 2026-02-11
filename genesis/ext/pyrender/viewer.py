@@ -1257,12 +1257,12 @@ class Viewer(pyglet.window.Window):
         self.switch_to()
         pyglet.clock.tick()
 
-        if gs.platform != "Windows":
-            pyglet.app.platform_event_loop.step(0.0)
-        else:
+        if sys.platform == "win32":
             # even changing `platform_event_loop.step(0.0)` to 0.001 causes the viewer to hang on Windows
             # this is a workaround on Windows. not sure if it's correct
             time.sleep(0.001)
+        else:
+            pyglet.app.platform_event_loop.step(0.0)
 
         self.dispatch_pending_events()
         if self._is_active:
