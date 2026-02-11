@@ -671,8 +671,9 @@ class IPCCoupler(RBC):
         import os
         import tempfile
 
-        # Create workspace directory for IPC output
-        workspace = os.path.join(tempfile.gettempdir(), "genesis_ipc_workspace")
+        # Create workspace directory for IPC output.
+        # Use process ID to avoid collisions under pytest-xdist.
+        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_workspace_{os.getpid()}")
         os.makedirs(workspace, exist_ok=True)
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
@@ -1771,9 +1772,9 @@ class IPCCoupler(RBC):
 
             # Some backends still return (n_envs, n_links, dim); slice to 2D for kernels.
             if all_links_pos.ndim == 3:
-                all_links_pos = all_links_pos[env_idx, :, :]
+                all_links_pos = all_links_pos[0, :, :]
             if all_links_quat.ndim == 3:
-                all_links_quat = all_links_quat[env_idx, :, :]
+                all_links_quat = all_links_quat[0, :, :]
 
             # Get number of links
             n_links = all_links_pos.shape[0]
