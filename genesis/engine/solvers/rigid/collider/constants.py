@@ -1,8 +1,5 @@
 """
 Constants and enums for the collider module.
-
-This module contains shared constants and enums used across multiple collision detection
-algorithms to avoid circular dependencies.
 """
 
 from enum import IntEnum
