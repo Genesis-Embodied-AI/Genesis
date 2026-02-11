@@ -99,13 +99,15 @@ class KinematicContactProbe(
 
         self.debug_sphere_objects: list["Mesh | None"] = []
         self.debug_contact_objects: list["Mesh | None"] = []
+        self.probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
+        self.probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
+        norms = self.probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
+        self.probe_local_normal /= norms
 
     def build(self):
         super().build()
 
-        probe_positions = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
-        probe_normals = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        n_probes = len(probe_positions)
+        n_probes = len(self.probe_local_pos)
         sensor_idx = self._idx
 
         self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
@@ -130,12 +132,11 @@ class KinematicContactProbe(
         )
 
         self._shared_metadata.probe_positions = concat_with_tensor(
-            self._shared_metadata.probe_positions, probe_positions, expand=(n_probes, 3), dim=0
+            self._shared_metadata.probe_positions, self.probe_local_pos, expand=(n_probes, 3), dim=0
         )
 
-        norms = probe_normals.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
         self._shared_metadata.probe_normals = concat_with_tensor(
-            self._shared_metadata.probe_normals, probe_normals / norms, expand=(n_probes, 3), dim=0
+            self._shared_metadata.probe_normals, self.probe_local_normal, expand=(n_probes, 3), dim=0
         )
 
         self._shared_metadata.total_n_probes += n_probes
@@ -241,10 +242,9 @@ class KinematicContactProbe(
 
         link_pos = self._link.get_pos(env_idx).reshape((3,))
         link_quat = self._link.get_quat(env_idx).reshape((4,))
-        probe_positions = self._options.get_probe_positions()
         data = self.read(env_idx)
 
-        for i, pos in enumerate(probe_positions):
+        for i, pos in enumerate(self.probe_local_pos):
             offset_pos = torch.tensor(pos, dtype=gs.tc_float, device=gs.device)
             probe_world = link_pos + transform_by_quat(offset_pos, link_quat)
 
@@ -283,7 +283,6 @@ def func_check_collision_filter(
     constraint_state: array_class.ConstraintState,
     equalities_info: array_class.EqualitiesInfo,
 ):
-    """Check collision filtering for kinematic contact probe."""
     is_valid = True
 
     # Self-link filtering
@@ -340,7 +339,6 @@ def _kernel_kinematic_contact_probe_support_query(
     support_field_info: array_class.SupportFieldInfo,
     output: ti.types.ndarray(),
 ):
-    """Compute contact probe readings using support functions."""
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output.shape[0]
 

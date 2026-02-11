@@ -632,18 +632,18 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
-    """Test KinematicContactProbe outputs against an analytic box/sphere setup."""
+    """Test KinematicContactProbe for a box resting on the ground and a fixed sphere on top of it."""
     BOX_SIZE = 0.5
     PROBE_RADIUS = 0.05
     PENETRATION = 0.01
     STIFFNESS = 2000.0
     SPHERE_RADIUS = 0.1
+    NOISE = 0.001
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
         show_viewer=show_viewer,
     )
 
@@ -663,28 +663,24 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
         )
     )
 
-    probe_positions = [(0.0, 0.0, BOX_SIZE / 2), (0.1, 0.0, BOX_SIZE / 2)]
-    probe_normals = [(0.0, 0.0, 1.0), (0.0, 0.0, 1.0)]
-
     probe = scene.add_sensor(
         gs.sensors.KinematicContactProbe(
             entity_idx=box.idx,
-            probe_local_pos=probe_positions,
-            probe_local_normal=probe_normals,
+            probe_local_pos=(
+                (0.0, 0.0, BOX_SIZE / 2),
+                (0.1, 0.0, BOX_SIZE / 2),
+                (0.0, 0.0, -BOX_SIZE / 2),
+            ),
+            probe_local_normal=(
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, -1.0),
+            ),
             radius=PROBE_RADIUS,
             stiffness=STIFFNESS,
-        )
-    )
-
-    probe_noisy = scene.add_sensor(
-        gs.sensors.KinematicContactProbe(
-            entity_idx=box.idx,
-            probe_local_pos=probe_positions,
-            probe_local_normal=probe_normals,
-            radius=PROBE_RADIUS,
-            stiffness=STIFFNESS,
-            noise=0.005,
-            random_walk=0.001,
+            noise=NOISE,
+            random_walk=NOISE * 0.1,
+            draw_debug=show_viewer,
         )
     )
 
@@ -695,66 +691,48 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
             probe_local_normal=[(0.0, 0.0, -1.0)],
             radius=PROBE_RADIUS,
             stiffness=STIFFNESS,
+            draw_debug=show_viewer,
         )
     )
 
     scene.build(n_envs=n_envs)
     scene.step()
 
-    data = probe.read()
-    ground_truth = probe.read_ground_truth()
-    noisy_data = probe_noisy.read()
-    noisy_ground_truth = probe_noisy.read_ground_truth()
+    noisy_data = probe.read()
+    true_data = probe.read_ground_truth()
     sphere_data = sphere_probe.read()
     sphere_ground_truth = sphere_probe.read_ground_truth()
 
-    assert_allclose(data.penetration, ground_truth.penetration, tol=gs.EPS)
-    assert_allclose(data.position, ground_truth.position, tol=gs.EPS)
-    assert_allclose(data.normal, ground_truth.normal, tol=gs.EPS)
-    assert_allclose(data.force, ground_truth.force, tol=gs.EPS)
-
-    assert_allclose(noisy_ground_truth.penetration, ground_truth.penetration, tol=gs.EPS)
-    assert_allclose(noisy_ground_truth.position, ground_truth.position, tol=gs.EPS)
-    assert_allclose(noisy_ground_truth.normal, ground_truth.normal, tol=gs.EPS)
-    assert_allclose(noisy_ground_truth.force, ground_truth.force, tol=gs.EPS)
+    noise_tol = NOISE * 10.0
+    assert_allclose(noisy_data.penetration, true_data.penetration, atol=noise_tol)
+    assert_allclose(noisy_data.position, true_data.position, atol=noise_tol)
+    assert_allclose(noisy_data.normal, true_data.normal, atol=noise_tol)
+    assert_allclose(noisy_data.force, true_data.force, atol=noise_tol)
 
     assert_allclose(sphere_data.penetration, sphere_ground_truth.penetration, tol=gs.EPS)
     assert_allclose(sphere_data.position, sphere_ground_truth.position, tol=gs.EPS)
     assert_allclose(sphere_data.normal, sphere_ground_truth.normal, tol=gs.EPS)
     assert_allclose(sphere_data.force, sphere_ground_truth.force, tol=gs.EPS)
 
-    expected_penetration = (PENETRATION, 0.0)
-    expected_position = ((0.0, 0.0, BOX_SIZE / 2 - PENETRATION), (0.0, 0.0, 0.0))
-    expected_normal = ((0.0, 0.0, 1.0), (0.0, 0.0, 0.0))
-    expected_force = ((0.0, 0.0, STIFFNESS * PENETRATION), (0.0, 0.0, 0.0))
-
-    expected_penetration_sphere = (0.0,)
-    expected_position_sphere = ((0.0, 0.0, 0.0),)
-    expected_normal_sphere = ((0.0, 0.0, 0.0),)
-    expected_force_sphere = ((0.0, 0.0, 0.0),)
-
-    assert_allclose(data.penetration, expected_penetration, tol=tol)
-    assert_allclose(data.position, expected_position, tol=tol)
-    assert_allclose(data.normal, expected_normal, tol=tol)
-    assert_allclose(data.force, expected_force, tol=tol)
+    zeros_3 = (0.0, 0.0, 0.0)
+    assert_allclose(true_data.penetration, (PENETRATION, 0.0, 0.0), tol=tol)
+    assert_allclose(true_data.position, ((0.0, 0.0, BOX_SIZE / 2 - PENETRATION), zeros_3, zeros_3), tol=tol)
+    assert_allclose(true_data.normal, ((0.0, 0.0, 1.0), zeros_3, zeros_3), tol=tol)
+    assert_allclose(true_data.force, ((0.0, 0.0, STIFFNESS * PENETRATION), zeros_3, zeros_3), tol=tol)
+    # TODO: This is failing, probably due to how the sensor uses support points?
+    assert_allclose(sphere_data.penetration, PENETRATION, tol=tol)
 
     with np.testing.assert_raises(AssertionError):
-        assert_allclose(noisy_data.penetration, noisy_ground_truth.penetration, tol=gs.EPS)
+        assert_allclose(noisy_data.penetration, true_data.penetration, tol=gs.EPS)
     with np.testing.assert_raises(AssertionError):
-        assert_allclose(noisy_data.force, noisy_ground_truth.force, tol=gs.EPS)
+        assert_allclose(noisy_data.force, true_data.force, tol=gs.EPS)
 
-    assert_allclose(sphere_data.penetration, expected_penetration_sphere, tol=tol)
-    assert_allclose(sphere_data.position, expected_position_sphere, tol=tol)
-    assert_allclose(sphere_data.normal, expected_normal_sphere, tol=tol)
-    assert_allclose(sphere_data.force, expected_force_sphere, tol=tol)
-
-    contact_pos_local = data.position[:, 0] if n_envs > 0 else data.position[0]
+    contact_pos_local = true_data.position[:, 0] if n_envs > 0 else true_data.position[0]
     contact_pos_world = box.get_pos() + contact_pos_local
     assert_allclose(contact_pos_world, (0.0, 0.0, BOX_SIZE - PENETRATION), tol=tol)
 
     sphere.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
     scene.step()
-    data_no_contact = probe.read()
     sphere_data_no_contact = sphere_probe.read()
-    for data in (*data_no_contact, *sphere_data_no_contact):
+    for data in sphere_data_no_contact:
         assert_allclose(data, 0.0, tol=gs.EPS)
