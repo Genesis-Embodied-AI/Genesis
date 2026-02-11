@@ -515,7 +515,6 @@ class RigidSolver(Solver):
         self._init_equality_fields()
 
         self._init_envs_offset()
-        self._init_sdf()
 
         self._init_invweight_and_meaninertia(force_update=False)
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
@@ -1076,9 +1075,6 @@ class RigidSolver(Solver):
     def _init_envs_offset(self):
         self.envs_offset = self._rigid_global_info.envs_offset
         self.envs_offset.from_numpy(self._scene.envs_offset)
-
-    def _init_sdf(self):
-        self.sdf = SDF(self)
 
     def _init_collider(self):
         self.collider = Collider(self)
