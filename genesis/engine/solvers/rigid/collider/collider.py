@@ -21,8 +21,47 @@ from genesis.utils.sdf import SDF
 from . import mpr
 from . import gjk
 from . import support_field
-from . import narrowphase, broadphase, contact
 
+# Import and re-export from submodules for backward compatibility
+from .broadphase import (
+    func_point_in_geom_aabb,
+    func_is_geom_aabbs_overlap,
+    func_find_intersect_midpoint,
+    func_check_collision_valid,
+    func_collision_clear,
+    func_broad_phase,
+)
+
+from .contact import (
+    collider_kernel_reset,
+    kernel_collider_clear,
+    collider_kernel_get_contacts,
+    func_add_contact,
+    func_set_contact,
+    func_add_diff_contact_input,
+    func_compute_tolerance,
+    func_contact_orthogonals,
+    func_rotate_frame,
+    func_set_upstream_grad,
+)
+
+from .narrowphase import (
+    CCD_ALGORITHM_CODE,
+    func_contact_sphere_sdf,
+    func_contact_vertex_sdf,
+    func_contact_edge_sdf,
+    func_contact_convex_convex_sdf,
+    func_contact_mpr_terrain,
+    func_add_prism_vert,
+    func_plane_box_contact,
+    func_convex_convex_contact,
+    func_box_box_contact,
+    func_narrow_phase_convex_vs_convex,
+    func_narrow_phase_diff_convex_vs_convex,
+    func_narrow_phase_convex_specializations,
+    func_narrow_phase_any_vs_terrain,
+    func_narrow_phase_nonconvex_vs_nonterrain,
+)
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -84,14 +123,14 @@ class Collider:
         # Identify the convex collision detection (ccd) algorithm
         if self._solver._options.use_gjk_collision:
             if self._solver._enable_mujoco_compatibility:
-                ccd_algorithm = narrowphase.CCD_ALGORITHM_CODE.MJ_GJK
+                ccd_algorithm = CCD_ALGORITHM_CODE.MJ_GJK
             else:
-                ccd_algorithm = narrowphase.CCD_ALGORITHM_CODE.GJK
+                ccd_algorithm = CCD_ALGORITHM_CODE.GJK
         else:
             if self._solver._enable_mujoco_compatibility:
-                ccd_algorithm = narrowphase.CCD_ALGORITHM_CODE.MJ_MPR
+                ccd_algorithm = CCD_ALGORITHM_CODE.MJ_MPR
             else:
-                ccd_algorithm = narrowphase.CCD_ALGORITHM_CODE.MPR
+                ccd_algorithm = CCD_ALGORITHM_CODE.MPR
 
         n_contacts_per_pair = 20 if self._solver._static_rigid_sim_config.requires_grad else 5
         if (
@@ -382,14 +421,14 @@ class Collider:
 
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        contact.collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
+        collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
 
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        contact.kernel_collider_clear(
+        kernel_collider_clear(
             envs_idx,
             self._solver.links_state,
             self._solver.links_info,
@@ -408,7 +447,7 @@ class Collider:
             return
 
         self._contact_data_cache.clear()
-        broadphase.func_broad_phase(
+        func_broad_phase(
             self._solver.links_state,
             self._solver.links_info,
             self._solver.geoms_state,
@@ -422,7 +461,7 @@ class Collider:
             self._solver._errno,
         )
         if self._collider_static_config.has_convex_convex:
-            narrowphase.func_narrow_phase_convex_vs_convex(
+            func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
@@ -447,7 +486,7 @@ class Collider:
                 self._solver._errno,
             )
         if self._collider_static_config.has_convex_specialization:
-            narrowphase.func_narrow_phase_convex_specializations(
+            func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
@@ -460,7 +499,7 @@ class Collider:
                 self._solver._errno,
             )
         if self._collider_static_config.has_terrain:
-            narrowphase.func_narrow_phase_any_vs_terrain(
+            func_narrow_phase_any_vs_terrain(
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
@@ -474,7 +513,7 @@ class Collider:
                 self._solver._errno,
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
-            narrowphase.func_narrow_phase_nonconvex_vs_nonterrain(
+            func_narrow_phase_nonconvex_vs_nonterrain(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
@@ -544,7 +583,7 @@ class Collider:
 
         # Copy contact data
         if n_contacts_max > 0:
-            contact.collider_kernel_get_contacts(
+            collider_kernel_get_contacts(
                 as_tensor, iout, fout, self._solver._static_rigid_sim_config, self._collider_state
             )
 
@@ -597,10 +636,10 @@ class Collider:
         return contact_data.copy()
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
-        contact.func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
 
         # Compute gradient
-        narrowphase.func_narrow_phase_diff_convex_vs_convex.grad(
+        func_narrow_phase_diff_convex_vs_convex.grad(
             self._solver.geoms_state,
             self._solver.geoms_info,
             self._solver._static_rigid_sim_config,
