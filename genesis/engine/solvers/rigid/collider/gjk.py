@@ -264,23 +264,23 @@ def func_gjk(
             gjk_state.simplex_vertex.id2[i_b, n],
             gjk_state.simplex_vertex.mink[i_b, n],
         ) = func_support(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            i_b=i_b,
-            dir=dir,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            shrink_sphere=shrink_sphere,
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            i_b,
+            dir,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            shrink_sphere,
         )
 
         # Early stopping based on Frank-Wolfe duality gap. We need to find the minimum [support_vector_norm],
@@ -501,23 +501,23 @@ def func_gjk_intersect(
             gjk_state.simplex_vertex_intersect.id2[i_b, min_si],
             gjk_state.simplex_vertex_intersect.mink[i_b, min_si],
         ) = func_support(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            i_b=i_b,
-            dir=min_normal,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            shrink_sphere=False,
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            i_b,
+            min_normal,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            False,
         )
 
         # Check if the origin is strictly outside of the Minkowski difference (which means there is no collision)
@@ -1083,21 +1083,21 @@ def func_support(
         quat = quat_a if i == 0 else quat_b
 
         sp, sp_, si = support_driver(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            direction=d,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-            i_b=i_b,
-            i_o=i,
-            shrink_sphere=shrink_sphere,
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            d,
+            i_g,
+            pos,
+            quat,
+            i_b,
+            i,
+            shrink_sphere,
         )
 
         if i == 0:
@@ -1339,64 +1339,21 @@ def support_driver(
 
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(
-            geoms_info=geoms_info,
-            d=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-            shrink=shrink_sphere,
-        )
+        v, v_, vid = support_field._func_support_sphere(geoms_info, direction, i_g, pos, quat, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(
-            geoms_info=geoms_info,
-            d=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-        )
+        v = support_field._func_support_ellipsoid(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(
-            geoms_info=geoms_info,
-            d=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-            shrink=shrink_sphere,
-        )
+        v = support_field._func_support_capsule(geoms_info, direction, i_g, pos, quat, shrink_sphere)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(
-            geoms_info=geoms_info,
-            d=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-        )
+        v, v_, vid = support_field._func_support_box(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(collider_state, direction, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            direction=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-            i_b=i_b,
-            i_o=i_o,
-        )
+        v, vid = support_mesh(geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, pos, quat, i_b, i_o)
     else:
-        v, v_, vid = support_field._func_support_world(
-            support_field_info=support_field_info,
-            d=direction,
-            i_g=i_g,
-            pos=pos,
-            quat=quat,
-        )
+        v, v_, vid = support_field._func_support_world(support_field_info, direction, i_g, pos, quat)
     return v, v_, vid
 
 
@@ -1458,23 +1415,23 @@ def func_safe_gjk(
         dir[2 - i // 2] = 1.0 - 2.0 * (i % 2)
 
         obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            i_b=i_b,
-            dir=dir,
+            geoms_info,
+            verts_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            i_b,
+            dir,
         )
 
         # Check if the new vertex would make a valid simplex.
@@ -1483,22 +1440,22 @@ def func_safe_gjk(
         # If this is not a valid vertex, fall back to a brute-force routine to find a valid vertex.
         if not valid:
             obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski, init_flag = func_search_valid_simplex_vertex(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                i_b=i_b,
+                geoms_info,
+                verts_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                gjk_state,
+                gjk_info,
+                support_field_info,
+                i_ga,
+                i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+                i_b,
             )
             # If the brute-force search failed, we cannot proceed with GJK.
             if init_flag == RETURN_CODE.FAIL:
@@ -1565,23 +1522,23 @@ def func_safe_gjk(
 
             # Find a new candidate vertex to replace the worst vertex (which has the smallest signed distance)
             obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                i_b=i_b,
-                dir=min_normal,
+                geoms_info,
+                verts_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                gjk_state,
+                gjk_info,
+                support_field_info,
+                i_ga,
+                i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+                i_b,
+                min_normal,
             )
 
             duplicate = func_is_new_simplex_vertex_duplicate(gjk_state, i_b, id1, id2)
@@ -1791,12 +1748,12 @@ def func_search_valid_simplex_vertex(
             id2 = geoms_info.vert_start[i_gb] + j
             for p in range(2):
                 obj, local_obj = func_get_discrete_geom_vertex(
-                    geoms_info=geoms_info,
-                    verts_info=verts_info,
-                    i_g=i_ga if p == 0 else i_gb,
-                    pos=pos_a if p == 0 else pos_b,
-                    quat=quat_a if p == 0 else quat_b,
-                    i_v=i if p == 0 else j,
+                    geoms_info,
+                    verts_info,
+                    i_ga if p == 0 else i_gb,
+                    pos_a if p == 0 else pos_b,
+                    quat_a if p == 0 else quat_b,
+                    i if p == 0 else j,
                 )
                 if p == 0:
                     obj1 = obj
@@ -1825,23 +1782,23 @@ def func_search_valid_simplex_vertex(
             for i in range(2):
                 d = dir if i == 0 else -dir
                 obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-                    geoms_info=geoms_info,
-                    verts_info=verts_info,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                    collider_state=collider_state,
-                    collider_static_config=collider_static_config,
-                    gjk_state=gjk_state,
-                    gjk_info=gjk_info,
-                    support_field_info=support_field_info,
-                    i_ga=i_ga,
-                    i_gb=i_gb,
-                    pos_a=pos_a,
-                    quat_a=quat_a,
-                    pos_b=pos_b,
-                    quat_b=quat_b,
-                    i_b=i_b,
-                    dir=d,
+                    geoms_info,
+                    verts_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    collider_state,
+                    collider_static_config,
+                    gjk_state,
+                    gjk_info,
+                    support_field_info,
+                    i_ga,
+                    i_gb,
+                    pos_a,
+                    quat_a,
+                    pos_b,
+                    quat_b,
+                    i_b,
+                    d,
                 )
 
                 # Check if the new vertex is valid
@@ -1992,15 +1949,7 @@ def func_safe_gjk_support(
         n_dir *= 2.0 - n_dir.dot(dir)
 
         num_supports = func_count_support(
-            geoms_info=geoms_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            dir=n_dir,
+            geoms_info, support_field_info, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, n_dir
         )
         if i > 0 and num_supports > 1:
             # If this is a perturbed direction and we have more than one support point, we skip this iteration. If
@@ -2015,21 +1964,21 @@ def func_safe_gjk_support(
             quat = quat_a if j == 0 else quat_b
 
             sp, local_sp, si = support_driver(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                direction=d,
-                i_g=i_g,
-                pos=pos,
-                quat=quat,
-                i_b=i_b,
-                i_o=j,
-                shrink_sphere=False,
+                geoms_info,
+                verts_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                gjk_state,
+                gjk_info,
+                support_field_info,
+                d,
+                i_g,
+                pos,
+                quat,
+                i_b,
+                j,
+                False,
             )
             if j == 0:
                 obj1 = sp
@@ -2183,22 +2132,22 @@ def func_gjk_contact(
         # Run GJK
         for _ in range(2 if shrink_sphere else 1):
             distance = func_gjk(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                i_b=i_b,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                shrink_sphere=shrink_sphere,
+                geoms_info,
+                verts_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                gjk_state,
+                gjk_info,
+                support_field_info,
+                i_ga,
+                i_gb,
+                i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+                shrink_sphere,
             )
 
             if shrink_sphere:
@@ -2248,22 +2197,22 @@ def func_gjk_contact(
                 polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
                 if nsimplex == 2:
                     polytope_flag = epa.func_epa_init_polytope_2d(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
+                        geoms_info,
+                        verts_info,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
+                        i_b,
                     )
                 elif nsimplex == 4:
                     polytope_flag = epa.func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
@@ -2275,41 +2224,41 @@ def func_gjk_contact(
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
                 ):
                     polytope_flag = epa.func_epa_init_polytope_3d(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
+                        geoms_info,
+                        verts_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
+                        i_b,
                     )
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
                     i_f = epa.func_epa(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        pos_a=pos_a,
-                        quat_a=quat_a,
-                        pos_b=pos_b,
-                        quat_b=quat_b,
-                        i_b=i_b,
+                        geoms_info,
+                        verts_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
+                        i_b,
                     )
 
                     if ti.static(gjk_static_config.enable_mujoco_multi_contact):
@@ -2333,22 +2282,22 @@ def func_gjk_contact(
                             gjk_state.multi_contact_flag[i_b] = True
     else:
         gjk_flag = func_safe_gjk(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            i_b=i_b,
+            geoms_info,
+            verts_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            i_b,
         )
         if gjk_flag == GJK_RETURN_CODE.INTERSECT:
             # Initialize polytope
@@ -2362,22 +2311,22 @@ def func_gjk_contact(
 
             # Run EPA from the polytope (use local version)
             epa.func_safe_epa(
-                geoms_info=geoms_info,
-                verts_info=verts_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                collider_state=collider_state,
-                collider_static_config=collider_static_config,
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                support_field_info=support_field_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                pos_a=pos_a,
-                quat_a=quat_a,
-                pos_b=pos_b,
-                quat_b=quat_b,
-                i_b=i_b,
+                geoms_info,
+                verts_info,
+                rigid_global_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                gjk_state,
+                gjk_info,
+                support_field_info,
+                i_ga,
+                i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
+                i_b,
             )
 
     # Compute the final contact points and normals
