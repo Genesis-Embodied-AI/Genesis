@@ -1,8 +1,7 @@
 """
 Utility functions for GJK/EPA algorithms.
 
-This module contains shared utility functions used by both GJK and EPA algorithms
-to avoid circular dependencies.
+This module contains shared utility functions used by both GJK and EPA algorithms.
 """
 
 import gstaichi as ti
