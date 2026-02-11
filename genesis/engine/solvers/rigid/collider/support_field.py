@@ -13,13 +13,11 @@ if TYPE_CHECKING:
 
 
 class SupportField:
-    def __init__(self, rigid_solver: "RigidSolver", is_active: bool = True) -> None:
+    def __init__(self, rigid_solver: "RigidSolver") -> None:
         self.solver = rigid_solver
-        self._is_active = is_active
-
         self._support_res = 180
-        if self.solver._enable_collision:
-            self._init_support()
+        self._support_field_info = array_class.get_support_field_info(0, 0, self._support_res)
+        self._is_active = False
 
     def _get_direction_grid(self):
         support_res = self._support_res
@@ -36,11 +34,8 @@ class SupportField:
         v = np.stack((x, y, z), axis=-1)
         return v
 
-    def _init_support(self) -> None:
-        if not self.is_active:
-            self._support_field_info = array_class.get_support_field_info(
-                self.solver.n_geoms, 0, support_res=self._support_res
-            )
+    def activate(self) -> None:
+        if self.is_active:
             return
 
         v = self._get_direction_grid()
@@ -50,7 +45,7 @@ class SupportField:
         support_v = []
         support_vid = []
         support_cell_start = []
-        start = 0
+        n_support_cells = 0
         if self.solver.n_geoms > 0:
             init_pos = self.solver.verts_info.init_pos.to_numpy()
             geoms_vert_start = self.solver.geoms_info.vert_start.to_numpy()
@@ -68,21 +63,21 @@ class SupportField:
 
                 support = this_pos[max_indices]
 
-                support_cell_start.append(start)
+                support_cell_start.append(n_support_cells)
                 support_v.append(support)
                 support_vid.append(max_indices)
-                start += support.shape[0]
+                n_support_cells += support.shape[0]
 
             support_v = np.concatenate(support_v)
             support_vid = np.concatenate(support_vid, dtype=gs.np_int)
             support_cell_start = np.array(support_cell_start, dtype=gs.np_int)
         else:
-            support_v = np.zeros([1, 3], dtype=gs.np_float)
-            support_vid = np.zeros([1], dtype=gs.np_int)
-            support_cell_start = np.zeros([1], dtype=gs.np_int)
+            support_v = np.zeros((1, 3), dtype=gs.np_float)
+            support_vid = np.zeros((1,), dtype=gs.np_int)
+            support_cell_start = np.zeros((1,), dtype=gs.np_int)
 
         self._support_field_info = array_class.get_support_field_info(
-            self.solver.n_geoms, n_support_cells=start, support_res=self._support_res
+            self.solver.n_geoms, n_support_cells, self._support_res
         )
 
         _kernel_init_support(
@@ -92,6 +87,8 @@ class SupportField:
             support_v,
             support_vid,
         )
+
+        self._is_active = True
 
     @property
     def is_active(self):

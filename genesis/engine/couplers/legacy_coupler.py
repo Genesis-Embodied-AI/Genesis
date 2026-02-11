@@ -54,6 +54,11 @@ class LegacyCoupler(RBC):
         self._fem_mpm = self.fem_solver.is_active and self.mpm_solver.is_active and self.options.fem_mpm
         self._fem_sph = self.fem_solver.is_active and self.sph_solver.is_active and self.options.fem_sph
 
+        if (self._rigid_mpm or self._rigid_sph or self._rigid_pbd or self._rigid_fem) and any(
+            geom.needs_coup for geom in self.rigid_solver.geoms
+        ):
+            self.rigid_solver.collider._sdf.activate()
+
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             # this field stores the geom index of the thin shell rigid object (if any) that separates particle and its surrounding grid cell
             self.cpic_flag = ti.field(gs.ti_int, shape=(self.mpm_solver.n_particles, 3, 3, 3, self.mpm_solver._B))
@@ -382,19 +387,20 @@ class LegacyCoupler(RBC):
                     vel_mpm = self._func_mpm_tool(f, pos, vel_mpm, i_b)
 
                 #################### MPM <-> Rigid ####################
-                vel_mpm = self._func_collide_with_rigid(
-                    f,
-                    pos,
-                    vel_mpm,
-                    mass_mpm,
-                    i_b,
-                    geoms_state=geoms_state,
-                    geoms_info=geoms_info,
-                    links_state=links_state,
-                    rigid_global_info=rigid_global_info,
-                    sdf_info=sdf_info,
-                    collider_static_config=collider_static_config,
-                )
+                if ti.static(self._rigid_mpm):
+                    vel_mpm = self._func_collide_with_rigid(
+                        f,
+                        pos,
+                        vel_mpm,
+                        mass_mpm,
+                        i_b,
+                        geoms_state=geoms_state,
+                        geoms_info=geoms_info,
+                        links_state=links_state,
+                        rigid_global_info=rigid_global_info,
+                        sdf_info=sdf_info,
+                        collider_static_config=collider_static_config,
+                    )
 
                 #################### MPM <-> SPH ####################
                 if ti.static(self._mpm_sph):
@@ -930,7 +936,7 @@ class LegacyCoupler(RBC):
                 f,
                 self.rigid_solver.geoms_state,
                 self.rigid_solver.geoms_info,
-                self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver._rigid_global_info,
                 self.rigid_solver.collider._collider_static_config,
             )
@@ -945,7 +951,7 @@ class LegacyCoupler(RBC):
                 geoms_info=self.rigid_solver.geoms_info,
                 links_state=self.rigid_solver.links_state,
                 rigid_global_info=self.rigid_solver._rigid_global_info,
-                sdf_info=self.rigid_solver.sdf._sdf_info,
+                sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 
@@ -957,7 +963,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.geoms_info,
                 self.rigid_solver.links_state,
                 self.rigid_solver._rigid_global_info,
-                self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
 
@@ -967,7 +973,7 @@ class LegacyCoupler(RBC):
                 geoms_state=self.rigid_solver.geoms_state,
                 geoms_info=self.rigid_solver.geoms_info,
                 links_state=self.rigid_solver.links_state,
-                sdf_info=self.rigid_solver.sdf._sdf_info,
+                sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 rigid_global_info=self.rigid_solver._rigid_global_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
@@ -984,7 +990,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.geoms_info,
                 self.rigid_solver.links_state,
                 self.rigid_solver._rigid_global_info,
-                self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
             self.fem_rigid_link_constraints()
@@ -997,7 +1003,7 @@ class LegacyCoupler(RBC):
                 self.rigid_solver.geoms_info,
                 self.rigid_solver.links_state,
                 self.rigid_solver._rigid_global_info,
-                self.rigid_solver.sdf._sdf_info,
+                self.rigid_solver.collider._sdf._sdf_info,
                 self.rigid_solver.collider._collider_static_config,
             )
         if self.mpm_solver.is_active:
@@ -1008,7 +1014,7 @@ class LegacyCoupler(RBC):
                 geoms_info=self.rigid_solver.geoms_info,
                 links_state=self.rigid_solver.links_state,
                 rigid_global_info=self.rigid_solver._rigid_global_info,
-                sdf_info=self.rigid_solver.sdf._sdf_info,
+                sdf_info=self.rigid_solver.collider._sdf._sdf_info,
                 collider_static_config=self.rigid_solver.collider._collider_static_config,
             )
 

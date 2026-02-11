@@ -1092,12 +1092,12 @@ class StructSupportFieldInfo(metaclass=BASE_METACLASS):
     support_res: V_ANNOTATION
 
 
-def get_support_field_info(n_geoms, n_support_cells, **kwargs):
+def get_support_field_info(n_geoms, n_support_cells, support_res):
     return StructSupportFieldInfo(
         support_cell_start=V(dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
         support_v=V_VEC(3, dtype=gs.ti_float, shape=(max(n_support_cells, 1),)),
         support_vid=V(dtype=gs.ti_int, shape=(max(n_support_cells, 1),)),
-        support_res=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["support_res"]),
+        support_res=V_SCALAR_FROM(dtype=gs.ti_int, value=support_res),
     )
 
 

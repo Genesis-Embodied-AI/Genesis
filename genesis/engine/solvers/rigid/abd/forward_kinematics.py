@@ -564,6 +564,7 @@ def func_forward_kinematics_entity(
                             ],
                             dt=gs.ti_float,
                         )
+                        quat_ = quat_ / quat_.norm()
                         pos = WR(links_state.pos_bw, next_I, pos_, BW)
                         quat = WR(links_state.quat_bw, next_I, quat_, BW)
 
