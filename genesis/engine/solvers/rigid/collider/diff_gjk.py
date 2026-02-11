@@ -112,22 +112,22 @@ def func_gjk_contact(
             )
 
         gjk_flag = GJK.func_safe_gjk(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=ga_pos_local,
-            quat_a=ga_quat_local,
-            pos_b=gb_pos_local,
-            quat_b=gb_quat_local,
-            i_b=i_b,
+            geoms_info,
+            verts_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            ga_pos_local,
+            ga_quat_local,
+            gb_pos_local,
+            gb_quat_local,
+            i_b,
         )
 
         if gjk_flag == GJK.GJK_RETURN_CODE.INTERSECT:
@@ -138,36 +138,30 @@ def func_gjk_contact(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            epa.func_safe_epa_init(
-                gjk_state=gjk_state,
-                gjk_info=gjk_info,
-                i_ga=i_ga,
-                i_gb=i_gb,
-                i_b=i_b,
-            )
+            epa.func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             if i == 0:
                 # In default configuration, we use the extended EPA algorithm to find multiple contact points.
                 max_epa_iter = gjk_info.epa_max_iterations[None]
                 while max_epa_iter > 0:
                     i_f, num_iter = func_extended_epa(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        i_b=i_b,
-                        pos_a=ga_pos_local,
-                        quat_a=ga_quat_local,
-                        pos_b=gb_pos_local,
-                        quat_b=gb_quat_local,
-                        max_iter=max_epa_iter,
+                        geoms_info,
+                        verts_info,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        ga_pos_local,
+                        ga_quat_local,
+                        gb_pos_local,
+                        gb_quat_local,
+                        max_epa_iter,
                     )
                     max_epa_iter -= num_iter
 
@@ -193,22 +187,22 @@ def func_gjk_contact(
 
                     # Add input data for differentiable contact detection
                     func_add_diff_contact_input(
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        i_b=i_b,
-                        pos_a=ga_pos_local,
-                        quat_a=ga_quat_local,
-                        pos_b=gb_pos_local,
-                        quat_b=gb_quat_local,
-                        i_f=i_f,
+                        geoms_info,
+                        verts_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        ga_pos_local,
+                        ga_quat_local,
+                        gb_pos_local,
+                        gb_quat_local,
+                        i_f,
                     )
 
                     if not found_default_epa:
@@ -220,16 +214,16 @@ def func_gjk_contact(
                         default_penetration = penetration
 
                         axis_0, axis_1 = func_contact_orthogonals(
-                            i_ga=i_ga,
-                            i_gb=i_gb,
-                            normal=normal / penetration,
-                            i_b=i_b,
-                            links_state=links_state,
-                            links_info=links_info,
-                            geoms_state=geoms_state,
-                            geoms_info=geoms_info,
-                            geoms_init_AABB=geoms_init_AABB,
-                            rigid_global_info=rigid_global_info,
+                            i_ga,
+                            i_gb,
+                            normal / penetration,
+                            i_b,
+                            links_state,
+                            links_info,
+                            geoms_state,
+                            geoms_info,
+                            geoms_init_AABB,
+                            rigid_global_info,
                         )
 
                         found_default_epa = True
@@ -245,44 +239,44 @@ def func_gjk_contact(
                     break
             else:
                 i_f = epa.func_safe_epa(
-                    geoms_info=geoms_info,
-                    verts_info=verts_info,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                    collider_state=collider_state,
-                    collider_static_config=collider_static_config,
-                    gjk_state=gjk_state,
-                    gjk_info=gjk_info,
-                    support_field_info=support_field_info,
-                    i_ga=i_ga,
-                    i_gb=i_gb,
-                    pos_a=ga_pos_local,
-                    quat_a=ga_quat_local,
-                    pos_b=gb_pos_local,
-                    quat_b=gb_quat_local,
-                    i_b=i_b,
+                    geoms_info,
+                    verts_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    collider_state,
+                    collider_static_config,
+                    gjk_state,
+                    gjk_info,
+                    support_field_info,
+                    i_ga,
+                    i_gb,
+                    ga_pos_local,
+                    ga_quat_local,
+                    gb_pos_local,
+                    gb_quat_local,
+                    i_b,
                 )
                 if i_f == -1:
                     continue
 
                 # Add input data for differentiable contact detection
                 func_add_diff_contact_input(
-                    geoms_info=geoms_info,
-                    verts_info=verts_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                    collider_state=collider_state,
-                    collider_static_config=collider_static_config,
-                    gjk_state=gjk_state,
-                    gjk_info=gjk_info,
-                    support_field_info=support_field_info,
-                    i_ga=i_ga,
-                    i_gb=i_gb,
-                    i_b=i_b,
-                    pos_a=ga_pos,
-                    quat_a=ga_quat,
-                    pos_b=gb_pos,
-                    quat_b=gb_quat,
-                    i_f=i_f,
+                    geoms_info,
+                    verts_info,
+                    static_rigid_sim_config,
+                    collider_state,
+                    collider_static_config,
+                    gjk_state,
+                    gjk_info,
+                    support_field_info,
+                    i_ga,
+                    i_gb,
+                    i_b,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    i_f,
                 )
 
         elif i == 0:
@@ -432,23 +426,23 @@ def func_extended_epa(
         lower = ti.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = epa.func_epa_support(
-            geoms_info=geoms_info,
-            verts_info=verts_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            collider_state=collider_state,
-            collider_static_config=collider_static_config,
-            gjk_state=gjk_state,
-            gjk_info=gjk_info,
-            support_field_info=support_field_info,
-            i_ga=i_ga,
-            i_gb=i_gb,
-            pos_a=pos_a,
-            quat_a=quat_a,
-            pos_b=pos_b,
-            quat_b=quat_b,
-            i_b=i_b,
-            dir=dir,
-            dir_norm=1.0,
+            geoms_info,
+            verts_info,
+            static_rigid_sim_config,
+            collider_state,
+            collider_static_config,
+            gjk_state,
+            gjk_info,
+            support_field_info,
+            i_ga,
+            i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
+            i_b,
+            dir,
+            1.0,
         )
         w = gjk_state.polytope_verts.mink[i_b, wi]
 
@@ -720,23 +714,23 @@ def func_add_diff_contact_input(
 
     ### Compute the support point along the face normal.
     obj1, obj2, localpos1, localpos2, id1, id2, mink = GJK.func_support(
-        geoms_info=geoms_info,
-        verts_info=verts_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        collider_state=collider_state,
-        collider_static_config=collider_static_config,
-        gjk_state=gjk_state,
-        gjk_info=gjk_info,
-        support_field_info=support_field_info,
-        i_ga=i_ga,
-        i_gb=i_gb,
-        i_b=i_b,
-        dir=normal,
-        pos_a=pos_a,
-        quat_a=quat_a,
-        pos_b=pos_b,
-        quat_b=quat_b,
-        shrink_sphere=False,
+        geoms_info,
+        verts_info,
+        static_rigid_sim_config,
+        collider_state,
+        collider_static_config,
+        gjk_state,
+        gjk_info,
+        support_field_info,
+        i_ga,
+        i_gb,
+        i_b,
+        normal,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
+        False,
     )
 
     gjk_state.diff_contact_input.local_pos1_a[i_b, n] = gjk_state.polytope_verts.local_obj1[i_b, i_v1]
