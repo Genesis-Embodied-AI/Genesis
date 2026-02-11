@@ -459,7 +459,6 @@ class Collider:
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
@@ -602,9 +601,7 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
             self._collider_info,
-            self._gjk._gjk_state,
             self._gjk._gjk_info,
-            self._gjk._gjk_static_config,
             self._collider_state.diff_contact_input,
         )
 
