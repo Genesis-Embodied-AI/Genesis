@@ -186,28 +186,11 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
     """
     Kinematic contact probe for detecting contact without affecting physics simulation.
 
-    This is a purely kinematic sensor that queries geometric proximity using support functions.
-    It does NOT use the simulator's actual contact model - it provides independent contact
-    measurements for applications like tactile sensing on robot fingertips.
+    The returned "force" is non-physical estimate: F = stiffness * penetration * probe_normal.
 
-    Mechanism
-    ---------
-    For each probe, the sensor:
-    1. Transforms probe_pos and probe_normal from link-local to world frame
-    2. For each nearby geom, computes support point in direction -probe_normal
-       (the point on the geom furthest in the opposite direction of the probe normal)
-    3. Checks if the support point falls within the probe's sensing radius
-    4. Computes penetration = dot(support_pos - probe_pos, probe_normal)
-
-    The penetration measures how far the geom's closest point (in the -normal direction)
-    penetrates past the probe's tangent plane. Positive values indicate contact.
-
-    Force Estimation (Not Physical)
-    -------------------------------
-    The returned "force" is a user-defined estimate: F = stiffness * penetration * probe_normal.
-    This is NOT derived from the simulator's contact solver. Genesis uses impulse-based contact
-    resolution, not a mass-spring model. The stiffness parameter is purely for user convenience
-    to convert penetration depth into a force-like quantity for downstream applications.
+    Note
+    ----
+    If the probe is attached to a fixed entity, it will not detect contacts with other fixed entities.
 
     Parameters
     ----------
@@ -215,35 +198,19 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         Probe positions in link-local frame. One (x, y, z) tuple per probe.
     probe_local_normal : Sequence[tuple[float, float, float]]
         Probe sensing directions in link-local frame. Penetration is measured along this axis.
-    radius : float
-        Sensing radius in meters. Objects within this distance are detected. Default: 0.005.
+    radius : Sequence[float] | float
+        Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
     stiffness : float
         User-defined coefficient for force estimation. Default: 1000.0.
     contype : int
         Collision type bitmask. Default: 1.
     conaffinity : int
         Collision affinity bitmask. Default: 0x7FFFFFFF.
-
-    Returns (from read())
-    ---------------------
-    KinematicContactProbeData NamedTuple with fields:
-        penetration : torch.Tensor
-            Shape (n_envs, n_probes) or (n_probes,). Penetration depth in meters.
-            Positive when contact detected, zero otherwise.
-        position : torch.Tensor
-            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact point in link-local frame.
-            The point on the contacting geom closest to the probe (in the -normal direction).
-        normal : torch.Tensor
-            Shape (n_envs, n_probes, 3) or (n_probes, 3). Contact normal in link-local frame.
-            Same as probe_local_normal when contact detected, zero otherwise.
-        force : torch.Tensor
-            Shape (n_envs, n_probes, 3) or (n_probes, 3). Estimated force in link-local frame.
-            Computed as stiffness * penetration * probe_normal (NOT physical, see above).
     """
 
     probe_local_pos: Sequence[Tuple3FType] = [(0.0, 0.0, 0.0)]
     probe_local_normal: Sequence[Tuple3FType] = [(0.0, 0.0, 1.0)]
-    radius: float = 0.005
+    radius: Sequence[float] | float = 0.005
     stiffness: float = 1000.0
     contype: int = 1
     conaffinity: int = 0x7FFFFFFF  # All bits set except sign bit (max positive int32)
@@ -252,7 +219,7 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
     debug_contact_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.8)
 
     def model_post_init(self, _):
-        if self.radius <= 0:
+        if np.any(np.array(self.radius) <= 0):
             gs.raise_exception(f"radius must be positive, got: {self.radius}")
         if self.stiffness < 0:
             gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
@@ -273,6 +240,11 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
             gs.raise_exception(
                 "probe_local_pos and probe_local_normal must have the same length. "
                 f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
+            )
+        if isinstance(self.radius, Sequence) and len(self.radius) != len(probe_local_pos):
+            gs.raise_exception(
+                "If radius is a sequence, it must have the same length as probe_local_pos. "
+                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
             )
 
     def _validate_probe_arrays(self, values: Sequence[Tuple3FType]) -> np.ndarray:
