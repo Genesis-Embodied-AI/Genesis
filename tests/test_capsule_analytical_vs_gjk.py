@@ -37,9 +37,9 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
     return mjcf
 
 
-@pytest.mark.debug(True)
-@pytest.mark.parametrize("backend", [gs.cpu])
-@pytest.mark.taichi_offline_cache(False)
+# @pytest.mark.debug(True)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+# @pytest.mark.taichi_offline_cache(False)
 @pytest.mark.parametrize(
     "pos1,euler1,pos2,euler2,should_collide,description",
     [
@@ -68,11 +68,58 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     radius = 0.1
     half_length = 0.25
 
-    from genesis.engine.solvers.rigid.collider import capsule_contact
+    from genesis.engine.solvers.rigid.collider import capsule_contact, diff_gjk
     import genesis.utils.array_class as array_class
+    import gstaichi as ti
+
+    # Monkeypatch the metaclass to support inheritance
+    original_metaclass_new = array_class.AutoInitMeta.__new__
+    
+    def patched_metaclass_new(cls, name, bases, namespace):
+        # Collect annotations from parent classes
+        all_annotations = {}
+        for base in reversed(bases):
+            if hasattr(base, "__annotations__"):
+                all_annotations.update(base.__annotations__)
+        
+        # Add current class annotations
+        if "__annotations__" in namespace:
+            all_annotations.update(namespace["__annotations__"])
+        else:
+            namespace["__annotations__"] = {}
+        
+        # Update namespace annotations to include parent annotations
+        namespace["__annotations__"] = all_annotations
+        
+        # Collect defaults from parent classes
+        all_names = tuple(all_annotations.keys())
+        for base in reversed(bases):
+            for key in all_names:
+                if hasattr(base, key) and key not in namespace:
+                    attr = getattr(base, key)
+                    if not callable(attr):
+                        namespace[key] = attr
+        
+        return original_metaclass_new(cls, name, bases, namespace)
+    
+    monkeypatch.setattr(array_class.AutoInitMeta, "__new__", staticmethod(patched_metaclass_new))
+
+    # Create a new class with debug field added
+    @array_class.DATA_ORIENTED
+    class PatchedStructColliderState(array_class.StructColliderState):
+        debug_analytical_capsule_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
+        debug_analytical_sphere_capsule_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
+        debug_gjk_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
+    
+    print("use_ndarray", gs.use_ndarray)
+
+    # Monkey patch the class definition
+    monkeypatch.setattr(array_class, "StructColliderState", PatchedStructColliderState)
+    monkeypatch.setattr(array_class, "ColliderState", PatchedStructColliderState if gs.use_ndarray else ti.template())
 
     func_sphere_capsule_contact_orig = capsule_contact.func_capsule_capsule_contact
 
+    @ti.func
     def func_sphere_capsule_contact_with_counter(
         i_ga,
         i_gb,
@@ -85,8 +132,10 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         errno: array_class.V_ANNOTATION,
     ):
         ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
+        # ti.atomic_add(errno[i_b], 1)
+        errno[i_b] |= 1 << 16
         print("hello")
-        func_sphere_capsule_contact_orig(
+        return func_sphere_capsule_contact_orig(
             i_ga=i_ga,
             i_gb=i_gb,
             i_b=i_b,
@@ -97,12 +146,12 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
             collider_info=collider_info,
             errno=errno)
 
-    # Monkey patch capsule contact function with counter version
     monkeypatch.setattr(
         capsule_contact,
         "func_capsule_capsule_contact",
         func_sphere_capsule_contact_with_counter
     )
+    print("after monkeypatch")
 
     # Scene 1: Using analytical capsule-capsule detection
     scene_analytical = gs.Scene(
@@ -113,6 +162,46 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
             use_gjk_collision=False,
         ),
     )
+
+    # func_gjk_contact_orig = diff_gjk.func_gjk_contact
+
+    # @ti.func
+    # def func_gjk_contact_with_counter(
+    #     links_state: array_class.LinksState,
+    #     links_info: array_class.LinksInfo,
+    #     geoms_state: array_class.GeomsState,
+    #     geoms_info: array_class.GeomsInfo,
+    #     geoms_init_AABB: array_class.GeomsInitAABB,
+    #     verts_info: array_class.VertsInfo,
+    #     faces_info: array_class.FacesInfo,
+    #     rigid_global_info: array_class.RigidGlobalInfo,
+    #     static_rigid_sim_config: ti.template(),
+    #     collider_state: array_class.ColliderState,
+    #     collider_static_config: ti.template(),
+    #     gjk_state: array_class.GJKState,
+    #     gjk_info: array_class.GJKInfo,
+    #     support_field_info: array_class.SupportFieldInfo,
+    #     # FIXME: Passing nested data structure as input argument is not supported for now.
+    #     diff_contact_input: array_class.DiffContactInput,
+    #     i_ga,
+    #     i_gb,
+    #     i_b,
+    #     pos_tol,
+    #     normal_tol,
+    # ):
+    #     errno[i_b] |= 1 << 17
+    #     print("hello")
+    #     return func_gjk_contact_orig(
+    #         i_ga=i_ga,
+    #         i_gb=i_gb,
+    #         i_b=i_b,
+    #         geoms_state=geoms_state,
+    #         geoms_info=geoms_info,
+    #         rigid_global_info=rigid_global_info,
+    #         collider_state=collider_state,
+    #         collider_info=collider_info,
+    #         errno=errno)
+
 
     with tempfile.TemporaryDirectory() as tmpdir:
         mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
@@ -156,28 +245,34 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     import gstaichi as ti
 
-    if (
-        hasattr(ti.lang._template_mapper.__builtins__, "__debug__")
-        and ti.lang._template_mapper.__builtins__["__debug__"]
-    ):
-        analytical_capsule_count = scene_analytical.rigid_solver.collider.collider_state.debug_analytical_capsule_count[
-            0
-        ]
-        analytical_gjk_count = scene_analytical.rigid_solver.collider.collider_state.debug_gjk_count[0]
-        gjk_scene_capsule_count = scene_gjk.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
-        gjk_scene_gjk_count = scene_gjk.rigid_solver.collider.collider_state.debug_gjk_count[0]
+    # if (
+    #     hasattr(ti.lang._template_mapper.__builtins__, "__debug__")
+    #     and ti.lang._template_mapper.__builtins__["__debug__"]
+    # ):
+    # print("debug correctly enabled")
+    print("errno", scene_analytical._sim.rigid_solver._errno)
+    # analytical_capsule_count = scene_analytical.rigid_solver.collider._collider_state.debug_analytical_capsule_count[
+    #     0
+    # ]
+    print("scene_analytical.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", scene_analytical.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
+    print("gjk_scene_gjk_count.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", gjk_scene_gjk_count.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
+    analytical_gjk_count = scene_analytical.rigid_solver.collider.collider_state.debug_gjk_count[0]
+    gjk_scene_capsule_count = scene_gjk.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
+    gjk_scene_gjk_count = scene_gjk.rigid_solver.collider.collider_state.debug_gjk_count[0]
 
-        # Scene 1 (analytical) should use analytical path, NOT GJK
-        assert analytical_capsule_count > 0, (
-            f"Scene 1 should have used analytical capsule path (count={analytical_capsule_count})"
-        )
-        assert analytical_gjk_count == 0, f"Scene 1 should NOT have used GJK path (count={analytical_gjk_count})"
+    # Scene 1 (analytical) should use analytical path, NOT GJK
+    assert analytical_capsule_count > 0, (
+        f"Scene 1 should have used analytical capsule path (count={analytical_capsule_count})"
+    )
+    assert analytical_gjk_count == 0, f"Scene 1 should NOT have used GJK path (count={analytical_gjk_count})"
 
-        # Scene 2 (GJK) should use GJK path, NOT analytical
-        assert gjk_scene_gjk_count > 0, f"Scene 2 should have used GJK path (count={gjk_scene_gjk_count})"
-        assert gjk_scene_capsule_count == 0, (
-            f"Scene 2 should NOT have used analytical capsule path (count={gjk_scene_capsule_count})"
-        )
+    # Scene 2 (GJK) should use GJK path, NOT analytical
+    assert gjk_scene_gjk_count > 0, f"Scene 2 should have used GJK path (count={gjk_scene_gjk_count})"
+    assert gjk_scene_capsule_count == 0, (
+        f"Scene 2 should NOT have used analytical capsule path (count={gjk_scene_capsule_count})"
+    )
+    # else:
+    #     print("WWARNING: test needs to be run with debug enabled.")
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)

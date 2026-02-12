@@ -34,10 +34,7 @@ from .box_contact import (
     func_box_box_contact,
 )
 
-from .capsule_contact import (
-    func_capsule_capsule_contact,
-    func_sphere_capsule_contact,
-)
+from . import capsule_contact
 
 
 class CCD_ALGORITHM_CODE(IntEnum):
@@ -627,9 +624,7 @@ def func_convex_convex_contact(
 
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                    if ti.static(__debug__):
-                        ti.atomic_add(collider_state.debug_analytical_capsule_count[i_b], 1)
-                    is_col, normal, contact_pos, penetration = func_capsule_capsule_contact(
+                    is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
                         i_ga,
                         i_gb,
                         i_b,
@@ -643,9 +638,7 @@ def func_convex_convex_contact(
                 elif (
                     geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
                 ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
-                    if ti.static(__debug__):
-                        ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
-                    is_col, normal, contact_pos, penetration = func_sphere_capsule_contact(
+                    is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
                         i_ga,
                         i_gb,
                         i_b,
@@ -732,8 +725,6 @@ def func_convex_convex_contact(
                     ### GJK, MJ_GJK
                     if ti.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
-                            if ti.static(__debug__):
-                                ti.atomic_add(collider_state.debug_gjk_count[i_b], 1)
                             if ti.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     links_state,
