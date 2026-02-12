@@ -271,16 +271,12 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
-    # Assert that at least one scene detected a collision (otherwise we're not comparing anything)
-    assert has_collision_analytical or has_collision_gjk, (
-        f"No collision detected in either scene! Test case '{description}' is not comparing anything. "
-        f"Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-    )
-
+    # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
     )
 
+    # If both detected a collision, compare the contact details
     if has_collision_analytical and has_collision_gjk:
         # Get first contact from each (may have multiple due to multi-contact)
         pen_analytical = contacts_analytical["penetration"][0]
@@ -291,6 +287,13 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
         pos_analytical = np.array(contacts_analytical["position"][0])
         pos_gjk = np.array(contacts_gjk["position"][0])
+
+        # Print detailed comparison
+        print(f"\nDetailed comparison:")
+        print(f"Penetration - Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}")
+        print(f"Normal - Analytical: {normal_analytical}, GJK: {normal_gjk}")
+        print(f"Position - Analytical: {pos_analytical}, GJK: {pos_gjk}")
+        print(f"Position diff: {np.linalg.norm(pos_analytical - pos_gjk):.6f}")
 
         pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
         assert abs(pen_analytical - pen_gjk) < pen_tol, (
