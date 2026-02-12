@@ -54,14 +54,7 @@ def create_modified_narrowphase_file():
         content = f.read()
     
     # Replace relative imports with absolute imports
-    content = content.replace('from . import mpr', 'from genesis.engine.solvers.rigid.collider import mpr')
-    content = content.replace('from . import gjk', 'from genesis.engine.solvers.rigid.collider import gjk')
-    content = content.replace('from . import diff_gjk', 'from genesis.engine.solvers.rigid.collider import diff_gjk')
-    content = content.replace('from . import support_field', 'from genesis.engine.solvers.rigid.collider import support_field')
-    content = content.replace('from . import capsule_contact', 'from genesis.engine.solvers.rigid.collider import capsule_contact')
-    content = content.replace('from .broadphase import', 'from genesis.engine.solvers.rigid.collider.broadphase import')
-    content = content.replace('from .contact import', 'from genesis.engine.solvers.rigid.collider.contact import')
-    content = content.replace('from .box_contact import', 'from genesis.engine.solvers.rigid.collider.box_contact import')
+    content = content.replace('from .', 'from genesis.engine.solvers.rigid.collider.')
     
     # Replace the capsule-capsule contact call with GJK
     content = content.replace(
