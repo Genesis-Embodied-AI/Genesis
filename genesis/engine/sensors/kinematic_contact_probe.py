@@ -10,8 +10,8 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.collider import func_check_weld_constraint, func_point_in_geom_aabb, mpr
-from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
+from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_verts_for_geom
+from genesis.engine.solvers.rigid.collider import func_point_in_geom_aabb
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_ti import get_triangle_vertices, ray_triangle_intersection
@@ -68,10 +68,6 @@ class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
     default_raycast_depth: float = 1.0
 
-    # Contact filtering - stores geoms in contact per env
-    contact_geoms: torch.Tensor = make_tensor_field((0, 0), dtype=torch.int32)
-    n_contact_geoms: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-
 
 @register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
 @ti.data_oriented
@@ -96,8 +92,7 @@ class KinematicContactProbe(
 
         super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
 
-        self._debug_sphere_objects: list["Mesh | None"] = []
-        self._debug_contact_objects: list["Mesh | None"] = []
+        self._debug_objects: list["Mesh | None"] = []
         self._probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
         self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
         norms = self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
@@ -140,7 +135,6 @@ class KinematicContactProbe(
 
         self._shared_metadata.total_n_probes += n_probes
 
-        # Handle radius as either single float or per-probe sequence
         if isinstance(self._options.radius, Sequence):
             radii_tensor = torch.tensor(self._options.radius, dtype=gs.tc_float, device=gs.device)
         else:
@@ -166,55 +160,9 @@ class KinematicContactProbe(
         cls, shared_metadata: KinematicContactProbeMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         solver = shared_metadata.solver
+        collider_state = solver.collider._collider_state
 
         shared_ground_truth_cache.zero_()
-
-        # Get contacts and extract unique geoms in contact with probe links
-        contacts = solver.collider.get_contacts(as_tensor=True, to_torch=True, keep_batch_dim=True)
-
-        shared_metadata.contact_geoms.fill_(-1)
-        shared_metadata.n_contact_geoms.zero_()
-
-        link_a, link_b = contacts["link_a"], contacts["link_b"]
-        geom_a, geom_b = contacts["geom_a"], contacts["geom_b"]
-        n_batches = link_a.shape[0]
-        max_slots = shared_metadata.contact_geoms.shape[1]
-
-        candidates = torch.stack(
-            (
-                geom_b.masked_fill(~torch.isin(link_a, shared_metadata.links_idx), -1),
-                geom_a.masked_fill(~torch.isin(link_b, shared_metadata.links_idx), -1),
-            ),
-            dim=2,
-        ).reshape(n_batches, -1)
-
-        valid = candidates >= 0
-        if valid.any():
-            env_idx, col_idx = valid.nonzero(as_tuple=True)
-            geom_vals = candidates[env_idx, col_idx]
-
-            if geom_vals.numel() > 0:
-                max_geoms = solver.n_geoms
-                unique_keys = torch.unique(env_idx * max_geoms + geom_vals)
-
-                unique_env = unique_keys // max_geoms
-                unique_geom = unique_keys % max_geoms
-
-                sort_idx = torch.argsort(unique_env)
-                unique_env = unique_env[sort_idx]
-                unique_geom = unique_geom[sort_idx]
-
-                env_vals, counts = torch.unique_consecutive(unique_env, return_counts=True)
-                group_starts = torch.cumsum(counts, 0) - counts
-                positions = torch.arange(unique_env.numel(), device=unique_env.device) - torch.repeat_interleave(
-                    group_starts, counts
-                )
-                keep = positions < max_slots
-
-                if keep.any():
-                    shared_metadata.contact_geoms[unique_env[keep], positions[keep]] = unique_geom[keep].to(torch.int32)
-
-                shared_metadata.n_contact_geoms[env_vals] = torch.clamp(counts, max=max_slots).to(torch.int32)
 
         _kernel_kinematic_contact_probe(
             probe_positions_local=shared_metadata.probe_positions,
@@ -224,18 +172,12 @@ class KinematicContactProbe(
             radii=shared_metadata.radii,
             stiffness=shared_metadata.stiffness,
             links_idx=shared_metadata.links_idx,
-            n_sensors=shared_metadata.links_idx.shape[0],
             n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
             sensor_cache_start=shared_metadata.sensor_cache_start,
             sensor_probe_start=shared_metadata.sensor_probe_start,
-            contact_geoms=shared_metadata.contact_geoms,
-            n_contact_geoms=shared_metadata.n_contact_geoms,
+            collider_state=collider_state,
             geoms_state=solver.geoms_state,
             geoms_info=solver.geoms_info,
-            static_rigid_sim_config=shared_metadata.solver._static_rigid_sim_config,
-            rigid_global_info=solver._rigid_global_info,
-            constraint_state=solver.constraint_solver.constraint_state,
-            equalities_info=solver.equalities_info,
             fixed_verts_state=solver.fixed_verts_state,
             free_verts_state=solver.free_verts_state,
             verts_info=solver.verts_info,
@@ -267,14 +209,10 @@ class KinematicContactProbe(
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
-        for obj in self._debug_sphere_objects:
+        for obj in self._debug_objects:
             if obj is not None:
                 context.clear_debug_object(obj)
-        self._debug_sphere_objects = []
-        for obj in self._debug_contact_objects:
-            if obj is not None:
-                context.clear_debug_object(obj)
-        self._debug_contact_objects = []
+        self._debug_objects = []
 
         if self._link is None:
             return
@@ -286,34 +224,24 @@ class KinematicContactProbe(
         for i, pos in enumerate(self._probe_local_pos):
             probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
 
-            # Get per-probe radius from shared metadata
             probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
             probe_radius = self._shared_metadata.radii[probe_global_idx].item()
+
+            penetration = data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item()
 
             sphere_obj = context.draw_debug_sphere(
                 pos=tensor_to_array(probe_world),
                 radius=probe_radius,
-                color=self._options.debug_sphere_color,
+                color=self._options.debug_sphere_color if penetration <= gs.EPS else self._options.debug_contact_color,
             )
-            self._debug_sphere_objects.append(sphere_obj)
-
-            penetration = data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item()
-
-            if penetration > gs.EPS:
-                contact_obj = context.draw_debug_sphere(
-                    pos=probe_world,
-                    radius=probe_radius * 0.3,
-                    color=self._options.debug_contact_color,
-                )
-                self._debug_contact_objects.append(contact_obj)
-            else:
-                self._debug_contact_objects.append(None)
+            self._debug_objects.append(sphere_obj)
 
 
 @ti.func
-def _raycast_geom_faces(
+def _probe_geom_penetration(
     probe_pos: ti.types.vector(3, gs.ti_float),
-    ray_dir: ti.types.vector(3, gs.ti_float),
+    probe_normal: ti.types.vector(3, gs.ti_float),
+    radius: gs.ti_float,
     max_range: gs.ti_float,
     i_g: ti.i32,
     i_b: ti.i32,
@@ -323,40 +251,11 @@ def _raycast_geom_faces(
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
 ):
-    """Raycast against all faces of a single geom. Returns closest hit distance or -1."""
-    closest_dist = gs.ti_float(-1.0)
+    best = gs.ti_float(0.0)
+    neg_normal = -probe_normal
     face_start = geoms_info.face_start[i_g]
     face_end = geoms_info.face_end[i_g]
-
-    for i_f in range(face_start, face_end):
-        tri_verts = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
-        result = ti.Vector.zero(gs.ti_float, 4)
-        result = ray_triangle_intersection(probe_pos, ray_dir, tri_verts[:, 0], tri_verts[:, 1], tri_verts[:, 2])
-        hit = result[3]  # 1.0 if hit, 0.0 if no hit
-        t = result[0]
-        if hit > 0.5 and t <= max_range:
-            if closest_dist < 0.0 or t < closest_dist:
-                closest_dist = t
-    return closest_dist
-
-
-@ti.func
-def _sphere_geom_faces_intersection(
-    sphere_pos: ti.types.vector(3, gs.ti_float),
-    radius: gs.ti_float,
-    selection_vector: ti.types.vector(3, gs.ti_float),
-    i_g: ti.i32,
-    i_b: ti.i32,
-    geoms_info: array_class.GeomsInfo,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-):
-    """Find the point of intersection between between the sphere and geom. Return the intersection point that is furthest along the selection_vector direction."""
-    max_penetration = gs.ti_float(-1.0)
-    face_start = geoms_info.face_start[i_g]
-    face_end = geoms_info.face_end[i_g]
+    radius_sq = radius * radius
 
     for i_f in range(face_start, face_end):
         tri_verts = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
@@ -364,20 +263,24 @@ def _sphere_geom_faces_intersection(
         v1 = tri_verts[:, 1]
         v2 = tri_verts[:, 2]
 
-        # Find closest point on triangle to sphere center
-        closest_point = _closest_point_on_triangle(sphere_pos, v0, v1, v2)
+        if radius > gs.EPS:
+            # Sphere-triangle test (closest point)
+            closest_point = _closest_point_on_triangle(probe_pos, v0, v1, v2)
+            diff = closest_point - probe_pos
+            dist_sq = diff.dot(diff)
+            if dist_sq <= radius_sq:
+                penetration = diff.dot(neg_normal)
+                if penetration > best:
+                    best = penetration
 
-        # Check if sphere intersects this triangle
-        diff = closest_point - sphere_pos
-        dist_sq = diff.dot(diff)
+        # Raycast test (ray along -normal)
+        result = ray_triangle_intersection(probe_pos, neg_normal, v0, v1, v2)
+        if result[3] > 0.5 and result[0] <= max_range:
+            t = result[0]
+            if best == 0.0 or t < best:
+                best = t
 
-        if dist_sq <= radius * radius:
-            # The penetration depth we care about is the distance along the selection vector
-            penetration = diff.dot(selection_vector)
-            if penetration > max_penetration:
-                max_penetration = penetration
-
-    return max_penetration
+    return best
 
 
 @ti.func
@@ -454,20 +357,12 @@ def _kernel_kinematic_contact_probe(
     radii: ti.types.ndarray(),
     stiffness: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
-    n_sensors: ti.i32,
     n_probes_per_sensor: ti.types.ndarray(),
     sensor_cache_start: ti.types.ndarray(),
     sensor_probe_start: ti.types.ndarray(),
-    # Contact filtering
-    contact_geoms: ti.types.ndarray(),
-    n_contact_geoms: ti.types.ndarray(),
-    # Geometry data for support functions and raycasting
+    collider_state: array_class.ColliderState,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    static_rigid_sim_config: ti.template(),
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    equalities_info: array_class.EqualitiesInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
@@ -475,9 +370,6 @@ def _kernel_kinematic_contact_probe(
     default_raycast_depth: ti.f32,
     output: ti.types.ndarray(),
 ):
-    func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
-    )
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output.shape[0]
 
@@ -503,57 +395,44 @@ def _kernel_kinematic_contact_probe(
 
         max_penetration = gs.ti_float(0.0)
 
-        for i_cg in range(n_contact_geoms[i_b]):
-            i_g = contact_geoms[i_b, i_cg]
+        # Iterate over contacts directly from collider state
+        n_contacts = collider_state.n_contacts[i_b]
+        for i_c in range(n_contacts):
+            c_link_a = collider_state.contact_data.link_a[i_c, i_b]
+            c_link_b = collider_state.contact_data.link_b[i_c, i_b]
+            c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
+            c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
 
-            # Filter geoms based on AABB check, self-link
-            if not func_check_collision_filter(
-                i_g,
-                i_b,
-                probe_pos,
-                radius,
-                sensor_link_idx,
-                geoms_state,
-                geoms_info,
-                rigid_global_info,
-                constraint_state,
-                equalities_info,
-            ):
-                continue
+            # Check if either side of this contact involves one of our sensor links;
+            for side in ti.static(range(2)):
+                contact_link = c_link_a if side == 0 else c_link_b
+                i_g = c_geom_b if side == 0 else c_geom_a
 
-            # Step 1: Direct raycast against faces of each contact geom
-            hit_dist = _raycast_geom_faces(
-                probe_pos,
-                -probe_normal,
-                default_raycast_depth,
-                i_g,
-                i_b,
-                geoms_info,
-                faces_info,
-                verts_info,
-                fixed_verts_state,
-                free_verts_state,
-            )
-            if hit_dist >= 0.0:
-                if max_penetration == 0.0 or hit_dist < max_penetration:
-                    max_penetration = hit_dist
+                # Is this contact relevant to this sensor?
+                if contact_link == sensor_link_idx and func_point_in_geom_aabb(
+                    i_g, i_b, geoms_state, probe_pos, radius
+                ):
+                    # Update vertices only for geoms that passed filtering
+                    func_update_verts_for_geom(
+                        i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state
+                    )
 
-            # Step 2: Collision with probe sphere for probes
-            penetration = _sphere_geom_faces_intersection(
-                probe_pos,
-                radius,
-                -probe_normal,
-                i_g,
-                i_b,
-                geoms_info,
-                faces_info,
-                verts_info,
-                fixed_verts_state,
-                free_verts_state,
-            )
-            if penetration >= 0.0:
-                if penetration > max_penetration:
-                    max_penetration = penetration
+                    # Raycast + sphere penetration test per geom
+                    penetration = _probe_geom_penetration(
+                        probe_pos,
+                        probe_normal,
+                        radius,
+                        default_raycast_depth,
+                        i_g,
+                        i_b,
+                        geoms_info,
+                        faces_info,
+                        verts_info,
+                        fixed_verts_state,
+                        free_verts_state,
+                    )
+                    if penetration > max_penetration:
+                        max_penetration = penetration
 
         force_local = ti.Vector.zero(gs.ti_float, 3)
         if max_penetration > 0:
@@ -567,42 +446,3 @@ def _kernel_kinematic_contact_probe(
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = force_local[0]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = force_local[1]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = force_local[2]
-
-
-@ti.func
-def func_check_collision_filter(
-    i_g: ti.i32,
-    i_b: ti.i32,
-    probe_pos: ti.types.vector(3, gs.ti_float),
-    probe_radius: gs.ti_float,
-    other_link_idx: ti.i32,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    constraint_state: array_class.ConstraintState,
-    equalities_info: array_class.EqualitiesInfo,
-):
-    valid = True
-    # Early AABB check to skip unnecessary filtering for geoms that are too far from the probe
-    if not func_point_in_geom_aabb(i_g, i_b, geoms_state, probe_pos, probe_radius):
-        valid = False
-
-    # Self-link filtering
-    geom_link_idx = geoms_info.link_idx[i_g]
-    if valid:
-        if geom_link_idx == other_link_idx:
-            valid = False
-
-    # Weld constraint filtering
-    if valid:
-        if not func_check_weld_constraint(
-            geom_link_idx,
-            other_link_idx,
-            i_b,
-            rigid_global_info,
-            constraint_state,
-            equalities_info,
-        ):
-            valid = False
-
-    return valid

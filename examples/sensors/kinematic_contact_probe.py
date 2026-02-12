@@ -1,121 +1,224 @@
 """
-Example demonstrating the KinematicContactProbe for detecting contact with surfaces.
+Interactive KinematicContactProbe visualization with keyboard teleop.
 
-A sphere drops onto a fixed box that has a 5x5 grid of kinematic contact probes on its surface.
-The probes detect when the falling sphere makes contact and report penetration along
-the probe normal direction.
+A platform with a grid of contact probes sits in the scene.
+Use keyboard controls to move the "pusher" cylinder across the probe surface and push around objects.
 """
 
 import argparse
+import os
+
+import numpy as np
 
 import genesis as gs
+from genesis.vis.keybindings import Key, KeyAction, Keybind
+
+# Teleop
+KEY_DPOS = 0.05
+PUSHER_SIZE = 0.1
+
+# Probe sensors
+GRID_SIZE = 5
+PROBE_RADIUS = 0.05
+
+# Objects
+PLATFORM_SIZE = 1.5
+PLATFORM_HEIGHT = 0.3
+OBJ_Z = PLATFORM_HEIGHT * 1.4
+OBJ_SIZE = PLATFORM_SIZE / 8.0
+
+
+def _build_probe_grid(grid_n: int, platform_size: float, platform_height: float):
+    spacing = platform_size / (grid_n + 1)
+    positions, normals, radii = [], [], []
+    centre = (grid_n - 1) / 2.0
+
+    for i in range(grid_n):
+        for j in range(grid_n):
+            x = (i - centre) * spacing
+            y = (j - centre) * spacing
+            z = platform_height / 2  # top surface in link-local frame
+
+            r = PROBE_RADIUS + i * (PROBE_RADIUS / 10.0)
+
+            positions.append((x, y, z))
+            normals.append((0.0, 0.0, 1.0))
+            radii.append(float(r))
+
+    return positions, normals, radii
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Interactive KinematicContactProbe Visualization")
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("-c", "--cpu", action="store_true", help="Use CPU instead of GPU")
-    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Number of seconds to simulate")
+    parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
-    ########################## init ##########################
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, logging_level="info")
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
-    ########################## scene setup ##########################
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.01,
-            substeps=10,
             gravity=(0.0, 0.0, -9.81),
         ),
-        vis_options=gs.options.VisOptions(
-            show_world_frame=True,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(-PLATFORM_SIZE * 2, 0.0, PLATFORM_HEIGHT + 1.5),
+            camera_lookat=(0.0, 0.0, PLATFORM_HEIGHT),
+            max_FPS=60,
         ),
         show_viewer=args.vis,
     )
 
-    # Ground plane
     scene.add_entity(gs.morphs.Plane())
 
-    # Fixed flat box as the platform
-    box_size = 0.5
-    box_height = 0.3
-    box = scene.add_entity(
+    platform = scene.add_entity(
         gs.morphs.Box(
-            size=(box_size, box_size, box_height),
-            pos=(0.0, 0.0, box_height / 2),  # Box sitting on ground
+            size=(PLATFORM_SIZE, PLATFORM_SIZE, PLATFORM_HEIGHT),
+            pos=(0.0, 0.0, PLATFORM_HEIGHT / 2),
             fixed=True,
         ),
     )
 
-    # Create a 5x5 grid of probe positions on top of the box
-    # Probes are evenly spaced across the box surface
-    grid_size = 5
-    probe_spacing = box_size / (grid_size + 1)  # Spacing between probes
-    probe_positions = []
-    probe_normals = []
+    probe_positions, probe_normals, probe_radii = _build_probe_grid(GRID_SIZE, PLATFORM_SIZE, PLATFORM_HEIGHT)
+    n_probes = len(probe_positions)
 
-    for i in range(grid_size):
-        for j in range(grid_size):
-            # Calculate position relative to box center
-            x = (i - (grid_size - 1) / 2) * probe_spacing
-            y = (j - (grid_size - 1) / 2) * probe_spacing
-            z = box_height / 2  # On top surface of box
-            probe_positions.append((x, y, z))
-            probe_normals.append((0.0, 0.0, 1.0))  # All probes sense upward
-
-    # Kinematic contact probe array on top of the box
-    # Each probe has a smaller radius to fit the grid
-    probe_radius = probe_spacing * 0.4  # Slightly smaller than half the spacing
     probe = scene.add_sensor(
         gs.sensors.KinematicContactProbe(
-            entity_idx=box.idx,
+            entity_idx=platform.idx,
             link_idx_local=0,
             probe_local_pos=probe_positions,
             probe_local_normal=probe_normals,
-            radius=probe_radius,
-            stiffness=5000.0,  # Contact stiffness for force calculation
-            draw_debug=args.vis,  # Visualize the sensing spheres
+            radius=probe_radii,
+            stiffness=5000.0,
+            draw_debug=args.vis,
         )
     )
 
-    # Falling sphere - starts above the box and drops due to gravity
-    sphere_radius = 0.1
-    falling_sphere = scene.add_entity(
-        gs.morphs.Sphere(
-            radius=sphere_radius,
-            pos=(0.0, 0.0, 0.8),  # Start above the probe grid
-            fixed=False,  # Dynamic - will fall
+    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE], dtype=np.float32)
+
+    pusher = scene.add_entity(
+        gs.morphs.Cylinder(
+            radius=PUSHER_SIZE,
+            height=PUSHER_SIZE,
+            pos=tuple(pusher_start),
+            fixed=True,
         ),
         surface=gs.surfaces.Default(
-            color=(1, 1, 1, 0.5),
+            color=(0.15, 0.55, 0.95, 1.0),
         ),
     )
 
-    scene.build(n_envs=0)
+    # Add objects
+    rect = scene.add_entity(
+        gs.morphs.Box(
+            size=(OBJ_SIZE, OBJ_SIZE * 2, OBJ_SIZE),
+            pos=(PLATFORM_SIZE / 4, 0, OBJ_Z),
+        ),
+        surface=gs.surfaces.Default(color=(1.0, 0.3, 0.3, 1.0)),
+    )
+    cylinder = scene.add_entity(
+        gs.morphs.Cylinder(
+            radius=OBJ_SIZE / 2,
+            height=OBJ_SIZE * 1.2,
+            pos=(0, PLATFORM_SIZE / 4, OBJ_Z),
+        ),
+        surface=gs.surfaces.Default(color=(0.3, 1.0, 0.3, 1.0)),
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=OBJ_SIZE / 2,
+            pos=(-PLATFORM_SIZE / 4, -PLATFORM_SIZE / 4, OBJ_Z),
+        ),
+        surface=gs.surfaces.Default(color=(0.3, 0.3, 1.0, 1.0)),
+    )
+    objects = [rect, cylinder, sphere]
 
-    ########################## simulation loop ##########################
-    steps = int(args.seconds / 0.01)
-    n_probes = len(probe_positions)
+    scene.build()
 
-    # give a sphere a small velocity in x
-    falling_sphere.set_dofs_velocity((0.1, 0.0, 0.0, 0.0, 0.0, 0.0))
+    is_running = True
+    # Register keybindings
+    if args.vis:
+        target_pos = pusher_start.copy()
+        next_obj_idx = 0
 
-    print("\n=== KinematicContactProbe Example (5x5 Grid) ===")
-    print(f"A sphere is falling onto a box with a {grid_size}x{grid_size} grid of contact probes.")
-    print(f"Total probes: {n_probes}, Probe radius: {probe_radius:.4f}m")
-    print("The probes measure penetration along their normal direction (+z).")
-    print("Watch for contact detection when the sphere lands.\n")
+        def stop():
+            nonlocal is_running
+            is_running = False
 
-    for step in range(steps):
-        scene.step()
+        def reset_pose():
+            target_pos[:] = pusher_start
 
-        data = probe.read()
-        penetrations = data.penetration
-        for p in range(n_probes):
-            if penetrations[p] > 0:
-                print(f"Step {step}: Probe {p} contact at {probe_positions[p]}")
-    print("\n=== Simulation Complete ===")
+        def translate(index: int, is_negative: bool):
+            target_pos[index] += (-1 if is_negative else 1) * KEY_DPOS
+
+        def drop_object():
+            nonlocal next_obj_idx
+            idx = next_obj_idx % len(objects)
+            drop_pos = target_pos.copy()
+            drop_pos[2] = PLATFORM_HEIGHT * 2
+            objects[idx].set_pos(drop_pos)
+            objects[idx].set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+            next_obj_idx += 1
+
+        scene.viewer.register_keybinds(
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
+            Keybind("move_backward", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, True)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, True)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
+            Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
+            Keybind("drop_object", Key.SPACE, KeyAction.PRESS, callback=drop_object),
+            Keybind("reset", Key.BACKSLASH, KeyAction.PRESS, callback=reset_pose),
+            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+        )
+
+    # ── Print info ─────────────────────────────────────────────────────
+    print("\n=== Interactive KinematicContactProbe ===")
+    print(f"Platform {PLATFORM_SIZE}m × {PLATFORM_SIZE}m with {GRID_SIZE}×{GRID_SIZE} probes ({n_probes} total)")
+    print(f"Probe radii range: {min(probe_radii):.4f} – {max(probe_radii):.4f} m")
+    if args.vis:
+        print()
+        print("Keyboard Controls:")
+        print("  [↑/↓/←/→]  Move pusher box in XY")
+        print("  [j / k]     Lower / raise pusher box")
+        print("  [SPACE]     Drop an object at pusher location")
+        print("  [\\]         Reset pusher position")
+    else:
+        print(f"Running headless for {args.seconds}s ...")
+    print()
+
+    # ── Simulation loop ────────────────────────────────────────────────
+    steps = int(args.seconds / scene.sim_options.dt) if not args.vis else None
+    step = 0
+
+    try:
+        while is_running:
+            pusher.set_pos(target_pos)
+            pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+            scene.step()
+
+            # Read probe data and print any active contacts
+            data = probe.read()
+            active = (data.penetration > 0).nonzero(as_tuple=False)
+            if active.numel() > 0:
+                idxs = active.squeeze(-1).tolist()
+                if isinstance(idxs, int):
+                    idxs = [idxs]
+                depths = data.penetration[active.squeeze(-1)].tolist()
+                if isinstance(depths, float):
+                    depths = [depths]
+                parts = [f"probe{i}={d:.4f}" for i, d in zip(idxs, depths)]
+                print(f"Step {step}: Contact: {', '.join(parts)}")
+
+            step += 1
+            if "PYTEST_VERSION" in os.environ:
+                break
+            if steps is not None and step >= steps:
+                break
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted.")
+    finally:
+        gs.logger.info("Simulation finished.")
 
 
 if __name__ == "__main__":

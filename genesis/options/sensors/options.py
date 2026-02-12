@@ -209,12 +209,12 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
     radius: Sequence[float] | float = 0.005
     stiffness: float = 1000.0
 
-    debug_sphere_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.5)
-    debug_contact_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.8)
+    debug_sphere_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.4)
+    debug_contact_color: tuple[float, float, float, float] = (1.0, 0.2, 0.0, 0.8)
 
     def model_post_init(self, _):
-        if np.any(np.array(self.radius) <= 0):
-            gs.raise_exception(f"radius must be positive, got: {self.radius}")
+        if np.any(np.array(self.radius) < 0):
+            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
         if self.stiffness < 0:
             gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
 
