@@ -232,6 +232,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
+            use_gjk_collision=True,
         ),
     )
 
