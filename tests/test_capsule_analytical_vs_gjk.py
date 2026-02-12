@@ -270,25 +270,6 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
-    # Print contact counts for debugging (keep these as they're useful for understanding multicontact)
-    print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
-    print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
-
-    # Print all contacts for debugging
-    if has_collision_analytical:
-        print("\nAnalytical contacts:")
-        for i in range(len(contacts_analytical["geom_a"])):
-            print(
-                f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}"
-            )
-
-    if has_collision_gjk:
-        print("\nGJK contacts:")
-        for i in range(len(contacts_gjk["geom_a"])):
-            print(
-                f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}"
-            )
-
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
@@ -306,15 +287,6 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         pos_analytical = np.array(contacts_analytical["position"][0])
         pos_gjk = np.array(contacts_gjk["position"][0])
 
-        # Print detailed comparison
-        print("\nDetailed comparison:")
-        print(
-            f"Penetration - Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
-        )
-        print(f"Normal - Analytical: {normal_analytical}, GJK: {normal_gjk}")
-        print(f"Position - Analytical: {pos_analytical}, GJK: {pos_gjk}")
-        print(f"Position diff: {np.linalg.norm(pos_analytical - pos_gjk):.6f}")
-
         pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
         assert abs(pen_analytical - pen_gjk) < pen_tol, (
             f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
@@ -330,10 +302,6 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         # exact position match, verify both contact points lie on the line connecting the surfaces.
         pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
         if description in ["parallel_touching", "parallel_far"]:
-            print(
-                f"Note: Parallel capsules - verifying multiple contacts along line between surfaces (pos_diff={pos_diff:.6f})"
-            )
-
             # For parallel capsules, multicontact should find at least 2 contacts (near endpoints)
             n_analytical = len(contacts_analytical["geom_a"])
             n_gjk = len(contacts_gjk["geom_a"])
@@ -350,7 +318,6 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
             for i, pos_a in enumerate(all_analytical_positions):
                 # Find closest GJK contact to this analytical contact
                 min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
-                print(f"  Analytical contact {i} closest to GJK contact: dist={min_dist:.6f}")
                 assert min_dist < 0.1, (
                     f"Analytical contact {i} at {pos_a} not matched by any GJK contact (min_dist={min_dist:.6f})"
                 )
@@ -566,25 +533,6 @@ def test_sphere_capsule_vs_gjk(
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
-    # Print contact counts for debugging (keep these as they're useful for understanding multicontact)
-    print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
-    print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
-
-    # Print all contacts for debugging
-    if has_collision_analytical:
-        print("\nAnalytical contacts:")
-        for i in range(len(contacts_analytical["geom_a"])):
-            print(
-                f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}"
-            )
-
-    if has_collision_gjk:
-        print("\nGJK contacts:")
-        for i in range(len(contacts_gjk["geom_a"])):
-            print(
-                f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}"
-            )
-
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
@@ -601,15 +549,6 @@ def test_sphere_capsule_vs_gjk(
 
         pos_analytical = np.array(contacts_analytical["position"][0])
         pos_gjk = np.array(contacts_gjk["position"][0])
-
-        # Print detailed comparison
-        print("\nDetailed comparison:")
-        print(
-            f"Penetration - Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
-        )
-        print(f"Normal - Analytical: {normal_analytical}, GJK: {normal_gjk}")
-        print(f"Position - Analytical: {pos_analytical}, GJK: {pos_gjk}")
-        print(f"Position diff: {np.linalg.norm(pos_analytical - pos_gjk):.6f}")
 
         pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
         assert abs(pen_analytical - pen_gjk) < pen_tol, (
