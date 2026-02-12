@@ -68,6 +68,7 @@ def create_modified_narrowphase_file():
         'is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(',
         '# MODIFIED: Use GJK instead of analytical\n' +
         '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(\n' +
+        '                    errno[i_b] |= 1 << 16  # Mark that we forced GJK for capsule-capsule\n' +
         '                    prefer_gjk = True  # Force GJK for capsule-capsule\n' +
         '                    if False:  # Skip analytical path\n' +
         '                        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
@@ -78,6 +79,7 @@ def create_modified_narrowphase_file():
         'is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(',
         '# MODIFIED: Use GJK instead of analytical\n' +
         '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(\n' +
+        '                    errno[i_b] |= 1 << 17  # Mark that we forced GJK for sphere-capsule\n' +
         '                    prefer_gjk = True  # Force GJK for sphere-capsule\n' +
         '                    if False:  # Skip analytical path\n' +
         '                        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
@@ -190,6 +192,19 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     scene_analytical.step()
     scene_gjk.step()
+
+    # Print errno values to see which code path was used
+    print(f"\nTest: {description}")
+    print(f"errno analytical: {scene_analytical._sim.rigid_solver._errno}")
+    print(f"errno gjk: {scene_gjk._sim.rigid_solver._errno}")
+    
+    # Check if capsule-capsule path was used (bit 16)
+    analytical_used_modified_capsule = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+    # Check if sphere-capsule path was used (bit 17)
+    analytical_used_modified_sphere = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 17)) != 0
+    
+    print(f"Analytical scene used modified capsule-capsule path: {analytical_used_modified_capsule}")
+    print(f"Analytical scene used modified sphere-capsule path: {analytical_used_modified_sphere}")
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
