@@ -110,38 +110,39 @@ def create_modified_narrowphase_file():
         
         return lines
     
+    # Function to insert errno marker before a function call
+    def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
+        """Insert errno marker on the line before a function call."""
+        call_line_idx = None
+        for i, line in enumerate(lines):
+            if function_call_pattern in line and '(' in line:
+                call_line_idx = i
+                break
+        
+        if call_line_idx is None:
+            raise ValueError(f"Could not find function call: {function_call_pattern}")
+        
+        # Get indentation from the call line
+        indent = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
+        indent_str = lines[call_line_idx][:indent]
+        
+        # Insert errno marker on the line before the call
+        errno_line = f"{indent_str}errno[i_b] |= 1 << {errno_bit}  # {comment}"
+        lines.insert(call_line_idx, errno_line)
+        
+        return lines
+    
     # Disable capsule-capsule analytical path
     lines = find_and_disable_condition(lines, 'capsule_contact.func_capsule_capsule_contact')
     
     # Disable sphere-capsule analytical path
     lines = find_and_disable_condition(lines, 'capsule_contact.func_sphere_capsule_contact')
     
-    # Now find the gjk.func_gjk_contact call and insert errno markers before it
-    gjk_call_idx = None
-    for i, line in enumerate(lines):
-        if 'gjk.func_gjk_contact(' in line:
-            gjk_call_idx = i
-            break
+    # Insert errno before gjk.func_gjk_contact (non-diff version)
+    lines = insert_errno_before_call(lines, 'gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
     
-    if gjk_call_idx is None:
-        raise ValueError("Could not find gjk.func_gjk_contact call")
-    
-    # Get indentation from the gjk call line
-    gjk_indent = len(lines[gjk_call_idx]) - len(lines[gjk_call_idx].lstrip())
-    gjk_indent_str = lines[gjk_call_idx][:gjk_indent]
-    
-    # Insert errno markers before the GJK call to mark when capsules use GJK
-    errno_lines = [
-        f"{gjk_indent_str}# MODIFIED: Mark if capsules are using GJK instead of analytical",
-        f"{gjk_indent_str}if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:",
-        f"{gjk_indent_str}    errno[i_b] |= 1 << 16",
-        f"{gjk_indent_str}if (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):",
-        f"{gjk_indent_str}    errno[i_b] |= 1 << 17",
-    ]
-    
-    # Insert the errno lines before the GJK call
-    for j, line in enumerate(errno_lines):
-        lines.insert(gjk_call_idx + j, line)
+    # Insert errno before diff_gjk.func_gjk_contact (diff version)  
+    lines = insert_errno_before_call(lines, 'diff_gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
     
     # Rejoin lines
     content = '\n'.join(lines)
@@ -259,18 +260,12 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     print(f"errno analytical: {scene_analytical._sim.rigid_solver._errno}")
     print(f"errno gjk: {scene_gjk._sim.rigid_solver._errno}")
     
-    # Check if capsule-capsule path was used (bit 16)
-    analytical_used_modified_capsule = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-    gjk_used_modified_capsule = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+    # Check if GJK was used (bit 16)
+    analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+    gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
     
-    # Check if sphere-capsule path was used (bit 17)
-    analytical_used_modified_sphere = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 17)) != 0
-    gjk_used_modified_sphere = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 17)) != 0
-    
-    print(f"Analytical scene used modified capsule-capsule path (bit 16): {analytical_used_modified_capsule}")
-    print(f"Analytical scene used modified sphere-capsule path (bit 17): {analytical_used_modified_sphere}")
-    print(f"GJK scene used modified capsule-capsule path (bit 16): {gjk_used_modified_capsule}")
-    print(f"GJK scene used modified sphere-capsule path (bit 17): {gjk_used_modified_sphere}")
+    print(f"Analytical scene used GJK (bit 16): {analytical_used_gjk}")
+    print(f"GJK scene used GJK (bit 16): {gjk_used_gjk}")
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
