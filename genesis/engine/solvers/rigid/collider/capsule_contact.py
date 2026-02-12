@@ -37,12 +37,11 @@ def func_closest_points_on_segments(
 
     if denom < EPS:
         # Segments are parallel or one/both are degenerate
-        # Use midpoint of segments for consistency with GJK
-        s = 0.5
+        s = 0.0
         if b_squared_len > EPS:
             t = ti.math.clamp(e / b_squared_len, 0.0, 1.0)
         else:
-            t = 0.5
+            t = 0.0
     else:
         # General case: solve for optimal parameters
         s = (dot_product_dir * e - b_squared_len * d) / denom
