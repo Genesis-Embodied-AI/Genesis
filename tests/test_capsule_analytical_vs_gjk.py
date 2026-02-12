@@ -195,9 +195,10 @@ def create_modified_narrowphase_file():
         # Distance: 0.18, sum of radii: 0.2 → penetration = 0.02 (light contact)
         ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light"),
         # Test 3: Diagonal capsule near vertical capsule (AABBs overlap, no collision)
-        # Capsule 1 vertical at origin, Capsule 2 rotated 45° at X=0.35
-        # Rotation increases AABB, so AABBs overlap, but actual distance ~0.247 > 0.2 (no collision)
-        ((0, 0, 0), (0, 0, 0), (0.35, 0, 0), (0, 45, 0), False, "diagonal_near"),
+        # Capsule 1 vertical at origin, Capsule 2 rotated 60° at X=0.4
+        # 60° rotation creates AABB X: [-0.317, 0.317], so at X=0.4, AABB: [0.083, 0.717]
+        # This overlaps with vertical capsule AABB [-0.1, 0.1], but distance > 0.2 (no collision)
+        ((0, 0, 0), (0, 0, 0), (0.4, 0, 0), (0, 60, 0), False, "diagonal_near"),
         # Test 4: Parallel capsules with deep penetration (for multicontact)
         # Distance: 0.15, sum of radii: 0.2 → penetration = 0.05 (deeper for multicontact)
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep"),
@@ -466,10 +467,16 @@ def create_sphere_mjcf(name, pos, radius):
         # Sphere at (0.18, 0, 0), capsule vertical at origin
         # Distance to axis: 0.18, sum of radii: 0.2 → light penetration
         ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule"),
-        # Test 3: Sphere near rotated capsule (AABBs overlap, no collision)
-        # Capsule rotated 45° increases AABB, sphere at distance where AABBs overlap but no collision
-        ((0.3, 0, 0), (0, 0, 0), (0, 45, 0), False, "sphere_near_rotated_capsule"),
-        # Test 4: Sphere touching capsule cylindrical surface
+        # Test 3: Sphere near cylinder but not touching (AABBs overlap)
+        # Sphere at 45° in XY plane, distance = r1+r2+4*EPS = 0.24
+        # Position: (0.17, 0.17, 0), AABBs overlap but no collision
+        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder"),
+        # Test 4: Sphere near spherical cap but not touching (AABBs overlap)
+        # Capsule rotated 45° around Y, sphere beyond top cap along axis
+        # Cap at (0.177, 0, 0.177), sphere at (0.35, 0, 0.35), distance = r1+r2+4*EPS
+        # Rotation creates larger AABB ensuring overlap, but no collision
+        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap"),
+        # Test 5: Sphere touching capsule cylindrical surface
         # Sphere at (0.15, 0, 0), capsule vertical at origin
         # Distance to axis: 0.15, sum of radii: 0.2 → good penetration
         ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder"),
@@ -503,7 +510,6 @@ def test_sphere_capsule_vs_gjk(
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,  # Use analytical methods
         ),
     )
 
