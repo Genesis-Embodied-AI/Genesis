@@ -277,14 +277,14 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     # Print all contacts for debugging
     if has_collision_analytical:
-        print(f"\nAnalytical contacts:")
+        print("\nAnalytical contacts:")
         for i in range(len(contacts_analytical["geom_a"])):
             print(
                 f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}"
             )
 
     if has_collision_gjk:
-        print(f"\nGJK contacts:")
+        print("\nGJK contacts:")
         for i in range(len(contacts_gjk["geom_a"])):
             print(
                 f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}"
@@ -308,7 +308,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         pos_gjk = np.array(contacts_gjk["position"][0])
 
         # Print detailed comparison
-        print(f"\nDetailed comparison:")
+        print("\nDetailed comparison:")
         print(
             f"Penetration - Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
         )
@@ -573,14 +573,14 @@ def test_sphere_capsule_vs_gjk(
 
     # Print all contacts for debugging
     if has_collision_analytical:
-        print(f"\nAnalytical contacts:")
+        print("\nAnalytical contacts:")
         for i in range(len(contacts_analytical["geom_a"])):
             print(
                 f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}"
             )
 
     if has_collision_gjk:
-        print(f"\nGJK contacts:")
+        print("\nGJK contacts:")
         for i in range(len(contacts_gjk["geom_a"])):
             print(
                 f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}"
@@ -604,7 +604,7 @@ def test_sphere_capsule_vs_gjk(
         pos_gjk = np.array(contacts_gjk["position"][0])
 
         # Print detailed comparison
-        print(f"\nDetailed comparison:")
+        print("\nDetailed comparison:")
         print(
             f"Penetration - Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}, diff: {abs(pen_analytical - pen_gjk):.6f}"
         )
