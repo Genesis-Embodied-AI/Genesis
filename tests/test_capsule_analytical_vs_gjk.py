@@ -60,8 +60,8 @@ def create_modified_narrowphase_file():
     content = content.replace('from .', 'from genesis.engine.solvers.rigid.collider.')
     
     # Replace the capsule-capsule contact call with GJK
-    content = content.replace(
-        'is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(',
+    original_capsule_capsule = 'is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
+    replacement_capsule_capsule = (
         '# MODIFIED: Use GJK instead of analytical\n' +
         '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(\n' +
         '                    errno[i_b] |= 1 << 16  # Mark that we forced GJK for capsule-capsule\n' +
@@ -70,9 +70,15 @@ def create_modified_narrowphase_file():
         '                        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
     )
     
+    # Count and verify exactly one replacement
+    capsule_capsule_count = content.count(original_capsule_capsule)
+    assert capsule_capsule_count == 1, f"Expected exactly 1 occurrence of capsule-capsule call, found {capsule_capsule_count}"
+    
+    content = content.replace(original_capsule_capsule, replacement_capsule_capsule)
+    
     # For sphere-capsule, replace the call
-    content = content.replace(
-        'is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(',
+    original_sphere_capsule = 'is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
+    replacement_sphere_capsule = (
         '# MODIFIED: Use GJK instead of analytical\n' +
         '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(\n' +
         '                    errno[i_b] |= 1 << 17  # Mark that we forced GJK for sphere-capsule\n' +
@@ -80,6 +86,12 @@ def create_modified_narrowphase_file():
         '                    if False:  # Skip analytical path\n' +
         '                        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
     )
+    
+    # Count and verify exactly one replacement
+    sphere_capsule_count = content.count(original_sphere_capsule)
+    assert sphere_capsule_count == 1, f"Expected exactly 1 occurrence of sphere-capsule call, found {sphere_capsule_count}"
+    
+    content = content.replace(original_sphere_capsule, replacement_sphere_capsule)
     
     # Write to /tmp with random integer
     randint = random.randint(0, 1000000)
@@ -212,6 +224,12 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+
+    # Assert that at least one scene detected a collision (otherwise we're not comparing anything)
+    assert has_collision_analytical or has_collision_gjk, (
+        f"No collision detected in either scene! Test case '{description}' is not comparing anything. "
+        f"Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
+    )
 
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
