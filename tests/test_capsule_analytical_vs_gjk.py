@@ -119,30 +119,13 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     radius = 0.1
     half_length = 0.25
     
-    # Create modified narrowphase file
-    temp_narrowphase_path = create_modified_narrowphase_file()
-    
-    # Import the modified module and monkey-patch func_convex_convex_contact
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
-    narrowphase_modified = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(narrowphase_modified)
-    
-    # Monkey-patch the narrowphase module to use modified function
-    from genesis.engine.solvers.rigid.collider import narrowphase
-    monkeypatch.setattr(
-        narrowphase,
-        "func_convex_convex_contact",
-        narrowphase_modified.func_convex_convex_contact
-    )
-    
-    # Scene 1: Using analytical capsule-capsule detection (normal behavior)
+    # Scene 1: Using ORIGINAL analytical capsule-capsule detection (before any monkey-patching)
     scene_analytical = gs.Scene(
         show_viewer=False,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,  # Use analytical for non-capsules
+            use_gjk_collision=False,  # Use analytical methods
         ),
     )
 
@@ -158,14 +141,31 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf2_path))
 
         scene_analytical.build()
+    
+    # NOW monkey-patch for the GJK scene
+    temp_narrowphase_path = create_modified_narrowphase_file()
+    
+    # Import the modified module and monkey-patch func_convex_convex_contact
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
+    narrowphase_modified = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(narrowphase_modified)
+    
+    # Monkey-patch the narrowphase module to use modified function
+    from genesis.engine.solvers.rigid.collider import narrowphase
+    monkeypatch.setattr(
+        narrowphase,
+        "func_convex_convex_contact",
+        narrowphase_modified.func_convex_convex_contact
+    )
 
-    # Scene 2: Force GJK for comparison (GJK is more accurate than MPR)
+    # Scene 2: Force GJK for capsules (using modified narrowphase)
     scene_gjk = gs.Scene(
         show_viewer=False,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=True,
+            use_gjk_collision=False,  # Still use_gjk_collision=False, but capsules will use GJK due to our patch
         ),
     )
 
