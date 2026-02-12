@@ -253,17 +253,16 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     scene_analytical.step()
     scene_gjk.step()
 
-    # Print errno values to see which code path was used
+    # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
-    print(f"errno analytical: {scene_analytical._sim.rigid_solver._errno}")
-    print(f"errno gjk: {scene_gjk._sim.rigid_solver._errno}")
-
+    
     # Check if GJK was used (bit 16)
     analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
     gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
 
-    print(f"Analytical scene used GJK (bit 16): {analytical_used_gjk}")
-    print(f"GJK scene used GJK (bit 16): {gjk_used_gjk}")
+    # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
+    assert not analytical_used_gjk, f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
@@ -271,6 +270,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
+    # Print contact counts for debugging (keep these as they're useful for understanding multicontact)
     print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
     print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
 
@@ -549,17 +549,16 @@ def test_sphere_capsule_vs_gjk(
     scene_analytical.step()
     scene_gjk.step()
 
-    # Print errno values to see which code path was used
+    # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
-    print(f"errno analytical: {scene_analytical._sim.rigid_solver._errno}")
-    print(f"errno gjk: {scene_gjk._sim.rigid_solver._errno}")
-
+    
     # Check if GJK was used (bit 16)
     analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
     gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
 
-    print(f"Analytical scene used GJK (bit 16): {analytical_used_gjk}")
-    print(f"GJK scene used GJK (bit 16): {gjk_used_gjk}")
+    # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
+    assert not analytical_used_gjk, f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
@@ -567,6 +566,7 @@ def test_sphere_capsule_vs_gjk(
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
+    # Print contact counts for debugging (keep these as they're useful for understanding multicontact)
     print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
     print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
 
