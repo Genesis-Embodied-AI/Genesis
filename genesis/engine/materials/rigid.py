@@ -93,7 +93,7 @@ class Rigid(Material):
         return self._gravity_compensation
 
     @property
-    def friction(self) -> float:
+    def friction(self) -> float | None:
         """Friction coefficient used within the rigid solver."""
         return self._friction
 

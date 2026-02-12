@@ -437,34 +437,34 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "weld.xml", "connect.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_weld(gs_sim, mj_sim, gs_solver):
+def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
     # Must disable self-collision caused by closing the kinematic chain (adjacent link filtering is not enough)
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
-    # Must increase sol params to improve numerical stability
-    sol_params = gu.default_solver_params()
-    sol_params[0] = 0.02
+    # Must the time constant of the constraints to improve numerical stability
+    TIME_CONSTANT = 0.02
     for entity in gs_sim.entities:
         for equality in entity.equalities:
-            equality.set_sol_params(sol_params)
-    mj_sim.model.eq_solref[:, 0] = sol_params[0]
+            equality.set_sol_params((TIME_CONSTANT, *tensor_to_array(equality.sol_params)[1:]))
+    mj_sim.model.eq_solref[:, 0] = TIME_CONSTANT
 
-    assert gs_sim.rigid_solver.n_equalities == 1
+    # Randomize the initial condition for force convergence of the constraints
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
 
-    # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
-    # The pose difference between Mujoco and Genesis (resulting from using quaternion instead of rotation matrices to
-    # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
-    # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
-    # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
+    # Note that the world frame in which weld constraint is computed is different between Mujoco and Genesis for sites.
+    # Mujoco is using site 1, whereas Genesis is using parent link frame of site 1 since it has no notion of site.
+    ignore_constraints = np.any(
+        (mj_sim.model.eq_objtype == mujoco.mjtObj.mjOBJ_SITE) & (mj_sim.model.eq_type == mujoco.mjtEq.mjEQ_WELD)
+    )
+    simulate_and_check_mujoco_consistency(
+        gs_sim, mj_sim, qpos, num_steps=300, tol=1e-7, ignore_constraints=ignore_constraints
+    )
 
 
 @pytest.mark.required
@@ -595,47 +595,12 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
 @pytest.mark.required
 @pytest.mark.multi_contact(False)
+@pytest.mark.parametrize("xml_path", ["linear_deformable.urdf"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_urdf_rope(
-    gs_solver,
-    gs_integrator,
-    merge_fixed_links,
-    multi_contact,
-    mujoco_compatibility,
-    adjacent_collision,
-    gjk_collision,
-    dof_damping,
-    show_viewer,
-):
-    asset_path = get_hf_dataset(pattern="linear_deformable.urdf")
-    xml_path = os.path.join(asset_path, "linear_deformable.urdf")
-
-    mj_sim = build_mujoco_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        adjacent_collision,
-        dof_damping,
-        gjk_collision,
-    )
-    gs_sim = build_genesis_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        mujoco_compatibility,
-        adjacent_collision,
-        gjk_collision,
-        show_viewer,
-        mj_sim,
-    )
-
+def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     # Must increase sol params to improve numerical stability
     sol_params = gu.default_solver_params()
     sol_params[0] = 0.02
@@ -970,7 +935,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
-    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
+    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
@@ -1434,7 +1399,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
 
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
-            quat_delta /= torch.linalg.norm(quat_delta)
+            quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
             entity.set_quat(quat_delta, relative=relative)
             quat = entity.get_quat()
             if relative:

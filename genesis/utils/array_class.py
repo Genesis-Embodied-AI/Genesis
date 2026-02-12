@@ -1,14 +1,13 @@
-import math
 import dataclasses
+import math
 from enum import IntEnum
 from functools import partial
-from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import gstaichi as ti
 import numpy as np
+from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import genesis as gs
-
 
 if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
@@ -219,8 +218,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     mv: V_ANNOTATION
     jv: V_ANNOTATION
     quad_gauss: V_ANNOTATION
-    quad: V_ANNOTATION
     candidates: V_ANNOTATION
+    eq_sum: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
     # Optional CG fields
@@ -295,6 +294,7 @@ def get_constraint_state(constraint_solver, solver):
         cg_pg_dot_pMg=V(dtype=gs.ti_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.ti_float, shape=(3, _B)),
         candidates=V(dtype=gs.ti_float, shape=(12, _B)),
+        eq_sum=V(dtype=gs.ti_float, shape=(3, _B)),
         Ma=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.ti_float, shape=(solver.n_dofs_, _B)),
@@ -320,7 +320,6 @@ def get_constraint_state(constraint_solver, solver):
         efc_force=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         efc_D=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
         jv=V(dtype=gs.ti_float, shape=(len_constraints_, _B)),
-        quad=V(dtype=gs.ti_float, shape=(len_constraints_, 3, _B)),
         jac=V(dtype=gs.ti_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.ti_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.ti_int, shape=jac_n_relevant_dofs_shape),
@@ -1100,12 +1099,12 @@ class StructSupportFieldInfo(metaclass=BASE_METACLASS):
     support_res: V_ANNOTATION
 
 
-def get_support_field_info(n_geoms, n_support_cells, **kwargs):
+def get_support_field_info(n_geoms, n_support_cells, support_res):
     return StructSupportFieldInfo(
         support_cell_start=V(dtype=gs.ti_int, shape=(max(n_geoms, 1),)),
         support_v=V_VEC(3, dtype=gs.ti_float, shape=(max(n_support_cells, 1),)),
         support_vid=V(dtype=gs.ti_int, shape=(max(n_support_cells, 1),)),
-        support_res=V_SCALAR_FROM(dtype=gs.ti_int, value=kwargs["support_res"]),
+        support_res=V_SCALAR_FROM(dtype=gs.ti_int, value=support_res),
     )
 
 
@@ -1926,6 +1925,28 @@ class DataManager:
         self.errno = V(dtype=gs.ti_int, shape=(solver._B,))
 
 
+# =========================================== ViewerRaycastResult ===========================================
+
+
+@DATA_ORIENTED
+class StructViewerRaycastResult(metaclass=BASE_METACLASS):
+    distance: V_ANNOTATION
+    geom_idx: V_ANNOTATION
+    hit_point: V_ANNOTATION
+    normal: V_ANNOTATION
+    env_idx: V_ANNOTATION
+
+
+def get_viewer_raycast_result():
+    return StructViewerRaycastResult(
+        distance=V(dtype=gs.ti_float, shape=()),
+        geom_idx=V(dtype=gs.ti_int, shape=()),
+        hit_point=V_VEC(3, dtype=gs.ti_float, shape=()),
+        normal=V_VEC(3, dtype=gs.ti_float, shape=()),
+        env_idx=V(dtype=gs.ti_int, shape=()),
+    )
+
+
 DofsState = StructDofsState if gs.use_ndarray else ti.template()
 DofsInfo = StructDofsInfo if gs.use_ndarray else ti.template()
 GeomsState = StructGeomsState if gs.use_ndarray else ti.template()
@@ -1959,3 +1980,4 @@ SDFInfo = StructSDFInfo if gs.use_ndarray else ti.template()
 ContactIslandState = StructContactIslandState if gs.use_ndarray else ti.template()
 DiffContactInput = StructDiffContactInput if gs.use_ndarray else ti.template()
 RigidAdjointCache = StructRigidAdjointCache if gs.use_ndarray else ti.template()
+RaycastResult = StructViewerRaycastResult if gs.use_ndarray else ti.template()

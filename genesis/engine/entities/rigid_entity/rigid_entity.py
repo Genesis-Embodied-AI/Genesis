@@ -1122,7 +1122,7 @@ class RigidEntity(Entity):
             elif type == gs.EQUALITY_TYPE.WELD:
                 obj_id = self.get_link(obj_name).idx
             else:
-                gs.logger.warning(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
+                gs.raise_exception(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
             objs_id.append(obj_id)
 
         equality = RigidEquality(

@@ -142,7 +142,7 @@ jobs:
           if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
             PYTHON_DEPS="${PYTHON_DEPS},usd"
           fi
-          pip install -e ".[${PYTHON_DEPS}]"
+          pip install ".[${PYTHON_DEPS}]"
 
       - name: Get artifact prefix name
         id: artifact_prefix

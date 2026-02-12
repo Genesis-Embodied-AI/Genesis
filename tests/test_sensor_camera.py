@@ -481,7 +481,9 @@ def test_raytracer_attached_without_offset_T():
 @pytest.mark.parametrize("n_envs", [0, 1])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer(n_envs, png_snapshot):
-    CAM_RES = (128, 256)
+    # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
+    # without denoiser.
+    png_snapshot.extension._blurred_kernel_size = 3
 
     scene = gs.Scene(
         renderer=gs.renderers.RayTracer(
@@ -508,7 +510,7 @@ def test_raytracer(n_envs, png_snapshot):
     )
 
     camera_common_options = dict(
-        res=CAM_RES,
+        res=(128, 256),
         pos=(-2.0, 0.0, 1.5),
         lookat=(0.0, 0.0, 1.0),
         up=(0.0, 0.0, 1.5),

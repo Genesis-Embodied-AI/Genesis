@@ -8,13 +8,16 @@ import genesis.utils.array_class as array_class
 
 @ti.data_oriented
 class SDF:
-    def __init__(self, rigid_solver, is_active: bool = True):
+    def __init__(self, rigid_solver):
         self.solver = rigid_solver
-        self._is_active = is_active
-
         self._sdf_info = array_class.get_sdf_info(self.solver.n_geoms, self.solver.n_cells)
+        self._is_active = False
 
-        if self.solver.n_geoms > 0 and is_active:
+    def activate(self):
+        if self._is_active:
+            return
+
+        if self.solver.n_geoms > 0:
             geoms = self.solver.geoms
             sdf_kernel_init_geom_fields(
                 geoms_T_mesh_to_sdf=np.array([geom.T_mesh_to_sdf for geom in geoms], dtype=gs.np_float),
@@ -30,6 +33,8 @@ class SDF:
                 static_rigid_sim_config=self.solver._static_rigid_sim_config,
                 sdf_info=self._sdf_info,
             )
+
+        self._is_active = True
 
     @property
     def is_active(self):

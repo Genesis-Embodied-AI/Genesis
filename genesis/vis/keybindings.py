@@ -244,6 +244,12 @@ class KeyAction(LabeledIntEnum):
     RELEASE = 2, "release"
 
 
+class MouseButton(LabeledIntEnum):
+    LEFT = 1 << 0, "left"
+    MIDDLE = 1 << 1, "middle"
+    RIGHT = 1 << 2, "right"
+
+
 def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int:
     """Generate a unique hash for a key combination.
 
