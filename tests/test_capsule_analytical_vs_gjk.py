@@ -36,6 +36,82 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
     return mjcf
 
 
+def find_and_disable_condition(lines, function_name):
+    """Find function call, look back for if/elif, and disable the condition."""
+    # Find the line with the function call
+    call_line_idx = None
+    for i, line in enumerate(lines):
+        if function_name in line and '(' in line:
+            call_line_idx = i
+            break
+    
+    if call_line_idx is None:
+        raise ValueError(f"Could not find function call: {function_name}")
+    
+    # Look backwards to find the if or elif line
+    condition_line_idx = None
+    for i in range(call_line_idx - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped.startswith('if ') or stripped.startswith('elif '):
+            condition_line_idx = i
+            break
+        # Stop if we hit another major control structure
+        if stripped.startswith('else:'):
+            break
+    
+    if condition_line_idx is None:
+        raise ValueError(f"Could not find if/elif for {function_name}")
+    
+    # Modify the condition line to add "False and" at the start
+    original_line = lines[condition_line_idx]
+    indent = len(original_line) - len(original_line.lstrip())
+    indent_str = original_line[:indent]
+    
+    # Extract the condition part (after if/elif and before :)
+    if original_line.strip().startswith('if '):
+        prefix = 'if '
+        rest = original_line.strip()[3:]  # Remove 'if '
+    elif original_line.strip().startswith('elif '):
+        prefix = 'elif '
+        rest = original_line.strip()[5:]  # Remove 'elif '
+    else:
+        raise ValueError(f"Expected if/elif but got: {original_line}")
+    
+    # Add False and to disable the condition
+    modified_line = f"{indent_str}{prefix}False and {rest}"
+    lines[condition_line_idx] = modified_line
+    
+    return lines
+
+
+def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
+    """Insert errno marker on the line before a function call."""
+    call_line_idx = None
+    for i, line in enumerate(lines):
+        if function_call_pattern in line:
+            # Find the position of the pattern in the line
+            idx = line.find(function_call_pattern)
+            if idx != -1:
+                # Make sure it's not part of a longer identifier
+                # Check that the character before the pattern (if any) is not alphanumeric or underscore
+                if idx == 0 or not (line[idx-1].isalnum() or line[idx-1] == '_'):
+                    call_line_idx = i
+                    break
+    
+    if call_line_idx is None:
+        raise ValueError(f"Could not find function call: {function_call_pattern}")
+    
+    # Get indentation from the call line
+    indent = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
+    indent_str = lines[call_line_idx][:indent]
+    
+    # Insert errno marker on the line before the call
+    errno_line = f"{indent_str}errno[i_b] |= 1 << {errno_bit}  # {comment}"
+    lines.insert(call_line_idx, errno_line)
+    
+    return lines
+
+
 def create_modified_narrowphase_file():
     """
     Create a modified version of narrowphase.py that forces capsule collisions to use GJK.
@@ -62,82 +138,6 @@ def create_modified_narrowphase_file():
     # Split content into lines for easier manipulation
     lines = content.split('\n')
     
-    # Function to find the if/elif line for a function call and disable it
-    def find_and_disable_condition(lines, function_name):
-        """Find function call, look back for if/elif, and disable the condition."""
-        # Find the line with the function call
-        call_line_idx = None
-        for i, line in enumerate(lines):
-            if function_name in line and '(' in line:
-                call_line_idx = i
-                break
-        
-        if call_line_idx is None:
-            raise ValueError(f"Could not find function call: {function_name}")
-        
-        # Look backwards to find the if or elif line
-        condition_line_idx = None
-        for i in range(call_line_idx - 1, -1, -1):
-            stripped = lines[i].strip()
-            if stripped.startswith('if ') or stripped.startswith('elif '):
-                condition_line_idx = i
-                break
-            # Stop if we hit another major control structure
-            if stripped.startswith('else:'):
-                break
-        
-        if condition_line_idx is None:
-            raise ValueError(f"Could not find if/elif for {function_name}")
-        
-        # Modify the condition line to add "False and" at the start
-        original_line = lines[condition_line_idx]
-        indent = len(original_line) - len(original_line.lstrip())
-        indent_str = original_line[:indent]
-        
-        # Extract the condition part (after if/elif and before :)
-        if original_line.strip().startswith('if '):
-            prefix = 'if '
-            rest = original_line.strip()[3:]  # Remove 'if '
-        elif original_line.strip().startswith('elif '):
-            prefix = 'elif '
-            rest = original_line.strip()[5:]  # Remove 'elif '
-        else:
-            raise ValueError(f"Expected if/elif but got: {original_line}")
-        
-        # Add False and to disable the condition
-        modified_line = f"{indent_str}{prefix}False and {rest}"
-        lines[condition_line_idx] = modified_line
-        
-        return lines
-    
-    # Function to insert errno marker before a function call
-    def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
-        """Insert errno marker on the line before a function call."""
-        call_line_idx = None
-        for i, line in enumerate(lines):
-            if function_call_pattern in line:
-                # Find the position of the pattern in the line
-                idx = line.find(function_call_pattern)
-                if idx != -1:
-                    # Make sure it's not part of a longer identifier
-                    # Check that the character before the pattern (if any) is not alphanumeric or underscore
-                    if idx == 0 or not (line[idx-1].isalnum() or line[idx-1] == '_'):
-                        call_line_idx = i
-                        break
-        
-        if call_line_idx is None:
-            raise ValueError(f"Could not find function call: {function_call_pattern}")
-        
-        # Get indentation from the call line
-        indent = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
-        indent_str = lines[call_line_idx][:indent]
-        
-        # Insert errno marker on the line before the call
-        errno_line = f"{indent_str}errno[i_b] |= 1 << {errno_bit}  # {comment}"
-        lines.insert(call_line_idx, errno_line)
-        
-        return lines
-    
     # Disable capsule-capsule analytical path
     lines = find_and_disable_condition(lines, 'capsule_contact.func_capsule_capsule_contact')
     
@@ -147,6 +147,9 @@ def create_modified_narrowphase_file():
     # Insert errno before GJK calls
     lines = insert_errno_before_call(lines, 'diff_gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
     lines = insert_errno_before_call(lines, 'gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
+    
+    # Rejoin lines
+    content = '\n'.join(lines)
     
     # Write to /tmp with random integer
     randint = random.randint(0, 1000000)
