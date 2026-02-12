@@ -56,8 +56,6 @@ class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
     radii: torch.Tensor = make_tensor_field((0,))
     stiffness: torch.Tensor = make_tensor_field((0,))
-    contypes: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    conaffinities: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
 
     probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
@@ -154,23 +152,6 @@ class KinematicContactProbe(
         self._shared_metadata.stiffness = concat_with_tensor(
             self._shared_metadata.stiffness, self._options.stiffness, expand=(1,), dim=0
         )
-        self._shared_metadata.contypes = concat_with_tensor(
-            self._shared_metadata.contypes, self._options.contype, expand=(1,), dim=0
-        )
-        self._shared_metadata.conaffinities = concat_with_tensor(
-            self._shared_metadata.conaffinities, self._options.conaffinity, expand=(1,), dim=0
-        )
-
-        if self._shared_metadata.contact_geoms.numel() == 0:
-            solver = self._shared_metadata.solver
-
-            self._shared_metadata.contact_geoms = torch.full(
-                (solver._B, min(solver.n_geoms, solver.max_collision_pairs)),
-                -1,
-                dtype=torch.int32,
-                device=gs.device,
-            )
-            self._shared_metadata.n_contact_geoms = torch.zeros(solver._B, dtype=torch.int32, device=gs.device)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         n = self._n_probes
@@ -243,8 +224,7 @@ class KinematicContactProbe(
             radii=shared_metadata.radii,
             stiffness=shared_metadata.stiffness,
             links_idx=shared_metadata.links_idx,
-            contypes=shared_metadata.contypes,
-            conaffinities=shared_metadata.conaffinities,
+            n_sensors=shared_metadata.links_idx.shape[0],
             n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
             sensor_cache_start=shared_metadata.sensor_cache_start,
             sensor_probe_start=shared_metadata.sensor_probe_start,
@@ -474,8 +454,7 @@ def _kernel_kinematic_contact_probe(
     radii: ti.types.ndarray(),
     stiffness: ti.types.ndarray(),
     links_idx: ti.types.ndarray(),
-    contypes: ti.types.ndarray(),
-    conaffinities: ti.types.ndarray(),
+    n_sensors: ti.i32,
     n_probes_per_sensor: ti.types.ndarray(),
     sensor_cache_start: ti.types.ndarray(),
     sensor_probe_start: ti.types.ndarray(),
@@ -515,8 +494,6 @@ def _kernel_kinematic_contact_probe(
         radius = radii[i_p]
         stiff = stiffness[i_s]
         sensor_link_idx = links_idx[i_s]
-        sensor_contype = contypes[i_s]
-        sensor_conaffinity = conaffinities[i_s]
 
         link_pos = links_state.pos[sensor_link_idx, i_b]
         link_quat = links_state.quat[sensor_link_idx, i_b]
@@ -529,15 +506,13 @@ def _kernel_kinematic_contact_probe(
         for i_cg in range(n_contact_geoms[i_b]):
             i_g = contact_geoms[i_b, i_cg]
 
-            # Filter geoms based on AABB check, self-link, contype/conaffinity
+            # Filter geoms based on AABB check, self-link
             if not func_check_collision_filter(
                 i_g,
                 i_b,
                 probe_pos,
                 radius,
                 sensor_link_idx,
-                sensor_contype,
-                sensor_conaffinity,
                 geoms_state,
                 geoms_info,
                 rigid_global_info,
@@ -601,8 +576,6 @@ def func_check_collision_filter(
     probe_pos: ti.types.vector(3, gs.ti_float),
     probe_radius: gs.ti_float,
     other_link_idx: ti.i32,
-    other_contype: ti.i32,
-    other_conaffinity: ti.i32,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -618,15 +591,6 @@ def func_check_collision_filter(
     geom_link_idx = geoms_info.link_idx[i_g]
     if valid:
         if geom_link_idx == other_link_idx:
-            valid = False
-
-    # Contype and conaffinity bitmask filtering
-    if valid:
-        geom_contype = geoms_info.contype[i_g]
-        geom_conaffinity = geoms_info.conaffinity[i_g]
-        cond1 = (geom_contype & other_conaffinity) != 0
-        cond2 = (other_contype & geom_conaffinity) != 0
-        if not (cond1 and cond2):
             valid = False
 
     # Weld constraint filtering

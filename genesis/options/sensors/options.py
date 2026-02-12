@@ -202,18 +202,12 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
     stiffness : float
         User-defined coefficient for force estimation. Default: 1000.0.
-    contype : int
-        Collision type bitmask. Default: 1.
-    conaffinity : int
-        Collision affinity bitmask. Default: 0x7FFFFFFF.
     """
 
     probe_local_pos: Sequence[Tuple3FType] = [(0.0, 0.0, 0.0)]
     probe_local_normal: Sequence[Tuple3FType] = [(0.0, 0.0, 1.0)]
     radius: Sequence[float] | float = 0.005
     stiffness: float = 1000.0
-    contype: int = 1
-    conaffinity: int = 0x7FFFFFFF  # All bits set except sign bit (max positive int32)
 
     debug_sphere_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.5)
     debug_contact_color: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.8)
@@ -223,10 +217,6 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
             gs.raise_exception(f"radius must be positive, got: {self.radius}")
         if self.stiffness < 0:
             gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
-        if self.contype < 0:
-            gs.raise_exception(f"contype must be non-negative, got: {self.contype}")
-        if self.conaffinity < 0:
-            gs.raise_exception(f"conaffinity must be non-negative, got: {self.conaffinity}")
 
         probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
         probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
