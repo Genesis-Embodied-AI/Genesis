@@ -8,6 +8,7 @@ Debug mode enables collision path tracking counters in the narrowphase kernel th
 empirically verify which algorithm (analytical vs GJK) was actually executed.
 """
 
+import gstaichi as ti
 import os
 import tempfile
 import xml.etree.ElementTree as ET
@@ -38,6 +39,7 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 
 @pytest.mark.debug(True)
 @pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.taichi_offline_cache(False)
 @pytest.mark.parametrize(
     "pos1,euler1,pos2,euler2,should_collide,description",
     [
@@ -59,12 +61,48 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
         ((0, 0, 0), (0, 0, 0), (0.3, 0.3, 0), (0, 0, 0), False, "diagonal_separated"),
     ],
 )
-def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description):
+def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description, monkeypatch):
     """
     Compare analytical capsule-capsule collision with GJK.
     """
     radius = 0.1
     half_length = 0.25
+
+    from genesis.engine.solvers.rigid.collider import capsule_contact
+    import genesis.utils.array_class as array_class
+
+    func_sphere_capsule_contact_orig = capsule_contact.func_capsule_capsule_contact
+
+    def func_sphere_capsule_contact_with_counter(
+        i_ga,
+        i_gb,
+        i_b,
+        geoms_state: array_class.GeomsState,
+        geoms_info: array_class.GeomsInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
+        collider_state: array_class.ColliderState,
+        collider_info: array_class.ColliderInfo,
+        errno: array_class.V_ANNOTATION,
+    ):
+        ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
+        print("hello")
+        func_sphere_capsule_contact_orig(
+            i_ga=i_ga,
+            i_gb=i_gb,
+            i_b=i_b,
+            geoms_state=geoms_state,
+            geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
+            collider_state=collider_state,
+            collider_info=collider_info,
+            errno=errno)
+
+    # Monkey patch capsule contact function with counter version
+    monkeypatch.setattr(
+        capsule_contact,
+        "func_capsule_capsule_contact",
+        func_sphere_capsule_contact_with_counter
+    )
 
     # Scene 1: Using analytical capsule-capsule detection
     scene_analytical = gs.Scene(
