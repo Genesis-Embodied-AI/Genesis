@@ -318,6 +318,10 @@ class IPCCoupler(RBC):
         # Structure: {(env_idx, link_idx): abd_geometry_slot}
         self._link_to_abd_slot = {}
 
+        # Track primary ABD bodies (excludes merged link aliases from fixed joints)
+        # Only primary bodies are used to build _abd_body_idx_to_link mapping
+        self._primary_abd_links = []  # List of (env_idx, link_idx) tuples
+
         # ============ AffineBodyStateAccessorFeature for efficient state retrieval ============
         # Optimized batch ABD state retrieval (initialized in _finalize_ipc)
         self._abd_state_feature = None  # AffineBodyStateAccessorFeature instance
@@ -1000,14 +1004,17 @@ class IPCCoupler(RBC):
 
                         rigid_solver._mesh_handles[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
 
-                        link_obj_counter += 1
                         # Store ABD geometry and slot mapping for articulation constraint
                         # Store for target link
                         self._link_to_abd_geo[(i_b, link_idx)] = merged_mesh
                         self._link_to_abd_slot[(i_b, link_idx)] = abd_slot
 
+                        # Record this as a primary ABD body (not an alias from fixed joint merging)
+                        self._primary_abd_links.append((i_b, link_idx))
+
                         # Also store mappings for all original links that were merged into this target
                         # This allows joints connecting to child links (via fixed joints) to find the merged ABD
+                        # NOTE: These are aliases and NOT added to _primary_abd_links
                         if "original_to_target" in link_data:
                             for original_link_idx in link_data["original_to_target"].keys():
                                 self._link_to_abd_geo[(i_b, original_link_idx)] = merged_mesh
@@ -1015,6 +1022,7 @@ class IPCCoupler(RBC):
                                 gs.logger.info(
                                     f"Created ABD slot mapping: link {original_link_idx} -> target link {link_idx} (merged via fixed joint)"
                                 )
+                        link_obj_counter += 1
                 except Exception as e:
                     gs.logger.warning(f"Failed to create IPC object for link {link_idx}: {e}")
                     continue
@@ -1035,24 +1043,31 @@ class IPCCoupler(RBC):
         """
         Initialize AffineBodyStateAccessorFeature for efficient batch ABD state retrieval.
 
-        This optimization uses libuipc's AffineBodyStateAccessorFeature to retrieve
-        all rigid body states in a single batch operation (O(N) where N = num rigid bodies),
-        instead of iterating through all geometries via SceneVisitor (O(M) where M = total geometries).
-
-        Performance improvement: ~10x faster for scenes with many rigid bodies.
+        This feature allows O(num_rigid_bodies) retrieval instead of O(total_geometries).
+        Creates index mapping from ABD body index to (env_idx, link_idx, entity_idx) for
+        fast lookups during runtime.
         """
         try:
             from uipc.core import AffineBodyStateAccessorFeature
             from uipc import builtin
             import numpy as np
 
+            # Try to get the feature from IPC world
             self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
             if self._abd_state_feature is None:
-                gs.logger.warning("AffineBodyStateAccessorFeature not available, falling back to legacy retrieval")
+                gs.logger.warning(
+                    "AffineBodyStateAccessorFeature not available. "
+                    "Using legacy SceneVisitor method for ABD state retrieval (slower)."
+                )
                 return
 
             body_count = self._abd_state_feature.body_count()
-            gs.logger.info(f"AffineBodyStateAccessorFeature initialized with {body_count} rigid bodies")
+            gs.logger.info(f"AffineBodyStateAccessorFeature initialized with {body_count} ABD bodies")
+
+            if body_count == 0:
+                # No ABD bodies, feature not needed
+                self._abd_state_feature = None
+                return
 
             # Create state geometry for batch data transfer
             self._abd_state_geo = self._abd_state_feature.create_geometry()
@@ -1061,29 +1076,43 @@ class IPCCoupler(RBC):
             self._abd_state_geo.instances().create(builtin.velocity, identity_matrix)
 
             # Build index mapping: ABD body index -> (env_idx, link_idx, entity_idx)
+            # The order matches the order ABD bodies were added to IPC scene
+            # IMPORTANT: Only iterate over primary ABD bodies (not merged link aliases)
             self._abd_body_idx_to_link = {}
             abd_body_idx = 0
 
-            # Iterate through all rigid links that were added to IPC
-            # The order should match the order in which geometries were added to IPC
-            if not hasattr(self, "_link_to_abd_geo"):
-                gs.logger.warning("_link_to_abd_geo not found, ABD state accessor not initialized")
-                return
-
-            for (env_idx, link_idx), _ in self._link_to_abd_geo.items():
+            # Only iterate over primary ABD bodies (excludes merged link aliases)
+            for env_idx, link_idx in self._primary_abd_links:
                 entity_idx = self.rigid_solver.links_info.entity_idx[link_idx]
                 self._abd_body_idx_to_link[abd_body_idx] = (env_idx, link_idx, entity_idx)
                 abd_body_idx += 1
 
+            # Verify the count matches IPC's ABD body count
             if abd_body_idx != body_count:
                 gs.logger.warning(
                     f"ABD body count mismatch: expected {body_count}, got {abd_body_idx}. "
-                    "State accessor may not work correctly."
+                    f"This may cause indexing errors in AffineBodyStateAccessorFeature."
+                )
+            else:
+                gs.logger.info(
+                    f"ABD body index mapping created: {len(self._abd_body_idx_to_link)} entries. "
+                    f"Optimized state retrieval enabled (O(N) instead of O(M), N={body_count})."
                 )
 
-        except Exception as e:
-            gs.logger.warning(f"Failed to initialize AffineBodyStateAccessorFeature: {e}")
+        except ImportError:
+            gs.logger.warning(
+                "AffineBodyStateAccessorFeature not available in this libuipc version. "
+                "Using legacy SceneVisitor method for ABD state retrieval (slower)."
+            )
             self._abd_state_feature = None
+            self._abd_state_geo = None
+        except Exception as e:
+            gs.logger.warning(
+                f"Failed to initialize AffineBodyStateAccessorFeature: {e}. "
+                f"Falling back to legacy SceneVisitor method (slower)."
+            )
+            self._abd_state_feature = None
+            self._abd_state_geo = None
 
     # ============================================================
     # Section 3: Configuration API
@@ -1676,10 +1705,10 @@ class IPCCoupler(RBC):
     def _retrieve_rigid_states_optimized(self, entity_set=None):
         """
         Optimized ABD state retrieval using AffineBodyStateAccessorFeature.
-        Also directly populates pre-allocated numpy arrays in coupling_data.
 
-        Performance: O(N) where N = num_rigid_bodies, vs O(M) for legacy method where M = total_geometries.
-        Speedup: ~10x faster for large scenes.
+        Performance: O(num_rigid_bodies) instead of O(total_geometries).
+        Also directly populates pre-allocated numpy arrays in coupling_data for
+        force computation, eliminating Python loops and memory allocation overhead.
 
         Parameters
         ----------
@@ -1689,7 +1718,7 @@ class IPCCoupler(RBC):
         Returns
         -------
         dict
-            abd_data_by_link mapping: link_idx -> {env_idx: {transform, aim_transform}}
+            abd_data_by_link: link_idx -> {env_idx: {transform, aim_transform}}
         """
         from uipc import builtin
 
@@ -1701,7 +1730,16 @@ class IPCCoupler(RBC):
 
         # Get all transforms at once (array view)
         trans_attr = self._abd_state_geo.instances().find(builtin.transform)
+        if trans_attr is None:
+            return abd_data_by_link
+
         transforms = trans_attr.view()  # Shape: (num_bodies, 4, 4)
+
+        # Get velocities (4x4 matrix representing transform derivative)
+        vel_attr = self._abd_state_geo.instances().find(builtin.velocity)
+        velocities = None
+        if vel_attr is not None:
+            velocities = vel_attr.view()  # Shape: (num_bodies, 4, 4)
 
         # Get pre-allocated numpy arrays from coupling_data
         cd = self.coupling_data
@@ -1713,56 +1751,75 @@ class IPCCoupler(RBC):
             if entity_set is not None and entity_idx not in entity_set:
                 continue
 
-            # Get transform matrix from IPC
-            transform_matrix = transforms[abd_body_idx].copy()
+            # Get aim transform (Genesis state stored before advance)
+            if link_idx not in self._genesis_stored_states or env_idx not in self._genesis_stored_states[link_idx]:
+                continue
 
-            # Get aim transform (stored Genesis state before IPC advance)
-            aim_transform = None
-            if link_idx in self._genesis_stored_states and env_idx in self._genesis_stored_states[link_idx]:
-                aim_transform = self._genesis_stored_states[link_idx][env_idx]
+            aim_transform = self._genesis_stored_states[link_idx][env_idx]
 
-            # Store in abd_data_by_link for backward compatibility
+            # Direct array access from IPC - O(1)
+            transform_matrix = transforms[abd_body_idx]
+
+            # Store data for abd_data_by_link (for compatibility/debugging)
             if link_idx not in abd_data_by_link:
                 abd_data_by_link[link_idx] = {}
+
             abd_data_by_link[link_idx][env_idx] = {
-                "transform": transform_matrix,
+                "transform": transform_matrix.copy(),
                 "aim_transform": aim_transform,
             }
 
-            # Directly fill pre-allocated numpy arrays (no allocation, direct write)
-            if aim_transform is not None:
-                cd.link_indices[n_items] = link_idx
-                cd.env_indices[n_items] = env_idx
-                cd.ipc_transforms[n_items] = transform_matrix
-                cd.aim_transforms[n_items] = aim_transform
-                cd.link_masses[n_items] = rigid_solver.links_info.inertial_mass[link_idx]
-                cd.inertia_tensors[n_items] = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
-                n_items += 1
+            # Add velocity if available (4x4 matrix representing transform derivative)
+            if velocities is not None:
+                velocity_matrix = velocities[abd_body_idx]
+                # Velocity matrix format (from libuipc utils.cu):
+                # [  A[0,0]  A[0,1]  A[0,2]  v_x  ]
+                # [  A[1,0]  A[1,1]  A[1,2]  v_y  ]
+                # [  A[2,0]  A[2,1]  A[2,2]  v_z  ]
+                # [    0       0       0       0   ]
+                # where v = [v_x, v_y, v_z] is linear velocity (last column, first 3 elements)
+                # and A is 3x3 rotation rate matrix (top-left 3x3 block)
+                abd_data_by_link[link_idx][env_idx]["velocity"] = velocity_matrix.copy()
 
+            # Fill pre-allocated numpy arrays (no allocation, direct write)
+            cd.link_indices[n_items] = link_idx
+            cd.env_indices[n_items] = env_idx
+            cd.ipc_transforms[n_items] = transform_matrix
+            cd.aim_transforms[n_items] = aim_transform
+            cd.link_masses[n_items] = rigid_solver.links_info.inertial_mass[link_idx]
+            cd.inertia_tensors[n_items] = rigid_solver.links_info.inertial_i[link_idx].to_numpy()
+            n_items += 1
+
+        # Store count for _apply_abd_coupling_forces
         cd.n_items = n_items
+
         return abd_data_by_link
 
-    def _retrieve_rigid_states_legacy(self, f, entity_set=None):
+    def _retrieve_rigid_states_legacy(self, entity_set=None):
         """
         Legacy ABD state retrieval using SceneVisitor.
-        DEPRECATED: Use _retrieve_rigid_states_optimized instead.
 
-        This method iterates through ALL geometries in the IPC scene (O(M) where M = total geometries),
-        which is slower than the optimized batch retrieval (O(N) where N = num_rigid_bodies).
+        Performance: O(total_geometries) - iterates all IPC geometries.
+
+        Parameters
+        ----------
+        entity_set : set, optional
+            Set of entity indices to process. If None, process all.
+
+        Returns
+        -------
+        dict
+            abd_data_by_link: link_idx -> {env_idx: {transform, aim_transform}}
         """
-        if not hasattr(self, "_ipc_scene") or not hasattr(self.rigid_solver, "list_env_mesh"):
-            return {}
-
         from uipc import builtin, view
         from uipc.backend import SceneVisitor
         from uipc.geometry import SimplicialComplexSlot
-        import genesis.utils.geom as gu
 
         rigid_solver = self.rigid_solver
         visitor = SceneVisitor(self._ipc_scene)
 
         # Collect ABD geometries and their constraint data using metadata
-        abd_data_by_link = {}  # link_idx -> {env_idx: {transform, gradient, mass}}
+        abd_data_by_link = {}  # link_idx -> {env_idx: {transform, aim_transform}}
 
         for geo_slot in visitor.geometries():
             if isinstance(geo_slot, SimplicialComplexSlot):
@@ -1809,7 +1866,10 @@ class IPCCoupler(RBC):
 
     def _retrieve_rigid_states(self, f, entity_set=None):
         """
-        Retrieve ABD transforms from IPC after solve. Uses optimized path if available.
+        Handle rigid body IPC: Retrieve ABD transforms/affine matrices after IPC step.
+
+        Uses AffineBodyStateAccessorFeature for optimized batch retrieval if available,
+        otherwise falls back to legacy SceneVisitor method.
 
         Parameters
         ----------
@@ -1821,18 +1881,20 @@ class IPCCoupler(RBC):
         if not hasattr(self, "_ipc_scene") or not hasattr(self.rigid_solver, "list_env_mesh"):
             return
 
-        # Use optimized retrieval if AffineBodyStateAccessorFeature is available
-        if self._abd_state_feature is not None:
+        # Try optimized path first
+        if self._abd_state_feature is not None and self._abd_state_geo is not None:
             try:
                 abd_data_by_link = self._retrieve_rigid_states_optimized(entity_set)
+                self.abd_data_by_link = abd_data_by_link
+                return
             except Exception as e:
-                gs.logger.warning(f"Optimized retrieval failed: {e}, falling back to legacy method")
-                abd_data_by_link = self._retrieve_rigid_states_legacy(f, entity_set)
-        else:
-            # Fallback to legacy SceneVisitor method
-            abd_data_by_link = self._retrieve_rigid_states_legacy(f, entity_set)
+                gs.logger.warning(
+                    f"AffineBodyStateAccessorFeature failed: {e}. Falling back to legacy SceneVisitor method."
+                )
+                # Fall through to legacy method
 
-        # Store transforms for later access
+        # Use legacy method
+        abd_data_by_link = self._retrieve_rigid_states_legacy(entity_set)
         self.abd_data_by_link = abd_data_by_link
 
     def _apply_abd_coupling_forces(self, entity_set=None):
