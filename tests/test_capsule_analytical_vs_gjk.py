@@ -6,10 +6,9 @@ forces capsule-capsule and sphere-capsule collisions to use GJK instead of
 analytical methods, allowing direct comparison between the two approaches.
 """
 
-# import gstaichi as ti
 import os
-import gstaichi.lang.impl as impl
-# import sys
+import importlib.util
+import random
 import tempfile
 import xml.etree.ElementTree as ET
 
@@ -139,8 +138,6 @@ def create_modified_narrowphase_file():
     Returns:
         str: Path to the temporary modified narrowphase.py file
     """
-    import random
-
     # Find the original narrowphase.py file
     import genesis.engine.solvers.rigid.collider.narrowphase as narrowphase_module
 
@@ -152,9 +149,6 @@ def create_modified_narrowphase_file():
     # remove relative imports
     content = content.replace("from . import ", "from genesis.engine.solvers.rigid.collider import ")
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
-
-    # disable fastcache
-    content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
 
     lines = content.split("\n")
 
@@ -171,6 +165,10 @@ def create_modified_narrowphase_file():
     lines = insert_errno_before_call(lines, "gjk.func_gjk_contact(", 16, "MODIFIED: GJK called for collision detection")
 
     content = "\n".join(lines)
+
+    # Debug: Check if errno was actually inserted
+    errno_count = content.count("errno[i_b] |= 1 << 16")
+    assert errno_count >= 1
 
     randint = random.randint(0, 1000000)
     temp_narrowphase_path = f"/tmp/narrow_{randint}.py"
@@ -240,26 +238,11 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
 
     # NOW monkey-patch for the GJK scene
     temp_narrowphase_path = create_modified_narrowphase_file()
-
-    # Import the modified module and monkey-patch func_convex_convex_contact
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
     narrowphase_modified = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(narrowphase_modified)
-
-    # Monkey-patch the narrowphase module to use modified function
     from genesis.engine.solvers.rigid.collider import narrowphase
-
     monkeypatch.setattr(narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact)
-
-    # CRITICAL: Clear materialized kernel cache to force recompilation with monkey-patched function
-    # The narrowphase.func_convex_convex_contact is a Kernel object with a materialized_kernels cache
-    # that maps (func, template_slot_locations, autodiff_mode) -> compiled kernel
-    # We must clear this cache to force Taichi to recompile with the patched function
-    import gstaichi.lang.impl as impl
-    if hasattr(narrowphase.func_convex_convex_contact, 'materialized_kernels'):
-        narrowphase.func_convex_convex_contact.materialized_kernels.clear()
 
     # Scene 2: Force GJK for capsules (using modified narrowphase)
     scene_gjk = gs.Scene(
@@ -523,25 +506,11 @@ def test_sphere_capsule_vs_gjk(
 
     # NOW monkey-patch for the GJK scene
     temp_narrowphase_path = create_modified_narrowphase_file()
-
-    # Import the modified module and monkey-patch func_convex_convex_contact
-    import importlib.util
-
     spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
     narrowphase_modified = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(narrowphase_modified)
-
-    # Monkey-patch the narrowphase module to use modified function
     from genesis.engine.solvers.rigid.collider import narrowphase
-
     monkeypatch.setattr(narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact)
-
-    # CRITICAL: Clear materialized kernel cache on BOTH the original AND the new function
-    # The original might have cached kernels, and we need to ensure the new one starts fresh
-    if hasattr(original_func, 'materialized_kernels'):
-        original_func.materialized_kernels.clear()
-    if hasattr(narrowphase_modified.func_convex_convex_contact, 'materialized_kernels'):
-        narrowphase_modified.func_convex_convex_contact.materialized_kernels.clear()
 
     # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
     scene_gjk = gs.Scene(
