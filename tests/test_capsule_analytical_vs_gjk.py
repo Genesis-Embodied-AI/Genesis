@@ -194,11 +194,10 @@ def create_modified_narrowphase_file():
         # Test 2: Parallel capsules with light contact
         # Distance: 0.18, sum of radii: 0.2 → penetration = 0.02 (light contact)
         ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light"),
-        # Test 3: Diagonal capsule near vertical capsule (AABBs overlap, no collision)
-        # Capsule 1 vertical at origin, Capsule 2 rotated 60° at X=0.45
-        # 60° rotation creates AABB X: [-0.317, 0.317], so at X=0.45, AABB: [0.133, 0.767]
-        # This overlaps with vertical capsule AABB [-0.1, 0.1], but distance > 0.2 (no collision)
-        ((0, 0, 0), (0, 0, 0), (0.45, 0, 0), (0, 60, 0), False, "diagonal_near"),
+        # Test 3: Parallel horizontal capsules, displaced at 45° in YZ plane (AABBs overlap, no collision)
+        # Both horizontal along X, capsule 2 at (0, 0.17, 0.17), distance = r1+r2+4*EPS = 0.24
+        # AABBs overlap but cylinders don't collide
+        ((0, 0, 0), (0, 90, 0), (0, 0.17, 0.17), (0, 90, 0), False, "horizontal_displaced"),
         # Test 4: Parallel capsules with deep penetration (for multicontact)
         # Distance: 0.15, sum of radii: 0.2 → penetration = 0.05 (deeper for multicontact)
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep"),
@@ -537,13 +536,12 @@ def test_sphere_capsule_vs_gjk(
 
     monkeypatch.setattr(narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact)
 
-    # CRITICAL: Clear materialized kernel cache to force recompilation with monkey-patched function
-    # The narrowphase.func_convex_convex_contact is a Kernel object with a materialized_kernels cache
-    # that maps (func, template_slot_locations, autodiff_mode) -> compiled kernel
-    # We must clear this cache to force Taichi to recompile with the patched function
-    import gstaichi.lang.impl as impl
-    if hasattr(narrowphase.func_convex_convex_contact, 'materialized_kernels'):
-        narrowphase.func_convex_convex_contact.materialized_kernels.clear()
+    # CRITICAL: Clear materialized kernel cache on BOTH the original AND the new function
+    # The original might have cached kernels, and we need to ensure the new one starts fresh
+    if hasattr(original_func, 'materialized_kernels'):
+        original_func.materialized_kernels.clear()
+    if hasattr(narrowphase_modified.func_convex_convex_contact, 'materialized_kernels'):
+        narrowphase_modified.func_convex_convex_contact.materialized_kernels.clear()
 
     # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
     scene_gjk = gs.Scene(
