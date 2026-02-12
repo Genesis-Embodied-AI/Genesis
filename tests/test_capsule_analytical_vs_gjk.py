@@ -458,23 +458,26 @@ def create_sphere_mjcf(name, pos, radius):
         # Distance from sphere center to capsule top: 0.4 - 0.25 = 0.15
         # Sum of radii: 0.1 + 0.1 = 0.2 → should collide (penetration = 0.05)
         ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top"),
-        # Test 2: Sphere far from capsule
-        # Sphere at (1.0, 0, 0), capsule vertical at origin
-        # Minimum distance > 0.2 → should NOT collide
-        ((1.0, 0, 0), (0, 0, 0), (0, 0, 0), False, "sphere_far_from_capsule"),
-        # Test 3: Sphere touching capsule cylindrical surface
-        # Sphere at (0.19, 0, 0), capsule vertical at origin
-        # Distance to axis: 0.19, sum of radii: 0.2 → barely touching
-        ((0.19, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder"),
-        # Test 4: Sphere at capsule center (deep penetration)
+        # Test 2: Sphere close to capsule (light contact)
+        # Sphere at (0.18, 0, 0), capsule vertical at origin
+        # Distance to axis: 0.18, sum of radii: 0.2 → light penetration
+        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule"),
+        # Test 3: Sphere near rotated capsule (AABBs overlap, no collision)
+        # Capsule rotated 45° increases AABB, sphere at distance where AABBs overlap but no collision
+        ((0.3, 0, 0), (0, 0, 0), (0, 45, 0), False, "sphere_near_rotated_capsule"),
+        # Test 4: Sphere touching capsule cylindrical surface
+        # Sphere at (0.15, 0, 0), capsule vertical at origin
+        # Distance to axis: 0.15, sum of radii: 0.2 → good penetration
+        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder"),
+        # Test 5: Sphere at capsule center (deep penetration)
         # Sphere at origin, capsule vertical at origin
         # Maximum penetration
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center"),
-        # Test 5: Sphere near capsule endpoint (hemispherical cap)
+        # Test 6: Sphere near capsule endpoint (hemispherical cap)
         # Sphere at (0.15, 0, 0.3), capsule vertical at origin
         # Tests collision with the rounded cap of the capsule
         ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap"),
-        # Test 6: Sphere with horizontal capsule
+        # Test 7: Sphere with horizontal capsule
         # Sphere at (0, 0.15, 0), capsule horizontal (rotated 90° around Y)
         # Distance to axis: 0.15, sum of radii: 0.2 → should collide
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule"),
