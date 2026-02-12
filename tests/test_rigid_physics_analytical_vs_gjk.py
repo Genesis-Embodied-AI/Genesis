@@ -237,6 +237,13 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
             entities_gjk[0].set_qpos(np.array([*pos1, *quat1]))
             entities_gjk[1].set_qpos(np.array([*pos2, *quat2]))
 
+            # Zero out velocities to prevent motion during step
+            zero_vel = np.zeros(6)  # 3 linear + 3 angular
+            entities_analytical[0].set_dofs_velocity(zero_vel)
+            entities_analytical[1].set_dofs_velocity(zero_vel)
+            entities_gjk[0].set_dofs_velocity(zero_vel)
+            entities_gjk[1].set_dofs_velocity(zero_vel)
+
             scene_analytical.step()
             scene_gjk.step()
 
@@ -498,6 +505,13 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
             entities_analytical[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
             entities_gjk[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
             entities_gjk[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
+
+            # Zero out velocities to prevent motion during step
+            zero_vel = np.zeros(6)  # 3 linear + 3 angular
+            entities_analytical[0].set_dofs_velocity(zero_vel)
+            entities_analytical[1].set_dofs_velocity(zero_vel)
+            entities_gjk[0].set_dofs_velocity(zero_vel)
+            entities_gjk[1].set_dofs_velocity(zero_vel)
 
             scene_analytical.step()
             scene_gjk.step()
