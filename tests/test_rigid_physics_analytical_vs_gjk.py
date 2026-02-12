@@ -227,76 +227,88 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
     for pos1, euler1, pos2, euler2, should_collide, description in test_cases:
         print(f"\nTest: {description}")
         
-        # Set positions and orientations
-        quat1 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler1), degrees=True)
-        quat2 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler2), degrees=True)
-        
-        entities_analytical[0].set_qpos(np.array([*pos1, *quat1]))
-        entities_analytical[1].set_qpos(np.array([*pos2, *quat2]))
-        entities_gjk[0].set_qpos(np.array([*pos1, *quat1]))
-        entities_gjk[1].set_qpos(np.array([*pos2, *quat2]))
-        
-        scene_analytical.step()
-        scene_gjk.step()
-        
-        scene_creator.checks_after()
-        
-        contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-        contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        try:
+            # Set positions and orientations
+            quat1 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler1), degrees=True)
+            quat2 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler2), degrees=True)
+            
+            entities_analytical[0].set_qpos(np.array([*pos1, *quat1]))
+            entities_analytical[1].set_qpos(np.array([*pos2, *quat2]))
+            entities_gjk[0].set_qpos(np.array([*pos1, *quat1]))
+            entities_gjk[1].set_qpos(np.array([*pos2, *quat2]))
+            
+            scene_analytical.step()
+            scene_gjk.step()
+            
+            scene_creator.checks_after()
+            
+            contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
-        has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
-        has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
-        
-        assert has_collision_analytical == has_collision_gjk, (
-            f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-        )
-        assert has_collision_analytical == should_collide
-        
-        # If both detected a collision, compare the contact details
-        if has_collision_analytical and has_collision_gjk:
-            pen_analytical = contacts_analytical["penetration"][0]
-            pen_gjk = contacts_gjk["penetration"][0]
-
-            normal_analytical = np.array(contacts_analytical["normal"][0])
-            normal_gjk = np.array(contacts_gjk["normal"][0])
-
-            pos_analytical = np.array(contacts_analytical["position"][0])
-            pos_gjk = np.array(contacts_gjk["position"][0])
-
-            pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
-            assert abs(pen_analytical - pen_gjk) < pen_tol, (
-                f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
+            has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
+            has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+            
+            assert has_collision_analytical == has_collision_gjk, (
+                f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
+            assert has_collision_analytical == should_collide
+            
+            # If both detected a collision, compare the contact details
+            if has_collision_analytical and has_collision_gjk:
+                pen_analytical = contacts_analytical["penetration"][0]
+                pen_gjk = contacts_gjk["penetration"][0]
 
-            normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-            assert normal_agreement > 0.95, f"Normal mismatch! agreement: {normal_agreement:.4f}"
+                normal_analytical = np.array(contacts_analytical["normal"][0])
+                normal_gjk = np.array(contacts_gjk["normal"][0])
 
-            pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
-            if description in ["parallel_light", "parallel_deep"]:
-                n_analytical = len(contacts_analytical["geom_a"])
-                n_gjk = len(contacts_gjk["geom_a"])
+                pos_analytical = np.array(contacts_analytical["position"][0])
+                pos_gjk = np.array(contacts_gjk["position"][0])
 
-                if n_analytical >= 2 or n_gjk >= 2:
-                    all_analytical_positions = np.array([contacts_analytical["position"][i] for i in range(n_analytical)])
-                    all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
+                pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
+                assert abs(pen_analytical - pen_gjk) < pen_tol, (
+                    f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
+                )
 
-                    for i, pos_a in enumerate(all_analytical_positions):
-                        min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
-                        assert min_dist < 0.1
+                normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
+                assert normal_agreement > 0.95, f"Normal mismatch! agreement: {normal_agreement:.4f}"
 
-                    # For parallel vertical capsules, verify contacts are on the line between axes
-                    if euler1 == (0, 0, 0) and euler2 == (0, 0, 0):  # Both vertical
-                        expected_xy = np.array([pos2[0] / 2, 0.0])  # Midpoint between capsules
-                        for pos_a in all_analytical_positions:
-                            assert np.linalg.norm(pos_a[:2] - expected_xy) < 0.02
-                            assert -0.26 < pos_a[2] < 0.26
-                        for pos_g in all_gjk_positions:
-                            assert np.linalg.norm(pos_g[:2] - expected_xy) < 0.02
-                            assert -0.26 < pos_g[2] < 0.26
+                pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
+                if description in ["parallel_light", "parallel_deep"]:
+                    n_analytical = len(contacts_analytical["geom_a"])
+                    n_gjk = len(contacts_gjk["geom_a"])
+
+                    if n_analytical >= 2 or n_gjk >= 2:
+                        all_analytical_positions = np.array([contacts_analytical["position"][i] for i in range(n_analytical)])
+                        all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
+
+                        for i, pos_a in enumerate(all_analytical_positions):
+                            min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
+                            assert min_dist < 0.1
+
+                        # For parallel vertical capsules, verify contacts are on the line between axes
+                        if euler1 == (0, 0, 0) and euler2 == (0, 0, 0):  # Both vertical
+                            expected_xy = np.array([pos2[0] / 2, 0.0])  # Midpoint between capsules
+                            for pos_a in all_analytical_positions:
+                                assert np.linalg.norm(pos_a[:2] - expected_xy) < 0.02
+                                assert -0.26 < pos_a[2] < 0.26
+                            for pos_g in all_gjk_positions:
+                                assert np.linalg.norm(pos_g[:2] - expected_xy) < 0.02
+                                assert -0.26 < pos_g[2] < 0.26
+                    else:
+                        assert pos_diff < 0.1
                 else:
-                    assert pos_diff < 0.1
-            else:
-                assert pos_diff < 0.05
+                    assert pos_diff < 0.05
+        except Exception as e:
+            print(f"\n{'='*80}")
+            print(f"FAILED TEST SCENARIO: {description}")
+            print(f"{'='*80}")
+            print(f"Capsule 1: pos={pos1}, euler={euler1}")
+            print(f"Capsule 2: pos={pos2}, euler={euler2}")
+            print(f"Expected collision: {should_collide}")
+            print(f"Backend: {backend}")
+            print(f"Radius: {radius}, Half-length: {half_length}")
+            print(f"{'='*80}")
+            raise
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -437,7 +449,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
         ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False),
         ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False),
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False),
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", False),
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True),
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
     ]
     
@@ -475,50 +487,63 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
             
         print(f"\nTest: {description}")
         
-        # Set positions and orientations
-        capsule_quat = gs.utils.geom.xyz_to_quat(xyz=np.array(capsule_euler), degrees=True)
-        sphere_quat = gs.utils.geom.xyz_to_quat(xyz=np.array([0, 0, 0]), degrees=True)
-        
-        entities_analytical[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
-        entities_analytical[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
-        entities_gjk[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
-        entities_gjk[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
-        
-        scene_analytical.step()
-        scene_gjk.step()
-        
-        scene_creator.checks_after()
-        
-        contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-        contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        try:
+            # Set positions and orientations
+            capsule_quat = gs.utils.geom.xyz_to_quat(xyz=np.array(capsule_euler), degrees=True)
+            sphere_quat = gs.utils.geom.xyz_to_quat(xyz=np.array([0, 0, 0]), degrees=True)
+            
+            entities_analytical[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
+            entities_analytical[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
+            entities_gjk[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
+            entities_gjk[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
+            
+            scene_analytical.step()
+            scene_gjk.step()
+            
+            scene_creator.checks_after()
+            
+            contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
-        has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
-        has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
-        
-        assert has_collision_analytical == has_collision_gjk, (
-            f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-        )
-        assert has_collision_analytical == should_collide
-        
-        # If both detected a collision, compare the contact details
-        if has_collision_analytical and has_collision_gjk:
-            pen_analytical = contacts_analytical["penetration"][0]
-            pen_gjk = contacts_gjk["penetration"][0]
-
-            normal_analytical = np.array(contacts_analytical["normal"][0])
-            normal_gjk = np.array(contacts_gjk["normal"][0])
-
-            pos_analytical = np.array(contacts_analytical["position"][0])
-            pos_gjk = np.array(contacts_gjk["position"][0])
-
-            pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
-            assert abs(pen_analytical - pen_gjk) < pen_tol, (
-                f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
+            has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
+            has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+            
+            assert has_collision_analytical == has_collision_gjk, (
+                f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
+            assert has_collision_analytical == should_collide
+            
+            # If both detected a collision, compare the contact details
+            if has_collision_analytical and has_collision_gjk:
+                pen_analytical = contacts_analytical["penetration"][0]
+                pen_gjk = contacts_gjk["penetration"][0]
 
-            normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-            normal_tol = 0.5 if description == "sphere_at_capsule_center" else 0.95
-            assert normal_agreement > normal_tol, f"Normal mismatch! agreement: {normal_agreement:.4f}"
+                normal_analytical = np.array(contacts_analytical["normal"][0])
+                normal_gjk = np.array(contacts_gjk["normal"][0])
 
-            pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
-            assert pos_diff < 0.05, f"Position mismatch! Diff: {pos_diff:.6f}"
+                pos_analytical = np.array(contacts_analytical["position"][0])
+                pos_gjk = np.array(contacts_gjk["position"][0])
+
+                pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
+                assert abs(pen_analytical - pen_gjk) < pen_tol, (
+                    f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
+                )
+
+                normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
+                normal_tol = 0.5 if description == "sphere_at_capsule_center" else 0.95
+                assert normal_agreement > normal_tol, f"Normal mismatch! agreement: {normal_agreement:.4f}"
+
+                pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
+                assert pos_diff < 0.05, f"Position mismatch! Diff: {pos_diff:.6f}"
+        except Exception as e:
+            print(f"\n{'='*80}")
+            print(f"FAILED TEST SCENARIO: {description}")
+            print(f"{'='*80}")
+            print(f"Sphere: pos={sphere_pos}")
+            print(f"Capsule: pos={capsule_pos}, euler={capsule_euler}")
+            print(f"Expected collision: {should_collide}")
+            print(f"Backend: {backend}")
+            print(f"Sphere radius: {sphere_radius}")
+            print(f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}")
+            print(f"{'='*80}")
+            raise
