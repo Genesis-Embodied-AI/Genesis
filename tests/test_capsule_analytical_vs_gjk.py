@@ -119,6 +119,8 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     func_sphere_capsule_contact_orig = capsule_contact.func_capsule_capsule_contact
 
+    use_gjk = False
+
     @ti.func
     def func_sphere_capsule_contact_with_counter(
         i_ga,
@@ -131,10 +133,11 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         collider_info: array_class.ColliderInfo,
         errno: array_class.V_ANNOTATION,
     ):
-        ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
+        # ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
         # ti.atomic_add(errno[i_b], 1)
-        errno[i_b] |= 1 << 16
-        print("hello")
+        # errno[i_b] |= 1 << 16
+        # print("hello")
+        # if not use_gjk:
         return func_sphere_capsule_contact_orig(
             i_ga=i_ga,
             i_gb=i_gb,
@@ -145,6 +148,8 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
             collider_state=collider_state,
             collider_info=collider_info,
             errno=errno)
+        # else:
+            
 
     monkeypatch.setattr(
         capsule_contact,
@@ -255,7 +260,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     #     0
     # ]
     print("scene_analytical.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", scene_analytical.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
-    print("gjk_scene_gjk_count.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", gjk_scene_gjk_count.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
+    print("scene_gjk.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", scene_gjk.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
     analytical_gjk_count = scene_analytical.rigid_solver.collider.collider_state.debug_gjk_count[0]
     gjk_scene_capsule_count = scene_gjk.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
     gjk_scene_gjk_count = scene_gjk.rigid_solver.collider.collider_state.debug_gjk_count[0]
