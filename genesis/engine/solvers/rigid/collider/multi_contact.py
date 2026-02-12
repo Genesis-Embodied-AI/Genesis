@@ -12,13 +12,14 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
-# Import helper functions from gjk
-from .gjk import func_is_equal_vec, RETURN_CODE
+from .constants import RETURN_CODE
+from .utils import (
+    func_is_equal_vec,
+)
 
 
 @ti.func
 def func_multi_contact(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
@@ -26,6 +27,10 @@ def func_multi_contact(
     gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     i_f,
 ):
@@ -88,23 +93,14 @@ def func_multi_contact(
 
         nnorms = 0
         if geom_type == gs.GEOM_TYPE.BOX:
+            quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_box_normals(
-                geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1i, v2i, v3i, t_dir
+                geoms_info, gjk_state, gjk_info, i_g, quat, i_b, nface, v1i, v2i, v3i, t_dir
             )
         elif geom_type == gs.GEOM_TYPE.MESH:
+            quat = quat_a if i_g0 == 0 else quat_b
             nnorms = func_potential_mesh_normals(
-                geoms_state,
-                geoms_info,
-                verts_info,
-                faces_info,
-                gjk_state,
-                gjk_info,
-                i_g,
-                i_b,
-                nface,
-                v1i,
-                v2i,
-                v3i,
+                geoms_info, verts_info, faces_info, gjk_state, gjk_info, i_g, quat, i_b, nface, v1i, v2i, v3i
             )
 
         for i_n in range(nnorms):
@@ -140,18 +136,23 @@ def func_multi_contact(
 
             nnorms = 0
             if geom_type == gs.GEOM_TYPE.BOX:
+                pos = pos_a if is_edge_face else pos_b
+                quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_box_edge_normals(
-                    geoms_state, geoms_info, gjk_state, gjk_info, i_g, i_b, nface, v1, v2, v1i, v2i
+                    geoms_info, gjk_state, gjk_info, i_g, pos, quat, i_b, nface, v1, v2, v1i, v2i
                 )
             elif geom_type == gs.GEOM_TYPE.MESH:
+                pos = pos_a if is_edge_face else pos_b
+                quat = quat_a if is_edge_face else quat_b
                 nnorms = func_potential_mesh_edge_normals(
-                    geoms_state,
                     geoms_info,
                     verts_info,
                     faces_info,
                     gjk_state,
                     gjk_info,
                     i_g,
+                    pos,
+                    quat,
                     i_b,
                     nface,
                     v1,
@@ -225,9 +226,13 @@ def func_multi_contact(
                     normal_face_idx = gjk_state.contact_faces[i_b, j].id2
 
                 if geom_type == gs.GEOM_TYPE.BOX:
-                    nface = func_box_face(geoms_state, geoms_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    pos = pos_a if k == 0 else pos_b
+                    quat = quat_a if k == 0 else quat_b
+                    nface = func_box_face(geoms_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
                 elif geom_type == gs.GEOM_TYPE.MESH:
-                    nface = func_mesh_face(geoms_state, verts_info, faces_info, gjk_state, i_g, i_b, k, normal_face_idx)
+                    pos = pos_a if k == 0 else pos_b
+                    quat = quat_a if k == 0 else quat_b
+                    nface = func_mesh_face(verts_info, faces_info, gjk_state, i_g, pos, quat, i_b, k, normal_face_idx)
 
             if k == 0:
                 nface1 = nface
@@ -293,11 +298,11 @@ def func_simplex_dim(
 
 @ti.func
 def func_potential_box_normals(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dim,
     v1,
@@ -314,9 +319,12 @@ def func_potential_box_normals(
     If the simplex is a point, at most three face normals are related.
 
     We identify related face normals to the simplex by checking the vertex indices of the simplex.
-    """
-    g_quat = geoms_state.quat[i_g, i_b]
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (vertex start index). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
 
+    """
     # Change to local vertex indices
     v1 -= geoms_info.vert_start[i_g]
     v2 -= geoms_info.vert_start[i_g]
@@ -348,7 +356,7 @@ def func_potential_box_normals(
             local_n = gs.ti_vec3(0, 0, 0)
             local_n[i] = xyz[i]
 
-        global_n = gu.ti_transform_by_quat(local_n, g_quat)
+        global_n = gu.ti_transform_by_quat(local_n, quat)
 
         if dim == 3:
             gjk_state.contact_normals[i_b, 0].normal = global_n
@@ -404,8 +412,7 @@ def func_potential_box_normals(
     if is_degenerate_simplex:
         n_normals = (
             1
-            if func_box_normal_from_collision_normal(geoms_state, gjk_state, gjk_info, i_g, i_b, dir)
-            == RETURN_CODE.SUCCESS
+            if func_box_normal_from_collision_normal(gjk_state, gjk_info, i_g, quat, i_b, dir) == RETURN_CODE.SUCCESS
             else 0
         )
 
@@ -454,15 +461,19 @@ def func_cmp_bit(
 
 @ti.func
 def func_box_normal_from_collision_normal(
-    geoms_state: array_class.GeomsState,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dir,
 ):
     """
     Among the 6 faces of the box, find the one of which normal is closest to the [dir].
+
+    Thread-safety note: Geometry index `i_g` is not used in this function at all
+    (retained for API consistency with original). It does not access `geoms_state.pos`
+    or `geoms_state.quat`.
     """
     # Every box face normal
     normals = ti.Vector(
@@ -471,8 +482,7 @@ def func_box_normal_from_collision_normal(
     )
 
     # Get local collision normal
-    g_quat = geoms_state.quat[i_g, i_b]
-    local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(g_quat))
+    local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(quat))
     local_dir = local_dir.normalized()
 
     # Determine the closest face normal
@@ -490,13 +500,13 @@ def func_box_normal_from_collision_normal(
 
 @ti.func
 def func_potential_mesh_normals(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dim,
     v1,
@@ -513,10 +523,12 @@ def func_potential_mesh_normals(
     could be related.
 
     We identify related face normals to the simplex by checking the vertex indices of the simplex.
-    """
-    # Get the geometry state and quaternion
-    g_quat = geoms_state.quat[i_g, i_b]
 
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    Note that this function only uses quat (not pos) since face normals are orientation-dependent
+    but not position-dependent.
+    """
     # Number of potential face normals
     n_normals = 0
 
@@ -548,7 +560,7 @@ def func_potential_mesh_normals(
             # Compute the face normal
             n = (v2pos - v1pos).cross(v3pos - v1pos)
             n = n.normalized()
-            n = gu.ti_transform_by_quat(n, g_quat)
+            n = gu.ti_transform_by_quat(n, quat)
 
             gjk_state.contact_normals[i_b, n_normals].normal = n
             gjk_state.contact_normals[i_b, n_normals].id = i_f
@@ -594,11 +606,12 @@ def func_find_aligned_faces(
 
 @ti.func
 def func_potential_box_edge_normals(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dim,
     v1,
@@ -614,10 +627,11 @@ def func_potential_box_edge_normals(
     If the simplex is a point, at most three edge normals are related.
 
     We identify related edge normals to the simplex by checking the vertex indices of the simplex.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (geometry size data, vertex start index). It does not access `geoms_state.pos` or
+    `geoms_state.quat`.
     """
-    # Get the geometry state and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
     g_size_x = geoms_info.data[i_g][0] * 0.5
     g_size_y = geoms_info.data[i_g][1] * 0.5
     g_size_z = geoms_info.data[i_g][2] * 0.5
@@ -645,7 +659,7 @@ def func_potential_box_edge_normals(
                 bv = gs.ti_vec3(x, -y, z)
             elif i == 2:
                 bv = gs.ti_vec3(x, y, -z)
-            ev = gu.ti_transform_by_trans_quat(bv, g_pos, g_quat)
+            ev = gu.ti_transform_by_trans_quat(bv, pos, quat)
             r = func_safe_normalize(gjk_info, ev - v1)
 
             gjk_state.contact_normals[i_b, i].endverts = ev
@@ -658,13 +672,14 @@ def func_potential_box_edge_normals(
 
 @ti.func
 def func_potential_mesh_edge_normals(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dim,
     v1,
@@ -680,11 +695,10 @@ def func_potential_mesh_edge_normals(
     If the simplex is a point, multiple edges that are adjacent to the point could be related.
 
     We identify related edge normals to the simplex by checking the vertex indices of the simplex.
-    """
-    # Get the geometry state and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
 
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (face start/end indices). It does not access `geoms_state.pos` or `geoms_state.quat`.
+    """
     # Number of potential face normals
     n_normals = 0
 
@@ -718,7 +732,7 @@ def func_potential_mesh_edge_normals(
 
                 # Compute the edge normal
                 v2_pos = verts_info.init_pos[t_v2i]
-                v2_pos = gu.ti_transform_by_trans_quat(v2_pos, g_pos, g_quat)
+                v2_pos = gu.ti_transform_by_trans_quat(v2_pos, pos, quat)
                 t_res = func_safe_normalize(gjk_info, v2_pos - v1)
 
                 gjk_state.contact_normals[i_b, n_normals].normal = t_res
@@ -790,16 +804,20 @@ def func_find_aligned_edge_face(
 
 @ti.func
 def func_box_face(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     i_o,
     face_idx,
 ):
     """
     Get the face vertices of the box geometry.
+
+    Thread-safety note: Geometry index `i_g` is only used for read-only metadata access
+    (geometry size data). It does not access `geoms_state.pos` or `geoms_state.quat`.
     """
     g_size_x = geoms_info.data[i_g][0]
     g_size_y = geoms_info.data[i_g][1]
@@ -834,14 +852,10 @@ def func_box_face(
             vs[3 * i + 1] = s[1] * g_size_y
             vs[3 * i + 2] = s[2] * g_size_z
 
-    # Get geometry position and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-
     # Transform the vertices to the global coordinates
     for i in range(nface):
         v = gs.ti_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
-        v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
+        v = gu.ti_transform_by_trans_quat(v, pos, quat)
         if i_o == 0:
             gjk_state.contact_faces[i_b, i].vert1 = v
         else:
@@ -852,27 +866,28 @@ def func_box_face(
 
 @ti.func
 def func_mesh_face(
-    geoms_state: array_class.GeomsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     i_g,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     i_o,
     face_idx,
 ):
     """
     Get the face vertices of the mesh.
-    """
-    # Get geometry position and quaternion
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
 
+    Thread-safety note: Geometry index `i_g` is only used to pass through to `faces_info`
+    and `verts_info` for read-only metadata access (face vertex indices, initial positions).
+    It does not access `geoms_state.pos` or `geoms_state.quat`.
+    """
     nvert = 3
     for i in range(nvert):
         i_v = faces_info[face_idx].verts_idx[i]
         v = verts_info.init_pos[i_v]
-        v = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
+        v = gu.ti_transform_by_trans_quat(v, pos, quat)
         if i_o == 0:
             gjk_state.contact_faces[i_b, i].vert1 = v
         else:

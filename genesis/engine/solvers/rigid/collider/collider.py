@@ -14,23 +14,17 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-import genesis.utils.sdf as sdf
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
 from genesis.utils.sdf import SDF
 
-from . import gjk
-from . import diff_gjk
 from . import mpr
+from . import gjk
 from . import support_field
-from .mpr import MPR
-from .gjk import GJK
-from .support_field import SupportField
 
 # Import and re-export from submodules for backward compatibility
 from .broadphase import (
     func_point_in_geom_aabb,
-    func_is_geom_aabbs_overlap,
     func_find_intersect_midpoint,
     func_check_collision_valid,
     func_collision_clear,
@@ -49,7 +43,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
 )
-
+from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
@@ -61,7 +55,6 @@ from .narrowphase import (
     func_plane_box_contact,
     func_convex_convex_contact,
     func_box_box_contact,
-    func_narrow_phase_convex_vs_convex,
     func_narrow_phase_diff_convex_vs_convex,
     func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
@@ -94,9 +87,9 @@ class Collider:
         self._init_collision_fields()
 
         self._sdf = SDF(rigid_solver)
-        self._mpr = MPR(rigid_solver)
-        self._gjk = GJK(rigid_solver)
-        self._support_field = SupportField(rigid_solver)
+        self._mpr = mpr.MPR(rigid_solver)
+        self._gjk = gjk.GJK(rigid_solver)
+        self._support_field = support_field.SupportField(rigid_solver)
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
@@ -466,7 +459,7 @@ class Collider:
             self._solver._errno,
         )
         if self._collider_static_config.has_convex_convex:
-            func_narrow_phase_convex_vs_convex(
+            narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
@@ -508,7 +501,6 @@ class Collider:
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
@@ -651,9 +643,7 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
             self._collider_info,
-            self._gjk._gjk_state,
             self._gjk._gjk_info,
-            self._gjk._gjk_static_config,
             self._collider_state.diff_contact_input,
         )
 
