@@ -255,13 +255,15 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
-    
+
     # Check if GJK was used (bit 16)
     analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
     gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
 
     # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
-    assert not analytical_used_gjk, f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    assert not analytical_used_gjk, (
+        f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    )
     assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
@@ -518,13 +520,15 @@ def test_sphere_capsule_vs_gjk(
 
     # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
-    
+
     # Check if GJK was used (bit 16)
     analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
     gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
 
     # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
-    assert not analytical_used_gjk, f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    assert not analytical_used_gjk, (
+        f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
+    )
     assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
