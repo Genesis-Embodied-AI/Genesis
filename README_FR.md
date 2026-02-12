@@ -140,7 +140,7 @@ docker run -it --network=host \
  genesis-amd
 ```
 
-Les exemples seront accessibles depuis `/workspace/examples`. Note : Les utilisateurs AMD doivent utiliser le backend Vulkan. Cela signifie que vous devrez appeler `gs.init(vulkan)` pour initialiser Genesis.
+Les exemples seront accessibles depuis `/workspace/examples`. Note : Les utilisateurs AMD doivent utiliser le backend ROCm (HIP). Cela signifie que vous devrez appeler `gs.init(gs.amdgpu)` pour initialiser Genesis.
 
 ## Documentation
 
