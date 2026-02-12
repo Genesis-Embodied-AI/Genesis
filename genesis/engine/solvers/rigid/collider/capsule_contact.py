@@ -146,7 +146,8 @@ def func_capsule_capsule_contact(
             normal = -gu.ti_normalize(temp_normal, EPS)
 
         penetration = combined_radius - dist
-        contact_pos = Pa - radius_a * normal
+        # Contact position at midpoint between surfaces (consistent with GJK convention)
+        contact_pos = Pa - radius_a * normal + gs.ti_float(0.5) * penetration * normal
 
     return is_col, normal, contact_pos, penetration
 
@@ -237,6 +238,7 @@ def func_sphere_capsule_contact(
             normal = gu.ti_normalize(normal, EPS)
 
         penetration = combined_radius - dist
-        contact_pos = sphere_center - sphere_radius * normal
+        # Contact position at midpoint between surfaces (consistent with GJK convention)
+        contact_pos = sphere_center - (sphere_radius - gs.ti_float(0.5) * penetration) * normal
 
     return is_col, normal * normal_dir, contact_pos, penetration
