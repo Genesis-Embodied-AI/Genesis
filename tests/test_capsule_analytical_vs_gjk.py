@@ -115,9 +115,17 @@ def create_modified_narrowphase_file():
         """Insert errno marker on the line before a function call."""
         call_line_idx = None
         for i, line in enumerate(lines):
-            if function_call_pattern in line and '(' in line:
-                call_line_idx = i
-                break
+            # Match the full pattern to avoid substring issues
+            # e.g., "diff_gjk.func_gjk_contact(" should not match "gjk.func_gjk_contact("
+            if function_call_pattern in line:
+                # Make sure this is the exact pattern, not a substring
+                # Check that the character before the pattern (if any) is whitespace
+                idx = line.find(function_call_pattern)
+                if idx != -1:
+                    # Check that it's not part of a longer identifier
+                    if idx == 0 or not line[idx-1].isalnum():
+                        call_line_idx = i
+                        break
         
         if call_line_idx is None:
             raise ValueError(f"Could not find function call: {function_call_pattern}")
@@ -138,11 +146,18 @@ def create_modified_narrowphase_file():
     # Disable sphere-capsule analytical path
     lines = find_and_disable_condition(lines, 'capsule_contact.func_sphere_capsule_contact')
     
-    # Insert errno before gjk.func_gjk_contact (non-diff version)
-    lines = insert_errno_before_call(lines, 'gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
-    
-    # Insert errno before diff_gjk.func_gjk_contact (diff version)  
+    # Insert errno before diff_gjk.func_gjk_contact FIRST (so the line numbers don't shift)
     lines = insert_errno_before_call(lines, 'diff_gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
+    
+    # Insert errno before gjk.func_gjk_contact (non-diff version) - but NOT diff_gjk
+    # We need to be careful here to not match diff_gjk.func_gjk_contact
+    for i, line in enumerate(lines):
+        if 'gjk.func_gjk_contact(' in line and 'diff_gjk' not in line:
+            indent = len(line) - len(line.lstrip())
+            indent_str = line[:indent]
+            errno_line = f"{indent_str}errno[i_b] |= 1 << 16  # MODIFIED: GJK called for collision detection"
+            lines.insert(i, errno_line)
+            break
     
     # Rejoin lines
     content = '\n'.join(lines)
