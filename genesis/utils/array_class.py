@@ -543,10 +543,6 @@ class StructColliderState(metaclass=BASE_METACLASS):
     contact_cache: StructContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
-    # Debug counters for collision detection path tracking
-    debug_analytical_capsule_count: V_ANNOTATION
-    debug_analytical_sphere_capsule_count: V_ANNOTATION
-    debug_gjk_count: V_ANNOTATION
 
 
 def get_collider_state(
