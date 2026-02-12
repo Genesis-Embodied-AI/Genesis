@@ -195,10 +195,10 @@ def create_modified_narrowphase_file():
         # Distance: 0.18, sum of radii: 0.2 → penetration = 0.02 (light contact)
         ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light"),
         # Test 3: Diagonal capsule near vertical capsule (AABBs overlap, no collision)
-        # Capsule 1 vertical at origin, Capsule 2 rotated 60° at X=0.4
-        # 60° rotation creates AABB X: [-0.317, 0.317], so at X=0.4, AABB: [0.083, 0.717]
+        # Capsule 1 vertical at origin, Capsule 2 rotated 60° at X=0.45
+        # 60° rotation creates AABB X: [-0.317, 0.317], so at X=0.45, AABB: [0.133, 0.767]
         # This overlaps with vertical capsule AABB [-0.1, 0.1], but distance > 0.2 (no collision)
-        ((0, 0, 0), (0, 0, 0), (0.4, 0, 0), (0, 60, 0), False, "diagonal_near"),
+        ((0, 0, 0), (0, 0, 0), (0.45, 0, 0), (0, 60, 0), False, "diagonal_near"),
         # Test 4: Parallel capsules with deep penetration (for multicontact)
         # Distance: 0.15, sum of radii: 0.2 → penetration = 0.05 (deeper for multicontact)
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep"),
