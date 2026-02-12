@@ -119,22 +119,19 @@ def _kernel_init_support(
 
 @ti.func
 def _func_support_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     support position for a world direction
     """
 
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
+    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
     v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
+    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
     return v, v_, vid
 
 
@@ -185,14 +182,14 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
 
 @ti.func
 def _func_support_sphere(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     shrink,
 ):
-    sphere_center = geoms_state.pos[i_g, i_b]
+    sphere_center = pos
     sphere_radius = geoms_info.data[i_g][0]
 
     # Shrink the sphere to a point
@@ -203,8 +200,7 @@ def _func_support_sphere(
         v += d * sphere_radius
 
         # Local position of the support point
-        g_quat = geoms_state.quat[i_g, i_b]
-        local_d = gu.ti_inv_transform_by_quat(d, g_quat)
+        local_d = gu.ti_inv_transform_by_quat(d, quat)
         v_ = local_d * sphere_radius
 
     return v, v_, vid
@@ -212,13 +208,13 @@ def _func_support_sphere(
 
 @ti.func
 def _func_support_ellipsoid(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
-    ellipsoid_center = geoms_state.pos[i_g, i_b]
+    ellipsoid_center = pos
     ellipsoid_scaled_axis = ti.Vector(
         [
             geoms_info.data[i_g][0] ** 2,
@@ -227,33 +223,38 @@ def _func_support_ellipsoid(
         ],
         dt=gs.ti_float,
     )
-    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, geoms_state.quat[i_g, i_b])
+    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, quat)
     dist = ellipsoid_scaled_axis / ti.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
     return ellipsoid_center + d * dist
 
 
 @ti.func
 def _func_support_capsule(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     shrink,
 ):
+    """
+    Support function for capsule geometry.
+
+    Thread-safety note: Fully migrated to use explicit pos/quat parameters.
+    The i_g parameter is only used for read-only metadata access (radius, halflength)
+    from geoms_info, which is thread-safe. Does not access geoms_state.
+    """
     res = gs.ti_vec3(0, 0, 0)
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    capsule_center = g_pos
+    capsule_center = pos
     capsule_radius = geoms_info.data[i_g][0]
     capsule_halflength = 0.5 * geoms_info.data[i_g][1]
 
     if shrink:
-        local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(g_quat))
+        local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
         res[2] = capsule_halflength if local_dir[2] >= 0.0 else -capsule_halflength
-        res = gu.ti_transform_by_trans_quat(res, capsule_center, g_quat)
+        res = gu.ti_transform_by_trans_quat(res, capsule_center, quat)
     else:
-        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), g_quat)
+        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), quat)
         capsule_endpoint_side = -1.0 if d.dot(capsule_axis) < 0.0 else 1.0
         capsule_endpoint = capsule_center + capsule_halflength * capsule_endpoint_side * capsule_axis
         res = capsule_endpoint + d * capsule_radius
@@ -264,7 +265,6 @@ def _func_support_capsule(
 def _func_support_prism(
     collider_state: array_class.ColliderState,
     d,
-    i_g,
     i_b,
 ):
     istart = 3
@@ -284,15 +284,13 @@ def _func_support_prism(
 
 @ti.func
 def _func_support_box(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_box = gu.ti_inv_transform_by_quat(d, g_quat)
+    d_box = gu.ti_inv_transform_by_quat(d, quat)
 
     v_ = ti.Vector(
         [
@@ -304,30 +302,27 @@ def _func_support_box(
     )
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += geoms_info.vert_start[i_g]
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
+    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
     return v, v_, vid
 
 
 @ti.func
 def _func_count_supports_world(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    i_b,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Count the number of valid support points for the given world direction.
+    Only needs quat since counting doesn't depend on position.
     """
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(geoms_state.quat[i_g, i_b]))
-    return _func_count_supports_mesh(geoms_state, geoms_info, support_field_info, d_mesh, i_g)
+    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
+    return _func_count_supports_mesh(support_field_info, d_mesh, i_g)
 
 
 @ti.func
 def _func_count_supports_mesh(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d_mesh,
     i_g,
@@ -376,20 +371,18 @@ def _func_count_supports_mesh(
 
 @ti.func
 def _func_count_supports_box(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     d,
-    i_g,
-    i_b,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Count the number of valid support points for a box in the given direction.
 
+    Only needs quat since counting doesn't depend on position or geometry-specific data.
+
     If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
     components, there are 4 possible support points.
     """
-    g_quat = geoms_state.quat[i_g, i_b]
-    d_box = gu.ti_inv_transform_by_quat(d, g_quat)
+    d_box = gu.ti_inv_transform_by_quat(d, quat)
 
     return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()
 
