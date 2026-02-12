@@ -38,7 +38,7 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 
 
 def find_and_disable_condition(lines, function_name):
-    """Find function call, look back for if/elif, and disable the condition."""
+    """Find function call, look back for if/elif, and disable the entire multi-line condition."""
     # Find the line with the function call
     call_line_idx = None
     for i, line in enumerate(lines):
@@ -63,7 +63,14 @@ def find_and_disable_condition(lines, function_name):
     if condition_line_idx is None:
         raise ValueError(f"Could not find if/elif for {function_name}")
 
-    # Modify the condition line to add "False and" at the start
+    # Find the end of the condition (look for the : that ends it)
+    condition_end_idx = condition_line_idx
+    for i in range(condition_line_idx, call_line_idx):
+        if ":" in lines[i]:
+            condition_end_idx = i
+            break
+
+    # Modify the condition to wrap entire thing in False and (...)
     original_line = lines[condition_line_idx]
     indent = len(original_line) - len(original_line.lstrip())
     indent_str = original_line[:indent]
@@ -78,9 +85,21 @@ def find_and_disable_condition(lines, function_name):
     else:
         raise ValueError(f"Expected if/elif but got: {original_line}")
 
-    # Add False and to disable the condition
-    modified_line = f"{indent_str}{prefix}False and {rest}"
-    lines[condition_line_idx] = modified_line
+    # If single-line condition
+    if condition_end_idx == condition_line_idx:
+        # Simple case: add False and
+        modified_line = f"{indent_str}{prefix}False and {rest}"
+        lines[condition_line_idx] = modified_line
+    else:
+        # Multi-line condition: wrap in False and (...)
+        rest_no_colon = rest.rstrip(":").rstrip()
+        lines[condition_line_idx] = f"{indent_str}{prefix}False and ({rest_no_colon}"
+        
+        # Add closing ) before the : on the last line
+        last_line = lines[condition_end_idx]
+        if ":" in last_line:
+            # Insert ) before the :
+            lines[condition_end_idx] = last_line.replace(":", "):", 1)
 
     return lines
 
