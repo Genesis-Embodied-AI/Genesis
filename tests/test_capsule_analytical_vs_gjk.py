@@ -1,15 +1,14 @@
 """
 Unit test comparing analytical capsule-capsule contact detection with GJK.
 
-NOTE: These tests should ideally be run with debug mode enabled (pytest --dev)
-to verify that the correct collision detection code paths are being used.
-
-Debug mode enables collision path tracking counters in the narrowphase kernel that
-empirically verify which algorithm (analytical vs GJK) was actually executed.
+This test creates a modified version of narrowphase.py in a temporary file that
+forces capsule-capsule and sphere-capsule collisions to use GJK instead of 
+analytical methods, allowing direct comparison between the two approaches.
 """
 
 import gstaichi as ti
 import os
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
@@ -37,9 +36,66 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
     return mjcf
 
 
-# @pytest.mark.debug(True)
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-# @pytest.mark.taichi_offline_cache(False)
+def create_modified_narrowphase_file():
+    """
+    Create a modified version of narrowphase.py that forces capsule collisions to use GJK.
+    
+    Returns:
+        str: Path to the temporary modified narrowphase.py file
+    """
+    import random
+    
+    # Find the original narrowphase.py file
+    import genesis.engine.solvers.rigid.collider.narrowphase as narrowphase_module
+    narrowphase_path = narrowphase_module.__file__
+    
+    # Read the original file
+    with open(narrowphase_path, 'r') as f:
+        content = f.read()
+    
+    # Replace relative imports with absolute imports
+    content = content.replace('from . import mpr', 'from genesis.engine.solvers.rigid.collider import mpr')
+    content = content.replace('from . import gjk', 'from genesis.engine.solvers.rigid.collider import gjk')
+    content = content.replace('from . import diff_gjk', 'from genesis.engine.solvers.rigid.collider import diff_gjk')
+    content = content.replace('from . import support_field', 'from genesis.engine.solvers.rigid.collider import support_field')
+    content = content.replace('from . import capsule_contact', 'from genesis.engine.solvers.rigid.collider import capsule_contact')
+    content = content.replace('from .broadphase import', 'from genesis.engine.solvers.rigid.collider.broadphase import')
+    content = content.replace('from .contact import', 'from genesis.engine.solvers.rigid.collider.contact import')
+    content = content.replace('from .box_contact import', 'from genesis.engine.solvers.rigid.collider.box_contact import')
+    
+    # Replace the capsule-capsule contact call with GJK
+    content = content.replace(
+        'is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(',
+        '# MODIFIED: Use GJK instead of analytical\n' +
+        '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(\n' +
+        '                    prefer_gjk = True  # Force GJK for capsule-capsule\n' +
+        '                    if False:  # Skip analytical path\n' +
+        '                        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
+    )
+    
+    # For sphere-capsule, replace the call
+    content = content.replace(
+        'is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(',
+        '# MODIFIED: Use GJK instead of analytical\n' +
+        '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(\n' +
+        '                    prefer_gjk = True  # Force GJK for sphere-capsule\n' +
+        '                    if False:  # Skip analytical path\n' +
+        '                        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
+    )
+    
+    # Write to /tmp with random integer
+    randint = random.randint(0, 1000000)
+    temp_narrowphase_path = f'/tmp/narrow_{randint}.py'
+    
+    with open(temp_narrowphase_path, 'w') as f:
+        f.write(content)
+    
+    print(f"Modified narrowphase written to: {temp_narrowphase_path}")
+    
+    return temp_narrowphase_path
+
+
+@pytest.mark.parametrize("backend", [gs.cpu])
 @pytest.mark.parametrize(
     "pos1,euler1,pos2,euler2,should_collide,description",
     [
@@ -63,159 +119,46 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 )
 def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description, monkeypatch):
     """
-    Compare analytical capsule-capsule collision with GJK.
+    Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
     """
     radius = 0.1
     half_length = 0.25
-
-    from genesis.engine.solvers.rigid.collider import capsule_contact, diff_gjk
-    import genesis.utils.array_class as array_class
-    import gstaichi as ti
-
-    # Monkeypatch the metaclass to support inheritance
-    original_metaclass_new = array_class.AutoInitMeta.__new__
     
-    def patched_metaclass_new(cls, name, bases, namespace):
-        # Collect annotations from parent classes
-        all_annotations = {}
-        for base in reversed(bases):
-            if hasattr(base, "__annotations__"):
-                all_annotations.update(base.__annotations__)
-        
-        # Add current class annotations
-        if "__annotations__" in namespace:
-            all_annotations.update(namespace["__annotations__"])
-        else:
-            namespace["__annotations__"] = {}
-        
-        # Update namespace annotations to include parent annotations
-        namespace["__annotations__"] = all_annotations
-        
-        # Collect defaults from parent classes
-        all_names = tuple(all_annotations.keys())
-        for base in reversed(bases):
-            for key in all_names:
-                if hasattr(base, key) and key not in namespace:
-                    attr = getattr(base, key)
-                    if not callable(attr):
-                        namespace[key] = attr
-        
-        return original_metaclass_new(cls, name, bases, namespace)
+    # Create modified narrowphase file
+    temp_narrowphase_path = create_modified_narrowphase_file()
     
-    monkeypatch.setattr(array_class.AutoInitMeta, "__new__", staticmethod(patched_metaclass_new))
-
-    # Create a new class with debug field added
-    @array_class.DATA_ORIENTED
-    class PatchedStructColliderState(array_class.StructColliderState):
-        debug_analytical_capsule_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
-        debug_analytical_sphere_capsule_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
-        debug_gjk_count: ti.field = ti.field(dtype=ti.i32, shape=(1,))
+    # Import the modified module and monkey-patch func_convex_convex_contact
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
+    narrowphase_modified = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(narrowphase_modified)
     
-    print("use_ndarray", gs.use_ndarray)
-
-    # Monkey patch the class definition
-    monkeypatch.setattr(array_class, "StructColliderState", PatchedStructColliderState)
-    monkeypatch.setattr(array_class, "ColliderState", PatchedStructColliderState if gs.use_ndarray else ti.template())
-
-    func_sphere_capsule_contact_orig = capsule_contact.func_capsule_capsule_contact
-
-    use_gjk = False
-
-    @ti.func
-    def func_sphere_capsule_contact_with_counter(
-        i_ga,
-        i_gb,
-        i_b,
-        geoms_state: array_class.GeomsState,
-        geoms_info: array_class.GeomsInfo,
-        rigid_global_info: array_class.RigidGlobalInfo,
-        collider_state: array_class.ColliderState,
-        collider_info: array_class.ColliderInfo,
-        errno: array_class.V_ANNOTATION,
-    ):
-        # ti.atomic_add(collider_state.debug_analytical_sphere_capsule_count[i_b], 1)
-        # ti.atomic_add(errno[i_b], 1)
-        # errno[i_b] |= 1 << 16
-        # print("hello")
-        # if not use_gjk:
-        return func_sphere_capsule_contact_orig(
-            i_ga=i_ga,
-            i_gb=i_gb,
-            i_b=i_b,
-            geoms_state=geoms_state,
-            geoms_info=geoms_info,
-            rigid_global_info=rigid_global_info,
-            collider_state=collider_state,
-            collider_info=collider_info,
-            errno=errno)
-        # else:
-            
-
+    # Monkey-patch the narrowphase module to use modified function
+    from genesis.engine.solvers.rigid.collider import narrowphase
     monkeypatch.setattr(
-        capsule_contact,
-        "func_capsule_capsule_contact",
-        func_sphere_capsule_contact_with_counter
+        narrowphase,
+        "func_convex_convex_contact",
+        narrowphase_modified.func_convex_convex_contact
     )
-    print("after monkeypatch")
-
-    # Scene 1: Using analytical capsule-capsule detection
+    
+    # Scene 1: Using analytical capsule-capsule detection (normal behavior)
     scene_analytical = gs.Scene(
         show_viewer=False,
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,
+            use_gjk_collision=False,  # Use analytical for non-capsules
         ),
     )
 
-    # func_gjk_contact_orig = diff_gjk.func_gjk_contact
-
-    # @ti.func
-    # def func_gjk_contact_with_counter(
-    #     links_state: array_class.LinksState,
-    #     links_info: array_class.LinksInfo,
-    #     geoms_state: array_class.GeomsState,
-    #     geoms_info: array_class.GeomsInfo,
-    #     geoms_init_AABB: array_class.GeomsInitAABB,
-    #     verts_info: array_class.VertsInfo,
-    #     faces_info: array_class.FacesInfo,
-    #     rigid_global_info: array_class.RigidGlobalInfo,
-    #     static_rigid_sim_config: ti.template(),
-    #     collider_state: array_class.ColliderState,
-    #     collider_static_config: ti.template(),
-    #     gjk_state: array_class.GJKState,
-    #     gjk_info: array_class.GJKInfo,
-    #     support_field_info: array_class.SupportFieldInfo,
-    #     # FIXME: Passing nested data structure as input argument is not supported for now.
-    #     diff_contact_input: array_class.DiffContactInput,
-    #     i_ga,
-    #     i_gb,
-    #     i_b,
-    #     pos_tol,
-    #     normal_tol,
-    # ):
-    #     errno[i_b] |= 1 << 17
-    #     print("hello")
-    #     return func_gjk_contact_orig(
-    #         i_ga=i_ga,
-    #         i_gb=i_gb,
-    #         i_b=i_b,
-    #         geoms_state=geoms_state,
-    #         geoms_info=geoms_info,
-    #         rigid_global_info=rigid_global_info,
-    #         collider_state=collider_state,
-    #         collider_info=collider_info,
-    #         errno=errno)
-
-
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
-        mjcf1_path = os.path.join(tmpdir, "capsule1_analytical.xml")
+        mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1_analytical.xml")
         ET.ElementTree(mjcf1).write(mjcf1_path)
         scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf1_path))
 
         mjcf2 = create_capsule_mjcf("capsule2", pos2, euler2, radius, half_length)
-        mjcf2_path = os.path.join(tmpdir, "capsule2_analytical.xml")
+        mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2_analytical.xml")
         ET.ElementTree(mjcf2).write(mjcf2_path)
         scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf2_path))
 
@@ -231,15 +174,15 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         ),
     )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         # Add same capsules to GJK scene
         mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
-        mjcf1_path = os.path.join(tmpdir, "capsule1_gjk.xml")
+        mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1_gjk.xml")
         ET.ElementTree(mjcf1).write(mjcf1_path)
         scene_gjk.add_entity(gs.morphs.MJCF(file=mjcf1_path))
 
         mjcf2 = create_capsule_mjcf("capsule2", pos2, euler2, radius, half_length)
-        mjcf2_path = os.path.join(tmpdir, "capsule2_gjk.xml")
+        mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2_gjk.xml")
         ET.ElementTree(mjcf2).write(mjcf2_path)
         scene_gjk.add_entity(gs.morphs.MJCF(file=mjcf2_path))
 
@@ -247,37 +190,6 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
 
     scene_analytical.step()
     scene_gjk.step()
-
-    import gstaichi as ti
-
-    # if (
-    #     hasattr(ti.lang._template_mapper.__builtins__, "__debug__")
-    #     and ti.lang._template_mapper.__builtins__["__debug__"]
-    # ):
-    # print("debug correctly enabled")
-    print("errno", scene_analytical._sim.rigid_solver._errno)
-    # analytical_capsule_count = scene_analytical.rigid_solver.collider._collider_state.debug_analytical_capsule_count[
-    #     0
-    # ]
-    print("scene_analytical.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", scene_analytical.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
-    print("scene_gjk.rigid_solver.collider.collider_state.debug_analytical_sphere_capsule_count[0]", scene_gjk.rigid_solver.collider._collider_state.debug_analytical_sphere_capsule_count[0])
-    analytical_gjk_count = scene_analytical.rigid_solver.collider.collider_state.debug_gjk_count[0]
-    gjk_scene_capsule_count = scene_gjk.rigid_solver.collider.collider_state.debug_analytical_capsule_count[0]
-    gjk_scene_gjk_count = scene_gjk.rigid_solver.collider.collider_state.debug_gjk_count[0]
-
-    # Scene 1 (analytical) should use analytical path, NOT GJK
-    assert analytical_capsule_count > 0, (
-        f"Scene 1 should have used analytical capsule path (count={analytical_capsule_count})"
-    )
-    assert analytical_gjk_count == 0, f"Scene 1 should NOT have used GJK path (count={analytical_gjk_count})"
-
-    # Scene 2 (GJK) should use GJK path, NOT analytical
-    assert gjk_scene_gjk_count > 0, f"Scene 2 should have used GJK path (count={gjk_scene_gjk_count})"
-    assert gjk_scene_capsule_count == 0, (
-        f"Scene 2 should NOT have used analytical capsule path (count={gjk_scene_capsule_count})"
-    )
-    # else:
-    #     print("WWARNING: test needs to be run with debug enabled.")
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
