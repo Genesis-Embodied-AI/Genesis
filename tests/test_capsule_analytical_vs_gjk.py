@@ -59,39 +59,92 @@ def create_modified_narrowphase_file():
     # Then handle 'from .submodule import' patterns
     content = content.replace('from .', 'from genesis.engine.solvers.rigid.collider.')
     
-    # Replace the capsule-capsule contact call with GJK
-    original_capsule_capsule = 'is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
-    replacement_capsule_capsule = (
-        '# MODIFIED: Use GJK instead of analytical\n' +
-        '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(\n' +
-        '                    errno[i_b] |= 1 << 16  # Mark that we forced GJK for capsule-capsule\n' +
-        '                    prefer_gjk = True  # Force GJK for capsule-capsule\n' +
-        '                    if False:  # Skip analytical path\n' +
-        '                        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact('
-    )
+    # Split content into lines for easier manipulation
+    lines = content.split('\n')
     
-    # Count and verify exactly one replacement
-    capsule_capsule_count = content.count(original_capsule_capsule)
-    assert capsule_capsule_count == 1, f"Expected exactly 1 occurrence of capsule-capsule call, found {capsule_capsule_count}"
+    # Function to find the if/elif line for a function call and disable it
+    def find_and_disable_condition(lines, function_name):
+        """Find function call, look back for if/elif, and disable the condition."""
+        # Find the line with the function call
+        call_line_idx = None
+        for i, line in enumerate(lines):
+            if function_name in line and '(' in line:
+                call_line_idx = i
+                break
+        
+        if call_line_idx is None:
+            raise ValueError(f"Could not find function call: {function_name}")
+        
+        # Look backwards to find the if or elif line
+        condition_line_idx = None
+        for i in range(call_line_idx - 1, -1, -1):
+            stripped = lines[i].strip()
+            if stripped.startswith('if ') or stripped.startswith('elif '):
+                condition_line_idx = i
+                break
+            # Stop if we hit another major control structure
+            if stripped.startswith('else:'):
+                break
+        
+        if condition_line_idx is None:
+            raise ValueError(f"Could not find if/elif for {function_name}")
+        
+        # Modify the condition line to add "False and" at the start
+        original_line = lines[condition_line_idx]
+        indent = len(original_line) - len(original_line.lstrip())
+        indent_str = original_line[:indent]
+        
+        # Extract the condition part (after if/elif and before :)
+        if original_line.strip().startswith('if '):
+            prefix = 'if '
+            rest = original_line.strip()[3:]  # Remove 'if '
+        elif original_line.strip().startswith('elif '):
+            prefix = 'elif '
+            rest = original_line.strip()[5:]  # Remove 'elif '
+        else:
+            raise ValueError(f"Expected if/elif but got: {original_line}")
+        
+        # Add False and to disable the condition
+        modified_line = f"{indent_str}{prefix}False and {rest}"
+        lines[condition_line_idx] = modified_line
+        
+        return lines
     
-    content = content.replace(original_capsule_capsule, replacement_capsule_capsule)
+    # Disable capsule-capsule analytical path
+    lines = find_and_disable_condition(lines, 'capsule_contact.func_capsule_capsule_contact')
     
-    # For sphere-capsule, replace the call
-    original_sphere_capsule = 'is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
-    replacement_sphere_capsule = (
-        '# MODIFIED: Use GJK instead of analytical\n' +
-        '                    # is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(\n' +
-        '                    errno[i_b] |= 1 << 17  # Mark that we forced GJK for sphere-capsule\n' +
-        '                    prefer_gjk = True  # Force GJK for sphere-capsule\n' +
-        '                    if False:  # Skip analytical path\n' +
-        '                        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact('
-    )
+    # Disable sphere-capsule analytical path
+    lines = find_and_disable_condition(lines, 'capsule_contact.func_sphere_capsule_contact')
     
-    # Count and verify exactly one replacement
-    sphere_capsule_count = content.count(original_sphere_capsule)
-    assert sphere_capsule_count == 1, f"Expected exactly 1 occurrence of sphere-capsule call, found {sphere_capsule_count}"
+    # Now find the gjk.func_gjk_contact call and insert errno markers before it
+    gjk_call_idx = None
+    for i, line in enumerate(lines):
+        if 'gjk.func_gjk_contact(' in line:
+            gjk_call_idx = i
+            break
     
-    content = content.replace(original_sphere_capsule, replacement_sphere_capsule)
+    if gjk_call_idx is None:
+        raise ValueError("Could not find gjk.func_gjk_contact call")
+    
+    # Get indentation from the gjk call line
+    gjk_indent = len(lines[gjk_call_idx]) - len(lines[gjk_call_idx].lstrip())
+    gjk_indent_str = lines[gjk_call_idx][:gjk_indent]
+    
+    # Insert errno markers before the GJK call to mark when capsules use GJK
+    errno_lines = [
+        f"{gjk_indent_str}# MODIFIED: Mark if capsules are using GJK instead of analytical",
+        f"{gjk_indent_str}if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:",
+        f"{gjk_indent_str}    errno[i_b] |= 1 << 16",
+        f"{gjk_indent_str}if (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):",
+        f"{gjk_indent_str}    errno[i_b] |= 1 << 17",
+    ]
+    
+    # Insert the errno lines before the GJK call
+    for j, line in enumerate(errno_lines):
+        lines.insert(gjk_call_idx + j, line)
+    
+    # Rejoin lines
+    content = '\n'.join(lines)
     
     # Write to /tmp with random integer
     randint = random.randint(0, 1000000)
