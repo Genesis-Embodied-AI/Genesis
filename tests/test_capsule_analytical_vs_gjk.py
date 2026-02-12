@@ -129,9 +129,12 @@ def create_modified_narrowphase_file():
     with open(narrowphase_path, "r") as f:
         content = f.read()
 
-    # Replace relative imports with absolute imports
+    # remove relative imports
     content = content.replace("from . import ", "from genesis.engine.solvers.rigid.collider import ")
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
+
+    # disable fastcache
+    content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
 
     lines = content.split("\n")
 
