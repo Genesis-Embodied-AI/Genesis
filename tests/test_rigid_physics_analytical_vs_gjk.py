@@ -198,10 +198,10 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0), True, "perpendicular_center"),
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 45, 0), True, "diagonal_rotated"),
     ]
-    
+
     radius = 0.1
     half_length = 0.25
-    
+
     # Build scenes once with initial configuration
     def build_scene(scene: gs.Scene):
         with tempfile.TemporaryDirectory() as tmpdir_mjcf:
@@ -217,42 +217,42 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
 
             scene.build()
             return [entity1, entity2]
-    
+
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
     entities_analytical = scene_creator.entities
     entities_gjk = scene_creator.entities_gjk
-    
+
     # Run all test cases
     for pos1, euler1, pos2, euler2, should_collide, description in test_cases:
         print(f"\nTest: {description}")
-        
+
         try:
             # Set positions and orientations
             quat1 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler1), degrees=True)
             quat2 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler2), degrees=True)
-            
+
             entities_analytical[0].set_qpos(np.array([*pos1, *quat1]))
             entities_analytical[1].set_qpos(np.array([*pos2, *quat2]))
             entities_gjk[0].set_qpos(np.array([*pos1, *quat1]))
             entities_gjk[1].set_qpos(np.array([*pos2, *quat2]))
-            
+
             scene_analytical.step()
             scene_gjk.step()
-            
+
             scene_creator.checks_after()
-            
+
             contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
-            
+
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
             assert has_collision_analytical == should_collide
-            
+
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
                 pen_analytical = contacts_analytical["penetration"][0]
@@ -278,7 +278,9 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
                     n_gjk = len(contacts_gjk["geom_a"])
 
                     if n_analytical >= 2 or n_gjk >= 2:
-                        all_analytical_positions = np.array([contacts_analytical["position"][i] for i in range(n_analytical)])
+                        all_analytical_positions = np.array(
+                            [contacts_analytical["position"][i] for i in range(n_analytical)]
+                        )
                         all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
 
                         for i, pos_a in enumerate(all_analytical_positions):
@@ -299,15 +301,15 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
                 else:
                     assert pos_diff < 0.05
         except Exception as e:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"FAILED TEST SCENARIO: {description}")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             print(f"Capsule 1: pos={pos1}, euler={euler1}")
             print(f"Capsule 2: pos={pos2}, euler={euler2}")
             print(f"Expected collision: {should_collide}")
             print(f"Backend: {backend}")
             print(f"Radius: {radius}, Half-length: {half_length}")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             raise
 
 
@@ -452,11 +454,11 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
         ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True),
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
     ]
-    
+
     sphere_radius = 0.1
     capsule_radius = 0.1
     capsule_half_length = 0.25
-    
+
     # Build scenes once with initial configuration
     def build_scene(scene: gs.Scene):
         with tempfile.TemporaryDirectory() as tmpdir_mjcf:
@@ -472,47 +474,47 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
 
             scene.build()
             return [entity_sphere, entity_capsule]
-    
+
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
     entities_analytical = scene_creator.entities
     entities_gjk = scene_creator.entities_gjk
-    
+
     # Run all test cases
     for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
         # Skip on GPU if requested (for known GJK issues)
         if skip_gpu and backend == gs.gpu:
             print(f"\nTest: {description} - SKIPPED on GPU")
             continue
-            
+
         print(f"\nTest: {description}")
-        
+
         try:
             # Set positions and orientations
             capsule_quat = gs.utils.geom.xyz_to_quat(xyz=np.array(capsule_euler), degrees=True)
             sphere_quat = gs.utils.geom.xyz_to_quat(xyz=np.array([0, 0, 0]), degrees=True)
-            
+
             entities_analytical[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
             entities_analytical[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
             entities_gjk[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
             entities_gjk[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
-            
+
             scene_analytical.step()
             scene_gjk.step()
-            
+
             scene_creator.checks_after()
-            
+
             contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
-            
+
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
             assert has_collision_analytical == should_collide
-            
+
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
                 pen_analytical = contacts_analytical["penetration"][0]
@@ -536,14 +538,14 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
                 pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
                 assert pos_diff < 0.05, f"Position mismatch! Diff: {pos_diff:.6f}"
         except Exception as e:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"FAILED TEST SCENARIO: {description}")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             print(f"Sphere: pos={sphere_pos}")
             print(f"Capsule: pos={capsule_pos}, euler={capsule_euler}")
             print(f"Expected collision: {should_collide}")
             print(f"Backend: {backend}")
             print(f"Sphere radius: {sphere_radius}")
             print(f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             raise
