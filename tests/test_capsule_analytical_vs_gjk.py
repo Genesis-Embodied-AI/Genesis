@@ -542,7 +542,7 @@ def test_sphere_capsule_vs_gjk(
         rigid_options=gs.options.RigidOptions(
             dt=0.01,
             gravity=(0, 0, 0),
-            use_gjk_collision=False,  # Still use_gjk_collision=False, but sphere-capsule will use GJK due to our patch
+            use_gjk_collision=True,
         ),
     )
 
