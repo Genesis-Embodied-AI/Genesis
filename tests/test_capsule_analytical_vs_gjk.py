@@ -125,17 +125,13 @@ def create_modified_narrowphase_file():
     import genesis.engine.solvers.rigid.collider.narrowphase as narrowphase_module
     narrowphase_path = narrowphase_module.__file__
     
-    # Read the original file
     with open(narrowphase_path, 'r') as f:
         content = f.read()
     
     # Replace relative imports with absolute imports
-    # First handle 'from . import X' patterns
     content = content.replace('from . import ', 'from genesis.engine.solvers.rigid.collider import ')
-    # Then handle 'from .submodule import' patterns
     content = content.replace('from .', 'from genesis.engine.solvers.rigid.collider.')
     
-    # Split content into lines for easier manipulation
     lines = content.split('\n')
     
     # Disable capsule-capsule analytical path
@@ -148,10 +144,8 @@ def create_modified_narrowphase_file():
     lines = insert_errno_before_call(lines, 'diff_gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
     lines = insert_errno_before_call(lines, 'gjk.func_gjk_contact(', 16, 'MODIFIED: GJK called for collision detection')
     
-    # Rejoin lines
     content = '\n'.join(lines)
     
-    # Write to /tmp with random integer
     randint = random.randint(0, 1000000)
     temp_narrowphase_path = f'/tmp/narrow_{randint}.py'
     
