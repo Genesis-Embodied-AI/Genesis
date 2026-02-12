@@ -200,11 +200,16 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     
     # Check if capsule-capsule path was used (bit 16)
     analytical_used_modified_capsule = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+    gjk_used_modified_capsule = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+    
     # Check if sphere-capsule path was used (bit 17)
     analytical_used_modified_sphere = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 17)) != 0
+    gjk_used_modified_sphere = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 17)) != 0
     
-    print(f"Analytical scene used modified capsule-capsule path: {analytical_used_modified_capsule}")
-    print(f"Analytical scene used modified sphere-capsule path: {analytical_used_modified_sphere}")
+    print(f"Analytical scene used modified capsule-capsule path (bit 16): {analytical_used_modified_capsule}")
+    print(f"Analytical scene used modified sphere-capsule path (bit 17): {analytical_used_modified_sphere}")
+    print(f"GJK scene used modified capsule-capsule path (bit 16): {gjk_used_modified_capsule}")
+    print(f"GJK scene used modified sphere-capsule path (bit 17): {gjk_used_modified_sphere}")
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
