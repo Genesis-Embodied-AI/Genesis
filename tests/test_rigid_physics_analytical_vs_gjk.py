@@ -93,7 +93,7 @@ def find_and_disable_condition(lines, function_name):
         # Multi-line condition: wrap in False and (...)
         rest_no_colon = rest.rstrip(":").rstrip()
         lines[condition_line_idx] = f"{indent_str}{prefix}False and ({rest_no_colon}"
-        
+
         # Add closing ) before the : on the last line
         last_line = lines[condition_end_idx]
         if ":" in last_line:
@@ -214,14 +214,8 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
     radius = 0.1
     half_length = 0.25
 
-    # Scene 1: Using ORIGINAL analytical capsule-capsule detection (before any monkey-patching)
-    scene_analytical = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, 0),
-        ),
-    )
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch)
+    scene_analytical, scene_gjk = scene_creator.setup_before()
 
     with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
@@ -235,24 +229,6 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
         scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf2_path))
 
         scene_analytical.build()
-
-    # NOW monkey-patch for the GJK scene
-    temp_narrowphase_path = create_modified_narrowphase_file()
-    spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
-    narrowphase_modified = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(narrowphase_modified)
-    from genesis.engine.solvers.rigid.collider import narrowphase
-    monkeypatch.setattr(narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact)
-
-    # Scene 2: Force GJK for capsules (using modified narrowphase)
-    scene_gjk = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, 0),
-            use_gjk_collision=True,
-        ),
-    )
 
     with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         # Add same capsules to GJK scene
@@ -271,18 +247,10 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
     scene_analytical.step()
     scene_gjk.step()
 
+    scene_creator.checks_after()
+
     # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
-
-    # Check if GJK was used (bit 16)
-    analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-    gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-
-    # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
-    assert not analytical_used_gjk, (
-        f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
-    )
-    assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
@@ -432,7 +400,56 @@ def create_sphere_mjcf(name, pos, radius):
     return mjcf
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+class AnalyticalVsGJKSceneCreator:
+    def __init__(self, monkeypatch) -> None:
+        self.monkeypatch = monkeypatch
+
+    def setup_before(self) -> tuple[gs.Scene, gs.Scene]:
+        # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
+        self.scene_analytical = gs.Scene(
+            show_viewer=False,
+            rigid_options=gs.options.RigidOptions(
+                dt=0.01,
+                gravity=(0, 0, 0),
+            ),
+        )
+
+        # NOW monkey-patch for the GJK scene
+        temp_narrowphase_path = create_modified_narrowphase_file()
+        spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
+        narrowphase_modified = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(narrowphase_modified)
+        from genesis.engine.solvers.rigid.collider import narrowphase
+
+        self.monkeypatch.setattr(
+            narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact
+        )
+
+        # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
+        self.scene_gjk = gs.Scene(
+            show_viewer=False,
+            rigid_options=gs.options.RigidOptions(
+                dt=0.01,
+                gravity=(0, 0, 0),
+                use_gjk_collision=True,
+            ),
+        )
+
+        return self.scene_analytical, self.scene_gjk
+
+    def checks_after(self):
+        # Check if GJK was used (bit 16)
+        analytical_used_gjk = (self.scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+        gjk_used_gjk = (self.scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+
+        # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
+        assert not analytical_used_gjk, (
+            f"Analytical scene should not use GJK (errno={self.scene_analytical._sim.rigid_solver._errno[0]})"
+        )
+        assert gjk_used_gjk, f"GJK scene should use GJK (errno={self.scene_gjk._sim.rigid_solver._errno[0]})"
+
+
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
     "sphere_pos,capsule_pos,capsule_euler,should_collide,description",
     [
@@ -472,9 +489,7 @@ def create_sphere_mjcf(name, pos, radius):
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule"),
     ],
 )
-def test_sphere_capsule_vs_gjk(
-    backend, sphere_pos, capsule_pos, capsule_euler, should_collide, description, monkeypatch
-):
+def test_sphere_capsule_vs_gjk(sphere_pos, capsule_pos, capsule_euler, should_collide, description, monkeypatch):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     """
@@ -482,14 +497,8 @@ def test_sphere_capsule_vs_gjk(
     capsule_radius = 0.1
     capsule_half_length = 0.25
 
-    # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
-    scene_analytical = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, 0),
-        ),
-    )
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch)
+    scene_analytical, scene_gjk = scene_creator.setup_before()
 
     with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         sphere_mjcf = create_sphere_mjcf("sphere", sphere_pos, sphere_radius)
@@ -503,24 +512,6 @@ def test_sphere_capsule_vs_gjk(
         scene_analytical.add_entity(gs.morphs.MJCF(file=capsule_path))
 
         scene_analytical.build()
-
-    # NOW monkey-patch for the GJK scene
-    temp_narrowphase_path = create_modified_narrowphase_file()
-    spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
-    narrowphase_modified = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(narrowphase_modified)
-    from genesis.engine.solvers.rigid.collider import narrowphase
-    monkeypatch.setattr(narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact)
-
-    # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
-    scene_gjk = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, 0),
-            use_gjk_collision=True,
-        ),
-    )
 
     with tempfile.TemporaryDirectory() as tmpdir_mjcf:
         # Add same objects to GJK scene
@@ -542,21 +533,14 @@ def test_sphere_capsule_vs_gjk(
     # Verify errno values to ensure correct code path was used
     print(f"\nTest: {description}")
 
-    # Check if GJK was used (bit 16)
-    analytical_used_gjk = (scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-    gjk_used_gjk = (scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-
-    # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
-    assert not analytical_used_gjk, (
-        f"Analytical scene should not use GJK (errno={scene_analytical._sim.rigid_solver._errno[0]})"
-    )
-    assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
+    scene_creator.checks_after()
 
     contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
     contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
 
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+    assert has_collision_analytical == should_collide
 
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
