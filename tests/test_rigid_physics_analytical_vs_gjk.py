@@ -10,6 +10,7 @@ import os
 import importlib.util
 import random
 import tempfile
+from typing import Callable
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -214,35 +215,22 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
     radius = 0.1
     half_length = 0.25
 
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch)
-    scene_analytical, scene_gjk = scene_creator.setup_before()
+    def build_scene(scene: gs.Scene) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir_mjcf:
+            mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
+            mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1_analytical.xml")
+            ET.ElementTree(mjcf1).write(mjcf1_path)
+            scene.add_entity(gs.morphs.MJCF(file=mjcf1_path))
 
-    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-        mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
-        mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1_analytical.xml")
-        ET.ElementTree(mjcf1).write(mjcf1_path)
-        scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf1_path))
+            mjcf2 = create_capsule_mjcf("capsule2", pos2, euler2, radius, half_length)
+            mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2_analytical.xml")
+            ET.ElementTree(mjcf2).write(mjcf2_path)
+            scene.add_entity(gs.morphs.MJCF(file=mjcf2_path))
 
-        mjcf2 = create_capsule_mjcf("capsule2", pos2, euler2, radius, half_length)
-        mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2_analytical.xml")
-        ET.ElementTree(mjcf2).write(mjcf2_path)
-        scene_analytical.add_entity(gs.morphs.MJCF(file=mjcf2_path))
+            scene.build()
 
-        scene_analytical.build()
-
-    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-        # Add same capsules to GJK scene
-        mjcf1 = create_capsule_mjcf("capsule1", pos1, euler1, radius, half_length)
-        mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1_gjk.xml")
-        ET.ElementTree(mjcf1).write(mjcf1_path)
-        scene_gjk.add_entity(gs.morphs.MJCF(file=mjcf1_path))
-
-        mjcf2 = create_capsule_mjcf("capsule2", pos2, euler2, radius, half_length)
-        mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2_gjk.xml")
-        ET.ElementTree(mjcf2).write(mjcf2_path)
-        scene_gjk.add_entity(gs.morphs.MJCF(file=mjcf2_path))
-
-        scene_gjk.build()
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
+    scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
 
     scene_analytical.step()
     scene_gjk.step()
@@ -257,6 +245,7 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
 
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+    assert has_collision_analytical == should_collide
 
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
@@ -401,10 +390,11 @@ def create_sphere_mjcf(name, pos, radius):
 
 
 class AnalyticalVsGJKSceneCreator:
-    def __init__(self, monkeypatch) -> None:
+    def __init__(self, monkeypatch, build_scene: Callable) -> None:
         self.monkeypatch = monkeypatch
+        self.build_scene = build_scene
 
-    def setup_before(self) -> tuple[gs.Scene, gs.Scene]:
+    def setup_scenes_before(self) -> tuple[gs.Scene, gs.Scene]:
         # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
         self.scene_analytical = gs.Scene(
             show_viewer=False,
@@ -413,6 +403,7 @@ class AnalyticalVsGJKSceneCreator:
                 gravity=(0, 0, 0),
             ),
         )
+        self.build_scene(self.scene_analytical)
 
         # NOW monkey-patch for the GJK scene
         temp_narrowphase_path = create_modified_narrowphase_file()
@@ -434,6 +425,7 @@ class AnalyticalVsGJKSceneCreator:
                 use_gjk_collision=True,
             ),
         )
+        self.build_scene(self.scene_gjk)
 
         return self.scene_analytical, self.scene_gjk
 
@@ -497,35 +489,22 @@ def test_sphere_capsule_vs_gjk(sphere_pos, capsule_pos, capsule_euler, should_co
     capsule_radius = 0.1
     capsule_half_length = 0.25
 
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch)
-    scene_analytical, scene_gjk = scene_creator.setup_before()
+    def build_scene(scene: gs.Scene) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir_mjcf:
+            sphere_mjcf = create_sphere_mjcf("sphere", sphere_pos, sphere_radius)
+            sphere_path = os.path.join(tmpdir_mjcf, "sphere_analytical.xml")
+            ET.ElementTree(sphere_mjcf).write(sphere_path)
+            scene.add_entity(gs.morphs.MJCF(file=sphere_path))
 
-    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-        sphere_mjcf = create_sphere_mjcf("sphere", sphere_pos, sphere_radius)
-        sphere_path = os.path.join(tmpdir_mjcf, "sphere_analytical.xml")
-        ET.ElementTree(sphere_mjcf).write(sphere_path)
-        scene_analytical.add_entity(gs.morphs.MJCF(file=sphere_path))
+            capsule_mjcf = create_capsule_mjcf("capsule", capsule_pos, capsule_euler, capsule_radius, capsule_half_length)
+            capsule_path = os.path.join(tmpdir_mjcf, "capsule_analytical.xml")
+            ET.ElementTree(capsule_mjcf).write(capsule_path)
+            scene.add_entity(gs.morphs.MJCF(file=capsule_path))
 
-        capsule_mjcf = create_capsule_mjcf("capsule", capsule_pos, capsule_euler, capsule_radius, capsule_half_length)
-        capsule_path = os.path.join(tmpdir_mjcf, "capsule_analytical.xml")
-        ET.ElementTree(capsule_mjcf).write(capsule_path)
-        scene_analytical.add_entity(gs.morphs.MJCF(file=capsule_path))
+            scene.build()
 
-        scene_analytical.build()
-
-    with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-        # Add same objects to GJK scene
-        sphere_mjcf = create_sphere_mjcf("sphere", sphere_pos, sphere_radius)
-        sphere_path = os.path.join(tmpdir_mjcf, "sphere_gjk.xml")
-        ET.ElementTree(sphere_mjcf).write(sphere_path)
-        scene_gjk.add_entity(gs.morphs.MJCF(file=sphere_path))
-
-        capsule_mjcf = create_capsule_mjcf("capsule", capsule_pos, capsule_euler, capsule_radius, capsule_half_length)
-        capsule_path = os.path.join(tmpdir_mjcf, "capsule_gjk.xml")
-        ET.ElementTree(capsule_mjcf).write(capsule_path)
-        scene_gjk.add_entity(gs.morphs.MJCF(file=capsule_path))
-
-        scene_gjk.build()
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
+    scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
 
     scene_analytical.step()
     scene_gjk.step()
@@ -535,8 +514,8 @@ def test_sphere_capsule_vs_gjk(sphere_pos, capsule_pos, capsule_euler, should_co
 
     scene_creator.checks_after()
 
-    contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
-    contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
+    contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+    contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
