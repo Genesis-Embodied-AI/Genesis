@@ -271,6 +271,20 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
+    print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
+    print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
+
+    # Print all contacts for debugging
+    if has_collision_analytical:
+        print(f"\nAnalytical contacts:")
+        for i in range(len(contacts_analytical['geom_a'])):
+            print(f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}")
+    
+    if has_collision_gjk:
+        print(f"\nGJK contacts:")
+        for i in range(len(contacts_gjk['geom_a'])):
+            print(f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}")
+
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
@@ -306,13 +320,44 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
         )
 
         # For parallel/near-parallel capsules, the contact position is ambiguous
-        # (any point along the overlapping region is equally valid). Skip position check
-        # for these cases as both methods are correct, just picking different representatives.
+        # (any point along the overlapping region is equally valid). Instead of checking
+        # exact position match, verify both contact points lie on the line connecting the surfaces.
         pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
-        if description not in ["parallel_touching", "parallel_far"]:
-            assert pos_diff < 0.05, f"Contact position mismatch! Diff: {pos_diff:.6f}"
+        if description in ["parallel_touching", "parallel_far"]:
+            print(f"Note: Parallel capsules - verifying multiple contacts along line between surfaces (pos_diff={pos_diff:.6f})")
+            
+            # For parallel capsules, multicontact should find at least 2 contacts (near endpoints)
+            n_analytical = len(contacts_analytical['geom_a'])
+            n_gjk = len(contacts_gjk['geom_a'])
+            
+            assert n_analytical >= 2, f"Parallel capsules should have at least 2 contacts (analytical), got {n_analytical}"
+            assert n_gjk >= 2, f"Parallel capsules should have at least 2 contacts (GJK), got {n_gjk}"
+            
+            # Check that each analytical contact is near at least one GJK contact
+            all_analytical_positions = np.array([contacts_analytical['position'][i] for i in range(n_analytical)])
+            all_gjk_positions = np.array([contacts_gjk['position'][i] for i in range(n_gjk)])
+            
+            for i, pos_a in enumerate(all_analytical_positions):
+                # Find closest GJK contact to this analytical contact
+                min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
+                print(f"  Analytical contact {i} closest to GJK contact: dist={min_dist:.6f}")
+                assert min_dist < 0.1, f"Analytical contact {i} at {pos_a} not matched by any GJK contact (min_dist={min_dist:.6f})"
+            
+            # For parallel vertical capsules, verify contacts are on the line between axes
+            # All contacts should have same X,Y but can have different Z
+            for i in range(n_analytical):
+                pos_a = all_analytical_positions[i]
+                xy_dist = np.linalg.norm(pos_a[:2] - np.array([0.095, 0.0]))
+                assert xy_dist < 0.01, f"Analytical contact {i} X,Y={pos_a[:2]} should be near [0.095, 0.0]"
+                assert -0.26 < pos_a[2] < 0.26, f"Analytical contact {i} Z={pos_a[2]:.3f} outside capsule range"
+            
+            for i in range(n_gjk):
+                pos_g = all_gjk_positions[i]
+                xy_dist = np.linalg.norm(pos_g[:2] - np.array([0.095, 0.0]))
+                assert xy_dist < 0.01, f"GJK contact {i} X,Y={pos_g[:2]} should be near [0.095, 0.0]"
+                assert -0.26 < pos_g[2] < 0.26, f"GJK contact {i} Z={pos_g[2]:.3f} outside capsule range"
         else:
-            print(f"Note: Skipping position check for parallel capsules (ambiguous contact point, pos_diff={pos_diff:.6f})")
+            assert pos_diff < 0.05, f"Contact position mismatch! Diff: {pos_diff:.6f}"
 
 
 @pytest.mark.parametrize("backend", [gs.cpu])
@@ -517,6 +562,17 @@ def test_sphere_capsule_vs_gjk(backend, sphere_pos, capsule_pos, capsule_euler, 
 
     print(f"Analytical collision count: {len(contacts_analytical['geom_a']) if has_collision_analytical else 0}")
     print(f"GJK collision count: {len(contacts_gjk['geom_a']) if has_collision_gjk else 0}")
+
+    # Print all contacts for debugging
+    if has_collision_analytical:
+        print(f"\nAnalytical contacts:")
+        for i in range(len(contacts_analytical['geom_a'])):
+            print(f"  Contact {i}: pos={contacts_analytical['position'][i]}, normal={contacts_analytical['normal'][i]}, pen={contacts_analytical['penetration'][i]:.6f}")
+    
+    if has_collision_gjk:
+        print(f"\nGJK contacts:")
+        for i in range(len(contacts_gjk['geom_a'])):
+            print(f"  Contact {i}: pos={contacts_gjk['position'][i]}, normal={contacts_gjk['normal'][i]}, pen={contacts_gjk['penetration'][i]:.6f}")
 
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
