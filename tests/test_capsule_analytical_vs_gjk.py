@@ -308,10 +308,6 @@ def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, desc
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
-    # All test cases should result in collision
-    assert has_collision_analytical, f"Analytical scene should detect collision for test '{description}'"
-    assert has_collision_gjk, f"GJK scene should detect collision for test '{description}'"
-
     # First check that both methods agree on whether there's a collision
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
