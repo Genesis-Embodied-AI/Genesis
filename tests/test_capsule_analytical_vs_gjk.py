@@ -160,7 +160,7 @@ def create_modified_narrowphase_file():
     return temp_narrowphase_path
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.parametrize(
     "pos1,euler1,pos2,euler2,should_collide,description",
     [
@@ -182,7 +182,7 @@ def create_modified_narrowphase_file():
         ((0, 0, 0), (0, 0, 0), (0.3, 0.3, 0), (0, 0, 0), False, "diagonal_separated"),
     ],
 )
-def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_collide, description, monkeypatch):
+def test_capsule_capsule_vs_gjk(pos1, euler1, pos2, euler2, should_collide, description, monkeypatch):
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
     """
@@ -266,8 +266,10 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     )
     assert gjk_used_gjk, f"GJK scene should use GJK (errno={scene_gjk._sim.rigid_solver._errno[0]})"
 
-    contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False)
-    contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False)
+    contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+    for k, v in contacts_analytical.items():
+        print('contact_analytical', k, type(v), v.shape)
+    contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
     has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
     has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
@@ -276,6 +278,7 @@ def test_capsule_capsule_vs_gjk(backend, pos1, euler1, pos2, euler2, should_coll
     assert has_collision_analytical == has_collision_gjk, (
         f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
     )
+    assert has_collision_analytical == should_collide
 
     # If both detected a collision, compare the contact details
     if has_collision_analytical and has_collision_gjk:
