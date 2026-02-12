@@ -482,14 +482,16 @@ class AnalyticalVsGJKSceneCreator:
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
     ],
 )
-def test_sphere_capsule_vs_gjk(backend, sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, monkeypatch):
+def test_sphere_capsule_vs_gjk(
+    backend, sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, monkeypatch
+):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     """
     # Skip on GPU if requested (for known GJK issues)
     if skip_gpu and backend == gs.gpu:
         pytest.skip(f"Skipping {description} on GPU due to known GJK issue")
-    
+
     sphere_radius = 0.1
     capsule_radius = 0.1
     capsule_half_length = 0.25
@@ -501,7 +503,9 @@ def test_sphere_capsule_vs_gjk(backend, sphere_pos, capsule_pos, capsule_euler, 
             ET.ElementTree(sphere_mjcf).write(sphere_path)
             scene.add_entity(gs.morphs.MJCF(file=sphere_path))
 
-            capsule_mjcf = create_capsule_mjcf("capsule", capsule_pos, capsule_euler, capsule_radius, capsule_half_length)
+            capsule_mjcf = create_capsule_mjcf(
+                "capsule", capsule_pos, capsule_euler, capsule_radius, capsule_half_length
+            )
             capsule_path = os.path.join(tmpdir_mjcf, "capsule_analytical.xml")
             ET.ElementTree(capsule_mjcf).write(capsule_path)
             scene.add_entity(gs.morphs.MJCF(file=capsule_path))
