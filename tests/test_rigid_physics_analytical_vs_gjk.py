@@ -134,7 +134,7 @@ def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
     return lines
 
 
-def create_modified_narrowphase_file():
+def create_modified_narrowphase_file(tmp_path: Path):
     """
     Create a modified version of narrowphase.py that forces capsule collisions to use GJK.
 
@@ -174,12 +174,11 @@ def create_modified_narrowphase_file():
     assert errno_count >= 1
 
     randint = random.randint(0, 1000000)
-    temp_narrowphase_path = f"/tmp/narrow_{randint}.py"
+    id = gs.UID()
+    temp_narrowphase_path = tmp_path / f"narrow_{id}.py"
 
     with open(temp_narrowphase_path, "w") as f:
         f.write(content)
-
-    print(f"Modified narrowphase written to: {temp_narrowphase_path}")
 
     return temp_narrowphase_path
 
@@ -240,7 +239,7 @@ class AnalyticalVsGJKSceneCreator:
         )
 
         # NOW monkey-patch for the GJK scene
-        temp_narrowphase_path = create_modified_narrowphase_file()
+        temp_narrowphase_path = create_modified_narrowphase_file(tmp_path=self.tmp_path)
         spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
         narrowphase_modified = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(narrowphase_modified)
@@ -318,8 +317,6 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
 
     for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
-        print(f"\nTest: {description}")
-
         try:
             scene_creator.update_pos_quat(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat(entity_idx=1, pos=pos1, euler=euler1)
@@ -496,8 +493,6 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         if skip_gpu and backend == gs.gpu:
             print(f"\nTest: {description} - SKIPPED on GPU")
             continue
-
-        print(f"\nTest: {description}")
 
         try:
             scene_creator.update_pos_quat(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
