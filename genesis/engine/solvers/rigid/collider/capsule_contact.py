@@ -69,8 +69,10 @@ def func_closest_points_on_segments(
 def func_capsule_capsule_contact(
     i_ga,
     i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
@@ -82,6 +84,11 @@ def func_capsule_capsule_contact(
       1. Find closest points on the two line segments (analytical)
       2. Check if distance < sum of radii
       3. Compute contact point and normal
+
+    Parameters
+    ----------
+    ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multicontact).
+    gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multicontact).
     """
     EPS = rigid_global_info.EPS[None]
     is_col = False
@@ -90,14 +97,14 @@ def func_capsule_capsule_contact(
     penetration = gs.ti_float(0.0)
 
     # Get capsule A parameters
-    pos_a = geoms_state.pos[i_ga, i_b]
-    quat_a = geoms_state.quat[i_ga, i_b]
+    pos_a = ga_pos
+    quat_a = ga_quat
     radius_a = geoms_info.data[i_ga][0]
     halflength_a = gs.ti_float(0.5) * geoms_info.data[i_ga][1]
 
     # Get capsule B parameters
-    pos_b = geoms_state.pos[i_gb, i_b]
-    quat_b = geoms_state.quat[i_gb, i_b]
+    pos_b = gb_pos
+    quat_b = gb_quat
     radius_b = geoms_info.data[i_gb][0]
     halflength_b = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 
@@ -154,8 +161,10 @@ def func_capsule_capsule_contact(
 def func_sphere_capsule_contact(
     i_ga,
     i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
@@ -167,11 +176,21 @@ def func_sphere_capsule_contact(
       2. Check if distance < sum of radii
       3. Compute contact point and normal
 
+    Parameters
+    ----------
+    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multicontact).
+    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multicontact).
     """
     # Ensure sphere is always i_ga and capsule is i_gb
     normal_dir = 1
+    sphere_pos = ga_pos
+    capsule_pos = gb_pos
+    capsule_q = gb_quat
     if geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
         i_ga, i_gb = i_gb, i_ga
+        sphere_pos = gb_pos
+        capsule_pos = ga_pos
+        capsule_q = ga_quat
         normal_dir = -1
 
     EPS = rigid_global_info.EPS[None]
@@ -180,11 +199,11 @@ def func_sphere_capsule_contact(
     contact_pos = ti.Vector.zero(gs.ti_float, 3)
     penetration = gs.ti_float(0.0)
 
-    sphere_center = geoms_state.pos[i_ga, i_b]
+    sphere_center = sphere_pos
     sphere_radius = geoms_info.data[i_ga][0]
 
-    capsule_center = geoms_state.pos[i_gb, i_b]
-    capsule_quat = geoms_state.quat[i_gb, i_b]
+    capsule_center = capsule_pos
+    capsule_quat = capsule_q
     capsule_radius = geoms_info.data[i_gb][0]
     capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 

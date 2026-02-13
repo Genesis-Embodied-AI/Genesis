@@ -641,8 +641,10 @@ def func_convex_convex_contact(
                     is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
                         i_ga=i_ga,
                         i_gb=i_gb,
-                        i_b=i_b,
-                        geoms_state=geoms_state,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
                         geoms_info=geoms_info,
                         rigid_global_info=rigid_global_info,
                     )
@@ -652,8 +654,10 @@ def func_convex_convex_contact(
                     is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
                         i_ga=i_ga,
                         i_gb=i_gb,
-                        i_b=i_b,
-                        geoms_state=geoms_state,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
                         geoms_info=geoms_info,
                         rigid_global_info=rigid_global_info,
                     )
