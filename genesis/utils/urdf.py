@@ -406,9 +406,12 @@ def merge_fixed_links(robot, links_to_keep):
                 parent_name = joint.parent
                 child_name = joint.child
 
-                if parent_name in original_to_merged:
+                # Follow the chain to find the ultimate merged parent
+                while parent_name in original_to_merged:
                     parent_name = original_to_merged[parent_name]
-                if child_name in original_to_merged:
+
+                # Follow the chain to find the ultimate merged child
+                while child_name in original_to_merged:
                     child_name = original_to_merged[child_name]
 
                 parent_idx = link_name_to_idx.get(parent_name)
@@ -420,9 +423,13 @@ def merge_fixed_links(robot, links_to_keep):
                 parent_link = links[parent_idx]
                 child_link = links[child_idx]
 
-                if parent_link.name not in original_to_merged:
-                    original_to_merged[parent_link.name] = parent_link.name
-                original_to_merged[child_link.name] = original_to_merged[parent_link.name]
+                # Update the mapping for the child to point to the ultimate parent
+                original_to_merged[joint.child] = parent_name
+
+                # Update all existing mappings that point to the child
+                for key in original_to_merged:
+                    if original_to_merged[key] == child_name:
+                        original_to_merged[key] = parent_name
 
                 update_subtree(links, joints, child_link.name, joint.origin)
                 merge_inertia(parent_link, child_link)
@@ -431,7 +438,6 @@ def merge_fixed_links(robot, links_to_keep):
 
                 links.pop(child_idx)
                 joints.remove(joint)
-
                 link_name_to_idx = {link.name: idx for idx, link in enumerate(links)}
 
                 fixed_joint_found = True
