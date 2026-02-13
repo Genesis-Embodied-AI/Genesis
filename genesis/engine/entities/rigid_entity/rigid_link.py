@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
+RHO_OBJECT = 600.0
+RHO_ROBOT = 1500.0
+
+
 # If mass is too small, we do not care much about spatial inertia discrepancy
 MASS_EPS = 0.005
 AABB_EPS = 0.002
@@ -58,11 +62,14 @@ class RigidLink(RBC):
         root_idx: int | None,
         invweight: float | None,
         visualize_contact: bool,
+        is_robot: bool,
     ):
         self._name: str = name
         self._entity: "RigidEntity" = entity
         self._solver: "RigidSolver" = entity.solver
         self._entity_idx_in_solver = entity._idx_in_solver
+
+        self._is_robot: bool = is_robot
 
         self._uid = gs.UID()
         self._idx: int = idx
@@ -151,6 +158,8 @@ class RigidLink(RBC):
 
             # Get material density
             rho = self.entity.material.rho
+            if rho is None:
+                rho = RHO_ROBOT if self._is_robot else RHO_OBJECT
 
             # Process each geom individually and compose their properties
             for geom in geom_list:

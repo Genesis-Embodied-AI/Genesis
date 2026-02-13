@@ -1970,7 +1970,7 @@ def test_frictionloss_advanced(show_viewer, tol):
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
     assert_allclose(robot.get_AABB()[0, 2], 0.0, tol=2e-4)
     box_pos = box.get_pos()
-    assert box_pos[0] > 0.6
+    assert box_pos[0] > 0.4
     # This is to check collision detection is working correctly on metal
     # The box will collide with the robot and rolling on the ground,
     # We check whether it's rolling within a reasonable range and not blowing up.
