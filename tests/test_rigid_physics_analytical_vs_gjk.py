@@ -264,13 +264,13 @@ class AnalyticalVsGJKSceneCreator:
         return self.scene_analytical, self.scene_gjk
 
     def update_pos_quat(self, entity_idx: int, pos, euler) -> None:
-        quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler), degrees=True)
+        quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
 
-        self.entities_analytical[entity_idx].set_qpos(np.array([*pos, *quat]))
-        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat]))
+        self.entities_analytical[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
+        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
 
         # Zero out velocities to prevent motion during step
-        zero_vel = np.zeros(6)  # 3 linear + 3 angular
+        zero_vel = np.zeros(6, dtype=gs.np_float)  # 3 linear + 3 angular
         self.entities_analytical[entity_idx].set_dofs_velocity(zero_vel)
         self.entities_gjk[entity_idx].set_dofs_velocity(zero_vel)
 
