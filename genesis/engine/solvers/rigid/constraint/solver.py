@@ -180,7 +180,6 @@ class ConstraintSolver:
         )
 
     def resolve(self):
-
         func_solve_init(
             self._solver.dofs_info,
             self._solver.dofs_state,
