@@ -13,6 +13,7 @@ dependencies = [
     "gstaichi==4.6.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
+    "frozendict",
     "trimesh",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name

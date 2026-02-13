@@ -1,7 +1,8 @@
 from typing import TYPE_CHECKING
 import os
 
-import gstaichi as ti
+from frozendict import frozendict
+import quadrants as ti
 import numpy as np
 import torch
 
@@ -12,6 +13,7 @@ from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import ti_to_torch
 
 from . import backward as backward_constraint_solver
+from . import solver_breakdown
 from . import noslip as constraint_noslip
 from ..collider.contact_island import ContactIsland
 
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
-GS_SOLVER_DECOMPOSE = "GS_SOLVER_DECOMPOSE"
+GS_SOLVER_DECOMPOSE = os.environ.get("GS_SOLVER_DECOMPOSE", "1") == "1"
 
 
 class ConstraintSolver:
@@ -184,9 +186,9 @@ class ConstraintSolver:
         Environment variables:
             GS_SOLVER_DECOMPOSE: Overrides any heuristics we are using
         """
-        use_decomposed_kernels = gs.backend != gs.cpu
-        if GS_SOLVER_DECOMPOSE in os.environ:
-            use_decomposed_kernels = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
+        # use_decomposed_kernels = gs.backend != gs.cpu
+        # if GS_SOLVER_DECOMPOSE in os.environ:
+        #     use_decomposed_kernels = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 
         func_solve_init(
             self._solver.dofs_info,
@@ -197,26 +199,33 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        if use_decomposed_kernels:
-            from genesis.engine.solvers.rigid.constraint.solver_breakdown import (
-                func_solve_decomposed_macrokernels,
-            )
+        func_solve_body(
+            self._solver.entities_info,
+            self._solver.dofs_state,
+            self.constraint_state,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+        )
+        # if use_decomposed_kernels:
+        #     from genesis.engine.solvers.rigid.constraint.solver_breakdown import (
+        #         func_solve_decomposed_macrokernels,
+        #     )
 
-            func_solve_decomposed_macrokernels(
-                self._solver.entities_info,
-                self._solver.dofs_state,
-                self.constraint_state,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
-        else:
-            func_solve_body(
-                self._solver.entities_info,
-                self._solver.dofs_state,
-                self.constraint_state,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-            )
+        #     func_solve_decomposed_macrokernels(
+        #         self._solver.entities_info,
+        #         self._solver.dofs_state,
+        #         self.constraint_state,
+        #         self._solver._rigid_global_info,
+        #         self._solver._static_rigid_sim_config,
+        #     )
+        # else:
+        #     func_solve_body_monolith(
+        #         self._solver.entities_info,
+        #         self._solver.dofs_state,
+        #         self.constraint_state,
+        #         self._solver._rigid_global_info,
+        #         self._solver._static_rigid_sim_config,
+        #     )
 
         func_update_qacc(
             self._solver.dofs_state,
@@ -3019,8 +3028,23 @@ def func_solve_iter(
         )
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@ti.perf_dispatch(get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)))
 def func_solve_body(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: ti.template(),
+) -> None: ...
+
+
+if GS_SOLVER_DECOMPOSE:
+    solver_breakdown.register_decomposed_solver_body()
+
+
+@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
+@ti.kernel(fastcache=gs.use_fastcache)
+def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
