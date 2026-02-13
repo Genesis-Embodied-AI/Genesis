@@ -358,6 +358,17 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
                     n_analytical = len(contacts_analytical["geom_a"])
                     n_gjk = len(contacts_gjk["geom_a"])
 
+                    # When GJK has multicontact, verify analytical also generates sufficient contacts
+                    if n_gjk >= 2:
+                        assert n_analytical >= 2, (
+                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
+                            f"(expected at least 2)"
+                        )
+                        assert n_analytical >= (n_gjk - 1), (
+                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
+                            f"(expected at least {n_gjk - 1})"
+                        )
+
                     if n_analytical >= 2 or n_gjk >= 2:
                         all_analytical_positions = np.array(
                             [contacts_analytical["position"][i] for i in range(n_analytical)]
