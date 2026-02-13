@@ -1,7 +1,7 @@
 import math
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 
 import genesis as gs

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import igl
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 import torch
 
 import genesis as gs
@@ -947,7 +947,7 @@ class FEMEntity(Entity):
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
             return
 
-        # FIXME: GsTaichi 'fill' method is very inefficient. Try using zero-copy if possible.
+        # FIXME: Quadrants 'fill' method is very inefficient. Try using zero-copy if possible.
         if verts_idx_local is None:
             self._solver.vertex_constraints.is_constrained.fill(0)
             return

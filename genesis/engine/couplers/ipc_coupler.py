@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import trimesh
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial

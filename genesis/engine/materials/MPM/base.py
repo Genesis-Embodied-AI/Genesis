@@ -1,7 +1,7 @@
 import platform
 import sys
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 

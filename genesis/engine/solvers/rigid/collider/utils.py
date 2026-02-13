@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 import genesis.utils.array_class as array_class
 from genesis.constants import GEOM_TYPE
 

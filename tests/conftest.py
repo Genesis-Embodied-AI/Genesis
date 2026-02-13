@@ -161,7 +161,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # relying on this mechanism is fragile.
     os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
-    # Disable GsTaichi dynamic array mode by default on MacOS because it is not supported by Metal
+    # Disable Quadrants dynamic array mode by default on MacOS because it is not supported by Metal
     if sys.platform == "darwin":
         os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
 
@@ -613,7 +613,7 @@ def initialize_genesis(
                 pytest.skip("Apple Metal GPU does not support 64bits precision.")
             if os.environ.get("GS_ENABLE_NDARRAY") == "1":
                 pytest.skip(
-                    "Using GsTaichi dynamic array type is not supported on Apple Metal GPU because this backend only "
+                    "Using Quadrants dynamic array type is not supported on Apple Metal GPU because this backend only "
                     "supports up to 31 kernel parameters, which is not enough for most solvers."
                 )
 
@@ -637,7 +637,7 @@ def initialize_genesis(
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
+        # Double garbage collection is over-zealous since quadrants 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 

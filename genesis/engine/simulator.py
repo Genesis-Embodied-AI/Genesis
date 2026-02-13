@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 from genesis.options.morphs import Morph

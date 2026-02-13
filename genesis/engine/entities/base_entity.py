@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 from genesis.repr_base import RBC

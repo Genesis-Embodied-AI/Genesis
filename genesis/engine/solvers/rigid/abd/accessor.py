@@ -9,7 +9,7 @@ These functions are used by the RigidSolver class to interface with the Taichi
 data structures for rigid body dynamics simulation.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

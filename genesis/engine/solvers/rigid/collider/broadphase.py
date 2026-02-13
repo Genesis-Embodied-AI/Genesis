@@ -5,7 +5,7 @@ This module contains AABB operations, sweep-and-prune algorithms,
 and collision pair validation for the rigid body collider.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -155,7 +155,7 @@ def func_broad_phase(
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
-    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to gstaichi
+    # we will use ColliderBroadPhaseBuffer as typing after Hugh adds array_struct feature to quadrants
     constraint_state: array_class.ConstraintState,
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,

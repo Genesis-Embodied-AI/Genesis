@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 
@@ -405,7 +405,7 @@ def kernel_get_equality_constraints(
     n_eqs_max = gs.ti_int(0)
 
     # this is a reduction operation (global max), we have to serialize it
-    # TODO: a good unittest and a better implementation from gstaichi for this kind of reduction
+    # TODO: a good unittest and a better implementation from quadrants for this kind of reduction
     ti.loop_config(serialize=True)
     for i_b in range(_B):
         n_eqs = constraint_state.ti_n_equalities[i_b]
@@ -1779,7 +1779,7 @@ def func_cholesky_solve_tiled(
     Note that this implementation leverages warp-level reduction whenever supported, a generic fallback otherwise. At
     the time of writing, all warp-level intrinsics in `ti.simt.warp` sub-module are CUDA-specific, of which only
     `shfl_down_f32` is being used here. Although some of these warp-level instrinsics are supposed to be supported by
-    all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), GsTaichi does not provide a unified
+    all major GPUs if not all (incl. Apple Silicon chips under naming 'SIMD-group'), Quadrants does not provide a unified
     API for it yet. As a result, warp-level intrinsics are currently disabled if not running on CUDA backend. On top of
     that, most if not all, Warp-level intrinsics are only supporting 32bits precision.
     """

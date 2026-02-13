@@ -6,7 +6,7 @@ This module contains specialized contact detection algorithms for box geometries
 - Box-box contact detection (MuJoCo algorithm)
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

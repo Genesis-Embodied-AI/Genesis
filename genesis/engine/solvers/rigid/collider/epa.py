@@ -6,7 +6,7 @@ penetration depth and contact normals for intersecting convex objects.
 Includes both standard and numerically robust ("safe") variants.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

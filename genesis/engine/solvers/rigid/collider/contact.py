@@ -5,7 +5,7 @@ This module contains functions for adding contacts, computing tolerances,
 and managing contact data including reset/clear operations.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -131,7 +131,7 @@ def collider_kernel_get_contacts(
 ):
     _B = collider_state.active_buffer.shape[1]
 
-    # TODO: Better implementation from gstaichi for this kind of reduction.
+    # TODO: Better implementation from quadrants for this kind of reduction.
     n_contacts_max = gs.ti_int(0)
     ti.loop_config(serialize=True)
     for i_b in range(_B):
