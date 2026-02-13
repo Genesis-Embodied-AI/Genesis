@@ -297,7 +297,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     Tests multiple configurations with a single scene build (moving objects between tests).
     """
     test_cases = [
-        # (pos1, euler1, pos2, euler2, should_collide, description)
+        # (pos0, euler0, pos1, euler1, should_collide, description)
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0), True, "perpendicular_close"),
         ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light"),
         ((0, 0, 0), (0, 90, 0), (0, 0.17, 0.17), (0, 90, 0), False, "horizontal_displaced"),
