@@ -2677,6 +2677,40 @@ def test_urdf_parsing(show_viewer, tol):
 
 
 @pytest.mark.required
+def test_urdf_parsing_merge_fixed_links(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    asset_path = get_hf_dataset(pattern="chain.urdf")
+    robot_1 = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+            merge_fixed_links=False,
+            recompute_inertia=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 0, 0, 0.5),
+        ),
+    )
+    robot_2 = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+            merge_fixed_links=True,
+            recompute_inertia=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0, 1, 0, 0.5),
+        ),
+    )
+    scene.build()
+
+    com_robot_1, com_robot_2 = scene.rigid_solver.get_links_root_COM(
+        links_idx=(robot_1.base_link_idx, robot_2.base_link_idx)
+    )
+    assert_allclose(com_robot_1, com_robot_2, tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
     with open(urdf_path, "w") as f:
