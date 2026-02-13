@@ -180,15 +180,6 @@ class ConstraintSolver:
         )
 
     def resolve(self):
-        """
-        Resolve constraints using either monolithic or decomposed solver kernels.
-
-        Environment variables:
-            GS_SOLVER_DECOMPOSE: Overrides any heuristics we are using
-        """
-        # use_decomposed_kernels = gs.backend != gs.cpu
-        # if GS_SOLVER_DECOMPOSE in os.environ:
-        #     use_decomposed_kernels = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
 
         func_solve_init(
             self._solver.dofs_info,
@@ -206,26 +197,6 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        # if use_decomposed_kernels:
-        #     from genesis.engine.solvers.rigid.constraint.solver_breakdown import (
-        #         func_solve_decomposed_macrokernels,
-        #     )
-
-        #     func_solve_decomposed_macrokernels(
-        #         self._solver.entities_info,
-        #         self._solver.dofs_state,
-        #         self.constraint_state,
-        #         self._solver._rigid_global_info,
-        #         self._solver._static_rigid_sim_config,
-        #     )
-        # else:
-        #     func_solve_body_monolith(
-        #         self._solver.entities_info,
-        #         self._solver.dofs_state,
-        #         self.constraint_state,
-        #         self._solver._rigid_global_info,
-        #         self._solver._static_rigid_sim_config,
-        #     )
 
         func_update_qacc(
             self._solver.dofs_state,
