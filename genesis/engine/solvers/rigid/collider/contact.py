@@ -8,8 +8,8 @@ and managing contact data including reset/clear operations.
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 
 
 @ti.func
@@ -98,15 +98,22 @@ def kernel_collider_clear(
 
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
+        # Clear contacts: when hibernation is enabled, only clear non-hibernated contacts.
+        # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
         for i_c in range(collider_state.n_contacts[i_b]):
-            collider_state.contact_data.link_a[i_c, i_b] = -1
-            collider_state.contact_data.link_b[i_c, i_b] = -1
-            collider_state.contact_data.geom_a[i_c, i_b] = -1
-            collider_state.contact_data.geom_b[i_c, i_b] = -1
-            collider_state.contact_data.penetration[i_c, i_b] = 0.0
-            collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            should_clear = True
+            if ti.static(static_rigid_sim_config.use_hibernation):
+                # Only clear if this is not a hibernated contact
+                should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
+            if should_clear:
+                collider_state.contact_data.link_a[i_c, i_b] = -1
+                collider_state.contact_data.link_b[i_c, i_b] = -1
+                collider_state.contact_data.geom_a[i_c, i_b] = -1
+                collider_state.contact_data.geom_b[i_c, i_b] = -1
+                collider_state.contact_data.penetration[i_c, i_b] = 0.0
+                collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
         if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
@@ -189,7 +196,7 @@ def func_add_contact(
 
         collider_state.n_contacts[i_b] = i_c + 1
     else:
-        errno[i_b] = errno[i_b] | 0b00000000000000000000000000000010
+        errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @ti.func
@@ -340,19 +347,26 @@ def func_contact_orthogonals(
 
 @ti.func
 def func_rotate_frame(
-    i_g,
-    contact_pos: ti.types.vector(3),
-    qrot: ti.types.vector(4),
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-):
-    geoms_state.quat[i_g, i_b] = gu.ti_transform_quat_by_quat(geoms_state.quat[i_g, i_b], qrot)
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
+    contact_pos: ti.types.vector(3, dtype=gs.ti_float),
+    qrot: ti.types.vector(4, dtype=gs.ti_float),
+) -> tuple[
+    ti.types.vector(3, dtype=gs.ti_float),
+    ti.types.vector(4, dtype=gs.ti_float),
+]:
+    """
+    Instead of modifying geoms_state in place, this function takes thread-local
+    pos/quat and returns the updated values.
+    """
+    new_quat = gu.ti_transform_quat_by_quat(quat, qrot)
 
-    rel = contact_pos - geoms_state.pos[i_g, i_b]
+    rel = contact_pos - pos
     vec = gu.ti_transform_by_quat(rel, qrot)
     vec = vec - rel
-    geoms_state.pos[i_g, i_b] = geoms_state.pos[i_g, i_b] - vec
+    new_pos = pos - vec
+
+    return new_pos, new_quat
 
 
 @ti.kernel

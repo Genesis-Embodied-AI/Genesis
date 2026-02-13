@@ -4,6 +4,7 @@ import math
 import numpy as np
 
 import genesis as gs
+from genesis.utils import mesh as mu
 
 from .misc import FoamOptions
 from .options import Options
@@ -249,7 +250,7 @@ class Surface(Options):
                 if isinstance(opacity_texture, ColorTexture):
                     rgba_texture = ColorTexture(color=(*color_texture.color, *opacity_texture.color))
                 elif isinstance(opacity_texture, ImageTexture) and opacity_texture.image_array is not None:
-                    rgb_color = np.round(np.array(color_texture.color) * 255).astype(np.uint8)
+                    rgb_color = mu.color_f32_to_u8(color_texture.color)
                     rgb_array = np.full((*opacity_texture.image_array.shape[:2], 3), rgb_color, dtype=np.uint8)
                     rgba_array = np.dstack((rgb_array, opacity_texture.image_array))
                     rgba_scale = (1.0, 1.0, 1.0, *opacity_texture.image_color)
@@ -259,7 +260,7 @@ class Surface(Options):
 
             elif isinstance(color_texture, ImageTexture) and color_texture.image_array is not None:
                 if isinstance(opacity_texture, ColorTexture):
-                    a_color = np.round(np.array(opacity_texture.color) * 255).astype(np.uint8)
+                    a_color = mu.color_f32_to_u8(opacity_texture.color)
                     a_array = np.full((*color_texture.image_array.shape[:2],), a_color, dtype=np.uint8)
                     rgba_array = np.dstack((color_texture.image_array, a_array))
                     rgba_scale = (*color_texture.image_color, 1.0)

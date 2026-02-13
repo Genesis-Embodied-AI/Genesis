@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
     from .rigid_joint import RigidJoint
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-    from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
 MASS_EPS = 0.005
+AABB_EPS = 0.002
 INERTIA_RATIO_MAX = 100.0
 
 
@@ -138,6 +138,8 @@ class RigidLink(RBC):
         hint_mass = 0.0
         hint_com = np.zeros(3, dtype=gs.np_float)
         hint_inertia = np.zeros((3, 3), dtype=gs.np_float)
+        aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
+        aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
         if not self._is_fixed:
             # Determine which geom list to use: geoms first, then vgeoms, then fallback
             if self._geoms:
@@ -152,27 +154,65 @@ class RigidLink(RBC):
 
             # Process each geom individually and compose their properties
             for geom in geom_list:
-                # Create mesh based on geom type
                 if is_visual:
-                    inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces)
+                    geom_type = gs.GEOM_TYPE.MESH
                 else:
-                    inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces)
+                    geom_type = geom.type
 
                 geom_pos = geom._init_pos
                 geom_quat = geom._init_quat
 
-                if not inertia_mesh.is_watertight:
-                    inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+                geom_com_local = np.zeros(3)
+                if geom_type == gs.GEOM_TYPE.PLANE:
+                    pass
+                elif geom_type == gs.GEOM_TYPE.SPHERE:
+                    radius = geom.data[0]
+                    geom_mass = (4.0 / 3.0) * np.pi * radius**3 * rho
+                    I = (2.0 / 5.0) * geom_mass * radius**2
+                    geom_inertia_local = np.diag([I, I, I])
+                elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+                    hx, hy, hz = geom.data[:3]
+                    geom_mass = (4.0 / 3.0) * np.pi * hx * hy * hz * rho
+                    geom_inertia_local = (geom_mass / 5.0) * np.diag([hy**2 + hz**2, hx**2 + hz**2, hx**2 + hy**2])
+                elif geom_type == gs.GEOM_TYPE.CYLINDER:
+                    radius, height = geom.data[:2]
+                    geom_mass = np.pi * radius**2 * height * rho
+                    I_r = (geom_mass / 12.0) * (3.0 * radius**2 + height**2)
+                    I_z = 0.5 * geom_mass * radius**2
+                    geom_inertia_local = np.diag([I_r, I_r, I_z])
+                elif geom_type == gs.GEOM_TYPE.CAPSULE:
+                    radius, height = geom.data[:2]
+                    m_cyl = np.pi * radius**2 * height * rho
+                    m_sph = (4.0 / 3.0) * np.pi * radius**3 * rho
+                    geom_mass = m_cyl + m_sph
+                    I_r = (m_cyl * radius**2 / 12.0 * (3.0 + height**2 / radius**2)) + (
+                        m_sph * radius**2 / 4.0 * (83.0 / 80.0 + (height / radius + 3.0 / 4.0) ** 2)
+                    )
+                    I_h = 0.5 * m_cyl * radius**2 + (2.0 / 5.0) * m_sph * radius**2
+                    geom_inertia_local = np.diag([I_r, I_r, I_h])
+                elif geom_type == gs.GEOM_TYPE.BOX:
+                    hx, hy, hz = geom.data[:3]
+                    geom_mass = (hx * hy * hz) * rho
+                    geom_inertia_local = (geom_mass / 12.0) * np.diag([hy**2 + hz**2, hx**2 + hz**2, hx**2 + hy**2])
+                else:  # geom_type == gs.GEOM_TYPE.MESH:
+                    # Create mesh based on geom type
+                    if is_visual:
+                        inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces, process=False)
+                    else:
+                        inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces, process=False)
 
-                # FIXME: without this check, some geom will have negative volume even after the above convex
-                # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
-                if inertia_mesh.volume < -gs.EPS:
-                    inertia_mesh.invert()
+                    if not inertia_mesh.is_watertight:
+                        inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
 
-                geom_mass = inertia_mesh.volume * rho
-                geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
+                    # FIXME: without this check, some geom will have negative volume even after the above convex
+                    # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
+                    if inertia_mesh.volume < -gs.EPS:
+                        inertia_mesh.invert()
 
-                geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
+                    geom_mass = inertia_mesh.volume * rho
+                    geom_com_local = inertia_mesh.center_mass
+
+                    geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
 
                 # Transform geom properties to link frame
                 geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
@@ -183,8 +223,29 @@ class RigidLink(RBC):
                     hint_mass, hint_com, hint_inertia, geom_mass, geom_com_link, geom_inertia_link
                 )
 
+            # Compute the bounding box of the links using both visual and collision geometries to be conservative
+            for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
+                for geom in geoms:
+                    verts = geom.init_vverts if is_visual else geom.init_verts
+                    verts = gu.transform_by_trans_quat(verts, geom._init_pos, geom._init_quat)
+                    aabb_min = np.minimum(aabb_min, verts.min(axis=0))
+                    aabb_max = np.maximum(aabb_max, verts.max(axis=0))
+
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if hint_mass > MASS_EPS:
+            if self._inertial_pos is not None:
+                tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
+                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                    com_str: list[str] = []
+                    aabb_str: list[str] = []
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                        com_str.append(f"{name}={pos:0.3f}")
+                        aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
+                    gs.logger.warning(
+                        f"Link '{self._name}' has dubious center of mass [{', '.join(com_str)}] compared to the "
+                        f"bounding box from geometry [{', '.join(aabb_str)}]."
+                    )
+
             if self._inertial_mass is not None:
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):
                     gs.logger.warning(
@@ -192,6 +253,7 @@ class RigidLink(RBC):
                         f"from geometry {hint_mass:0.3f} given material density {rho:0.0f}."
                     )
                 hint_inertia *= self._inertial_mass / hint_mass
+
             if self._inertial_i is not None:
                 inertia_diag = np.diag(self._inertial_i)
                 hint_inertia_diag = np.diag(hint_inertia)
@@ -745,11 +807,6 @@ class RigidLink(RBC):
     @property
     def is_free(self):
         raise DeprecationError("This property has been removed.")
-
-    @property
-    def pose(self) -> "Pose":
-        """Return the current pose of the link (note, this is not necessarily the same as the principal axes frame)."""
-        return Pose.from_link(self)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------

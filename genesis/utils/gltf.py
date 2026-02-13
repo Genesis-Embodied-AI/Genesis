@@ -291,7 +291,7 @@ def parse_glb_tree(glb, node_index):
     return mesh_list
 
 
-def parse_mesh_glb(path, group_by_material, scale, surface):
+def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
     glb = pygltflib.GLTF2().load(path)
     assert glb is not None
     glb.convert_images(pygltflib.ImageFormat.DATAURI)
@@ -392,8 +392,9 @@ def parse_mesh_glb(path, group_by_material, scale, surface):
             mesh_info, first_created = mesh_infos.get(group_idx)
             if first_created:
                 mesh_info.set_property(
-                    surface=material, metadata={"path": path, "name": material_name if group_by_material else mesh_name}
+                    surface=material,
+                    metadata={"mesh_path": path, "name": material_name if group_by_material else mesh_name},
                 )
             mesh_info.append(points, triangles, normals, uvs)
 
-    return mesh_infos.export_meshes(scale=scale)
+    return mesh_infos.export_meshes(scale=scale, is_mesh_zup=is_mesh_zup)

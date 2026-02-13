@@ -1,4 +1,5 @@
 import os
+import xml.etree.ElementTree as ET
 from itertools import chain
 from pathlib import Path
 
@@ -11,6 +12,41 @@ from genesis.ext import urdfpy
 
 from . import geom as gu
 from .misc import get_assets_dir
+
+
+def get_robot_name(file_path):
+    """
+    Extract the robot name from a URDF file.
+
+    The name is extracted from the ``<robot name="...">`` attribute, which is
+    required by the URDF specification.
+
+    Reference: https://wiki.ros.org/urdf/XML/robot
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the URDF file.
+
+    Returns
+    -------
+    str
+        The robot name.
+
+    Raises
+    ------
+    ValueError
+        If the robot name attribute is missing or empty.
+    """
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "robot":
+        name = root.attrib.get("name")
+        if name:
+            return name
+        raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
+    raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):
@@ -57,8 +93,10 @@ def _order_links(l_infos, j_infos, links_g_infos=None):
 def parse_urdf(morph, surface):
     if isinstance(morph.file, (str, Path)):
         path = os.path.join(get_assets_dir(), morph.file)
+        parent_dir = os.path.dirname(path)
         robot = urdfpy.URDF.load(path)
     else:
+        parent_dir = os.getcwd()
         robot = morph.file
 
     # Merge links connected by fixed joints
@@ -115,6 +153,7 @@ def parse_urdf(morph, surface):
                     scale *= geometry.scale
 
                 # Overwrite surface color by original color specified in URDF file only if necessary
+                is_urdf_material = False
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
@@ -123,30 +162,30 @@ def parse_urdf(morph, surface):
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or surface.color is None)
                 ):
+                    is_urdf_material = True
                     geom_surface = surface.copy()
                     geom_surface.color = geom_prop.material.color
                 else:
                     geom_surface = surface
 
-                mesh_path = urdfpy.utils.get_filename(os.path.dirname(path), geometry.filename)
+                mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
                     group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, geom_surface)
+                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, geom_surface)
                     geometry._meshes = [mesh.trimesh for mesh in meshes]
 
                 # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
-                for i, tmesh in enumerate(geometry.meshes):
+                for _, tmesh in enumerate(geometry.meshes):
                     mesh = gs.Mesh.from_trimesh(
                         tmesh,
                         scale=scale,
                         surface=geom_surface,
+                        is_mesh_zup=morph.file_meshes_are_zup,
                         metadata={"mesh_path": mesh_path},
                     )
-
-                    if not morph.file_meshes_are_zup:
-                        mesh.convert_to_zup()
-                        if i == 0:
-                            gs.logger.debug(f"Converting the geometry of the '{morph.file}' file to zup.")
+                    if is_urdf_material:
+                        # Material color defined in URDF are not considered as visual overwrite
+                        mesh.metadata["is_visual_overwritten"] = False
 
                     g_info = {"mesh" if geom_is_col else "vmesh": mesh}
                     link_g_infos_.append(g_info)

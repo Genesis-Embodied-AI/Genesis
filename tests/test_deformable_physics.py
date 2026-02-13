@@ -107,7 +107,6 @@ def test_muscle(n_envs, muscle_material, show_viewer):
 @pytest.mark.slow  # ~150s
 @pytest.mark.debug(False)  # Disable debug for speedup
 @pytest.mark.required
-@pytest.mark.skipif(platform.machine() == "aarch64", reason="Module 'tetgen' is crashing on Linux ARM.")
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_deformable_parallel(show_viewer):
     scene = gs.Scene(

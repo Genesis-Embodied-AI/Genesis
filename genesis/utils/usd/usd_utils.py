@@ -1,0 +1,74 @@
+from typing import List, Tuple
+
+import numpy as np
+from pxr import Gf, Usd, UsdGeom
+
+import genesis as gs
+from genesis.utils import geom as gu
+
+
+AXES_VECTOR = {
+    "X": np.array([1, 0, 0], dtype=np.float32),
+    "Y": np.array([0, 1, 0], dtype=np.float32),
+    "Z": np.array([0, 0, 1], dtype=np.float32),
+}
+
+
+AXES_T = {
+    "X": np.array(
+        [[0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0], [-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
+    ),
+    "Y": np.array(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
+    ),
+    "Z": np.eye(4, dtype=np.float32),
+}
+
+
+def usd_pos_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray:
+    if usd_pos is None:
+        return gu.zero_pos()
+    return np.asarray(usd_pos, dtype=np.float32)
+
+
+def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
+    if usd_quat is None:
+        return gu.identity_quat()
+    return np.asarray([usd_quat.GetReal(), *usd_quat.GetImaginary()], dtype=np.float32)
+
+
+def usd_attr_array_to_numpy(attr: Usd.Attribute, dtype: np.dtype, return_none: bool = False) -> np.ndarray | None:
+    if attr.HasValue():
+        return np.array(attr.Get(), dtype=dtype)
+    return None if return_none else np.empty(0, dtype=dtype)
+
+
+def usd_primvar_array_to_numpy(
+    primvar: UsdGeom.Primvar, dtype: np.dtype, return_none: bool = False
+) -> np.ndarray | None:
+    if primvar.IsDefined() and primvar.HasValue():
+        return np.array(primvar.ComputeFlattened(), dtype=dtype)
+    return None if return_none else np.empty(0, dtype=dtype)
+
+
+def extract_scale(T: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    R, S = gu.polar(T[:3, :3], pure_rotation=True, side="right")
+    if np.linalg.det(R) <= 0:
+        gs.raise_exception(f"Negative determinant of rotation matrix detected. Got {np.linalg.det(R)}.")
+    Q = np.eye(4, dtype=T.dtype)
+    Q[:3, :3] = R
+    Q[:3, 3] = T[:3, 3]
+    return Q, S
+
+
+def get_attr_value_by_candidates(prim: Usd.Prim, candidates: List[str], attr_name: str, default_value: float):
+    for candidate in candidates:
+        attr_value = prim.GetAttribute(candidate).Get()
+        if attr_value is not None:
+            return attr_value
+
+    gs.logger.debug(
+        f"No matching attribute `{attr_name}` found in {prim.GetPath()} "
+        f"given candidates: {candidates}. Using default value: {default_value}."
+    )
+    return default_value

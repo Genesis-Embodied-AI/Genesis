@@ -17,7 +17,6 @@ import genesis.utils.sdf as sdf
 from . import mpr
 from . import gjk
 from . import diff_gjk
-from . import support_field
 
 from .broadphase import func_point_in_geom_aabb
 from .contact import (
@@ -84,6 +83,10 @@ def func_contact_vertex_sdf(
     i_ga,
     i_gb,
     i_b,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -91,9 +94,6 @@ def func_contact_vertex_sdf(
     collider_static_config: ti.template(),
     sdf_info: array_class.SDFInfo,
 ):
-    ga_pos = geoms_state.pos[i_ga, i_b]
-    ga_quat = geoms_state.quat[i_ga, i_b]
-
     is_col = False
     penetration = gs.ti_float(0.0)
     normal = ti.Vector.zero(gs.ti_float, 3)
@@ -101,8 +101,8 @@ def func_contact_vertex_sdf(
 
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, geoms_info, vertex_pos):
-            new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, vertex_pos, i_gb, i_b)
+        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, vertex_pos):
+            new_penetration = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
             if new_penetration > penetration:
                 is_col = True
                 contact_pos = vertex_pos
@@ -110,8 +110,8 @@ def func_contact_vertex_sdf(
 
     if is_col:
         # Compute contact normal only once, and only in case of contact
-        normal = sdf.sdf_func_normal_world(
-            geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, i_b
+        normal = sdf.sdf_func_normal_world_local(
+            geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, gb_pos, gb_quat
         )
 
         # The contact point must be offsetted by half the penetration depth
@@ -125,7 +125,11 @@ def func_contact_edge_sdf(
     i_ga,
     i_gb,
     i_b,
-    geoms_state: array_class.GeomsState,
+    ga_pos: ti.types.vector(3, dtype=gs.ti_float),
+    ga_quat: ti.types.vector(4, dtype=gs.ti_float),
+    gb_pos: ti.types.vector(3, dtype=gs.ti_float),
+    gb_quat: ti.types.vector(4, dtype=gs.ti_float),
+    geoms_state: array_class.GeomsState,  # For AABB only
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     edges_info: array_class.EdgesInfo,
@@ -148,27 +152,23 @@ def func_contact_edge_sdf(
             i_v0 = edges_info.v0[i_e]
             i_v1 = edges_info.v1[i_e]
 
-            p_0 = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v0], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-            )
-            p_1 = gu.ti_transform_by_trans_quat(
-                verts_info.init_pos[i_v1], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-            )
+            p_0 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v0], ga_pos, ga_quat)
+            p_1 = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v1], ga_pos, ga_quat)
             vec_01 = gu.ti_normalize(p_1 - p_0, EPS)
 
-            sdf_grad_0_b = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_gb, i_b
+            sdf_grad_0_b = sdf.sdf_func_grad_world_local(
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_gb, gb_pos, gb_quat
             )
-            sdf_grad_1_b = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_gb, i_b
+            sdf_grad_1_b = sdf.sdf_func_grad_world_local(
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_gb, gb_pos, gb_quat
             )
 
-            # check if the edge on a is facing towards mesh b (I am not 100% sure about this, subject to removal)
-            sdf_grad_0_a = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_ga, i_b
+            # check if the edge on a is facing towards mesh b
+            sdf_grad_0_a = sdf.sdf_func_grad_world_local(
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_0, i_ga, ga_pos, ga_quat
             )
-            sdf_grad_1_a = sdf.sdf_func_grad_world(
-                geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_ga, i_b
+            sdf_grad_1_a = sdf.sdf_func_grad_world_local(
+                geoms_info, rigid_global_info, collider_static_config, sdf_info, p_1, i_ga, ga_pos, ga_quat
             )
             normal_edge_0 = sdf_grad_0_a - sdf_grad_0_a.dot(vec_01) * vec_01
             normal_edge_1 = sdf_grad_1_a - sdf_grad_1_a.dot(vec_01) * vec_01
@@ -179,15 +179,15 @@ def func_contact_edge_sdf(
                     while cur_length > ga_sdf_cell_size:
                         p_mid = 0.5 * (p_0 + p_1)
                         if (
-                            sdf.sdf_func_grad_world(
-                                geoms_state,
+                            sdf.sdf_func_grad_world_local(
                                 geoms_info,
                                 rigid_global_info,
                                 collider_static_config,
                                 sdf_info,
                                 p_mid,
                                 i_gb,
-                                i_b,
+                                gb_pos,
+                                gb_quat,
                             ).dot(vec_01)
                             < 0
                         ):
@@ -197,12 +197,12 @@ def func_contact_edge_sdf(
                         cur_length = 0.5 * cur_length
 
                     p = 0.5 * (p_0 + p_1)
-                    new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, p, i_gb, i_b)
+                    new_penetration = -sdf.sdf_func_world_local(geoms_info, sdf_info, p, i_gb, gb_pos, gb_quat)
 
                     if new_penetration > penetration:
                         is_col = True
-                        normal = sdf.sdf_func_normal_world(
-                            geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, p, i_gb, i_b
+                        normal = sdf.sdf_func_normal_world_local(
+                            geoms_info, rigid_global_info, collider_static_config, sdf_info, p, i_gb, gb_pos, gb_quat
                         )
                         contact_pos = p
                         penetration = new_penetration
@@ -370,18 +370,16 @@ def func_contact_mpr_terrain(
     tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
 
     if not is_return:
-        # move to terrain's frame
-        geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = gu.ti_transform_pos_quat_by_trans_quat(
-            ga_pos - geoms_state.pos[i_gb, i_b],
+        # Transform to terrain's frame (using local variables, not modifying global state)
+        ga_pos_terrain_frame, ga_quat_terrain_frame = gu.ti_transform_pos_quat_by_trans_quat(
+            ga_pos - gb_pos,
             ga_quat,
             ti.Vector.zero(gs.ti_float, 3),
-            gu.ti_inv_quat(geoms_state.quat[i_gb, i_b]),
+            gu.ti_inv_quat(gb_quat),
         )
-        geoms_state.pos[i_gb, i_b] = ti.Vector.zero(gs.ti_float, 3)
-        geoms_state.quat[i_gb, i_b] = gu.ti_identity_quat()
-        center_a = gu.ti_transform_by_trans_quat(
-            geoms_info.center[i_ga], geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-        )
+        gb_pos_terrain_frame = ti.Vector.zero(gs.ti_float, 3)
+        gb_quat_terrain_frame = gu.ti_identity_quat()
+        center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos_terrain_frame, ga_quat_terrain_frame)
 
         for i_axis, i_m in ti.ndrange(3, 2):
             direction = ti.Vector.zero(gs.ti_float, 3)
@@ -390,15 +388,15 @@ def func_contact_mpr_terrain(
             else:
                 direction[i_axis] = -1.0
             v1 = mpr.support_driver(
-                geoms_state,
                 geoms_info,
                 collider_state,
-                collider_info,
                 collider_static_config,
                 support_field_info,
                 direction,
                 i_ga,
                 i_b,
+                ga_pos_terrain_frame,
+                ga_quat_terrain_frame,
             )
             collider_state.xyz_max_min[3 * i_m + i_axis, i_b] = v1[i_axis]
 
@@ -448,11 +446,9 @@ def func_contact_mpr_terrain(
                                 center_b = center_b / 6.0
 
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
-                                    geoms_state,
                                     geoms_info,
                                     static_rigid_sim_config,
                                     collider_state,
-                                    collider_info,
                                     collider_static_config,
                                     mpr_state,
                                     mpr_info,
@@ -462,6 +458,10 @@ def func_contact_mpr_terrain(
                                     i_b,
                                     center_a,
                                     center_b,
+                                    ga_pos_terrain_frame,
+                                    ga_quat_terrain_frame,
+                                    gb_pos_terrain_frame,
+                                    gb_quat_terrain_frame,
                                 )
                                 if is_col:
                                     normal = gu.ti_transform_by_quat(normal, gb_quat)
@@ -492,9 +492,6 @@ def func_contact_mpr_terrain(
                                             errno,
                                         )
                                         n_con = n_con + 1
-
-    geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-    geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
 
 @ti.func
@@ -547,6 +544,7 @@ def func_convex_convex_contact(
     errno: array_class.V_ANNOTATION,
 ):
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+        # Plane-box collision doesn't use perturbations, so call original function
         if ti.static(sys.platform == "darwin"):
             func_plane_box_contact(
                 i_ga=i_ga,
@@ -585,11 +583,20 @@ def func_convex_convex_contact(
         )
         diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
-        # Backup state before local perturbation
-        ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-        gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+        # Load original geometry state into thread-local variables
+        # These are the UNPERTURBED states used as reference point for each independent perturbation
+        ga_pos_original = geoms_state.pos[i_ga, i_b]
+        ga_quat_original = geoms_state.quat[i_ga, i_b]
+        gb_pos_original = geoms_state.pos[i_gb, i_b]
+        gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-        # Pre-allocate some buffers
+        # Current (possibly perturbed) state - initialized to original, updated during perturbations
+        ga_pos_current = ga_pos_original
+        ga_quat_current = ga_quat_original
+        gb_pos_current = gb_pos_original
+        gb_quat_current = gb_quat_original
+
+        # Pre-allocate buffers
         is_col_0 = False
         penetration_0 = gs.ti_float(0.0)
         normal_0 = ti.Vector.zero(gs.ti_float, 3)
@@ -612,34 +619,41 @@ def func_convex_convex_contact(
                 or collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
             )
 
+            # Apply perturbations to thread-local state
             if multi_contact and is_col_0:
                 # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
-                # otherwise it would be more sensitive to ill-conditionning.
+                # otherwise it would be more sensitive to ill-conditioning.
                 axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
                 qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-                func_rotate_frame(i_ga, contact_pos_0, qrot, i_b, geoms_state, geoms_info)
-                func_rotate_frame(i_gb, contact_pos_0, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
+
+                # Apply perturbation starting from original state
+                ga_pos_current, ga_quat_current = func_rotate_frame(
+                    pos=ga_pos_original, quat=ga_quat_original, contact_pos=contact_pos_0, qrot=qrot
+                )
+                gb_pos_current, gb_quat_current = func_rotate_frame(
+                    pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.ti_inv_quat(qrot)
+                )
 
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
                     )
-                    plane_dir = gu.ti_transform_by_quat(plane_dir, geoms_state.quat[i_ga, i_b])
+                    plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat_current)
                     normal = -plane_dir.normalized()
 
                     v1 = mpr.support_driver(
-                        geoms_state,
                         geoms_info,
                         collider_state,
-                        collider_info,
                         collider_static_config,
                         support_field_info,
                         normal,
                         i_gb,
                         i_b,
+                        gb_pos_current,
+                        gb_quat_current,
                     )
-                    penetration = normal.dot(v1 - geoms_state.pos[i_ga, i_b])
+                    penetration = normal.dot(v1 - ga_pos_current)
                     contact_pos = v1 - 0.5 * penetration * normal
                     is_col = penetration > 0.0
                 else:
@@ -666,13 +680,11 @@ def func_convex_convex_contact(
 
                             if not is_mpr_updated:
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                    geoms_state,
                                     geoms_info,
                                     geoms_init_AABB,
                                     rigid_global_info,
                                     static_rigid_sim_config,
                                     collider_state,
-                                    collider_info,
                                     collider_static_config,
                                     mpr_state,
                                     mpr_info,
@@ -681,6 +693,10 @@ def func_convex_convex_contact(
                                     i_gb,
                                     i_b,
                                     normal_ws,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                 )
                                 is_mpr_updated = True
 
@@ -717,6 +733,10 @@ def func_convex_convex_contact(
                                     i_ga,
                                     i_gb,
                                     i_b,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                     diff_pos_tolerance,
                                     diff_normal_tolerance,
                                 )
@@ -737,6 +757,10 @@ def func_convex_convex_contact(
                                     i_ga,
                                     i_gb,
                                     i_b,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
                                 )
 
                             is_col = gjk_state.is_col[i_b] == 1
@@ -841,9 +865,7 @@ def func_convex_convex_contact(
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col_0 > 0 and is_col > 0:
                 if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
-                    # 1. Project the contact point on both geometries
-                    # 2. Revert the effect of small rotation
-                    # 3. Update contact point
+                    # Project contact points and correct for perturbation
                     contact_point_a = (
                         gu.ti_transform_by_quat(
                             (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
@@ -863,8 +885,8 @@ def func_convex_convex_contact(
                     # First-order correction of the normal direction.
                     # The way the contact normal gets twisted by applying perturbation of geometry poses is
                     # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                    # the mininal rotation that makes the corrected twisted normal as closed as possible to the
-                    # original one, up to the scale of the perturbation, then apply first-order Taylor expension of
+                    # the minimal rotation that makes the corrected twisted normal as closed as possible to the
+                    # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
                     # Rodrigues' rotation formula.
                     twist_rotvec = ti.math.clamp(
                         normal.cross(normal_0),
@@ -909,12 +931,6 @@ def func_convex_convex_contact(
                             errno,
                         )
                         n_con = n_con + 1
-
-            if multi_contact and is_col_0:
-                geoms_state.pos[i_ga, i_b] = ga_pos
-                geoms_state.quat[i_ga, i_b] = ga_quat
-                geoms_state.pos[i_gb, i_b] = gb_pos
-                geoms_state.quat[i_gb, i_b] = gb_quat
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -1031,9 +1047,7 @@ def func_narrow_phase_diff_convex_vs_convex(
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
-    gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
-    gjk_static_config: ti.template(),
     # FIXME: Passing nested data structure as input argument is not supported for now.
     diff_contact_input: array_class.DiffContactInput,
 ):
@@ -1157,7 +1171,6 @@ def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
@@ -1253,10 +1266,18 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                         normal_i = ti.Vector.zero(gs.ti_float, 3)
                         contact_pos_i = ti.Vector.zero(gs.ti_float, 3)
                         if not is_col:
+                            ga_pos = geoms_state.pos[i_ga, i_b]
+                            ga_quat = geoms_state.quat[i_ga, i_b]
+                            gb_pos = geoms_state.pos[i_gb, i_b]
+                            gb_quat = geoms_state.quat[i_gb, i_b]
                             is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
                                 i_ga,
                                 i_gb,
                                 i_b,
+                                ga_pos,
+                                ga_quat,
+                                gb_pos,
+                                gb_quat,
                                 geoms_state,
                                 geoms_info,
                                 verts_info,
@@ -1281,8 +1302,14 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 
                         if ti.static(static_rigid_sim_config.enable_multi_contact):
                             if not is_col and is_col_i:
-                                ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-                                gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+                                ga_pos_original, ga_quat_original = (
+                                    geoms_state.pos[i_ga, i_b],
+                                    geoms_state.quat[i_ga, i_b],
+                                )
+                                gb_pos_original, gb_quat_original = (
+                                    geoms_state.pos[i_gb, i_b],
+                                    geoms_state.quat[i_gb, i_b],
+                                )
 
                                 # Perturb geom_a around two orthogonal axes to find multiple contacts
                                 axis_0, axis_1 = func_contact_orthogonals(
@@ -1304,15 +1331,23 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     axis = (2 * (i_rot % 2) - 1) * axis_0 + (1 - 2 * ((i_rot // 2) % 2)) * axis_1
 
                                     qrot = gu.ti_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-                                    func_rotate_frame(i_ga, contact_pos_i, qrot, i_b, geoms_state, geoms_info)
-                                    func_rotate_frame(
-                                        i_gb, contact_pos_i, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info
+
+                                    # Apply perturbations to local variables (no global state modification)
+                                    ga_pos_perturbed, ga_quat_perturbed = func_rotate_frame(
+                                        ga_pos_original, ga_quat_original, contact_pos_i, qrot
+                                    )
+                                    gb_pos_perturbed, gb_quat_perturbed = func_rotate_frame(
+                                        gb_pos_original, gb_quat_original, contact_pos_i, gu.ti_inv_quat(qrot)
                                     )
 
                                     is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
                                         i_ga,
                                         i_gb,
                                         i_b,
+                                        ga_pos_perturbed,
+                                        ga_quat_perturbed,
+                                        gb_pos_perturbed,
+                                        gb_quat_perturbed,
                                         geoms_state,
                                         geoms_info,
                                         verts_info,
@@ -1380,14 +1415,21 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                 )
                                                 n_con = n_con + 1
 
-                                    geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-                                    geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
-
                         if not is_col:  # check edge-edge if vertex-face is not detected
+                            # Extract current poses for initial collision detection
+                            ga_pos = geoms_state.pos[i_ga, i_b]
+                            ga_quat = geoms_state.quat[i_ga, i_b]
+                            gb_pos = geoms_state.pos[i_gb, i_b]
+                            gb_quat = geoms_state.quat[i_gb, i_b]
+
                             is_col, normal, penetration, contact_pos = func_contact_edge_sdf(
                                 i_ga,
                                 i_gb,
                                 i_b,
+                                ga_pos,
+                                ga_quat,
+                                gb_pos,
+                                gb_quat,
                                 geoms_state,
                                 geoms_info,
                                 verts_info,

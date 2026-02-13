@@ -8,13 +8,16 @@ import genesis.utils.array_class as array_class
 
 @ti.data_oriented
 class SDF:
-    def __init__(self, rigid_solver, is_active: bool = True):
+    def __init__(self, rigid_solver):
         self.solver = rigid_solver
-        self._is_active = is_active
-
         self._sdf_info = array_class.get_sdf_info(self.solver.n_geoms, self.solver.n_cells)
+        self._is_active = False
 
-        if self.solver.n_geoms > 0 and is_active:
+    def activate(self):
+        if self._is_active:
+            return
+
+        if self.solver.n_geoms > 0:
             geoms = self.solver.geoms
             sdf_kernel_init_geom_fields(
                 geoms_T_mesh_to_sdf=np.array([geom.T_mesh_to_sdf for geom in geoms], dtype=gs.np_float),
@@ -30,6 +33,8 @@ class SDF:
                 static_rigid_sim_config=self.solver._static_rigid_sim_config,
                 sdf_info=self._sdf_info,
             )
+
+        self._is_active = True
 
     @property
     def is_active(self):
@@ -87,18 +92,42 @@ def sdf_func_world(
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
+    return sdf_func_world_local(
+        geoms_info=geoms_info,
+        sdf_info=sdf_info,
+        pos_world=pos_world,
+        geom_idx=geom_idx,
+        geom_pos=g_pos,
+        geom_quat=g_quat,
+    )
+
+
+@ti.func
+def sdf_func_world_local(
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+    pos_world: ti.types.vector(3, dtype=gs.ti_float),
+    geom_idx,
+    geom_pos: ti.types.vector(3, dtype=gs.ti_float),
+    geom_quat: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Computes SDF value from world coordinate, using provided geometry pose
+    instead of reading from geoms_state.
+    """
     sd = gs.ti_float(0.0)
+
     if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
-        sd = (pos_world - g_pos).norm() - geoms_info.data[geom_idx][0]
+        sd = (pos_world - geom_pos).norm() - geoms_info.data[geom_idx][0]
 
     elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         geom_data = geoms_info.data[geom_idx]
         plane_normal = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
         sd = pos_mesh.dot(plane_normal)
 
     else:
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
         pos_sdf = gu.ti_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
         sd = sdf_func_sdf(sdf_info, pos_sdf, geom_idx)
 
@@ -176,28 +205,19 @@ def sdf_func_grad_world(
     geom_idx,
     batch_idx,
 ):
-    EPS = rigid_global_info.EPS[None]
-
     g_pos = geoms_state.pos[geom_idx, batch_idx]
     g_quat = geoms_state.quat[geom_idx, batch_idx]
 
-    grad_world = ti.Vector.zero(gs.ti_float, 3)
-    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
-        grad_world = gu.ti_normalize(pos_world - g_pos, EPS)
-
-    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
-        geom_data = geoms_info.data[geom_idx]
-        plane_normal = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
-        grad_world = gu.ti_transform_by_quat(plane_normal, g_quat)
-
-    else:
-        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, g_pos, g_quat)
-        pos_sdf = gu.ti_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
-        grad_sdf = sdf_func_grad(geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
-
-        grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
-        grad_world = gu.ti_transform_by_quat(grad_mesh, g_quat)
-    return grad_world
+    return sdf_func_grad_world_local(
+        geoms_info=geoms_info,
+        rigid_global_info=rigid_global_info,
+        collider_static_config=collider_static_config,
+        sdf_info=sdf_info,
+        pos_world=pos_world,
+        geom_idx=geom_idx,
+        geom_pos=g_pos,
+        geom_quat=g_quat,
+    )
 
 
 @ti.func
@@ -286,12 +306,87 @@ def sdf_func_normal_world(
     geom_idx,
     batch_idx,
 ):
+    g_pos = geoms_state.pos[geom_idx, batch_idx]
+    g_quat = geoms_state.quat[geom_idx, batch_idx]
+
+    return sdf_func_normal_world_local(
+        geoms_info=geoms_info,
+        rigid_global_info=rigid_global_info,
+        collider_static_config=collider_static_config,
+        sdf_info=sdf_info,
+        pos_world=pos_world,
+        geom_idx=geom_idx,
+        geom_pos=g_pos,
+        geom_quat=g_quat,
+    )
+
+
+@ti.func
+def sdf_func_normal_world_local(
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: ti.template(),
+    sdf_info: array_class.SDFInfo,
+    pos_world: ti.types.vector(3, dtype=gs.ti_float),
+    geom_idx,
+    geom_pos: ti.types.vector(3, dtype=gs.ti_float),
+    geom_quat: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Computes normalized SDF gradient (surface normal) in world coordinates,
+    using provided geometry pose instead of reading from geoms_state.
+    """
     return gu.ti_normalize(
-        sdf_func_grad_world(
-            geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_world, geom_idx, batch_idx
+        sdf_func_grad_world_local(
+            geoms_info,
+            rigid_global_info,
+            collider_static_config,
+            sdf_info,
+            pos_world,
+            geom_idx,
+            geom_pos,
+            geom_quat,
         ),
         rigid_global_info.EPS[None],
     )
+
+
+@ti.func
+def sdf_func_grad_world_local(
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: ti.template(),
+    sdf_info: array_class.SDFInfo,
+    pos_world: ti.types.vector(3, dtype=gs.ti_float),
+    geom_idx,
+    geom_pos: ti.types.vector(3, dtype=gs.ti_float),
+    geom_quat: ti.types.vector(4, dtype=gs.ti_float),
+):
+    """
+    Computes SDF gradient in world coordinates, using provided geometry pose
+    instead of reading from geoms_state.
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    grad_world = ti.Vector.zero(gs.ti_float, 3)
+
+    if geoms_info.type[geom_idx] == gs.GEOM_TYPE.SPHERE:
+        grad_world = gu.ti_normalize(pos_world - geom_pos, EPS)
+
+    elif geoms_info.type[geom_idx] == gs.GEOM_TYPE.PLANE:
+        geom_data = geoms_info.data[geom_idx]
+        plane_normal = gs.ti_vec3([geom_data[0], geom_data[1], geom_data[2]])
+        grad_world = gu.ti_transform_by_quat(plane_normal, geom_quat)
+
+    else:
+        pos_mesh = gu.ti_inv_transform_by_trans_quat(pos_world, geom_pos, geom_quat)
+        pos_sdf = gu.ti_transform_by_T(pos_mesh, sdf_info.geoms_info.T_mesh_to_sdf[geom_idx])
+        grad_sdf = sdf_func_grad(geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_sdf, geom_idx)
+
+        grad_mesh = grad_sdf  # no rotation between mesh and sdf frame
+        grad_world = gu.ti_transform_by_quat(grad_mesh, geom_quat)
+
+    return grad_world
 
 
 @ti.func

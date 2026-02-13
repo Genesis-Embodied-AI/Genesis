@@ -1,6 +1,9 @@
 import inspect
+import os
+import xml.etree.ElementTree as ET
 from copy import copy
 from itertools import chain
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
@@ -21,7 +24,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
-from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_numpy, ti_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -143,8 +146,13 @@ class RigidEntity(Entity):
         equality_start=0,
         visualize_contact: bool = False,
         morph_heterogeneous: list[Morph] | None = None,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, solver, material, surface)
+        # Set heterogeneous support before super().__init__() because _get_morph_identifier() needs it
+        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
+        self._enable_heterogeneous = bool(self._morph_heterogeneous)
+
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._idx_in_solver = idx_in_solver
         self._link_start: int = link_start
@@ -172,10 +180,6 @@ class RigidEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
-
-        # Heterogeneous simulation support (convert None to [] for consistency)
-        self._morph_heterogeneous = morph_heterogeneous if morph_heterogeneous is not None else []
-        self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         self._load_model()
 
@@ -453,10 +457,7 @@ class RigidEntity(Entity):
             # Merge them as a single one if requested
             if morph.merge_submeshes_for_collision and len(meshes) > 1:
                 tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-                mesh = gs.Mesh.from_trimesh(
-                    mesh=tmesh,
-                    surface=gs.surfaces.Collision(),
-                )
+                mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision())
                 meshes = (mesh,)
 
             for mesh in meshes:
@@ -474,7 +475,7 @@ class RigidEntity(Entity):
         if load_geom_only_for_heterogeneous:
             return g_infos
 
-        link_name = morph.file.rsplit("/", 1)[-1].replace(".", "_")
+        link_name = os.path.basename(morph.file).replace(".", "_")
 
         self._add_by_info(
             l_info=dict(
@@ -618,14 +619,19 @@ class RigidEntity(Entity):
                 inertia_i = l_info.get("inertial_i")
                 if inertia_i is None:
                     continue
-                inertia_diag = np.linalg.eigvals(inertia_i)
-                if (inertia_diag < 0.0).any():
+
+                # Compute eigenvalues of inertia matrix after enforcing symmetry
+                inertia_diag, Q = np.linalg.eigh(0.5 * (inertia_i + inertia_i.T))
+
+                # Make sure that all eigenvalues are positive, ignoring rounding errors
+                if (inertia_diag < -gs.EPS).any():
                     gs.raise_exception(
                         f"Inertia matrix of link '{l_info['name']}' not positive definite (eigenvalues: {inertia_diag})."
                     )
+
+                # Make sure that the inertia matrix is physically valid (nothing to do with numerical conditioning)
                 if any(
-                    inertia_diag[i] + inertia_diag[(i + 1) % 3] + gs.EPS
-                    < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
+                    inertia_diag[i] + inertia_diag[(i + 1) % 3] < inertia_diag[(i + 2) % 3] * (1.0 - 1e-6) - 1e-9
                     for i in range(3)
                 ):
                     gs.raise_exception(
@@ -633,6 +639,9 @@ class RigidEntity(Entity):
                         f"(eigenvalues: {inertia_diag}). Please fix manually you morph file '{morph.file}' or specify "
                         "`recompute_inertia=True`."
                     )
+
+                # Make sure that the inertia matrix is symmetric with positive eigenvalues
+                l_info["inertial_i"] = Q @ np.diag(np.maximum(inertia_diag, 0.0)) @ Q.T
 
         # Add free floating joint at root if necessary
         if (
@@ -1113,7 +1122,7 @@ class RigidEntity(Entity):
             elif type == gs.EQUALITY_TYPE.WELD:
                 obj_id = self.get_link(obj_name).idx
             else:
-                gs.logger.warning(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
+                gs.raise_exception(f"Equality type {type} not supported. Only CONNECT, JOINT, and WELD are supported.")
             objs_id.append(obj_id)
 
         equality = RigidEquality(
@@ -2113,7 +2122,9 @@ class RigidEntity(Entity):
             for joint in self.joints:
                 if joint.name == name:
                     return joint
-            gs.raise_exception(f"Joint not found for name: {name}.")
+            gs.raise_exception(
+                f"Joint not found for name: {name}. Available joint names: {[joint.name for joint in self.joints]}."
+            )
 
         elif uid is not None:
             for joint in self.joints:
@@ -2145,7 +2156,9 @@ class RigidEntity(Entity):
             for link in self._links:
                 if link.name == name:
                     return link
-            gs.raise_exception(f"Link not found for name: {name}.")
+            gs.raise_exception(
+                f"Link not found for name: {name}. Available link names: {[link.name for link in self._links]}."
+            )
 
         elif uid is not None:
             for link in self._links:
@@ -3272,17 +3285,64 @@ class RigidEntity(Entity):
             an array of shape (n_envs,) with per-environment masses.
         """
         if self._enable_heterogeneous:
-            # Use solver's batched links_info for accurate per-environment masses
-            all_links_mass = self._solver.links_info.inertial_mass.to_numpy()
-            links_idx = np.arange(self.link_start, self.link_end)
-            # Shape: (n_links, n_envs) -> sum over links axis
-            return all_links_mass[links_idx].sum(axis=0)
-        else:
-            # Original behavior: sum link masses to scalar
-            mass = 0.0
-            for link in self.links:
-                mass += link.get_mass()
-            return mass
+            links_idx = slice(self.link_start, self.link_end)
+            links_mass = ti_to_numpy(self._solver.links_info.inertial_mass, None, links_idx, transpose=True)
+            return links_mass.sum(axis=1)
+
+        # Original behavior: sum link masses to scalar
+        mass = 0.0
+        for link in self.links:
+            mass += link.get_mass()
+        return mass
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        if self._enable_heterogeneous:
+            return "heterogeneous"
+
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "cylinder"
+        if isinstance(morph, gs.morphs.Plane):
+            return "plane"
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.URDF):
+            if isinstance(morph.file, str):
+                # Try to get robot name from URDF file, fall back to filename stem
+                try:
+                    return uu.get_robot_name(morph.file)
+                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
+                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
+                    return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.MJCF):
+            if isinstance(morph.file, str):
+                # Try to get model name from MJCF file, fall back to filename stem
+                model_name = mju.get_model_name(morph.file)
+                if model_name:
+                    return model_name
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.Drone):
+            if isinstance(morph.file, str):
+                return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.USD):
+            if morph.prim_path:
+                return morph.prim_path.rstrip("/").split("/")[-1]
+            return Path(morph.file).stem
+        if isinstance(morph, gs.morphs.Terrain):
+            return morph.name if morph.name else "terrain"
+        return "rigid"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

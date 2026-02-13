@@ -1,52 +1,50 @@
 import math
-from enum import IntEnum
 
 import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+from .constants import RETURN_CODE, GJK_RETURN_CODE, EPA_POLY_INIT_RETURN_CODE
+from .gjk_utils import (
+    func_ray_triangle_intersection,
+    func_triangle_affine_coords,
+    func_point_triangle_intersection,
+    func_point_plane_same_side,
+    func_origin_tetra_intersection,
+    func_project_origin_to_plane,
+)
+from .utils import (
+    func_is_discrete_geoms,
+    func_is_equal_vec,
+    func_det3,
+)
 from . import support_field
 
+# Import support functions that are shared with epa
+from .gjk_support import func_support, support_driver, support_mesh
 
-class RETURN_CODE(IntEnum):
-    """
-    Return codes for the general subroutines used in GJK and EPA algorithms.
-    """
+# Import EPA functions directly
+from .epa import (
+    func_epa_init_polytope_2d,
+    func_epa_init_polytope_3d,
+    func_epa_init_polytope_4d,
+    func_epa,
+    func_safe_epa_init,
+    func_safe_epa,
+)
 
-    SUCCESS = 0
-    FAIL = 1
-
-
-class GJK_RETURN_CODE(IntEnum):
-    """
-    Return codes for the GJK algorithm.
-    """
-
-    SEPARATED = 0
-    INTERSECT = 1
-    NUM_ERROR = 2
-
-
-class EPA_POLY_INIT_RETURN_CODE(IntEnum):
-    """
-    Return codes for the EPA polytope initialization.
-    """
-
-    SUCCESS = 0
-    P2_NONCONVEX = 1
-    P2_FALLBACK3 = 2
-    P3_BAD_NORMAL = 3
-    P3_INVALID_V4 = 4
-    P3_INVALID_V5 = 5
-    P3_MISSING_ORIGIN = 6
-    P3_ORIGIN_ON_FACE = 7
-    P4_MISSING_ORIGIN = 8
-    P4_FALLBACK3 = 9
+# Import multi_contact functions directly
+from .multi_contact import (
+    func_safe_normalize,
+    func_multi_contact,
+)
 
 
 class GJK:
-    def __init__(self, rigid_solver, is_active: bool = True):
+    def __init__(self, rigid_solver):
+        self._solver = rigid_solver
+
         # Initialize static configuration.
         # MuJoCo's multi-contact detection algorithm is disabled by default, because it is often less stable than the
         # other multi-contact detection algorithm. However, we keep the code here for compatibility with MuJoCo and for
@@ -114,25 +112,23 @@ class GJK:
 
         # Initialize GJK state
         self._gjk_state = array_class.get_gjk_state(
-            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, is_active
+            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, False
         )
 
-        self._is_active = is_active
+        self._is_active = False
 
-    def reset(self):
-        pass
+    def activate(self):
+        if self._is_active:
+            return
+
+        self._gjk_state = array_class.get_gjk_state(
+            self._solver, self._solver._static_rigid_sim_config, self._gjk_info, True
+        )
+        self._is_active = True
 
     @property
     def is_active(self):
         return self._is_active
-
-
-@ti.func
-def func_is_equal_vec(a, b, eps):
-    """
-    Check if two vectors are equal within a small tolerance.
-    """
-    return (ti.abs(a - b) < eps).all()
 
 
 @ti.func
@@ -178,6 +174,10 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Detect (possibly multiple) contact between two geometries using GJK and EPA algorithms.
@@ -190,24 +190,22 @@ def func_gjk_contact(
     MuJoCo's implementation:
     https://github.com/google-deepmind/mujoco/blob/7dc7a349c5ba2db2d3f8ab50a367d08e2f1afbbc/src/engine/engine_collision_gjk.c#L2259
     """
-    # Clear the cache to prepare for this GJK-EPA run.
+    # Clear the cache to prepare for this GJK-EPA run
     clear_cache(gjk_state, i_b)
 
-    # We use MuJoCo's GJK implementation when the compatibility mode is enabled. When it is disabled, we use more
-    # robust GJK implementation which has the same overall structure as MuJoCo.
+    # We use MuJoCo's GJK implementation when the compatibility mode is enabled
     if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
-        # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives, we can shrink them
-        # to a point or line to detect shallow penetration faster.
+        # If any one of the geometries is a sphere or capsule, which are sphere-swept primitives,
+        # we can shrink them to a point or line to detect shallow penetration faster
         is_sphere_swept_geom_a, is_sphere_swept_geom_b = (
-            func_is_sphere_swept_geom(geoms_info, i_ga, i_b),
-            func_is_sphere_swept_geom(geoms_info, i_gb, i_b),
+            func_is_sphere_swept_geom(geoms_info, i_ga),
+            func_is_sphere_swept_geom(geoms_info, i_gb),
         )
         shrink_sphere = is_sphere_swept_geom_a or is_sphere_swept_geom_b
 
         # Run GJK
         for _ in range(2 if shrink_sphere else 1):
             distance = func_gjk(
-                geoms_state,
                 geoms_info,
                 verts_info,
                 static_rigid_sim_config,
@@ -219,14 +217,18 @@ def func_gjk_contact(
                 i_ga,
                 i_gb,
                 i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
                 shrink_sphere,
             )
 
             if shrink_sphere:
-                # If we shrinked the sphere and capsule to point and line and the distance is larger than the
-                # collision epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and
-                # the capsule to get the actual distance. If the distance is smaller than the collision epsilon, it
-                # means a deep penetration, which requires the default GJK handling.
+                # If we shrunk the sphere and capsule to point and line and the distance is larger than the collision
+                # epsilon, it means a shallow penetration. Thus we subtract the radius of the sphere and the capsule to
+                # get the actual distance. If the distance is smaller than the collision epsilon, it means a deep
+                # penetration, which requires the default GJK handling.
                 if distance > gjk_info.collision_eps[None]:
                     radius_a, radius_b = 0.0, 0.0
                     if is_sphere_swept_geom_a:
@@ -271,7 +273,6 @@ def func_gjk_contact(
                 polytope_flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
                 if nsimplex == 2:
                     polytope_flag = func_epa_init_polytope_2d(
-                        geoms_state,
                         geoms_info,
                         verts_info,
                         rigid_global_info,
@@ -283,19 +284,22 @@ def func_gjk_contact(
                         support_field_info,
                         i_ga,
                         i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
                         i_b,
                     )
                 elif nsimplex == 4:
                     polytope_flag = func_epa_init_polytope_4d(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
-                # Polytope 3D could be used as a fallback for 2D and 4D cases, but it is not necessary
+                # Polytope 3D could be used as a fallback for 2D and 4D cases
                 if (
                     nsimplex == 3
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P2_FALLBACK3)
                     or (polytope_flag == EPA_POLY_INIT_RETURN_CODE.P4_FALLBACK3)
                 ):
                     polytope_flag = func_epa_init_polytope_3d(
-                        geoms_state,
                         geoms_info,
                         verts_info,
                         static_rigid_sim_config,
@@ -306,13 +310,16 @@ def func_gjk_contact(
                         support_field_info,
                         i_ga,
                         i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
                         i_b,
                     )
 
                 # Run EPA from the polytope
                 if polytope_flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
                     i_f = func_epa(
-                        geoms_state,
                         geoms_info,
                         verts_info,
                         static_rigid_sim_config,
@@ -323,6 +330,10 @@ def func_gjk_contact(
                         support_field_info,
                         i_ga,
                         i_gb,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
                         i_b,
                     )
 
@@ -333,7 +344,6 @@ def func_gjk_contact(
                         # (3) [enable_mujoco_multi_contact] should be True. Default to False.
                         if i_f >= 0 and func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
                             func_multi_contact(
-                                geoms_state,
                                 geoms_info,
                                 verts_info,
                                 faces_info,
@@ -341,13 +351,16 @@ def func_gjk_contact(
                                 gjk_info,
                                 i_ga,
                                 i_gb,
+                                pos_a,
+                                quat_a,
+                                pos_b,
+                                quat_b,
                                 i_b,
                                 i_f,
                             )
                             gjk_state.multi_contact_flag[i_b] = True
     else:
         gjk_flag = func_safe_gjk(
-            geoms_state,
             geoms_info,
             verts_info,
             rigid_global_info,
@@ -359,6 +372,10 @@ def func_gjk_contact(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
         )
         if gjk_flag == GJK_RETURN_CODE.INTERSECT:
@@ -373,7 +390,6 @@ def func_gjk_contact(
 
             # Run EPA from the polytope
             func_safe_epa(
-                geoms_state,
                 geoms_info,
                 verts_info,
                 rigid_global_info,
@@ -385,10 +401,14 @@ def func_gjk_contact(
                 support_field_info,
                 i_ga,
                 i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
                 i_b,
             )
 
-    # Compute the final contact points and normals.
+    # Compute the final contact points and normals
     n_contacts = 0
     gjk_state.is_col[i_b] = gjk_state.distance[i_b] < 0.0
     gjk_state.penetration[i_b] = -gjk_state.distance[i_b] if gjk_state.is_col[i_b] else 0.0
@@ -411,7 +431,7 @@ def func_gjk_contact(
             n_contacts += 1
 
     gjk_state.n_contacts[i_b] = n_contacts
-    # If there are no contacts, we set the penetration and is_col to 0.
+    # If there are no contacts, we set the penetration and is_col to 0
     # FIXME: When we use if statement here, it leads to a bug in some backends (e.g. x86 cpu). Need to investigate.
     gjk_state.is_col[i_b] = False if n_contacts == 0 else gjk_state.is_col[i_b]
     gjk_state.penetration[i_b] = 0.0 if n_contacts == 0 else gjk_state.penetration[i_b]
@@ -419,7 +439,6 @@ def func_gjk_contact(
 
 @ti.func
 def func_gjk(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
@@ -431,6 +450,10 @@ def func_gjk(
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     shrink_sphere,
 ):
     """
@@ -483,16 +506,16 @@ def func_gjk(
     # Whether or not the main loop finished early because intersection or seperation was detected.
     early_stop = False
 
-    # Set initial guess of support vector using the positions, which should be a non-zero vector.
-    approx_witness_point_obj1 = geoms_state.pos[i_ga, i_b]
-    approx_witness_point_obj2 = geoms_state.pos[i_gb, i_b]
+    # Set initial guess of support vector using the thread-local positions, which should be a non-zero vector.
+    approx_witness_point_obj1 = pos_a
+    approx_witness_point_obj2 = pos_b
     support_vector = approx_witness_point_obj1 - approx_witness_point_obj2
     if support_vector.dot(support_vector) < gjk_info.FLOAT_MIN_SQ[None]:
         support_vector = gs.ti_vec3(1.0, 0.0, 0.0)
 
     # Epsilon for convergence check.
     epsilon = gs.ti_float(0.0)
-    if not func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+    if not func_is_discrete_geoms(geoms_info, i_ga, i_gb):
         # If the objects are smooth, finite convergence is not guaranteed, so we need to set some epsilon
         # to determine convergence.
         epsilon = 0.5 * (gjk_info.tolerance[None] ** 2)
@@ -517,7 +540,6 @@ def func_gjk(
             gjk_state.simplex_vertex.id2[i_b, n],
             gjk_state.simplex_vertex.mink[i_b, n],
         ) = func_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -530,6 +552,10 @@ def func_gjk(
             i_gb,
             i_b,
             dir,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             shrink_sphere,
         )
 
@@ -561,7 +587,6 @@ def func_gjk(
         if n == 3 and backup_gjk:
             # Tetrahedron is generated, try to detect collision if possible.
             intersect_code = func_gjk_intersect(
-                geoms_state=geoms_state,
                 geoms_info=geoms_info,
                 verts_info=verts_info,
                 static_rigid_sim_config=static_rigid_sim_config,
@@ -573,6 +598,10 @@ def func_gjk(
                 i_ga=i_ga,
                 i_gb=i_gb,
                 i_b=i_b,
+                pos_a=pos_a,
+                quat_a=quat_a,
+                pos_b=pos_b,
+                quat_b=quat_b,
             )
             if intersect_code == GJK_RETURN_CODE.SEPARATED:
                 # No intersection, objects are separated
@@ -654,7 +683,6 @@ def func_gjk(
 
 @ti.func
 def func_gjk_intersect(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     static_rigid_sim_config: ti.template(),
@@ -666,6 +694,10 @@ def func_gjk_intersect(
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
     Check if the two objects intersect using the GJK algorithm.
@@ -745,7 +777,6 @@ def func_gjk_intersect(
             gjk_state.simplex_vertex_intersect.id2[i_b, min_si],
             gjk_state.simplex_vertex_intersect.mink[i_b, min_si],
         ) = func_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -758,6 +789,10 @@ def func_gjk_intersect(
             i_gb,
             i_b,
             min_normal,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             False,
         )
 
@@ -1078,337 +1113,15 @@ def func_gjk_subdistance_1d(
 
 
 @ti.func
-def func_ray_triangle_intersection(
-    ray_v1,
-    ray_v2,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
-    """
-    Check if the ray intersects the triangle.
-
-    Returns
-    -------
-    int
-        True if the ray intersects the triangle, otherwise False.
-    """
-    ray = ray_v2 - ray_v1
-
-    # Signed volumes of the tetrahedrons formed by the ray and triangle edges
-    vols = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in range(3):
-        v1, v2 = gs.ti_vec3(0.0, 0.0, 0.0), gs.ti_vec3(0.0, 0.0, 0.0)
-        if i == 0:
-            v1, v2 = tri_v1 - ray_v1, tri_v2 - ray_v1
-        if i == 1:
-            v1, v2 = tri_v2 - ray_v1, tri_v3 - ray_v1
-        elif i == 2:
-            v1, v2 = tri_v3 - ray_v1, tri_v1 - ray_v1
-        vols[i] = func_det3(v1, v2, ray)
-
-    return (vols >= 0.0).all() or (vols <= 0.0).all()
-
-
-@ti.func
-def func_point_triangle_intersection(
-    gjk_info: array_class.GJKInfo,
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
-    """
-    Check if the point is inside the triangle.
-    """
-    is_inside = False
-    # Compute the affine coordinates of the point with respect to the triangle
-    _lambda = func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3)
-
-    # If any of the affine coordinates is negative, the point is outside the triangle
-    if (_lambda >= 0).all():
-        # Check if the point predicted by the affine coordinates is equal to the point itself
-        pred = tri_v1 * _lambda[0] + tri_v2 * _lambda[1] + tri_v3 * _lambda[2]
-        diff = pred - point
-        is_inside = diff.norm_sqr() < gjk_info.FLOAT_MIN_SQ[None]
-
-    return is_inside
-
-
-@ti.func
-def func_triangle_affine_coords(
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
-    """
-    Compute the affine coordinates of the point with respect to the triangle.
-    """
-    # Compute minors of the triangle vertices
-    ms = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in ti.static(range(3)):
-        i1, i2 = (i + 1) % 3, (i + 2) % 3
-        if i == 1:
-            i1, i2 = i2, i1
-
-        ms[i] = (
-            tri_v2[i1] * tri_v3[i2]
-            - tri_v2[i2] * tri_v3[i1]
-            - tri_v1[i1] * tri_v3[i2]
-            + tri_v1[i2] * tri_v3[i1]
-            + tri_v1[i1] * tri_v2[i2]
-            - tri_v1[i2] * tri_v2[i1]
-        )
-
-    # Exclude one of the axes with the largest projection using the minors of the above linear system.
-    m_max = gs.ti_float(0.0)
-    i_x, i_y = gs.ti_int(0), gs.ti_int(0)
-    absms = ti.abs(ms)
-    for i in range(3):
-        if absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
-            # Remove the i-th row
-            m_max = ms[i]
-            i_x, i_y = (i + 1) % 3, (i + 2) % 3
-            if i == 1:
-                i_x, i_y = i_y, i_x
-            break
-
-    cs = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in range(3):
-        tv1, tv2 = tri_v2, tri_v3
-        if i == 1:
-            tv1, tv2 = tri_v3, tri_v1
-        elif i == 2:
-            tv1, tv2 = tri_v1, tri_v2
-
-        # Corresponds to the signed area of 2-simplex (triangle): (point, tv1, tv2)
-        cs[i] = (
-            point[i_x] * tv1[i_y]
-            + point[i_y] * tv2[i_x]
-            + tv1[i_x] * tv2[i_y]
-            - point[i_x] * tv2[i_y]
-            - point[i_y] * tv1[i_x]
-            - tv2[i_x] * tv1[i_y]
-        )
-
-    # Affine coordinates are computed as: [ l1, l2, l3 ] = [ C1 / m_max, C2 / m_max, C3 / m_max ]
-    return cs / m_max
-
-
-@ti.func
-def func_origin_tetra_intersection(
-    tet_v1,
-    tet_v2,
-    tet_v3,
-    tet_v4,
-):
-    """
-    Check if the origin is inside the tetrahedron.
-    """
-    flag = RETURN_CODE.SUCCESS
-    for i in range(4):
-        v1, v2, v3, v4 = tet_v1, tet_v2, tet_v3, tet_v4
-        if i == 1:
-            v1, v2, v3, v4 = tet_v2, tet_v3, tet_v4, tet_v1
-        elif i == 2:
-            v1, v2, v3, v4 = tet_v3, tet_v4, tet_v1, tet_v2
-        elif i == 3:
-            v1, v2, v3, v4 = tet_v4, tet_v1, tet_v2, tet_v3
-        flag = func_point_plane_same_side(v1, v2, v3, v4)
-        if flag == RETURN_CODE.FAIL:
-            break
-    return flag
-
-
-@ti.func
-def func_point_plane_same_side(
-    point,
-    plane_v1,
-    plane_v2,
-    plane_v3,
-):
-    """
-    Check if the point is on the same side of the plane as the origin.
-    """
-    # Compute the normal of the plane
-    edge1 = plane_v2 - plane_v1
-    edge2 = plane_v3 - plane_v1
-    normal = edge1.cross(edge2)
-
-    diff1 = point - plane_v1
-    dot1 = normal.dot(diff1)
-
-    # origin - plane_v1
-    diff2 = -plane_v1
-    dot2 = normal.dot(diff2)
-
-    return RETURN_CODE.SUCCESS if dot1 * dot2 > 0 else RETURN_CODE.FAIL
-
-
-@ti.func
-def func_is_discrete_geoms(
-    geoms_info: array_class.GeomsInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
-    """
-    Check if the given geoms are discrete geometries.
-    """
-    return func_is_discrete_geom(geoms_info, i_ga, i_b) and func_is_discrete_geom(geoms_info, i_gb, i_b)
-
-
-@ti.func
-def func_is_discrete_geom(
-    geoms_info: array_class.GeomsInfo,
-    i_g,
-    i_b,
-):
-    """
-    Check if the given geom is a discrete geometry.
-    """
-    geom_type = geoms_info.type[i_g]
-    return geom_type == gs.GEOM_TYPE.MESH or geom_type == gs.GEOM_TYPE.BOX
-
-
-@ti.func
 def func_is_sphere_swept_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Check if the given geoms are sphere-swept geometries.
     """
     geom_type = geoms_info.type[i_g]
     return geom_type == gs.GEOM_TYPE.SPHERE or geom_type == gs.GEOM_TYPE.CAPSULE
-
-
-@ti.func
-def func_support(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    dir,
-    shrink_sphere,
-):
-    """
-    Find support points on the two objects using [dir].
-
-    Parameters:
-    ----------
-    dir: gs.ti_vec3
-        The direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
-    """
-    support_point_obj1 = gs.ti_vec3(0, 0, 0)
-    support_point_obj2 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos1 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos2 = gs.ti_vec3(0, 0, 0)
-    support_point_id_obj1 = -1
-    support_point_id_obj2 = -1
-    for i in range(2):
-        d = dir if i == 0 else -dir
-        i_g = i_ga if i == 0 else i_gb
-
-        sp, sp_, si = support_driver(
-            geoms_state,
-            geoms_info,
-            verts_info,
-            static_rigid_sim_config,
-            collider_state,
-            collider_static_config,
-            gjk_state,
-            gjk_info,
-            support_field_info,
-            d,
-            i_g,
-            i_b,
-            i,
-            shrink_sphere,
-        )
-        if i == 0:
-            support_point_obj1 = sp
-            support_point_id_obj1 = si
-            support_point_localpos1 = sp_
-        else:
-            support_point_obj2 = sp
-            support_point_id_obj2 = si
-            support_point_localpos2 = sp_
-    support_point_minkowski = support_point_obj1 - support_point_obj2
-
-    return (
-        support_point_obj1,
-        support_point_obj2,
-        support_point_localpos1,
-        support_point_localpos2,
-        support_point_id_obj1,
-        support_point_id_obj2,
-        support_point_minkowski,
-    )
-
-
-@ti.func
-def func_project_origin_to_plane(
-    gjk_info: array_class.GJKInfo,
-    v1,
-    v2,
-    v3,
-):
-    """
-    Project the origin onto the plane defined by the simplex vertices.
-    """
-    point, flag = gs.ti_vec3(0, 0, 0), RETURN_CODE.SUCCESS
-
-    d21 = v2 - v1
-    d31 = v3 - v1
-    d32 = v3 - v2
-
-    for i in range(3):
-        n = gs.ti_vec3(0, 0, 0)
-        v = gs.ti_vec3(0, 0, 0)
-        if i == 0:
-            # Normal = (v1 - v2) x (v3 - v2)
-            n = d32.cross(d21)
-            v = v2
-        elif i == 1:
-            # Normal = (v2 - v1) x (v3 - v1)
-            n = d21.cross(d31)
-            v = v1
-        else:
-            # Normal = (v1 - v3) x (v2 - v3)
-            n = d31.cross(d32)
-            v = v3
-        nv = n.dot(v)
-        nn = n.norm_sqr()
-        if nn == 0:
-            # Zero normal, cannot project.
-            flag = RETURN_CODE.FAIL
-            break
-        elif nn > gjk_info.FLOAT_MIN[None]:
-            point = n * (nv / nn)
-            flag = RETURN_CODE.SUCCESS
-            break
-
-        # Last fallback if no valid normal was found
-        if i == 2:
-            # If the normal is still unreliable, cannot project.
-            if nn < gjk_info.FLOAT_MIN[None]:
-                flag = RETURN_CODE.FAIL
-            else:
-                point = n * (nv / nn)
-                flag = RETURN_CODE.SUCCESS
-
-    return point, flag
 
 
 @ti.func
@@ -1484,124 +1197,7 @@ def func_simplex_vertex_linear_comb(
 
 
 @ti.func
-def func_det3(
-    v1,
-    v2,
-    v3,
-):
-    """
-    Compute the determinant of a 3x3 matrix M = [v1 | v2 | v3].
-    """
-    return (
-        v1[0] * (v2[1] * v3[2] - v2[2] * v3[1])
-        - v1[1] * (v2[0] * v3[2] - v2[2] * v3[0])
-        + v1[2] * (v2[0] * v3[1] - v2[1] * v3[0])
-    )
-
-
-@ti.func
-def support_mesh(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    direction,
-    i_g,
-    i_b,
-    i_o,
-):
-    """
-    Find the support point on a mesh in the given direction.
-    """
-    g_quat = geoms_state.quat[i_g, i_b]
-    g_pos = geoms_state.pos[i_g, i_b]
-    d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(g_quat))
-
-    # Exhaustively search for the vertex with maximum dot product
-    fmax = -gjk_info.FLOAT_MAX[None]
-    imax = 0
-
-    vert_start = geoms_info.vert_start[i_g]
-    vert_end = geoms_info.vert_end[i_g]
-
-    # Use the previous maximum vertex if it is within the current range
-    prev_imax = gjk_state.support_mesh_prev_vertex_id[i_b, i_o]
-    if (prev_imax >= vert_start) and (prev_imax < vert_end):
-        pos = verts_info.init_pos[prev_imax]
-        fmax = d_mesh.dot(pos)
-        imax = prev_imax
-
-    for i in range(vert_start, vert_end):
-        pos = verts_info.init_pos[i]
-        vdot = d_mesh.dot(pos)
-        if vdot > fmax:
-            fmax = vdot
-            imax = i
-
-    v = verts_info.init_pos[imax]
-    vid = imax
-
-    gjk_state.support_mesh_prev_vertex_id[i_b, i_o] = vid
-
-    v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
-    return v_, vid
-
-
-@ti.func
-def support_driver(
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
-    collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    support_field_info: array_class.SupportFieldInfo,
-    direction,
-    i_g,
-    i_b,
-    i_o,
-    shrink_sphere,
-):
-    """
-    @ shrink_sphere: If True, use point and line support for sphere and capsule.
-    """
-    v = ti.Vector.zero(gs.ti_float, 3)
-    v_ = ti.Vector.zero(gs.ti_float, 3)
-    vid = -1
-
-    geom_type = geoms_info.type[i_g]
-    if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
-    elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, shrink_sphere)
-    elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.TERRAIN:
-        if ti.static(collider_static_config.has_terrain):
-            v, vid = support_field._func_support_prism(collider_state, direction, i_g, i_b)
-    elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
-        # If mujoco-compatible, do exhaustive search for the vertex
-        v, vid = support_mesh(geoms_state, geoms_info, verts_info, gjk_state, gjk_info, direction, i_g, i_b, i_o)
-    else:
-        v, v_, vid = support_field._func_support_world(
-            geoms_state,
-            geoms_info,
-            support_field_info,
-            direction,
-            i_g,
-            i_b,
-        )
-    return v, v_, vid
-
-
-@ti.func
 def func_safe_gjk(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1613,10 +1209,19 @@ def func_safe_gjk(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
     Safe GJK algorithm to compute the minimum distance between two convex objects.
+    using thread-local pos/quat for both geometries.
+
+    Thread-safety note: Geometry indices `i_ga` and `i_gb` are only used for read-only
+    metadata access (checking geometry types via `func_is_discrete_geoms`) and passing to
+    support functions. They do not access `geoms_state.pos` or `geoms_state.quat`.
 
     This implementation is safer than the one based on the MuJoCo implementation for the following reasons:
     1) It guarantees that the origin is strictly inside the tetrahedron when the intersection is detected.
@@ -1649,7 +1254,6 @@ def func_safe_gjk(
         dir[2 - i // 2] = 1.0 - 2.0 * (i % 2)
 
         obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-            geoms_state,
             geoms_info,
             verts_info,
             rigid_global_info,
@@ -1661,6 +1265,10 @@ def func_safe_gjk(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
         )
@@ -1671,7 +1279,6 @@ def func_safe_gjk(
         # If this is not a valid vertex, fall back to a brute-force routine to find a valid vertex.
         if not valid:
             obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski, init_flag = func_search_valid_simplex_vertex(
-                geoms_state,
                 geoms_info,
                 verts_info,
                 rigid_global_info,
@@ -1683,6 +1290,10 @@ def func_safe_gjk(
                 support_field_info,
                 i_ga,
                 i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
                 i_b,
             )
             # If the brute-force search failed, we cannot proceed with GJK.
@@ -1750,7 +1361,6 @@ def func_safe_gjk(
 
             # Find a new candidate vertex to replace the worst vertex (which has the smallest signed distance)
             obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-                geoms_state,
                 geoms_info,
                 verts_info,
                 rigid_global_info,
@@ -1762,6 +1372,10 @@ def func_safe_gjk(
                 support_field_info,
                 i_ga,
                 i_gb,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
                 i_b,
                 min_normal,
             )
@@ -1927,7 +1541,6 @@ def func_is_coplanar(
 
 @ti.func
 def func_search_valid_simplex_vertex(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1939,10 +1552,15 @@ def func_search_valid_simplex_vertex(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
 ):
     """
     Search for a valid simplex vertex (non-duplicate, non-degenerate) in the Minkowski difference.
+    using thread-local pos/quat for both geometries.
     """
     obj1 = gs.ti_vec3(0.0, 0.0, 0.0)
     obj2 = gs.ti_vec3(0.0, 0.0, 0.0)
@@ -1954,10 +1572,10 @@ def func_search_valid_simplex_vertex(
     flag = RETURN_CODE.FAIL
 
     # If both geometries are discrete, we can use a brute-force search to find a valid simplex vertex.
-    if func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b):
+    if func_is_discrete_geoms(geoms_info, i_ga, i_gb):
         geom_nverts = gs.ti_ivec2(0, 0)
         for i in range(2):
-            geom_nverts[i] = func_num_discrete_geom_vertices(geoms_info, i_ga if i == 0 else i_gb, i_b)
+            geom_nverts[i] = func_num_discrete_geom_vertices(geoms_info, i_ga if i == 0 else i_gb)
 
         num_cases = geom_nverts[0] * geom_nverts[1]
         for k in range(num_cases):
@@ -1969,7 +1587,12 @@ def func_search_valid_simplex_vertex(
             id2 = geoms_info.vert_start[i_gb] + j
             for p in range(2):
                 obj, local_obj = func_get_discrete_geom_vertex(
-                    geoms_state, geoms_info, verts_info, i_ga if p == 0 else i_gb, i_b, i if p == 0 else j
+                    geoms_info,
+                    verts_info,
+                    i_ga if p == 0 else i_gb,
+                    pos_a if p == 0 else pos_b,
+                    quat_a if p == 0 else quat_b,
+                    i if p == 0 else j,
                 )
                 if p == 0:
                     obj1 = obj
@@ -1998,7 +1621,6 @@ def func_search_valid_simplex_vertex(
             for i in range(2):
                 d = dir if i == 0 else -dir
                 obj1, obj2, local_obj1, local_obj2, id1, id2, minkowski = func_safe_gjk_support(
-                    geoms_state,
                     geoms_info,
                     verts_info,
                     rigid_global_info,
@@ -2010,6 +1632,10 @@ def func_search_valid_simplex_vertex(
                     support_field_info,
                     i_ga,
                     i_gb,
+                    pos_a,
+                    quat_a,
+                    pos_b,
+                    quat_b,
                     i_b,
                     d,
                 )
@@ -2026,7 +1652,6 @@ def func_search_valid_simplex_vertex(
 def func_num_discrete_geom_vertices(
     geoms_info: array_class.GeomsInfo,
     i_g,
-    i_b,
 ):
     """
     Count the number of discrete vertices in the geometry.
@@ -2039,19 +1664,17 @@ def func_num_discrete_geom_vertices(
 
 @ti.func
 def func_get_discrete_geom_vertex(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
     i_v,
 ):
     """
     Get the discrete vertex of the geometry for the given index [i_v].
     """
     geom_type = geoms_info.type[i_g]
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
 
     # Get the vertex position in the local frame of the geometry.
     v_ = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
@@ -2070,8 +1693,8 @@ def func_get_discrete_geom_vertex(
         vert_start = geoms_info.vert_start[i_g]
         v_ = verts_info.init_pos[vert_start + i_v]
 
-    # Transform the vertex position to the world frame
-    v = gu.ti_transform_by_trans_quat(v_, g_pos, g_quat)
+    # Transform the vertex position to the world frame using thread-local pos/quat
+    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
 
     return v, v_
 
@@ -2112,7 +1735,6 @@ def func_safe_gjk_triangle_info(
 
 @ti.func
 def func_safe_gjk_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -2124,11 +1746,16 @@ def func_safe_gjk_support(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     i_b,
     dir,
 ):
     """
     Find support points on the two objects using [dir] to use in the [safe_gjk] algorithm.
+    Uses thread-local pos/quat for both geometries.
 
     This is a more robust version of the support function that finds only one pair of support points, because this
     function perturbs the support direction to find the best support points that guarantee non-degenerate simplex
@@ -2161,13 +1788,7 @@ def func_safe_gjk_support(
         n_dir *= 2.0 - n_dir.dot(dir)
 
         num_supports = func_count_support(
-            geoms_state,
-            geoms_info,
-            support_field_info,
-            i_ga,
-            i_gb,
-            i_b,
-            n_dir,
+            geoms_info, support_field_info, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, n_dir
         )
         if i > 0 and num_supports > 1:
             # If this is a perturbed direction and we have more than one support point, we skip this iteration. If
@@ -2178,9 +1799,10 @@ def func_safe_gjk_support(
         for j in range(2):
             d = n_dir if j == 0 else -n_dir
             i_g = i_ga if j == 0 else i_gb
+            pos = pos_a if j == 0 else pos_b
+            quat = quat_a if j == 0 else quat_b
 
             sp, local_sp, si = support_driver(
-                geoms_state,
                 geoms_info,
                 verts_info,
                 static_rigid_sim_config,
@@ -2191,6 +1813,8 @@ def func_safe_gjk_support(
                 support_field_info,
                 d,
                 i_g,
+                pos,
+                quat,
                 i_b,
                 j,
                 False,
@@ -2228,102 +1852,57 @@ def func_safe_gjk_support(
 
 @ti.func
 def count_support_driver(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    i_b,
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     """
-    Count the number of possible support points in the given direction.
+    Count the number of possible support points in the given direction,
+    using thread-local quat instead of reading from geoms_state.
     """
     geom_type = geoms_info.type[i_g]
     count = 1
     if geom_type == gs.GEOM_TYPE.BOX:
-        count = support_field._func_count_supports_box(geoms_state, geoms_info, d, i_g, i_b)
+        count = support_field._func_count_supports_box(d, quat)
     elif geom_type == gs.GEOM_TYPE.MESH:
         count = support_field._func_count_supports_world(
-            geoms_state,
-            geoms_info,
             support_field_info,
             d,
             i_g,
-            i_b,
+            quat,
         )
     return count
 
 
 @ti.func
 def func_count_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     dir,
 ):
     """
-    Count the number of possible pairs of support points on the two objects in the given direction [d].
+    Count the number of possible pairs of support points on the two objects
+    in the given direction, using thread-local pos/quat for both geometries.
     """
     count = 1
     for i in range(2):
         count *= count_support_driver(
-            geoms_state,
             geoms_info,
             support_field_info,
             dir if i == 0 else -dir,
             i_ga if i == 0 else i_gb,
-            i_b,
+            quat_a if i == 0 else quat_b,
         )
 
     return count
-
-
-# Import EPA functions (circular import resolved by importing after all gjk functions are defined)
-from .epa import (
-    func_epa,
-    func_epa_witness,
-    func_epa_horizon,
-    func_add_edge_to_horizon,
-    func_get_edge_idx,
-    func_delete_face_from_polytope,
-    func_epa_insert_vertex_to_polytope,
-    func_epa_init_polytope_2d,
-    func_epa_init_polytope_3d,
-    func_epa_init_polytope_4d,
-    func_epa_support,
-    func_attach_face_to_polytope,
-    func_replace_simplex_3,
-    func_safe_epa,
-    func_safe_epa_witness,
-    func_safe_epa_init,
-    func_safe_attach_face_to_polytope,
-    func_plane_normal,
-)
-
-# Import multi-contact functions
-from .multi_contact import (
-    func_multi_contact,
-    func_simplex_dim,
-    func_potential_box_normals,
-    func_cmp_bit,
-    func_box_normal_from_collision_normal,
-    func_potential_mesh_normals,
-    func_find_aligned_faces,
-    func_potential_box_edge_normals,
-    func_potential_mesh_edge_normals,
-    func_safe_normalize,
-    func_find_aligned_edge_face,
-    func_box_face,
-    func_mesh_face,
-    func_clip_polygon,
-    func_halfspace,
-    func_plane_intersect,
-    func_approximate_polygon_with_quad,
-    func_quadrilateral_area,
-)
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module

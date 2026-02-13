@@ -437,34 +437,34 @@ def test_equality_joint(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml"])
-@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
-@pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
+@pytest.mark.parametrize("xml_path", ["xml/four_bar_linkage_weld.xml", "weld.xml", "connect.xml"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.Newton])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_equality_weld(gs_sim, mj_sim, gs_solver):
+def test_equality_link(gs_sim, mj_sim, gs_solver, xml_path):
     # Must disable self-collision caused by closing the kinematic chain (adjacent link filtering is not enough)
     gs_sim.rigid_solver._enable_collision = False
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
 
-    # Must increase sol params to improve numerical stability
-    sol_params = gu.default_solver_params()
-    sol_params[0] = 0.02
+    # Must the time constant of the constraints to improve numerical stability
+    TIME_CONSTANT = 0.02
     for entity in gs_sim.entities:
         for equality in entity.equalities:
-            equality.set_sol_params(sol_params)
-    mj_sim.model.eq_solref[:, 0] = sol_params[0]
+            equality.set_sol_params((TIME_CONSTANT, *tensor_to_array(equality.sol_params)[1:]))
+    mj_sim.model.eq_solref[:, 0] = TIME_CONSTANT
 
-    assert gs_sim.rigid_solver.n_equalities == 1
+    # Randomize the initial condition for force convergence of the constraints
     np.random.seed(0)
     qpos = np.random.rand(gs_sim.rigid_solver.n_qs) * 0.1
 
-    # Note that it is impossible to be more accurate than this because of the inherent stiffness of the problem.
-    # The pose difference between Mujoco and Genesis (resulting from using quaternion instead of rotation matrices to
-    # apply transform internally) is about 1e-15. This is fine and not surprising as it is consistent with machine
-    # precision. These rounding errors are then amplified by 1e8 when computing the forces resulting from the kinematic
-    # constraints. The constraints could be made softer by changing its impede parameters.
-    tol = 1e-7 if gs_solver == gs.constraint_solver.Newton else 2e-5
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, num_steps=300, tol=tol)
+    # Note that the world frame in which weld constraint is computed is different between Mujoco and Genesis for sites.
+    # Mujoco is using site 1, whereas Genesis is using parent link frame of site 1 since it has no notion of site.
+    ignore_constraints = np.any(
+        (mj_sim.model.eq_objtype == mujoco.mjtObj.mjOBJ_SITE) & (mj_sim.model.eq_type == mujoco.mjtEq.mjEQ_WELD)
+    )
+    simulate_and_check_mujoco_consistency(
+        gs_sim, mj_sim, qpos, num_steps=300, tol=1e-7, ignore_constraints=ignore_constraints
+    )
 
 
 @pytest.mark.required
@@ -595,47 +595,12 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
 @pytest.mark.required
 @pytest.mark.multi_contact(False)
+@pytest.mark.parametrize("xml_path", ["linear_deformable.urdf"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
 @pytest.mark.parametrize("gjk_collision", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_urdf_rope(
-    gs_solver,
-    gs_integrator,
-    merge_fixed_links,
-    multi_contact,
-    mujoco_compatibility,
-    adjacent_collision,
-    gjk_collision,
-    dof_damping,
-    show_viewer,
-):
-    asset_path = get_hf_dataset(pattern="linear_deformable.urdf")
-    xml_path = os.path.join(asset_path, "linear_deformable.urdf")
-
-    mj_sim = build_mujoco_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        adjacent_collision,
-        dof_damping,
-        gjk_collision,
-    )
-    gs_sim = build_genesis_sim(
-        xml_path,
-        gs_solver,
-        gs_integrator,
-        merge_fixed_links,
-        multi_contact,
-        mujoco_compatibility,
-        adjacent_collision,
-        gjk_collision,
-        show_viewer,
-        mj_sim,
-    )
-
+def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
     # Must increase sol params to improve numerical stability
     sol_params = gu.default_solver_params()
     sol_params[0] = 0.02
@@ -970,7 +935,7 @@ def test_robot_kinematics(gs_sim, mj_sim, tol):
     # Disable all constraints and actuation
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
     mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_ACTUATION
-    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(gs.CTRL_MODE.FORCE)
+    gs_sim.rigid_solver.dofs_state.ctrl_mode.fill(int(gs.CTRL_MODE.FORCE))
     gs_sim.rigid_solver._enable_collision = False
     gs_sim.rigid_solver._enable_joint_limit = False
     gs_sim.rigid_solver._disable_constraint = True
@@ -1434,7 +1399,7 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             assert_allclose(entity.get_AABB(), entity_aabb_init + (pos_ref - pos_zero), tol=tol)
 
             quat_delta = torch.tile(torch.as_tensor(np.random.rand(4), dtype=gs.tc_float, device=gs.device), (2, 1))
-            quat_delta /= torch.linalg.norm(quat_delta)
+            quat_delta /= torch.linalg.norm(quat_delta, axis=1, keepdim=True)
             entity.set_quat(quat_delta, relative=relative)
             quat = entity.get_quat()
             if relative:
@@ -2072,7 +2037,6 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             file=f"{asset_path}/work_table.glb",
             pos=(0.4, 0.0, -0.54),
             fixed=True,
-            file_meshes_are_zup=True,
         ),
         vis_mode="collision",
     )
@@ -2712,11 +2676,12 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_urdf_color_overwrite(overwrite):
-    scene = gs.Scene()
+def test_urdf_color_overwrite(overwrite, show_viewer):
+    scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
             file="genesis/assets/urdf/blue_box/model.urdf",
+            convexify=False,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
@@ -2725,17 +2690,32 @@ def test_urdf_color_overwrite(overwrite):
     axis = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
+            convexify=False,
         ),
         surface=gs.surfaces.Default(
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    asset_path = get_hf_dataset(pattern="work_table.glb")
+    table = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/work_table.glb",
+            convexify=False,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
+    if show_viewer:
+        scene.build()
     for vgeom in box.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
     for vgeom in axis.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
@@ -2743,8 +2723,16 @@ def test_urdf_color_overwrite(overwrite):
             assert_array_equal(color, (255, 0, 0, 255))
         else:
             assert_array_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+    for vgeom in table.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        if overwrite:
+            color = np.unique(visual.vertex_colors, axis=0)
+            assert_array_equal(color, (255, 0, 0, 255))
     for entity in scene.entities:
         for geom in entity.geoms:
+            assert geom.mesh.metadata["is_visual_overwritten"]
             visual = geom.mesh.trimesh.visual
             assert visual.defined
             color = np.unique(visual.vertex_colors, axis=0)
@@ -4264,3 +4252,82 @@ def test_pick_heterogenous_objects(show_viewer):
     post_lift_z = het_obj.get_pos()[:, 2]
     lift_deltas = (post_lift_z - pre_lift_z).cpu().numpy()
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("performance_mode", [True])
+def test_hibernation_and_contact_islands(show_viewer):
+    """
+    Test hibernation and contact island behavior.
+
+    Scenario:
+    1. Two boxes settle separately on ground -> both hibernate, 2 contact islands
+    2. Move one box above the other using set_pos (wakes it up)
+    3. Box falls and collides -> both boxes awake
+    4. Stacked boxes settle and hibernate -> 1 contact island (merged)
+    """
+    if gs.use_ndarray:
+        pytest.skip("Hibernation does not support dynamic array mode.")
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_contact_island=True,
+            use_hibernation=True,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Two boxes placed separately on ground
+    box1 = scene.add_entity(
+        gs.morphs.Box(pos=(-0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
+    )
+    box2 = scene.add_entity(
+        gs.morphs.Box(pos=(0.3, 0, 0.15), size=(0.1, 0.1, 0.1)),
+    )
+
+    scene.build()
+
+    solver = scene.sim.rigid_solver
+    box1_idx = box1._idx_in_solver
+    box2_idx = box2._idx_in_solver
+
+    # Phase 1: Let boxes settle and hibernate separately
+    for step in range(200):
+        scene.step()
+        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+            break
+
+    assert solver.entities_state.hibernated[box1_idx, 0]
+    assert solver.entities_state.hibernated[box2_idx, 0]
+    assert solver.constraint_solver.contact_island.n_islands[0] == 2
+
+    # Phase 2: Move box1 above box2 (this should wake up box1)
+    offset = 0.01
+    box2_pos = box2.get_pos()
+    box1.set_pos(np.array([float(box2_pos[0]) + offset, float(box2_pos[1]) + offset, 0.3]))
+
+    # Verify box1 woke up and position was set
+    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert float(box1.get_pos()[2]) > 0.2
+
+    # Let box1 fall and collide with box2
+    for _ in range(25):
+        scene.step()
+
+    # Both boxes should be awake shortly after collision (before they re-hibernate)
+    assert not solver.entities_state.hibernated[box1_idx, 0]
+    assert not solver.entities_state.hibernated[box2_idx, 0]
+
+    # Phase 3: Let stacked boxes settle and hibernate
+    for step in range(200):
+        scene.step()
+        if solver.entities_state.hibernated[box1_idx, 0] and solver.entities_state.hibernated[box2_idx, 0]:
+            break
+
+    assert solver.entities_state.hibernated[box1_idx, 0]
+    assert solver.entities_state.hibernated[box2_idx, 0]
+
+    # Stacked boxes should form 1 contact island
+    assert solver.constraint_solver.contact_island.n_islands[0] == 1

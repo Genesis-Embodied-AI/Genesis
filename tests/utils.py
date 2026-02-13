@@ -17,28 +17,27 @@ from types import GeneratorType
 from typing import Literal, Sequence
 
 import cpuinfo
-import numpy as np
 import mujoco
+import numpy as np
 import torch
-from httpx import HTTPError as HTTPXError
 from httpcore import TimeoutException as HTTPTimeoutException
+from httpx import HTTPError as HTTPXError
 from huggingface_hub import snapshot_download
 from PIL import Image, UnidentifiedImageError
 from requests.exceptions import HTTPError
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.options.morphs import GLTF_FORMATS, MESH_FORMATS, MJCF_FORMAT, URDF_FORMAT, USD_FORMATS
 from genesis.utils import mjcf as mju
 from genesis.utils.mesh import get_assets_dir
 from genesis.utils.misc import tensor_to_array
-from genesis.options.morphs import URDF_FORMAT, MJCF_FORMAT, MESH_FORMATS, GLTF_FORMATS, USD_FORMATS
-
 
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "c50bfe3e354e105b221ef4eb9a79504650709dd2"
-HUGGINGFACE_SNAPSHOT_REVISION = "53228deca0e3a0e0848cc997315e9f8ba5f97cce"
+HUGGINGFACE_ASSETS_REVISION = "83792c5cdab2683af11421dbeb40649c49db3e0b"
+HUGGINGFACE_SNAPSHOT_REVISION = "63afb805efb70350a983dcafee27fbd74a7a9286"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
 IMAGE_EXTENSIONS = (".png", ".jpg")
@@ -186,7 +185,6 @@ def get_hf_dataset(
     local_dir: str | None = None,
     num_retry: int = 4,
     retry_delay: float = 30.0,
-    local_dir_use_symlinks: bool = True,
 ):
     assert num_retry >= 1
 
@@ -207,7 +205,6 @@ def get_hf_dataset(
                 allow_patterns=pattern,
                 max_workers=1,
                 local_dir=local_dir,
-                local_dir_use_symlinks=local_dir_use_symlinks,
             )
 
             # Make sure that download was successful
@@ -432,7 +429,14 @@ def _get_model_mappings(
     mj_motors_idx: list[int] = []
     for joint_name in joints_name:
         if joint_name:
-            mj_joint = mj_sim.model.joint(joint_name)
+            try:
+                mj_joint = mj_sim.model.joint(joint_name)
+            except KeyError:
+                for entity in gs_sim.entities:
+                    for joint in entity.joints:
+                        if joint.name == joint_name:
+                            mj_joint = mj_sim.model.joint(joint.idx)
+                            break
         else:
             # Must rely on exhaustive search if the joint has empty name
             for j in range(mj_sim.model.njoint):
@@ -503,9 +507,13 @@ def build_mujoco_sim(
     else:
         raise ValueError(f"Integrator '{gs_integrator}' not supported")
 
-    xml_path = os.path.join(get_assets_dir(), xml_path)
+    file = os.path.join(get_assets_dir(), xml_path)
+    if not os.path.exists(file):
+        asset_path = get_hf_dataset(pattern=xml_path)
+        file = os.path.join(asset_path, xml_path)
+
     model = mju.build_model(
-        xml_path, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
+        file, discard_visual=True, default_armature=None, merge_fixed_links=merge_fixed_links, links_to_keep=()
     )
 
     model.opt.solver = mj_solver
@@ -575,8 +583,13 @@ def build_genesis_sim(
         show_FPS=False,
     )
 
+    file = os.path.join(get_assets_dir(), xml_path)
+    if not os.path.exists(file):
+        asset_path = get_hf_dataset(pattern=xml_path)
+        file = os.path.join(asset_path, xml_path)
+
     morph_kwargs = dict(
-        file=xml_path,
+        file=file,
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
         default_armature=None,
@@ -590,7 +603,7 @@ def build_genesis_sim(
             links_to_keep=(),
             **morph_kwargs,
         )
-    gs_robot = scene.add_entity(
+    scene.add_entity(
         morph,
         visualize_contact=True,
     )
@@ -788,6 +801,7 @@ def check_mujoco_data_consistency(
     *,
     qvel_prev: np.ndarray | None = None,
     tol: float,
+    ignore_constraints: bool = False,
 ):
     # Get mapping between Mujoco and Genesis
     gs_maps, mj_maps = _get_model_mappings(gs_sim, mj_sim, joints_name, bodies_name)
@@ -834,7 +848,7 @@ def check_mujoco_data_consistency(
     mj_n_constraints = mj_sim.data.nefc
     assert gs_n_constraints == mj_n_constraints
 
-    if gs_n_constraints:
+    if gs_n_constraints and not ignore_constraints:
         gs_contact_pos = gs_sim.rigid_solver.collider._collider_state.contact_data.pos.to_numpy()[:gs_n_contacts, 0]
         mj_contact_pos = mj_sim.data.contact.pos
         # Sort based on the axis with the largest variation
@@ -898,7 +912,6 @@ def check_mujoco_data_consistency(
         mj_efc_force = mj_sim.data.efc_force
         assert_allclose(gs_efc_force[gs_sidx], mj_efc_force[mj_sidx], tol=tol)
 
-    if gs_n_constraints:
         mj_iter = mj_sim.data.solver_niter[0] - 1
         if gs_n_constraints and mj_iter >= 0:
             gs_scale = 1.0 / (gs_meaninertia * max(1, gs_sim.rigid_solver.n_dofs))
@@ -1019,7 +1032,9 @@ def check_mujoco_data_consistency(
     assert_allclose(gs_cinr_mass[gs_bodies_idx], mj_cinr_mass[mj_bodies_idx], tol=tol)
 
 
-def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps):
+def simulate_and_check_mujoco_consistency(
+    gs_sim, mj_sim, qpos=None, qvel=None, *, tol, num_steps, ignore_constraints=False
+):
     # Get mapping between Mujoco and Genesis
     _, (_, _, mj_qs_idx, mj_dofs_idx, _, _) = _get_model_mappings(gs_sim, mj_sim)
 
@@ -1034,7 +1049,9 @@ def simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos=None, qvel=None, 
 
     for i in range(num_steps):
         # Make sure that all "dynamic" quantities are matching before stepping
-        check_mujoco_data_consistency(gs_sim, mj_sim, qvel_prev=qvel_prev, tol=tol)
+        check_mujoco_data_consistency(
+            gs_sim, mj_sim, qvel_prev=qvel_prev, tol=tol, ignore_constraints=ignore_constraints
+        )
 
         # Keep Mujoco and Genesis simulation in sync to avoid drift over time
         mj_sim.data.qpos[mj_qs_idx] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]

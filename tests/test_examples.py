@@ -20,6 +20,7 @@ ALLOW_PATTERNS = {
     "sensors/**/*.py",
     "tutorials/**/*.py",
     "usd/**/*.py",
+    "viewer_plugins/**/*.py",
 }
 IGNORE_SCRIPT_NAMES = {
     "ddp_multi_gpu.py",

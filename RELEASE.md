@@ -1,5 +1,50 @@
 # Genesis Release Note
 
+## 0.3.14
+
+This release mainly focuses on usability, by extending support of USD and introducing a new external plugin mechanism for the interactive viewer. Besides, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%).
+
+### New Features
+
+* Introduce interactive viewer plugins. (@Milotrince) (#2004, #2357)
+* Add naming logics to entities. (@YilingQiao) (#2303)
+* Support rendering textures for USD scenes. (@ACMLCZH) (#2286)
+* Add invalid spatial inertia diagnosis. (@duburcqa) (#2297, #2321, #2367)
+
+### Bug Fixes
+
+* Fix wrong default sampler for SPH solver causing numerical stability issues. (@erizmr) (#2280)
+* Fix render destroy. (@nimrod-gileadi, @duburcqa) (#2282, #2358)
+* Fix IPC Coupler. (@duburcqa) (#2299)
+* Fix batched numpy 'euler_to_R' geom util. (@Kashu7100) (#2306)
+* Fix glTF mesh loading. (@duburcqa) (#2296, #2311, #2316, #2329)
+* Fix 'Mesh.convert_to_zup' by applying scaling out-of-place. (@duburcqa)
+* Fix rigid body entity hibernation mechanism. (@YilingQiao) (#2294)
+* Fix DFSPH solver. (@erizmr) (#2302)
+* Fix parsing material of primitive geometries in MJCF files. (@ACMLCZH) (#2328)
+* Fix 'draw_debug_frames' after PR#1869. (@duburcqa) (#2330)
+* Fix compatibility with 'trimesh<4.6.0'. (@duburcqa) (#2334)
+* Fix linesearch edge-case fallback. (@erizmr) (#2339)
+* Fix mujoco-compatible GJK multi-contact for box primitive. (@hughperkins) (#2341)
+* FIX FEM entity rendering with Raytracer backend. (@duburcqa) (#2356)
+* Fix combining Rasterizer-based camera sensors and interactive viewer. (@YilingQiao) (#2351)
+
+### Miscellaneous
+
+* Track mesh UVs in FEM/PBD solvers for rendering of deformable entities. (@alelievr) (#2323)
+* Support scrolling menu in 'gs view'. (@Kashu7100) (#2335)
+* Add memory to CI performance monitoring report. (@hughperkins) (#2281, #2291, #2293, #2295, #2298, #2300, #2312, #2315, #2320)
+* Improve support of Linux ARM. (@duburcqa) (#2317)
+* Clearer error message of 'RigidEntity.(get_joint|get_link)'. (@Kashu7100) (#2313)
+* Add Markdown Files to Facilitate AI Tools. (@YilingQiao) (#2305)
+* Support --record in the RL stage in Manipulation example (@SnakeOnex) (#2344)
+* More robust OpenGL context initialisation for Rasterizer. (@duburcqa) (#2354)
+* Add benchmark for Unitree G1. (@hughperkins) (#2310)
+* Recomputing inertia for primitive geometries using analytical formula. (@duburcqa) (#2337)
+* Speed up linesearch via batched alpha evals and reduced global memory access. (@erizmr) (#2350)
+* Disable shadow and plane reflection when using software rendering. (@duburcqa) (#2365)
+* Workaround for 'pyglet' bug. (@duburcqa) (#2385)
+
 ## 0.3.13
 
 This small release adds user-friendly diagnosis of invalid Rigid physics properties and improves support of GLTF meshes.

@@ -9,6 +9,9 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+from .utils import (
+    func_is_geom_aabbs_overlap,
+)
 
 
 @ti.func
@@ -16,24 +19,9 @@ def func_point_in_geom_aabb(
     i_g,
     i_b,
     geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
     point: ti.types.vector(3),
 ):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
-
-
-@ti.func
-def func_is_geom_aabbs_overlap(
-    i_ga,
-    i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-):
-    return not (
-        (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
-        or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
-    )
 
 
 @ti.func
@@ -107,8 +95,8 @@ def func_collision_clear(
 
             # Advect hibernated contacts
             for i_c in range(collider_state.n_contacts[i_b]):
-                i_la = collider_state.contact_data[i_c, i_b].link_a
-                i_lb = collider_state.contact_data[i_c, i_b].link_b
+                i_la = collider_state.contact_data.link_a[i_c, i_b]
+                i_lb = collider_state.contact_data.link_b[i_c, i_b]
                 I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
                 I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
 
@@ -120,18 +108,38 @@ def func_collision_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        collider_state.contact_data[i_c_hibernated, i_b] = collider_state.contact_data[i_c, i_b]
+                        # Copying all fields of class StructContactData individually
+                        # (fields mode doesn't support struct-level copy operations):
+                        # fmt: off
+                        collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
+                        collider_state.contact_data.geom_b[i_c_hibernated, i_b] = collider_state.contact_data.geom_b[i_c, i_b]
+                        collider_state.contact_data.penetration[i_c_hibernated, i_b] = collider_state.contact_data.penetration[i_c, i_b]
+                        collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
+                        collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
+                        collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
+                        collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
+                        collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
+                        collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
+                        collider_state.contact_data.link_b[i_c_hibernated, i_b] = collider_state.contact_data.link_b[i_c, i_b]
+                        # fmt: on
                     collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
+        # Clear contacts: when hibernation is enabled, only clear non-hibernated contacts.
+        # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
         for i_c in range(collider_state.n_contacts[i_b]):
-            collider_state.contact_data.link_a[i_c, i_b] = -1
-            collider_state.contact_data.link_b[i_c, i_b] = -1
-            collider_state.contact_data.geom_a[i_c, i_b] = -1
-            collider_state.contact_data.geom_b[i_c, i_b] = -1
-            collider_state.contact_data.penetration[i_c, i_b] = 0.0
-            collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            should_clear = True
+            if ti.static(static_rigid_sim_config.use_hibernation):
+                # Only clear if this is not a hibernated contact
+                should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
+            if should_clear:
+                collider_state.contact_data.link_a[i_c, i_b] = -1
+                collider_state.contact_data.link_b[i_c, i_b] = -1
+                collider_state.contact_data.geom_a[i_c, i_b] = -1
+                collider_state.contact_data.geom_b[i_c, i_b] = -1
+                collider_state.contact_data.penetration[i_c, i_b] = 0.0
+                collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
 
         if ti.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
@@ -266,7 +274,7 @@ def func_broad_phase(
                         ):
                             continue
 
-                        if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                        if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                             # Clear collision normal cache if not in contact
                             if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                 i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
@@ -274,7 +282,7 @@ def func_broad_phase(
                             continue
 
                         if n_broad == collider_info.max_collision_pairs_broad[None]:
-                            errno[i_b] = errno[i_b] | 0b00000000000000000000000000000001
+                            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
                             break
                         collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
                         collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
@@ -321,7 +329,7 @@ def func_broad_phase(
                             ):
                                 continue
 
-                            if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                            if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                 # Clear collision normal cache if not in contact
                                 if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
@@ -355,7 +363,7 @@ def func_broad_phase(
                                 ):
                                     continue
 
-                                if not func_is_geom_aabbs_overlap(i_ga, i_gb, i_b, geoms_state, geoms_info):
+                                if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                     # Clear collision normal cache if not in contact
                                     i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
                                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)

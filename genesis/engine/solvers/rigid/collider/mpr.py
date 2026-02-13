@@ -7,9 +7,8 @@ from . import support_field
 
 
 class MPR:
-    def __init__(self, rigid_solver, is_active: bool = True):
+    def __init__(self, rigid_solver):
         self._solver = rigid_solver
-        self._is_active = is_active
 
         self._mpr_info = array_class.get_mpr_info(
             # It has been observed in practice that increasing this threshold makes collision detection instable,
@@ -20,13 +19,6 @@ class MPR:
         )
         self._mpr_state = array_class.get_mpr_state(self._solver._B)
 
-    def reset(self):
-        pass
-
-    @property
-    def is_active(self):
-        return self._is_active
-
 
 @ti.kernel
 def clear(mpr_state: ti.template()):
@@ -36,14 +28,6 @@ def clear(mpr_state: ti.template()):
 @ti.func
 def func_point_in_geom_aabb(geoms_state: array_class.GeomsState, point, i_g, i_b):
     return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
-
-
-@ti.func
-def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
-    return not (
-        (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
-        or (geoms_state.aabb_min[i_ga, i_b] >= geoms_state.aabb_max[i_gb, i_b]).any()
-    )
 
 
 @ti.func
@@ -166,68 +150,57 @@ def mpr_portal_reach_tolerance(
 
 @ti.func
 def support_driver(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     direction,
     i_g,
     i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
     v = ti.Vector.zero(gs.ti_float, 3)
     geom_type = geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(geoms_state, geoms_info, direction, i_g, i_b, False)
+        v, v_, vid = support_field._func_support_sphere(geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(geoms_state, geoms_info, direction, i_g, i_b)
+        v = support_field._func_support_ellipsoid(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(geoms_state, geoms_info, direction, i_g, i_b, False)
+        v = support_field._func_support_capsule(geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(geoms_state, geoms_info, direction, i_g, i_b)
+        v, v_, vid = support_field._func_support_box(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if ti.static(collider_static_config.has_terrain):
-            v, _ = support_field._func_support_prism(collider_state, direction, i_g, i_b)
+            # Terrain support doesn't depend on geometry pos/quat - uses collider_state.prism
+            # Terrain is global and not perturbed, so we use the global state directly
+            v, _ = support_field._func_support_prism(collider_state, direction, i_b)
     else:
-        v, v_, vid = support_field._func_support_world(geoms_state, geoms_info, support_field_info, direction, i_g, i_b)
+        v, v_, vid = support_field._func_support_world(support_field_info, direction, i_g, pos, quat)
+
     return v
 
 
 @ti.func
 def compute_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     direction,
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     v1 = support_driver(
-        geoms_state,
-        geoms_info,
-        collider_state,
-        collider_info,
-        collider_static_config,
-        support_field_info,
-        direction,
-        i_ga,
-        i_b,
+        geoms_info, collider_state, collider_static_config, support_field_info, direction, i_ga, i_b, pos_a, quat_a
     )
     v2 = support_driver(
-        geoms_state,
-        geoms_info,
-        collider_state,
-        collider_info,
-        collider_static_config,
-        support_field_info,
-        -direction,
-        i_gb,
-        i_b,
+        geoms_info, collider_state, collider_static_config, support_field_info, -direction, i_gb, i_b, pos_b, quat_b
     )
 
     v = v1 - v2
@@ -236,39 +209,35 @@ def compute_support(
 
 @ti.func
 def func_geom_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     direction,
     i_g,
-    i_b,
+    pos: ti.types.vector(3, dtype=gs.ti_float),
+    quat: ti.types.vector(4, dtype=gs.ti_float),
 ):
-    g_pos = geoms_state.pos[i_g, i_b]
-    g_quat = geoms_state.quat[i_g, i_b]
-    direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, g_quat)
+    direction_in_init_frame = gu.ti_inv_transform_by_quat(direction, quat)
 
     dot_max = gs.ti_float(-1e10)
     v = ti.Vector.zero(gs.ti_float, 3)
     vid = 0
 
     for i_v in range(geoms_info.vert_start[i_g], geoms_info.vert_end[i_g]):
-        pos = verts_info.init_pos[i_v]
-        dot = pos.dot(direction_in_init_frame)
+        pos_local = verts_info.init_pos[i_v]
+        dot = pos_local.dot(direction_in_init_frame)
         if dot > dot_max:
-            v = pos
+            v = pos_local
             dot_max = dot
             vid = i_v
-    v_ = gu.ti_transform_by_trans_quat(v, g_pos, g_quat)
+    v_world = gu.ti_transform_by_trans_quat(v, pos, quat)
 
-    return v_, vid
+    return v_world, vid
 
 
 @ti.func
 def mpr_refine_portal(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
@@ -276,6 +245,10 @@ def mpr_refine_portal(
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     ret = 1
     while True:
@@ -286,16 +259,18 @@ def mpr_refine_portal(
             break
 
         v, v1, v2 = compute_support(
-            geoms_state,
             geoms_info,
             collider_state,
-            collider_info,
             collider_static_config,
             support_field_info,
             direction,
             i_ga,
             i_gb,
             i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
         )
 
         if not mpr_portal_can_encapsule_origin(mpr_info, v, direction) or mpr_portal_reach_tolerance(
@@ -367,18 +342,20 @@ def mpr_find_penetr_segment(mpr_state: array_class.MPRState, i_ga, i_gb, i_b):
 
 @ti.func
 def mpr_find_penetration(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     static_rigid_sim_config: ti.template(),
     support_field_info: array_class.SupportFieldInfo,
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
     i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     iterations = 0
 
@@ -390,16 +367,18 @@ def mpr_find_penetration(
     while True:
         direction = mpr_portal_dir(mpr_state, i_ga, i_gb, i_b)
         v, v1, v2 = compute_support(
-            geoms_state,
             geoms_info,
             collider_state,
-            collider_info,
             collider_static_config,
             support_field_info,
             direction,
             i_ga,
             i_gb,
             i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
         )
         if (
             mpr_portal_reach_tolerance(mpr_state, mpr_info, v, direction, i_ga, i_gb, i_b)
@@ -470,11 +449,9 @@ def mpr_expand_portal(mpr_state: array_class.MPRState, v, v1, v2, i_ga, i_gb, i_
 
 @ti.func
 def mpr_discover_portal(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     support_field_info: array_class.SupportFieldInfo,
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
@@ -483,6 +460,10 @@ def mpr_discover_portal(
     i_b,
     center_a,
     center_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     mpr_state.simplex_support.v1[0, i_b] = center_a
     mpr_state.simplex_support.v2[0, i_b] = center_b
@@ -495,16 +476,18 @@ def mpr_discover_portal(
     direction = -mpr_state.simplex_support.v[0, i_b].normalized()
 
     v, v1, v2 = compute_support(
-        geoms_state,
         geoms_info,
         collider_state,
-        collider_info,
         collider_static_config,
         support_field_info,
         direction,
         i_ga,
         i_gb,
         i_b,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
     )
 
     mpr_state.simplex_support.v1[1, i_b] = v1
@@ -527,16 +510,18 @@ def mpr_discover_portal(
         else:
             direction = direction.normalized()
             v, v1, v2 = compute_support(
-                geoms_state,
                 geoms_info,
                 collider_state,
-                collider_info,
                 collider_static_config,
                 support_field_info,
                 direction,
                 i_ga,
                 i_gb,
                 i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
             )
             dot = v.dot(direction)
             if dot < mpr_info.CCD_EPS[None]:
@@ -563,16 +548,18 @@ def mpr_discover_portal(
                 num_trials = gs.ti_int(0)
                 while mpr_state.simplex_size[i_b] < 4:
                     v, v1, v2 = compute_support(
-                        geoms_state,
                         geoms_info,
                         collider_state,
-                        collider_info,
                         collider_static_config,
                         support_field_info,
                         direction,
                         i_ga,
                         i_gb,
                         i_b,
+                        pos_a,
+                        quat_a,
+                        pos_b,
+                        quat_b,
                     )
                     dot = v.dot(direction)
                     if dot < mpr_info.CCD_EPS[None]:
@@ -618,7 +605,6 @@ def mpr_discover_portal(
 
 @ti.func
 def guess_geoms_center(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -626,7 +612,10 @@ def guess_geoms_center(
     mpr_info: array_class.MPRInfo,
     i_ga,
     i_gb,
-    i_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
     normal_ws,
 ):
     # MPR algorithm was initially design to check whether a pair of convex geometries was colliding. The author
@@ -657,21 +646,18 @@ def guess_geoms_center(
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
     EPS = rigid_global_info.EPS[None]
 
-    g_pos_a = geoms_state.pos[i_ga, i_b]
-    g_pos_b = geoms_state.pos[i_gb, i_b]
-    g_quat_a = geoms_state.quat[i_ga, i_b]
-    g_quat_b = geoms_state.quat[i_gb, i_b]
-    center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], g_pos_a, g_quat_a)
-    center_b = gu.ti_transform_by_trans_quat(geoms_info.center[i_gb], g_pos_b, g_quat_b)
+    # Transform geometry centers to world space using thread-local pos/quat
+    center_a = gu.ti_transform_by_trans_quat(geoms_info.center[i_ga], pos_a, quat_a)
+    center_b = gu.ti_transform_by_trans_quat(geoms_info.center[i_gb], pos_b, quat_b)
 
     # Completely different center logics if a normal guess is provided
     if ti.static(not static_rigid_sim_config.enable_mujoco_compatibility):
         if (ti.abs(normal_ws) > mpr_info.CCD_EPS[None]).any():
             # Must start from the center of each bounding box
             center_a_local = 0.5 * (geoms_init_AABB[i_ga, 7] + geoms_init_AABB[i_ga, 0])
-            center_a = gu.ti_transform_by_trans_quat(center_a_local, g_pos_a, g_quat_a)
+            center_a = gu.ti_transform_by_trans_quat(center_a_local, pos_a, quat_a)
             center_b_local = 0.5 * (geoms_init_AABB[i_gb, 7] + geoms_init_AABB[i_gb, 0])
-            center_b = gu.ti_transform_by_trans_quat(center_b_local, g_pos_b, g_quat_b)
+            center_b = gu.ti_transform_by_trans_quat(center_b_local, pos_b, quat_b)
             delta = center_a - center_b
 
             # Skip offset if normal is roughly pointing in the same direction already.
@@ -687,8 +673,8 @@ def guess_geoms_center(
                     # Compute the size of the bounding boxes along the target offset direction.
                     # First, move the direction in local box frame
                     dir_offset = offset / offset_norm
-                    dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, g_quat_a)
-                    dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, g_quat_b)
+                    dir_offset_local_a = gu.ti_inv_transform_by_quat(dir_offset, quat_a)
+                    dir_offset_local_b = gu.ti_inv_transform_by_quat(dir_offset, quat_b)
                     box_size_a = geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]
                     box_size_b = geoms_init_AABB[i_gb, 7] - geoms_init_AABB[i_gb, 0]
                     length_a = box_size_a.dot(ti.abs(dir_offset_local_a))
@@ -704,11 +690,9 @@ def guess_geoms_center(
 
 @ti.func
 def func_mpr_contact_from_centers(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
@@ -718,13 +702,15 @@ def func_mpr_contact_from_centers(
     i_b,
     center_a,
     center_b,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     res = mpr_discover_portal(
-        geoms_state=geoms_state,
         geoms_info=geoms_info,
         support_field_info=support_field_info,
         collider_state=collider_state,
-        collider_info=collider_info,
         collider_static_config=collider_static_config,
         mpr_state=mpr_state,
         mpr_info=mpr_info,
@@ -733,6 +719,10 @@ def func_mpr_contact_from_centers(
         i_b=i_b,
         center_a=center_a,
         center_b=center_b,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
     )
 
     is_col = False
@@ -746,10 +736,8 @@ def func_mpr_contact_from_centers(
         is_col, normal, penetration, pos = mpr_find_penetr_segment(mpr_state, i_ga, i_gb, i_b)
     elif res == 0:
         res = mpr_refine_portal(
-            geoms_state,
             geoms_info,
             collider_state,
-            collider_info,
             collider_static_config,
             mpr_state,
             mpr_info,
@@ -757,34 +745,38 @@ def func_mpr_contact_from_centers(
             i_ga,
             i_gb,
             i_b,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
         )
         if res >= 0:
             is_col, normal, penetration, pos = mpr_find_penetration(
-                geoms_state,
                 geoms_info,
                 static_rigid_sim_config,
                 support_field_info,
                 collider_state,
-                collider_info,
                 collider_static_config,
                 mpr_state,
                 mpr_info,
                 i_ga,
                 i_gb,
                 i_b,
+                pos_a,
+                quat_a,
+                pos_b,
+                quat_b,
             )
     return is_col, normal, penetration, pos
 
 
 @ti.func
 def func_mpr_contact(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
     collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: ti.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
@@ -793,9 +785,12 @@ def func_mpr_contact(
     i_gb,
     i_b,
     normal_ws,
+    pos_a: ti.types.vector(3, dtype=gs.ti_float),
+    quat_a: ti.types.vector(4, dtype=gs.ti_float),
+    pos_b: ti.types.vector(3, dtype=gs.ti_float),
+    quat_b: ti.types.vector(4, dtype=gs.ti_float),
 ):
     center_a, center_b = guess_geoms_center(
-        geoms_state,
         geoms_info,
         geoms_init_AABB,
         rigid_global_info,
@@ -803,15 +798,16 @@ def func_mpr_contact(
         mpr_info,
         i_ga,
         i_gb,
-        i_b,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
         normal_ws,
     )
     return func_mpr_contact_from_centers(
-        geoms_state=geoms_state,
         geoms_info=geoms_info,
         static_rigid_sim_config=static_rigid_sim_config,
         collider_state=collider_state,
-        collider_info=collider_info,
         collider_static_config=collider_static_config,
         mpr_state=mpr_state,
         mpr_info=mpr_info,
@@ -821,6 +817,10 @@ def func_mpr_contact(
         i_b=i_b,
         center_a=center_a,
         center_b=center_b,
+        pos_a=pos_a,
+        quat_a=quat_a,
+        pos_b=pos_b,
+        quat_b=quat_b,
     )
 
 

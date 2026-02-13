@@ -214,6 +214,9 @@ class MPMSolver(Solver):
                     "CPIC is not supported in differentiable mode yet. Submit a feature request if you need it."
                 )
 
+            if self._enable_CPIC and self.sim.rigid_solver.is_active and self.sim.rigid_solver.n_geoms:
+                self.sim.rigid_solver.collider._sdf.activate()
+
             self.init_particle_fields()
             self.init_grid_fields()
             self.init_vvert_fields()
@@ -244,7 +247,7 @@ class MPMSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None):
         self.add_material(material)
 
         # create entity
@@ -259,6 +262,7 @@ class MPMSolver(Solver):
             particle_start=self.n_particles,
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
+            name=name,
         )
         self._entities.append(entity)
 
@@ -505,7 +509,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.geoms_info,
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
-            self.sim.coupler.rigid_solver.sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
             self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
 
@@ -516,7 +520,7 @@ class MPMSolver(Solver):
             self.sim.coupler.rigid_solver.geoms_info,
             self.sim.coupler.rigid_solver.links_state,
             self.sim.coupler.rigid_solver._rigid_global_info,
-            self.sim.coupler.rigid_solver.sdf._sdf_info,
+            self.sim.coupler.rigid_solver.collider._sdf._sdf_info,
             self.sim.coupler.rigid_solver.collider._collider_static_config,
         )
         self.svd_grad(f)
