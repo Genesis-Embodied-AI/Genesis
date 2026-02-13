@@ -272,9 +272,13 @@ class RigidLink(RBC):
 
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
             if not self._is_fixed:
-                if not self._geoms and not self._vgeoms:
+                if (
+                    not self._geoms
+                    and not self._vgeoms
+                    and any(joint.type is not gs.JOINT_TYPE.FIXED for joint in self.joints)
+                ):
                     gs.logger.info(
-                        f"Link mass is not specified and no geoms found for link '{self.name}'. Mass is set to 'gs.EPS'."
+                        f"Link mass not specified and no geoms found for link '{self.name}'. Setting mass to 'gs.EPS'."
                     )
                 elif not self._geoms:
                     gs.logger.info(
