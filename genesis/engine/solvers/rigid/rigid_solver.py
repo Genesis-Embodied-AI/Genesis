@@ -2652,6 +2652,10 @@ class RigidSolver(Solver):
         tensor = ti_to_torch(self.geoms_state.pos, envs_idx, geoms_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
+    def get_geoms_quat(self, geoms_idx=None, envs_idx=None):
+        tensor = ti_to_torch(self.geoms_state.quat, envs_idx, geoms_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
+
     def get_qpos(self, qs_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.qpos, envs_idx, qs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
