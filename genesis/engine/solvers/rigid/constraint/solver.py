@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import os
 
 import quadrants as ti
 import numpy as np
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
 
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
+
+GS_SOLVER_DECOMPOSE = "GS_SOLVER_DECOMPOSE"
 
 
 class ConstraintSolver:
@@ -175,6 +178,16 @@ class ConstraintSolver:
         )
 
     def resolve(self):
+        """
+        Resolve constraints using either monolithic or decomposed solver kernels.
+
+        Environment variables:
+            GS_SOLVER_DECOMPOSE: Overrides any heuristics we are using
+        """
+        use_decomposed_kernels = gs.backend != gs.cpu
+        if GS_SOLVER_DECOMPOSE in os.environ:
+            use_decomposed_kernels = os.environ.get("GS_SOLVER_DECOMPOSE", "0") == "1"
+
         func_solve_init(
             self._solver.dofs_info,
             self._solver.dofs_state,
@@ -183,13 +196,27 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
-        func_solve_body(
-            self._solver.entities_info,
-            self._solver.dofs_state,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-        )
+
+        if use_decomposed_kernels:
+            from genesis.engine.solvers.rigid.constraint.solver_breakdown import (
+                func_solve_decomposed_macrokernels,
+            )
+
+            func_solve_decomposed_macrokernels(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            func_solve_body(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         func_update_qacc(
             self._solver.dofs_state,
@@ -1377,6 +1404,8 @@ def func_hessian_direct_tiled(
         i_b = i // BLOCK_DIM
         if i_b >= _B:
             continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
 
         jac_row = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
         jac_col = ti.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.ti_float)
@@ -1528,6 +1557,8 @@ def func_cholesky_factor_direct_tiled(
         tid = i % BLOCK_DIM
         i_b = i // BLOCK_DIM
         if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
         # Padding +1 to avoid memory bank conflicts that would cause access serialization
@@ -2244,6 +2275,41 @@ def update_bracket_no_eval_local(
 
 
 @ti.func
+def func_linesearch_and_apply_alpha(
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: ti.template(),
+):
+    alpha = func_linesearch_batch(
+        i_b,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        rigid_global_info=rigid_global_info,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+    n_dofs = constraint_state.qacc.shape[0]
+    if ti.abs(alpha) < rigid_global_info.EPS[None]:
+        constraint_state.improved[i_b] = False
+    else:
+        # Update qacc and Ma
+        # we need alpha for this, so stay in same top level for loop
+        # (though we could store alpha in a new tensor of course, if we wanted to split this)
+        for i_d in range(n_dofs):
+            constraint_state.qacc[i_d, i_b] = (
+                constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
+            )
+            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+
+        # Update Jaref
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+
+
+@ti.func
 def func_linesearch_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2423,6 +2489,17 @@ def func_linesearch_batch(
 
 
 # ====================================================== Helpers ======================================================
+
+
+@ti.func
+def func_save_prev_grad(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    n_dofs = constraint_state.qacc.shape[0]
+    for i_d in range(n_dofs):
+        constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+        constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
 
 
 @ti.func
@@ -2837,6 +2914,10 @@ def func_solve_init(
         constraint_state=constraint_state,
         static_rigid_sim_config=static_rigid_sim_config,
     )
+
+    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in ti.ndrange(_B):
+        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
 
     if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_hessian_and_cholesky_factor_direct(
