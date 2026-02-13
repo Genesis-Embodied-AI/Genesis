@@ -643,7 +643,7 @@ class FEMEntity(Entity):
             self.set_vel(self._sim.cur_substep_local, self._tgt["vel"])
 
         if self._tgt["act"] is not None:
-            assert self._tgt["act"] in [gs.ACTIVE, gs.INACTIVE]
+            assert self._tgt["act"] in (gs.ACTIVE, gs.INACTIVE)
             self.set_active(self._sim.cur_substep_local, self._tgt["act"])
 
         if self._tgt["actu"] is not None:

@@ -38,7 +38,7 @@ class RayTracer(RendererOptions):
     Parameters
     ----------
     device_index : int, optional
-        Device ID used for the raytracer. Defaults to 0.
+        Device ID used for the raytracer. None for Genesis' device. Defaults to None.
     logging_level : str, optional
         Logging level. Should be one of "debug", "info", "warning". Defaults to "warning".
     state_limit : int, optional
@@ -65,7 +65,7 @@ class RayTracer(RendererOptions):
         Lower bound for direct face normal vs vertex normal for face normal interpolation. Range is [0, 180]. Defaults to 180.
     """
 
-    device_index: int = 0
+    device_index: Optional[int] = None
     logging_level: str = "warning"
     state_limit: int = 2**25
     tracing_depth: int = 32

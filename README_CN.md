@@ -139,7 +139,7 @@ docker run -it --network=host \
  genesis-amd
 ```
 
-示例文件将可以在 `/workspace/examples` 目录下找到。注意：AMD 用户应使用 Vulkan 后端。这意味着您需要调用 `gs.init(vulkan)` 来初始化 Genesis。
+示例文件将可以在 `/workspace/examples` 目录下找到。注意：AMD 用户应使用 ROCm (HIP) 后端。这意味着您需要调用 `gs.init(gs.amdgpu)` 来初始化 Genesis。
 
 ### 文档
 

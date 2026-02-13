@@ -1,6 +1,5 @@
 import enum
 
-import gstaichi as ti
 
 # dynamic loading
 ACTIVE = 1
@@ -68,9 +67,8 @@ class backend(IntEnum):
     cpu = 0
     gpu = 1
     cuda = 2
-    vulkan = 3
+    amdgpu = 3
     metal = 4
-    opengl = 5
 
     def __format__(self, format_spec):
         return f"gs.{self.name}"
@@ -85,49 +83,6 @@ class IMAGE_TYPE(IntEnum):
 
     def __format__(self, format_spec):
         return self.name
-
-
-# FIXME: Remove this static map entirely and rather determines the appropriate GPU backend dynamically, based on
-# hardware (using torch default device)
-GS_ARCH = {
-    "macOS": {
-        backend.cpu: backend.cpu,
-        backend.gpu: backend.metal,
-        backend.metal: backend.metal,
-        backend.vulkan: backend.vulkan,
-    },
-    "Linux": {
-        backend.cpu: backend.cpu,
-        backend.gpu: backend.cuda,
-        backend.cuda: backend.cuda,
-        backend.vulkan: backend.vulkan,
-    },
-    "Windows": {
-        backend.cpu: backend.cpu,
-        backend.gpu: backend.cuda,
-        backend.cuda: backend.cuda,
-        backend.vulkan: backend.vulkan,
-    },
-}
-
-# FIXME: The list of support backends should honor `TI_ENABLE_*` env var
-TI_ARCH = {
-    "macOS": {
-        backend.cpu: ti.cpu,
-        backend.metal: ti.metal,
-        backend.vulkan: ti.vulkan,
-    },
-    "Linux": {
-        backend.cpu: ti.cpu,
-        backend.cuda: ti.cuda,
-        backend.vulkan: ti.vulkan,
-    },
-    "Windows": {
-        backend.cpu: ti.cpu,
-        backend.cuda: ti.cuda,
-        backend.vulkan: ti.vulkan,
-    },
-}
 
 
 # parallelize

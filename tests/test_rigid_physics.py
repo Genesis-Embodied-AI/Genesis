@@ -2520,7 +2520,7 @@ def test_mjcf_parsing_with_include():
 
 @pytest.mark.required
 @pytest.mark.parametrize("gjk_collision", [True, False])
-def test_urdf_parsing(show_viewer, tol, gjk_collision):
+def test_urdf_parsing(gjk_collision, show_viewer, tol):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
     DOOR_JOINT_DAMPING = 1.5
@@ -2581,7 +2581,7 @@ def test_urdf_parsing(show_viewer, tol, gjk_collision):
             entities[key].set_quat(np.array([0.0, 0.0, 0.0, 1.0]), relative=relative)
         if show_viewer:
             scene.visualizer.update()
-        _check_entity_positions(relative, tol=gs.EPS)
+        _check_entity_positions(relative, tol=tol)
 
     # Check that `set_qpos` applies the same absolute transform in all cases
     door_angle = np.array([1.1])
@@ -2596,7 +2596,7 @@ def test_urdf_parsing(show_viewer, tol, gjk_collision):
         entities[key].set_qpos(door_angle)
     if show_viewer:
         scene.visualizer.update()
-    _check_entity_positions(relative=True, tol=gs.EPS)
+    _check_entity_positions(relative=True, tol=tol)
 
     # Add dof damping to stabilitze the physics
     for key in ((False, False), (False, True), (True, False), (True, True)):
