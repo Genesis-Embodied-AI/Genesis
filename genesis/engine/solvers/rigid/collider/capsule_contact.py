@@ -135,15 +135,15 @@ def func_capsule_capsule_contact(
         else:
             # Segments are coincident, use arbitrary perpendicular direction
             # Try cross product with axis_a first
-            temp_normal = axis_a.cross(axis_b)
-            if temp_normal.dot(temp_normal) < EPS:
+            normal = axis_a.cross(axis_b)
+            if normal.dot(normal) < EPS:
                 # Axes are parallel, use any perpendicular
                 if ti.abs(axis_a[0]) < 0.9:
-                    temp_normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
+                    normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
                 else:
-                    temp_normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(axis_a)
+                    normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(axis_a)
             # For coincident case, the sign doesn't matter much, but keep consistent
-            normal = -gu.ti_normalize(temp_normal, EPS)
+            normal = -gu.ti_normalize(normal, EPS)
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces (consistent with GJK convention)
