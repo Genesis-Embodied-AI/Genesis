@@ -134,14 +134,14 @@ def func_capsule_capsule_contact(
             # Try cross product with axis_a first
             normal = -axis_a.cross(axis_b)
             normal_len = normal.dot(normal)
-            if normal_len < EPS:
+            if normal.dot(normal) < EPS:
                 # Axes are parallel, use any perpendicular
                 if ti.abs(axis_a[0]) < 0.9:
                     normal = ti.Vector([-1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
                 else:
                     normal = ti.Vector([0.0, -1.0, 0.0], dt=gs.ti_float).cross(axis_a)
-            else:
-                normal = normal / normal_len
+                normal_len = normal.dot(normal)
+            normal = normal / normal_len
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces (consistent with GJK convention)
