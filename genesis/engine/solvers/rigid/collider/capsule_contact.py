@@ -140,9 +140,10 @@ def func_capsule_capsule_contact(
                     normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
                 else:
                     normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(axis_a)
-                normal_len = 1.0
+            else:
+                normal = normal / normal_len
             # For coincident case, the sign doesn't matter much, but keep consistent
-            normal = -normal / normal_len
+            normal = -normal
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces (consistent with GJK convention)
