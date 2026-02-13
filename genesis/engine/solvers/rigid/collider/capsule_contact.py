@@ -134,7 +134,7 @@ def func_capsule_capsule_contact(
             # Try cross product with axis_a first
             normal = axis_a.cross(axis_b)
             normal_len = normal.dot(normal)
-            if normal.dot(normal) < EPS:
+            if normal_len < EPS:
                 # Axes are parallel, use any perpendicular
                 if ti.abs(axis_a[0]) < 0.9:
                     normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
