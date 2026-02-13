@@ -199,22 +199,6 @@ def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radiu
     return entity_capsule
 
 
-class SceneBuilder:
-    def __init__(self, scene: gs.Scene, tmp_path: Path, entities: list) -> None:
-        self.scene = scene
-        self.tmp_path = tmp_path
-        self.entities = entities
-
-    def add_capsule(self, half_length: float, radius: float) -> None:
-        self.entities.append(scene_add_capsule(self.tmp_path, self.scene, half_length, radius))
-
-    def add_sphere(self, radius: float) -> None:
-        self.entities.append(scene_add_sphere(self.tmp_path, self.scene, radius))
-
-    def build_scene(self) -> None:
-        self.scene.build()
-
-
 class AnalyticalVsGJKSceneCreator:
     def __init__(self, monkeypatch, build_scene: Callable, tmp_path: Path) -> None:
         self.monkeypatch = monkeypatch
@@ -234,9 +218,7 @@ class AnalyticalVsGJKSceneCreator:
                 gravity=(0, 0, 0),
             ),
         )
-        self.build_scene(
-            SceneBuilder(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
-        )
+        self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
 
         # NOW monkey-patch for the GJK scene
         temp_narrowphase_path = create_modified_narrowphase_file(tmp_path=self.tmp_path)
@@ -258,7 +240,7 @@ class AnalyticalVsGJKSceneCreator:
                 use_gjk_collision=True,
             ),
         )
-        self.build_scene(SceneBuilder(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk))
+        self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
         return self.scene_analytical, self.scene_gjk
 
@@ -308,10 +290,10 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     radius = 0.1
     half_length = 0.25
 
-    def build_scene(scene_builder: SceneBuilder):
-        scene_builder.add_capsule(half_length=half_length, radius=radius)
-        scene_builder.add_capsule(half_length=half_length, radius=radius)
-        scene_builder.build_scene()
+    def build_scene(scene: gs.Scene, tmp_path: Path, entities: list):
+        entities.append(scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius))
+        entities.append(scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius))
+        scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
@@ -492,10 +474,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     capsule_radius = 0.1
     capsule_half_length = 0.25
 
-    def build_scene(scene_builder: SceneBuilder):
-        scene_builder.add_sphere(radius=sphere_radius)
-        scene_builder.add_capsule(half_length=capsule_half_length, radius=capsule_radius)
-        scene_builder.build_scene()
+    def build_scene(scene: gs.Scene, tmp_path: Path, entities: list) -> None:
+        entities.append(scene_add_sphere(tmp_path, scene, radius=sphere_radius))
+        entities.append(scene_add_capsule(tmp_path, scene, half_length=capsule_half_length, radius=capsule_radius))
+        scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
