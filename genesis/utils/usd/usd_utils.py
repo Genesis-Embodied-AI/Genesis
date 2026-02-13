@@ -26,20 +26,39 @@ AXES_T = {
 }
 
 
-def usd_pos_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray:
+def usd_pos_to_numpy(usd_pos: Gf.Vec3f | None) -> np.ndarray:
     """
     Convert USD position to numpy array, handling None values.
 
-    Returns zero vector for None to maintain compatibility with code that
-    expects numpy arrays. Invalid values (inf/nan) are preserved as-is
-    for downstream validation.
+    Parameters
+    ----------
+    usd_pos : Gf.Vec3f | None
+        USD position attribute value. If None, returns zero vector.
+
+    Returns
+    -------
+    np.ndarray
+        Position as numpy array, or zero vector if input is None.
     """
     if usd_pos is None:
         return gu.zero_pos()
     return np.asarray(usd_pos, dtype=np.float32)
 
 
-def usd_quat_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray:
+def usd_quat_to_numpy(usd_quat: Gf.Quatf | None) -> np.ndarray:
+    """
+    Convert USD quaternion to numpy array, handling None values.
+
+    Parameters
+    ----------
+    usd_quat : Gf.Quatf | None
+        USD quaternion attribute value. If None, returns identity quaternion.
+
+    Returns
+    -------
+    np.ndarray
+        Quaternion as numpy array, or identity quaternion if input is None.
+    """
     if usd_quat is None:
         return gu.identity_quat()
     return np.asarray([usd_quat.GetReal(), *usd_quat.GetImaginary()], dtype=np.float32)
@@ -64,8 +83,6 @@ def usd_center_of_mass_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray | None:
     np.ndarray | None
         Valid center of mass position as numpy array, or None if invalid/default.
     """
-    if usd_pos is None:
-        return None
     pos = usd_pos_to_numpy(usd_pos)
     # Default invalid value is (-inf, -inf, -inf) - all negative infinity
     if np.all(np.isinf(pos) & (pos < 0)):
@@ -92,8 +109,6 @@ def usd_principal_axes_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray | None:
     np.ndarray | None
         Valid principal axes quaternion as numpy array, or None if invalid/default.
     """
-    if usd_quat is None:
-        return None
     quat = usd_quat_to_numpy(usd_quat)
     # Default invalid value is (0, 0, 0, 0) - identity quaternion should be (1, 0, 0, 0)
     if np.allclose(quat, [0, 0, 0, 0]):
@@ -119,8 +134,6 @@ def usd_diagonal_inertia_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray | None:
     np.ndarray | None
         Valid diagonal inertia as numpy array, or None if default ignored or invalid.
     """
-    if usd_pos is None:
-        return None
     inertia = usd_pos_to_numpy(usd_pos)
     # Default is (0, 0, 0) which means ignored - only return if non-zero and valid
     if np.allclose(inertia, 0):
@@ -149,8 +162,6 @@ def usd_mass_to_float(usd_mass: float) -> float | None:
     float | None
         Valid mass value, or None if default ignored or invalid.
     """
-    if usd_mass is None:
-        return None
     # Default is 0 which means ignored
     if usd_mass <= 0:
         return None
