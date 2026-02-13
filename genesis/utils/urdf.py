@@ -140,57 +140,30 @@ def parse_urdf(morph, surface):
             l_info["inertial_mass"] = link.inertial.mass
 
         for geom_prop in (*link.collisions, *link.visuals):
-            link_g_infos_ = []
-            geom_is_col = not isinstance(geom_prop, urdfpy.Visual)
             geometry = geom_prop.geometry.geometry
+            geom_is_col = not isinstance(geom_prop, urdfpy.Visual)
+
+            geom_meshes = []
             if isinstance(geometry, urdfpy.Mesh):
                 geom_type = gs.GEOM_TYPE.MESH
                 geom_data = None
+
+                # One asset may contain multiple meshes (.obj, .glb, ...)
+                mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
+                tmeshes = geometry.meshes
+                if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
+                    group_material = True
+                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, surface)
+                    tmeshes = [mesh.trimesh for mesh in meshes]
 
                 # Compute the absolute scale of the geometry
                 scale = float(morph.scale)
                 if geometry.scale is not None:
                     scale *= geometry.scale
 
-                # Overwrite surface color by original color specified in URDF file only if necessary
-                is_urdf_material = False
-                if geom_is_col:
-                    geom_surface = gs.surfaces.Collision()
-                elif (
-                    not geom_is_col
-                    and getattr(geom_prop, "material") is not None
-                    and geom_prop.material.color is not None
-                    and (morph.prioritize_urdf_material or surface.color is None)
-                ):
-                    is_urdf_material = True
-                    geom_surface = surface.copy()
-                    geom_surface.color = geom_prop.material.color
-                else:
-                    geom_surface = surface
-
-                mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
-                if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
-                    group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, geom_surface)
-                    geometry._meshes = [mesh.trimesh for mesh in meshes]
-
-                # One asset (.obj) can contain multiple meshes. Each mesh is one RigidGeom in genesis.
-                for _, tmesh in enumerate(geometry.meshes):
-                    mesh = gs.Mesh.from_trimesh(
-                        tmesh,
-                        scale=scale,
-                        surface=geom_surface,
-                        is_mesh_zup=morph.file_meshes_are_zup,
-                        metadata={"mesh_path": mesh_path},
-                    )
-                    if is_urdf_material:
-                        # Material color defined in URDF are not considered as visual overwrite
-                        mesh.metadata["is_visual_overwritten"] = False
-
-                    g_info = {"mesh" if geom_is_col else "vmesh": mesh}
-                    link_g_infos_.append(g_info)
+                metadata = {"mesh_path": mesh_path}
+                is_mesh_zup = morph.file_meshes_are_zup
             else:
-                # Each geometry primitive is one RigidGeom in genesis
                 if isinstance(geometry, urdfpy.Box):
                     tmesh = trimesh.creation.box(extents=geometry.size)
                     geom_type = gs.GEOM_TYPE.BOX
@@ -213,29 +186,56 @@ def parse_urdf(morph, surface):
                 else:
                     gs.raise_exception(f"Unsupported primitive geometry: {geometry}")
 
+                tmeshes = [tmesh]
+
+                scale = morph.scale
+                metadata = {}
+                is_mesh_zup = True
+
+            # Each mesh is one RigidGeom in genesis
+            for tmesh in tmeshes:
+                # Overwrite surface color by original color specified in URDF file only if necessary
+                is_urdf_material = False
+                if geom_is_col:
+                    geom_surface = gs.surfaces.Collision()
+                elif (
+                    surface.color is None
+                    and getattr(geom_prop, "material") is not None
+                    and geom_prop.material.color is not None
+                    and (morph.prioritize_urdf_material or not tmesh.visual.defined)
+                ):
+                    is_urdf_material = True
+                    geom_surface = gs.surfaces.Default(color=geom_prop.material.color)
+                else:
+                    geom_surface = surface
+
                 mesh = gs.Mesh.from_trimesh(
                     tmesh,
-                    scale=morph.scale,
-                    surface=gs.surfaces.Collision() if geom_is_col else surface,
+                    scale=scale,
+                    surface=geom_surface,
+                    is_mesh_zup=is_mesh_zup,
+                    metadata=metadata,
                 )
 
-                if not geom_is_col:
-                    if geom_prop.material is not None and geom_prop.material.color is not None:
-                        mesh.set_color(geom_prop.material.color)
+                # Material color defined in URDF are not considered as visual overwrite
+                if is_urdf_material:
+                    mesh.metadata["is_visual_overwritten"] = False
 
-                g_info = {"mesh" if geom_is_col else "vmesh": mesh}
-                link_g_infos_.append(g_info)
+                geom_meshes.append(mesh)
 
-            for g_info in link_g_infos_:
-                g_info["type"] = geom_type
-                g_info["data"] = geom_data
-                g_info["pos"] = geom_prop.origin[:3, 3].copy()
-                g_info["quat"] = gu.R_to_quat(geom_prop.origin[:3, :3])
-                g_info["contype"] = 1 if geom_is_col else 0
-                g_info["conaffinity"] = 1 if geom_is_col else 0
-                g_info["friction"] = gu.default_friction()
-                g_info["sol_params"] = gu.default_solver_params()
-            link_g_infos += link_g_infos_
+            for mesh in geom_meshes:
+                g_info = {
+                    "mesh" if geom_is_col else "vmesh": mesh,
+                    "type": geom_type,
+                    "data": geom_data,
+                    "pos": geom_prop.origin[:3, 3].copy(),
+                    "quat": gu.R_to_quat(geom_prop.origin[:3, :3]),
+                    "contype": 1 if geom_is_col else 0,
+                    "conaffinity": 1 if geom_is_col else 0,
+                    "friction": gu.default_friction(),
+                    "sol_params": gu.default_solver_params(),
+                }
+                link_g_infos.append(g_info)
 
     #########################  non-base joints and links #########################
     for joint in robot.joints:

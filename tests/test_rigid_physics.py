@@ -2736,6 +2736,15 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    asset_path = get_hf_dataset(pattern="chain.urdf")
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0, 0, 1.0) if overwrite else None,
+        ),
+    )
     axis = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
@@ -2763,6 +2772,12 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
+    for vgeom in robot.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        assert_array_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
