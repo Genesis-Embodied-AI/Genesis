@@ -110,9 +110,9 @@ class RigidLink(RBC):
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
         self._inertial_pos: "np.typing.ArrayLike | None" = inertial_pos
-        if inertial_quat is not None:
-            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
-        self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
+        if inertial_quat is None:
+            inertial_quat = (1.0, 0.0, 0.0, 0.0)
+        self._inertial_quat: "np.typing.ArrayLike" = np.asarray(inertial_quat, dtype=gs.np_float)
         if inertial_mass is not None:
             inertial_mass = float(inertial_mass)
         self._inertial_mass: float | None = inertial_mass

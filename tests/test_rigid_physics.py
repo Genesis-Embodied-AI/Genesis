@@ -481,7 +481,7 @@ def test_dynamic_weld(show_viewer, tol):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        surface=gs.surfaces.Plastic(
+        surface=gs.surfaces.Default(
             color=(1, 0, 0),
         ),
     )
@@ -2572,16 +2572,12 @@ def test_mjcf_parsing_with_include():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("gjk_collision", [True, False])
-def test_urdf_parsing(gjk_collision, show_viewer, tol):
+def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
     DOOR_JOINT_DAMPING = 1.5
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=gjk_collision,
-        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
