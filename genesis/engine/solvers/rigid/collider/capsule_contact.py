@@ -73,9 +73,6 @@ def func_capsule_capsule_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
 ):
     """
     Analytical capsule-capsule collision detection.
@@ -160,9 +157,6 @@ def func_sphere_capsule_contact(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
 ):
     """
     Analytical sphere-capsule collision detection.
