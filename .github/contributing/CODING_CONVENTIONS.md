@@ -13,7 +13,7 @@ import torch
 
 - Classes: `PascalCase` (e.g., `RigidEntity`, `SimOptions`)
 - Functions/methods: `snake_case` (e.g., `add_entity`, `get_dofs_position`)
-- Constants: `UPPER_CASE` (e.g., `EPS`, `GS_ARCH`)
+- Constants: `UPPER_CASE` (e.g., `EPS`)
 - Private: `_leading_underscore` (e.g., `_initialized`)
 
 ## Configuration via Pydantic Options
@@ -69,7 +69,7 @@ import genesis as gs
 # CPU backend (default for debug mode)
 gs.init(backend=gs.cpu)
 
-# GPU backend (auto-selects CUDA/Metal/Vulkan)
+# GPU backend (auto-selects CUDA/ROCm/Metal)
 gs.init(backend=gs.gpu)
 
 # Explicit precision

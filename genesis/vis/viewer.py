@@ -1,5 +1,6 @@
 import importlib
 import os
+import sys
 import threading
 from traceback import TracebackException
 from typing import TYPE_CHECKING
@@ -75,15 +76,15 @@ class Viewer(RBC):
         # Try all candidate onscreen OpenGL "platforms" if none is specifically requested
         opengl_platform_orig = os.environ.get("PYOPENGL_PLATFORM")
         if opengl_platform_orig is None:
-            if gs.platform == "Windows":
+            if sys.platform == "win32":
                 all_opengl_platforms = ("wgl",)  # same as "native"
-            elif gs.platform == "Linux":
+            elif sys.platform == "linux":
                 # "native" is platform-specific ("egl" or "glx")
                 all_opengl_platforms = ("native", "egl", "glx", "osmesa")
             else:
                 all_opengl_platforms = ("native",)
         else:
-            if opengl_platform_orig == "osmesa" and gs.platform != "Linux":
+            if opengl_platform_orig == "osmesa" and sys.platform != "linux":
                 gs.raise_exception("PYOPENGL_PLATFORM='osmesa' is only supported on Linux OS for now.")
             all_opengl_platforms = (opengl_platform_orig,)
 

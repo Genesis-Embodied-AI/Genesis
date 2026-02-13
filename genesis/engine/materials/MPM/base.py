@@ -1,4 +1,5 @@
 import platform
+import sys
 
 import gstaichi as ti
 
@@ -48,7 +49,7 @@ class Base(Material):
         super().__init__()
 
         if sampler is None:
-            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
+            sampler = "pbs" if (sys.platform == "linux" and platform.machine() == "x86_64") else "random"
         if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pbs-")):
             gs.raise_exception(
                 f"Particle sampler must be either 'pbs(-[0-9]+)', 'random' or 'regular. Got '{sampler}'."
