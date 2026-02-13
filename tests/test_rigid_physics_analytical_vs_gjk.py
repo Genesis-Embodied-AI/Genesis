@@ -423,7 +423,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path):
 
     scene.build()
 
-    cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)]))
+    cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)], dtype=gs.np_float))
 
     scene.step()
 
