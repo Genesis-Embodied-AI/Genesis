@@ -6,17 +6,19 @@ forces capsule-capsule and sphere-capsule collisions to use GJK instead of
 analytical methods, allowing direct comparison between the two approaches.
 """
 
-import os
 import importlib.util
 import random
-import tempfile
-from typing import Callable
+from pathlib import Path
+from typing import Callable, cast, TYPE_CHECKING
 import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
 
 import genesis as gs
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity import RigidGeom
 
 
 def create_capsule_mjcf(name, pos, euler, radius, half_length):
@@ -182,13 +184,118 @@ def create_modified_narrowphase_file():
     return temp_narrowphase_path
 
 
+def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidGeom":
+    sphere_mjcf = create_sphere_mjcf("sphere", (0, 0, 0), radius)
+    sphere_path = tmp_path / "sphere.xml"
+    ET.ElementTree(sphere_mjcf).write(sphere_path)
+    entity_sphere = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=sphere_path)))
+    return entity_sphere
+
+
+def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float) -> "RigidGeom":
+    capsule_mjcf = create_capsule_mjcf("capsule", (0, 0, 0), (0, 0, 0), radius, half_length)
+    capsule_path = tmp_path / "sphere.xml"
+    ET.ElementTree(capsule_mjcf).write(capsule_path)
+    entity_capsule = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=capsule_path)))
+    return entity_capsule
+
+
+class SceneBuilder:
+    def __init__(self, scene: gs.Scene, tmp_path: Path, entities: list) -> None:
+        self.scene = scene
+        self.tmp_path = tmp_path
+        self.entities = entities
+
+    def add_capsule(self, half_length: float, radius: float) -> None:
+        self.entities.append(scene_add_capsule(self.tmp_path, self.scene, half_length, radius))
+
+    def add_sphere(self, radius: float) -> None:
+        self.entities.append(scene_add_sphere(self.tmp_path, self.scene, radius))
+
+    def build_scene(self) -> None:
+        self.scene.build()
+
+
+class AnalyticalVsGJKSceneCreator:
+    def __init__(self, monkeypatch, build_scene: Callable, tmp_path: Path) -> None:
+        self.monkeypatch = monkeypatch
+        self.build_scene = build_scene
+        self.tmp_path = tmp_path
+        self.scene_analytical: gs.Scene
+        self.scene_gjk: gs.Scene
+        self.entities_analytical = []
+        self.entities_gjk = []
+
+    def setup_scenes_before(self) -> tuple[gs.Scene, gs.Scene]:
+        # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
+        self.scene_analytical = gs.Scene(
+            show_viewer=False,
+            rigid_options=gs.options.RigidOptions(
+                dt=0.01,
+                gravity=(0, 0, 0),
+            ),
+        )
+        self.build_scene(
+            SceneBuilder(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
+        )
+
+        # NOW monkey-patch for the GJK scene
+        temp_narrowphase_path = create_modified_narrowphase_file()
+        spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
+        narrowphase_modified = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(narrowphase_modified)
+        from genesis.engine.solvers.rigid.collider import narrowphase
+
+        self.monkeypatch.setattr(
+            narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact
+        )
+
+        # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
+        self.scene_gjk = gs.Scene(
+            show_viewer=False,
+            rigid_options=gs.options.RigidOptions(
+                dt=0.01,
+                gravity=(0, 0, 0),
+                use_gjk_collision=True,
+            ),
+        )
+        self.build_scene(SceneBuilder(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk))
+
+        return self.scene_analytical, self.scene_gjk
+
+    def update_pos_quat(self, entity_idx: int, pos, euler) -> None:
+        quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler), degrees=True)
+
+        self.entities_analytical[entity_idx].set_qpos(np.array([*pos, *quat]))
+        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat]))
+
+        # Zero out velocities to prevent motion during step
+        zero_vel = np.zeros(6)  # 3 linear + 3 angular
+        self.entities_analytical[entity_idx].set_dofs_velocity(zero_vel)
+        self.entities_gjk[entity_idx].set_dofs_velocity(zero_vel)
+
+    def step(self):
+        self.scene_analytical.step()
+        self.scene_gjk.step()
+
+    def checks_after(self):
+        # Check if GJK was used (bit 16)
+        analytical_used_gjk = (self.scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+        gjk_used_gjk = (self.scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
+
+        # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
+        assert not analytical_used_gjk, (
+            f"Analytical scene should not use GJK (errno={self.scene_analytical._sim.rigid_solver._errno[0]})"
+        )
+        assert gjk_used_gjk, f"GJK scene should use GJK (errno={self.scene_gjk._sim.rigid_solver._errno[0]})"
+
+
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_capsule_capsule_vs_gjk(backend, monkeypatch):
+def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
     """
-    # Define all test cases
     test_cases = [
         # (pos1, euler1, pos2, euler2, should_collide, description)
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0), True, "perpendicular_close"),
@@ -202,51 +309,21 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
     radius = 0.1
     half_length = 0.25
 
-    # Build scenes once with initial configuration
-    def build_scene(scene: gs.Scene):
-        with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-            mjcf1 = create_capsule_mjcf("capsule1", (0, 0, 0), (0, 0, 0), radius, half_length)
-            mjcf1_path = os.path.join(tmpdir_mjcf, "capsule1.xml")
-            ET.ElementTree(mjcf1).write(mjcf1_path)
-            entity1 = scene.add_entity(gs.morphs.MJCF(file=mjcf1_path))
+    def build_scene(scene_builder: SceneBuilder):
+        scene_builder.add_capsule(half_length=half_length, radius=radius)
+        scene_builder.add_capsule(half_length=half_length, radius=radius)
+        scene_builder.build_scene()
 
-            mjcf2 = create_capsule_mjcf("capsule2", (0, 0, 0), (0, 0, 0), radius, half_length)
-            mjcf2_path = os.path.join(tmpdir_mjcf, "capsule2.xml")
-            ET.ElementTree(mjcf2).write(mjcf2_path)
-            entity2 = scene.add_entity(gs.morphs.MJCF(file=mjcf2_path))
-
-            scene.build()
-            return [entity1, entity2]
-
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
-    entities_analytical = scene_creator.entities
-    entities_gjk = scene_creator.entities_gjk
 
-    # Run all test cases
-    for pos1, euler1, pos2, euler2, should_collide, description in test_cases:
+    for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
         print(f"\nTest: {description}")
 
         try:
-            # Set positions and orientations
-            quat1 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler1), degrees=True)
-            quat2 = gs.utils.geom.xyz_to_quat(xyz=np.array(euler2), degrees=True)
-
-            entities_analytical[0].set_qpos(np.array([*pos1, *quat1]))
-            entities_analytical[1].set_qpos(np.array([*pos2, *quat2]))
-            entities_gjk[0].set_qpos(np.array([*pos1, *quat1]))
-            entities_gjk[1].set_qpos(np.array([*pos2, *quat2]))
-
-            # Zero out velocities to prevent motion during step
-            zero_vel = np.zeros(6)  # 3 linear + 3 angular
-            entities_analytical[0].set_dofs_velocity(zero_vel)
-            entities_analytical[1].set_dofs_velocity(zero_vel)
-            entities_gjk[0].set_dofs_velocity(zero_vel)
-            entities_gjk[1].set_dofs_velocity(zero_vel)
-
-            scene_analytical.step()
-            scene_gjk.step()
-
+            scene_creator.update_pos_quat(entity_idx=0, pos=pos0, euler=euler0)
+            scene_creator.update_pos_quat(entity_idx=1, pos=pos1, euler=euler1)
+            scene_creator.step()
             scene_creator.checks_after()
 
             contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
@@ -295,8 +372,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
                             assert min_dist < 0.1
 
                         # For parallel vertical capsules, verify contacts are on the line between axes
-                        if euler1 == (0, 0, 0) and euler2 == (0, 0, 0):  # Both vertical
-                            expected_xy = np.array([pos2[0] / 2, 0.0])  # Midpoint between capsules
+                        if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):  # Both vertical
+                            expected_xy = np.array([pos1[0] / 2, 0.0])  # Midpoint between capsules
                             for pos_a in all_analytical_positions:
                                 assert np.linalg.norm(pos_a[:2] - expected_xy) < 0.02
                                 assert -0.26 < pos_a[2] < 0.26
@@ -311,8 +388,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
             print(f"\n{'=' * 80}")
             print(f"FAILED TEST SCENARIO: {description}")
             print(f"{'=' * 80}")
+            print(f"Capsule 0: pos={pos0}, euler={euler0}")
             print(f"Capsule 1: pos={pos1}, euler={euler1}")
-            print(f"Capsule 2: pos={pos2}, euler={euler2}")
             print(f"Expected collision: {should_collide}")
             print(f"Backend: {backend}")
             print(f"Radius: {radius}, Half-length: {half_length}")
@@ -320,8 +397,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch):
             raise
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
-def test_capsule_analytical_accuracy(backend):
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_capsule_analytical_accuracy(tmp_path: Path):
     """
     Test that analytical capsule-capsule gives exact results for simple cases.
     """
@@ -341,22 +418,16 @@ def test_capsule_analytical_accuracy(backend):
         ),
     )
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        mjcf1 = create_capsule_mjcf("capsule1", (0, 0, 0), (0, 0, 0), 0.1, 0.25)
-        mjcf1_path = os.path.join(tmpdir, "capsule1.xml")
-        ET.ElementTree(mjcf1).write(mjcf1_path)
-        scene.add_entity(gs.morphs.MJCF(file=mjcf1_path))
+    _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
+    cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
 
-        mjcf2 = create_capsule_mjcf("capsule2", (0.15, 0, 0), (0, 0, 0), 0.1, 0.25)
-        mjcf2_path = os.path.join(tmpdir, "capsule2.xml")
-        ET.ElementTree(mjcf2).write(mjcf2_path)
-        scene.add_entity(gs.morphs.MJCF(file=mjcf2_path))
+    scene.build()
 
-        scene.build()
+    cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)]))
 
     scene.step()
 
-    contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False)
+    contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
 
     assert contacts is not None and len(contacts["geom_a"]) > 0
 
@@ -391,65 +462,12 @@ def create_sphere_mjcf(name, pos, radius):
     return mjcf
 
 
-class AnalyticalVsGJKSceneCreator:
-    def __init__(self, monkeypatch, build_scene: Callable) -> None:
-        self.monkeypatch = monkeypatch
-        self.build_scene = build_scene
-
-    def setup_scenes_before(self) -> tuple[gs.Scene, gs.Scene]:
-        # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
-        self.scene_analytical = gs.Scene(
-            show_viewer=False,
-            rigid_options=gs.options.RigidOptions(
-                dt=0.01,
-                gravity=(0, 0, 0),
-            ),
-        )
-        self.entities = self.build_scene(self.scene_analytical)
-
-        # NOW monkey-patch for the GJK scene
-        temp_narrowphase_path = create_modified_narrowphase_file()
-        spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
-        narrowphase_modified = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(narrowphase_modified)
-        from genesis.engine.solvers.rigid.collider import narrowphase
-
-        self.monkeypatch.setattr(
-            narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact
-        )
-
-        # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
-        self.scene_gjk = gs.Scene(
-            show_viewer=False,
-            rigid_options=gs.options.RigidOptions(
-                dt=0.01,
-                gravity=(0, 0, 0),
-                use_gjk_collision=True,
-            ),
-        )
-        self.entities_gjk = self.build_scene(self.scene_gjk)
-
-        return self.scene_analytical, self.scene_gjk
-
-    def checks_after(self):
-        # Check if GJK was used (bit 16)
-        analytical_used_gjk = (self.scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-        gjk_used_gjk = (self.scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-
-        # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
-        assert not analytical_used_gjk, (
-            f"Analytical scene should not use GJK (errno={self.scene_analytical._sim.rigid_solver._errno[0]})"
-        )
-        assert gjk_used_gjk, f"GJK scene should use GJK (errno={self.scene_gjk._sim.rigid_solver._errno[0]})"
-
-
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_capsule_vs_gjk(backend, monkeypatch):
+def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
     """
-    # Define all test cases
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu)
         ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", False),
@@ -466,30 +484,15 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
     capsule_radius = 0.1
     capsule_half_length = 0.25
 
-    # Build scenes once with initial configuration
-    def build_scene(scene: gs.Scene):
-        with tempfile.TemporaryDirectory() as tmpdir_mjcf:
-            sphere_mjcf = create_sphere_mjcf("sphere", (0, 0, 0), sphere_radius)
-            sphere_path = os.path.join(tmpdir_mjcf, "sphere.xml")
-            ET.ElementTree(sphere_mjcf).write(sphere_path)
-            entity_sphere = scene.add_entity(gs.morphs.MJCF(file=sphere_path))
+    def build_scene(scene_builder: SceneBuilder):
+        scene_builder.add_sphere(radius=sphere_radius)
+        scene_builder.add_capsule(half_length=capsule_half_length, radius=capsule_radius)
+        scene_builder.build_scene()
 
-            capsule_mjcf = create_capsule_mjcf("capsule", (0, 0, 0), (0, 0, 0), capsule_radius, capsule_half_length)
-            capsule_path = os.path.join(tmpdir_mjcf, "capsule.xml")
-            ET.ElementTree(capsule_mjcf).write(capsule_path)
-            entity_capsule = scene.add_entity(gs.morphs.MJCF(file=capsule_path))
-
-            scene.build()
-            return [entity_sphere, entity_capsule]
-
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene)
+    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
     scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
-    entities_analytical = scene_creator.entities
-    entities_gjk = scene_creator.entities_gjk
 
-    # Run all test cases
     for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
-        # Skip on GPU if requested (for known GJK issues)
         if skip_gpu and backend == gs.gpu:
             print(f"\nTest: {description} - SKIPPED on GPU")
             continue
@@ -497,24 +500,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch):
         print(f"\nTest: {description}")
 
         try:
-            # Set positions and orientations
-            capsule_quat = gs.utils.geom.xyz_to_quat(xyz=np.array(capsule_euler), degrees=True)
-            sphere_quat = gs.utils.geom.xyz_to_quat(xyz=np.array([0, 0, 0]), degrees=True)
+            scene_creator.update_pos_quat(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
+            scene_creator.update_pos_quat(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
 
-            entities_analytical[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
-            entities_analytical[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
-            entities_gjk[0].set_qpos(np.array([*sphere_pos, *sphere_quat]))
-            entities_gjk[1].set_qpos(np.array([*capsule_pos, *capsule_quat]))
-
-            # Zero out velocities to prevent motion during step
-            zero_vel = np.zeros(6)  # 3 linear + 3 angular
-            entities_analytical[0].set_dofs_velocity(zero_vel)
-            entities_analytical[1].set_dofs_velocity(zero_vel)
-            entities_gjk[0].set_dofs_velocity(zero_vel)
-            entities_gjk[1].set_dofs_velocity(zero_vel)
-
-            scene_analytical.step()
-            scene_gjk.step()
+            scene_creator.step()
 
             scene_creator.checks_after()
 
