@@ -329,6 +329,20 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
+            # Debug: Print contact counts for parallel cases
+            if description in ["parallel_light", "parallel_deep"]:
+                n_a = len(contacts_analytical["geom_a"]) if has_collision_analytical else 0
+                n_g = len(contacts_gjk["geom_a"]) if has_collision_gjk else 0
+                print(f"  Contact counts: Analytical={n_a}, GJK={n_g}")
+                print(f"  Analytical multicontact: {scene_analytical.rigid_solver._enable_multi_contact}")
+                print(f"  GJK multicontact: {scene_gjk.rigid_solver._enable_multi_contact}")
+                if has_collision_analytical:
+                    for i in range(n_a):
+                        print(f"    Analytical contact {i}: pos={contacts_analytical['position'][i]}, pen={contacts_analytical['penetration'][i]:.6f}")
+                if has_collision_gjk:
+                    for i in range(n_g):
+                        print(f"    GJK contact {i}: pos={contacts_gjk['position'][i]}, pen={contacts_gjk['penetration'][i]:.6f}")
+
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
