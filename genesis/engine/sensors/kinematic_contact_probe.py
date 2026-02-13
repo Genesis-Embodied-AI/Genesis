@@ -34,209 +34,6 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-class KinematicContactProbeData(NamedTuple):
-    """
-    Data returned by the kinematic contact probe.
-
-    Parameters
-    ----------
-    penetration: torch.Tensor, shape ([n_envs,] n_probes)
-        Depth of penetration in meters (0 if no contact).
-    force: torch.Tensor, shape ([n_envs,] n_probes, 3)
-        Estimated contact force based on penetration and stiffness (non-physical) in the link frame.
-    """
-
-    penetration: torch.Tensor
-    force: torch.Tensor
-
-
-@dataclass
-class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
-    """Shared metadata for all kinematic contact probes."""
-
-    radii: torch.Tensor = make_tensor_field((0,))
-    stiffness: torch.Tensor = make_tensor_field((0,))
-
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    probe_positions: torch.Tensor = make_tensor_field((0, 3))
-    probe_normals: torch.Tensor = make_tensor_field((0, 3))
-
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    total_n_probes: int = 0
-
-    default_raycast_depth: float = 1.0
-
-
-@register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
-@ti.data_oriented
-class KinematicContactProbe(
-    RigidSensorMixin[KinematicContactProbeMetadata],
-    NoisySensorMixin[KinematicContactProbeMetadata],
-    Sensor[KinematicContactProbeMetadata],
-):
-    """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
-
-    _update_on_read: bool = True
-
-    def __init__(
-        self,
-        sensor_options: KinematicContactProbeOptions,
-        sensor_idx: int,
-        data_cls: Type[KinematicContactProbeData],
-        sensor_manager: "SensorManager",
-    ):
-        # Store n_probes before super().__init__() since _get_return_format() is called there
-        self._n_probes = len(sensor_options.probe_local_pos)
-
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
-
-        self._debug_objects: list["Mesh | None"] = []
-        self._probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
-        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        norms = self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
-        self._probe_local_normal /= norms
-
-    def build(self):
-        super().build()
-
-        n_probes = len(self._probe_local_pos)
-        sensor_idx = self._idx
-
-        self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
-            self._shared_metadata.n_probes_per_sensor, n_probes, expand=(1,), dim=0
-        )
-
-        current_cache_start = sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0
-        self._shared_metadata.sensor_cache_start = concat_with_tensor(
-            self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
-        )
-
-        current_probe_start = self._shared_metadata.total_n_probes
-        self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start, current_probe_start, expand=(1,), dim=0
-        )
-
-        self._shared_metadata.probe_sensor_idx = concat_with_tensor(
-            self._shared_metadata.probe_sensor_idx,
-            torch.full((n_probes,), sensor_idx, dtype=torch.int32, device=gs.device),
-            expand=(n_probes,),
-            dim=0,
-        )
-
-        self._shared_metadata.probe_positions = concat_with_tensor(
-            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(n_probes, 3), dim=0
-        )
-
-        self._shared_metadata.probe_normals = concat_with_tensor(
-            self._shared_metadata.probe_normals, self._probe_local_normal, expand=(n_probes, 3), dim=0
-        )
-
-        self._shared_metadata.total_n_probes += n_probes
-
-        if isinstance(self._options.radius, Sequence):
-            radii_tensor = torch.tensor(self._options.radius, dtype=gs.tc_float, device=gs.device)
-        else:
-            radii_tensor = torch.full((n_probes,), self._options.radius, dtype=gs.tc_float, device=gs.device)
-
-        self._shared_metadata.radii = concat_with_tensor(
-            self._shared_metadata.radii, radii_tensor, expand=(n_probes,), dim=0
-        )
-        self._shared_metadata.stiffness = concat_with_tensor(
-            self._shared_metadata.stiffness, self._options.stiffness, expand=(1,), dim=0
-        )
-
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        n = self._n_probes
-        return (n,), (n, 3)
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
-
-    @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: KinematicContactProbeMetadata, shared_ground_truth_cache: torch.Tensor
-    ):
-        solver = shared_metadata.solver
-        collider_state = solver.collider._collider_state
-
-        shared_ground_truth_cache.zero_()
-
-        _kernel_kinematic_contact_probe(
-            probe_positions_local=shared_metadata.probe_positions,
-            probe_normals_local=shared_metadata.probe_normals,
-            probe_sensor_idx=shared_metadata.probe_sensor_idx,
-            links_state=solver.links_state,
-            radii=shared_metadata.radii,
-            stiffness=shared_metadata.stiffness,
-            links_idx=shared_metadata.links_idx,
-            n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
-            sensor_cache_start=shared_metadata.sensor_cache_start,
-            sensor_probe_start=shared_metadata.sensor_probe_start,
-            collider_state=collider_state,
-            geoms_state=solver.geoms_state,
-            geoms_info=solver.geoms_info,
-            fixed_verts_state=solver.fixed_verts_state,
-            free_verts_state=solver.free_verts_state,
-            verts_info=solver.verts_info,
-            faces_info=solver.faces_info,
-            default_raycast_depth=shared_metadata.default_raycast_depth,
-            output=shared_ground_truth_cache,
-        )
-
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: KinematicContactProbeMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        buffered_data.set(shared_ground_truth_cache)
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.cur_jitter_ts,
-            shared_metadata.interpolate,
-        )
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
-
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
-        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
-
-        for obj in self._debug_objects:
-            if obj is not None:
-                context.clear_debug_object(obj)
-        self._debug_objects = []
-
-        if self._link is None:
-            return
-
-        link_pos = self._link.get_pos(env_idx).reshape((3,))
-        link_quat = self._link.get_quat(env_idx).reshape((4,))
-        data = self.read_ground_truth(env_idx)
-
-        for i, pos in enumerate(self._probe_local_pos):
-            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
-
-            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
-            probe_radius = self._shared_metadata.radii[probe_global_idx].item()
-
-            penetration = data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item()
-
-            sphere_obj = context.draw_debug_sphere(
-                pos=tensor_to_array(probe_world),
-                radius=probe_radius,
-                color=self._options.debug_sphere_color if penetration <= gs.EPS else self._options.debug_contact_color,
-            )
-            self._debug_objects.append(sphere_obj)
-
-
 @ti.func
 def _probe_geom_penetration(
     probe_pos: ti.types.vector(3, gs.ti_float),
@@ -446,3 +243,206 @@ def _kernel_kinematic_contact_probe(
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = force_local[0]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = force_local[1]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = force_local[2]
+
+
+class KinematicContactProbeData(NamedTuple):
+    """
+    Data returned by the kinematic contact probe.
+
+    Parameters
+    ----------
+    penetration: torch.Tensor, shape ([n_envs,] n_probes)
+        Depth of penetration in meters (0 if no contact).
+    force: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Estimated contact force based on penetration and stiffness (non-physical) in the link frame.
+    """
+
+    penetration: torch.Tensor
+    force: torch.Tensor
+
+
+@dataclass
+class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+    """Shared metadata for all kinematic contact probes."""
+
+    radii: torch.Tensor = make_tensor_field((0,))
+    stiffness: torch.Tensor = make_tensor_field((0,))
+
+    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    probe_positions: torch.Tensor = make_tensor_field((0, 3))
+    probe_normals: torch.Tensor = make_tensor_field((0, 3))
+
+    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    total_n_probes: int = 0
+
+    default_raycast_depth: float = 1.0
+
+
+@register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
+@ti.data_oriented
+class KinematicContactProbe(
+    RigidSensorMixin[KinematicContactProbeMetadata],
+    NoisySensorMixin[KinematicContactProbeMetadata],
+    Sensor[KinematicContactProbeMetadata],
+):
+    """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
+
+    _update_on_read: bool = True
+
+    def __init__(
+        self,
+        sensor_options: KinematicContactProbeOptions,
+        sensor_idx: int,
+        data_cls: Type[KinematicContactProbeData],
+        sensor_manager: "SensorManager",
+    ):
+        # Store n_probes before super().__init__() since _get_return_format() is called there
+        self._n_probes = len(sensor_options.probe_local_pos)
+
+        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+
+        self._debug_objects: list["Mesh | None"] = []
+        self._probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
+        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
+        norms = self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
+        self._probe_local_normal /= norms
+
+    def build(self):
+        super().build()
+
+        n_probes = len(self._probe_local_pos)
+        sensor_idx = self._idx
+
+        self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
+            self._shared_metadata.n_probes_per_sensor, n_probes, expand=(1,), dim=0
+        )
+
+        current_cache_start = sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0
+        self._shared_metadata.sensor_cache_start = concat_with_tensor(
+            self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
+        )
+
+        current_probe_start = self._shared_metadata.total_n_probes
+        self._shared_metadata.sensor_probe_start = concat_with_tensor(
+            self._shared_metadata.sensor_probe_start, current_probe_start, expand=(1,), dim=0
+        )
+
+        self._shared_metadata.probe_sensor_idx = concat_with_tensor(
+            self._shared_metadata.probe_sensor_idx,
+            torch.full((n_probes,), sensor_idx, dtype=torch.int32, device=gs.device),
+            expand=(n_probes,),
+            dim=0,
+        )
+
+        self._shared_metadata.probe_positions = concat_with_tensor(
+            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(n_probes, 3), dim=0
+        )
+
+        self._shared_metadata.probe_normals = concat_with_tensor(
+            self._shared_metadata.probe_normals, self._probe_local_normal, expand=(n_probes, 3), dim=0
+        )
+
+        self._shared_metadata.total_n_probes += n_probes
+
+        if isinstance(self._options.radius, Sequence):
+            radii_tensor = torch.tensor(self._options.radius, dtype=gs.tc_float, device=gs.device)
+        else:
+            radii_tensor = torch.full((n_probes,), self._options.radius, dtype=gs.tc_float, device=gs.device)
+
+        self._shared_metadata.radii = concat_with_tensor(
+            self._shared_metadata.radii, radii_tensor, expand=(n_probes,), dim=0
+        )
+        self._shared_metadata.stiffness = concat_with_tensor(
+            self._shared_metadata.stiffness, self._options.stiffness, expand=(1,), dim=0
+        )
+
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        n = self._n_probes
+        return (n,), (n, 3)
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
+    def _update_shared_ground_truth_cache(
+        cls, shared_metadata: KinematicContactProbeMetadata, shared_ground_truth_cache: torch.Tensor
+    ):
+        solver = shared_metadata.solver
+        collider_state = solver.collider._collider_state
+
+        shared_ground_truth_cache.zero_()
+
+        _kernel_kinematic_contact_probe(
+            probe_positions_local=shared_metadata.probe_positions,
+            probe_normals_local=shared_metadata.probe_normals,
+            probe_sensor_idx=shared_metadata.probe_sensor_idx,
+            links_state=solver.links_state,
+            radii=shared_metadata.radii,
+            stiffness=shared_metadata.stiffness,
+            links_idx=shared_metadata.links_idx,
+            n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
+            sensor_cache_start=shared_metadata.sensor_cache_start,
+            sensor_probe_start=shared_metadata.sensor_probe_start,
+            collider_state=collider_state,
+            geoms_state=solver.geoms_state,
+            geoms_info=solver.geoms_info,
+            fixed_verts_state=solver.fixed_verts_state,
+            free_verts_state=solver.free_verts_state,
+            verts_info=solver.verts_info,
+            faces_info=solver.faces_info,
+            default_raycast_depth=shared_metadata.default_raycast_depth,
+            output=shared_ground_truth_cache,
+        )
+
+    @classmethod
+    def _update_shared_cache(
+        cls,
+        shared_metadata: KinematicContactProbeMetadata,
+        shared_ground_truth_cache: torch.Tensor,
+        shared_cache: torch.Tensor,
+        buffered_data: "TensorRingBuffer",
+    ):
+        buffered_data.set(shared_ground_truth_cache)
+        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
+        cls._apply_delay_to_shared_cache(
+            shared_metadata,
+            shared_cache,
+            buffered_data,
+            shared_metadata.cur_jitter_ts,
+            shared_metadata.interpolate,
+        )
+        cls._add_noise_drift_bias(shared_metadata, shared_cache)
+        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
+
+        for obj in self._debug_objects:
+            if obj is not None:
+                context.clear_debug_object(obj)
+        self._debug_objects = []
+
+        if self._link is None:
+            return
+
+        link_pos = self._link.get_pos(env_idx).reshape((3,))
+        link_quat = self._link.get_quat(env_idx).reshape((4,))
+        data = self.read_ground_truth(env_idx)
+
+        for i, pos in enumerate(self._probe_local_pos):
+            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
+
+            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
+            probe_radius = self._shared_metadata.radii[probe_global_idx].item()
+
+            penetration = data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item()
+
+            sphere_obj = context.draw_debug_sphere(
+                pos=tensor_to_array(probe_world),
+                radius=probe_radius,
+                color=self._options.debug_sphere_color if penetration <= gs.EPS else self._options.debug_contact_color,
+            )
+            self._debug_objects.append(sphere_obj)
