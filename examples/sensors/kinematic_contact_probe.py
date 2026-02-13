@@ -187,14 +187,16 @@ def main():
         print(f"Running headless for {args.seconds}s ...")
     print()
 
-    # ── Simulation loop ────────────────────────────────────────────────
+    # Simulation loop
     steps = int(args.seconds / scene.sim_options.dt) if not args.vis else None
     step = 0
 
     try:
         while is_running:
-            pusher.set_pos(target_pos)
-            pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+            if args.vis:
+                pusher.set_pos(target_pos)
+                pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+
             scene.step()
 
             # Read probe data and print any active contacts
@@ -213,7 +215,7 @@ def main():
             step += 1
             if "PYTEST_VERSION" in os.environ:
                 break
-            if steps is not None and step >= steps:
+            if not args.vis and step >= steps:
                 break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted.")
