@@ -458,17 +458,16 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
         franka.control_dofs_position(qpos0)
 
     if n_envs > 0 and is_randomized:
-        vel0 = 0.5 * torch.rand((n_envs, franka.n_qs), dtype=gs.tc_float, device=gs.device)
+        vel0 = 0.4 * torch.clip(torch.randn((n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device), -1.0, 1.0)
+        vel0[:, [link.dof_start for link in franka.links if not link.name.startswith("link") and link.n_dofs]] = 0.0
     else:
-        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_qs), dtype=gs.tc_float, device=gs.device)
+        vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
     franka.set_dofs_velocity(vel0)
 
     if n_envs > 0:
         n_reset_envs = max(int(0.02 * n_envs), 1)
         reset_envs_idx = torch.randperm(n_envs, dtype=gs.tc_int, device=gs.device)[:n_reset_envs]
         reset_envs_mask = torch.isin(scene._envs_idx, reset_envs_idx)
-        qpos0 = qpos0[reset_envs_mask]
-        vel0 = vel0[reset_envs_mask]
     else:
         reset_envs_mask = None
 
@@ -748,7 +747,6 @@ def g1_fall(solver, n_envs, gjk):
     # we see on Eden Beyond Mimic
     step_dt = 0.005
 
-    asset_path = get_hf_dataset(pattern="unitree_g1/*")
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             dt=step_dt,
@@ -765,6 +763,7 @@ def g1_fall(solver, n_envs, gjk):
     scene.add_entity(
         gs.morphs.Plane(),
     )
+    asset_path = get_hf_dataset(pattern="unitree_g1/*")
     robot = scene.add_entity(
         gs.morphs.MJCF(
             **get_file_morph_options(

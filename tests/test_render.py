@@ -1351,9 +1351,6 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
     png_snapshot.extension._std_err_threshold = 2.0
     png_snapshot.extension._blurred_kernel_size = 3
 
-    # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
-    monkeypatch.setattr("genesis.ext.pyrender.renderer.Renderer.render_texts", lambda *args, **kwargs: None)
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=5e-4,
@@ -1377,11 +1374,13 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             camera_fov=40,
             res=(640, 480),
             run_in_thread=False,
+            # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
+            disable_help_text=False,
         ),
         vis_options=gs.options.VisOptions(
-            show_world_frame=True,
             visualize_mpm_boundary=True,
             visualize_sph_boundary=True,
+            show_world_frame=True,
         ),
         show_viewer=True,
         show_FPS=False,
