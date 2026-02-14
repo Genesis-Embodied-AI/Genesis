@@ -83,7 +83,9 @@ def init(
 
     # Get device and backend
     global device
-    if backend is None or backend == _gs_backend.gpu:
+    if backend is None and debug:
+        backend_candidates = [_gs_backend.cpu]
+    elif backend is None or backend == _gs_backend.gpu:
         backend_candidates = [_gs_backend.cuda, _gs_backend.amdgpu, _gs_backend.metal, _gs_backend.cpu]
     else:
         backend_candidates = [backend]
@@ -160,12 +162,12 @@ def init(
                 f"Genesis backend '{backend}' not consistent with Torch device type '{device.type}'. Zero-copy "
                 "not supported."
             )
-    supported_arch = [_gs_backend.cpu]
-    if backend in (_gs_backend.cuda, _gs_backend.amdgpu) and device.type == "cuda":
-        supported_arch.append(_gs_backend.cuda)
-    if backend == _gs_backend.metal and device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD):
-        supported_arch.append(_gs_backend.metal)
-    if backend in supported_arch:
+
+    if (
+        (backend == gs.cpu and device.type == "cpu")
+        or (backend in (_gs_backend.cuda, _gs_backend.amdgpu) and device.type == "cuda")
+        or (backend == _gs_backend.metal and device.type == "mps" and (_use_ndarray or _TORCH_MPS_SUPPORT_DLPACK_FIELD))
+    ):
         if _use_zerocopy is None:
             _use_zerocopy = True
     else:
