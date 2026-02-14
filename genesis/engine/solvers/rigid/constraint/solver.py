@@ -2998,7 +2998,7 @@ def func_solve_iter(
         )
 
 
-@ti.perf_dispatch(get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=25, active=10)
+@ti.perf_dispatch(get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=25, active=5)
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
