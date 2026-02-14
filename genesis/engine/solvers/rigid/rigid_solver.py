@@ -2103,7 +2103,8 @@ class RigidSolver(Solver):
             ):
                 qs_data = data[(slice(None), *qs_mask)]
                 if qpos.ndim == 2:
-                    qs_data.masked_scatter_(envs_idx[:, None], qpos)
+                    # Note that it is necessary to create a new temporary view because it will be modified in-place
+                    qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
@@ -2322,7 +2323,8 @@ class RigidSolver(Solver):
                         dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
                     if velocity.ndim == 2:
-                        dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
+                        # Note that it is necessary to create a new temporary view because it will be modified in-place
+                        dofs_vel.masked_scatter_(envs_idx[:, None], velocity.view_as(velocity))
                     else:
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
                         torch.where(envs_idx[:, None], velocity, dofs_vel, out=dofs_vel)
