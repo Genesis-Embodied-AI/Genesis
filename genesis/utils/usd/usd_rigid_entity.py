@@ -106,6 +106,13 @@ def _parse_link(
         mass_attr = mass_api.GetMassAttr()
         l_info["inertial_mass"] = usd_mass_to_float(mass_attr.Get())
 
+    # set link transform for pure rigid bodies (no joints)
+    if not joints:
+        Q, S = context.compute_gs_transform(link, None)
+        l_info["parent_idx"] = -1
+        l_info["pos"] = Q[:3, 3]
+        l_info["quat"] = gu.R_to_quat(Q[:3, :3])
+
     j_infos = []
     for joint_prim, parent_idx, is_body1 in joints:
         if "parent_idx" not in l_info:
@@ -337,24 +344,54 @@ def _parse_link(
 
 # Rigidbody requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_rigid_bodies/capability-physics_rigid_bodies.html
 # Joint requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_joints/capability-physics_joints.html
-def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
-    # TODO: we only assume that all links are under the subtree of the articulation root now.
-    # To parse the accurate articulation structure, we need to search through the BodyRel.
+def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim, joint_prims: List[str] | None = None):
     link_path_joints = {}
-    if entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-        for prim in Usd.PrimRange(entity_prim):  # will not iterate inactive prims
-            if prim.IsA(UsdPhysics.Joint):
-                joint = UsdPhysics.Joint(prim)
-                body0_targets = joint.GetBody0Rel().GetTargets()  # parent
-                body1_targets = joint.GetBody1Rel().GetTargets()  # child
-                body0_target_path = str(body0_targets[0]) if body0_targets else None
-                body1_target_path = str(body1_targets[0]) if body1_targets else None
-                if body1_target_path:
-                    if body0_target_path:
-                        link_path_joints.setdefault(body0_target_path, [])
-                    link_path_joints.setdefault(body1_target_path, []).append((prim, body0_target_path, True))
-                elif body0_target_path:
-                    link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
+
+    # Get joints to process - joint_prims should be provided by the caller (parse_usd_entity or parse_usd_stage)
+    # If None, it means no joints (pure rigid body case)
+    if joint_prims is not None:
+        # Use provided joint prims
+        joint_prim_objs = [stage.GetPrimAtPath(joint_path) for joint_path in joint_prims]
+        for prim in joint_prim_objs:
+            if not prim.IsValid():
+                gs.raise_exception(f"Invalid joint prim path: {prim}")
+            if not prim.IsA(UsdPhysics.Joint):
+                gs.raise_exception(f"Prim {prim.GetPath()} is not a joint.")
+    else:
+        # No joints provided - this is a pure rigid body case
+        joint_prim_objs = []
+
+    # Process joints to build link/joint structure
+    # Only include paths that are actually rigid bodies (have RigidBodyAPI or CollisionAPI)
+    def is_rigid_body(path: str) -> bool:
+        """Check if a prim path is a rigid body."""
+        prim = stage.GetPrimAtPath(path)
+        if not prim.IsValid():
+            return False
+        return prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI)
+
+    for prim in joint_prim_objs:
+        joint = UsdPhysics.Joint(prim)
+        body0_targets = joint.GetBody0Rel().GetTargets()  # parent
+        body1_targets = joint.GetBody1Rel().GetTargets()  # child
+        body0_target_path = str(body0_targets[0]) if body0_targets else None
+        body1_target_path = str(body1_targets[0]) if body1_targets else None
+
+        # Only process if at least one body is a rigid body
+        body0_is_rigid = body0_target_path and is_rigid_body(body0_target_path)
+        body1_is_rigid = body1_target_path and is_rigid_body(body1_target_path)
+
+        if body1_is_rigid:
+            # body1 is a rigid body - add it as a link
+            parent_path = body0_target_path if body0_is_rigid else None
+            link_path_joints.setdefault(body1_target_path, []).append((prim, parent_path, True))
+            # If body0 is also a rigid body, add it as a link (may be parent)
+            if body0_is_rigid:
+                link_path_joints.setdefault(body0_target_path, [])
+        elif body0_is_rigid:
+            # body0 is a rigid body - add it as a link
+            link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
+        # If neither is a rigid body, skip this joint (it doesn't connect rigid bodies)
 
     links, link_joints = [], []
     if link_path_joints:
@@ -368,12 +405,16 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
                 [(joint, link_path_to_idx[parent_path], is_body1) for joint, parent_path, is_body1 in joints]
             )
     else:
+        # Pure rigid body case - no joints, no placeholder needed
         links = [entity_prim]
         link_joints = [[]]
         link_path_to_idx = {None: -1, str(entity_prim.GetPath()): 0}
-    for joints in link_joints:
-        if not joints:
-            joints.append((None, -1, False))
+    # Only add placeholder joints for articulation links that have no joints
+    # (pure rigid bodies should not have any joints)
+    if link_path_joints:
+        for joints in link_joints:
+            if not joints:
+                joints.append((None, -1, False))
 
     return links, link_joints, link_path_to_idx
 
@@ -450,7 +491,7 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
         gs.raise_exception(err_msg)
 
     # find joints
-    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim)
+    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim, morph.joint_prims)
     links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
