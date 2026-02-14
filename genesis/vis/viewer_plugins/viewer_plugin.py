@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
     from genesis.ext.pyrender.viewer import Viewer
-    from genesis.utils.raycast_ti import Raycaster
+    from genesis.utils.raycast_qd import Raycaster
 
 
 EVENT_HANDLE_STATE = Literal[True] | None
@@ -85,7 +85,7 @@ class RaycasterViewerPlugin(ViewerPlugin):
         super().build(viewer, camera, scene)
 
         # NOTE: delayed import to avoid array_class import before gs is fully initialized
-        from genesis.utils.raycast_ti import Raycaster
+        from genesis.utils.raycast_qd import Raycaster
 
         self._raycaster = Raycaster(self.scene)
         self._camera_tan_half_fov = np.tan(0.5 * self.camera.camera.yfov)
