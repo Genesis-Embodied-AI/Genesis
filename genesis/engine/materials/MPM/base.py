@@ -1,14 +1,14 @@
 import platform
 import sys
 
-import gstaichi as ti
+import quadrants as qd
 
 import genesis as gs
 
 from ..base import Material
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Base(Material):
     """
     The base class of MPM materials.
@@ -61,7 +61,7 @@ class Base(Material):
         self._sampler = sampler
         self._default_Jp = 1.0
 
-        # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
+        # lame parameters: https://github.com/quadrants-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         if mu is None:
             self._mu = E / (2.0 * (1.0 + nu))
         else:
@@ -79,15 +79,15 @@ class Base(Material):
     def _repr_type(cls):
         return f"<gs.materials.MPM.{cls.__name__}>"
 
-    @ti.func
+    @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
         raise NotImplementedError
 
-    @ti.func
+    @qd.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        # NOTE: class member function inheritance will still introduce redundant computation graph in taichi
-        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + ti.Matrix.identity(
-            gs.ti_float, 3
+        # NOTE: class member function inheritance will still introduce redundant computation graph in quadrants
+        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + qd.Matrix.identity(
+            gs.qd_float, 3
         ) * self._lam * J * (J - 1)
 
         return stress

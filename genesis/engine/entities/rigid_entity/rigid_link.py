@@ -9,7 +9,7 @@ from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 
-from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
+from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
@@ -415,9 +415,9 @@ class RigidLink(RBC):
 
         verts_idx = slice(self._verts_state_start, self._verts_state_start + self.n_verts)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
         else:
-            tensor = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor

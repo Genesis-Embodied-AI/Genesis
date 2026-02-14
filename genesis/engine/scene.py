@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Callable, Iterable, Literal
 
 import numpy as np
 import torch
-import gstaichi as ti
-from gstaichi.lang import impl
+import quadrants as qd
+from quadrants.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -104,7 +104,7 @@ class Scene(RBC):
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
-        # Delay simulator import to allow specifying gstaichi array type at init
+        # Delay simulator import to allow specifying Quadrants array type at init
         from genesis.engine.simulator import Simulator
 
         # Handling of default arguments
@@ -273,7 +273,7 @@ class Scene(RBC):
         else:
             if sim_options.requires_grad and gs.use_ndarray:
                 gs.logger.info(
-                    "Use GsTaichi dynamic array mode while enabling gradient computation is not recommended. Please "
+                    "Use Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
                 )
         if rigid_options.box_box_detection is None:
@@ -1330,7 +1330,7 @@ class Scene(RBC):
     def _backward(self):
         """
         At this point, all the scene states the simulation run should have been filled with gradients.
-        Next, we run backward from scene state back to scene's internal taichi variables, then back through time.
+        Next, we run backward from scene state back to scene's internal# Quadrants variables, then back through time.
         """
 
         if not self._backward_ready:
@@ -1345,7 +1345,7 @@ class Scene(RBC):
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         """
-        Collect every Taichi field in the **scene and its active solvers** and
+        Collect every Quadrants field in the **scene and its active solvers** and
         return them as a flat ``{key: ndarray}`` dictionary.
 
         Returns
@@ -1356,7 +1356,7 @@ class Scene(RBC):
         arrays: dict[str, np.ndarray] = {}
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (ti.Field, ti.Ndarray)):
+            if isinstance(value, (qd.Field, qd.Ndarray)):
                 arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
@@ -1396,7 +1396,7 @@ class Scene(RBC):
         arrays = state["arrays"]
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (ti.Field, ti.Ndarray)):
+            if isinstance(value, (qd.Field, qd.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
                     value.from_numpy(arrays[key])

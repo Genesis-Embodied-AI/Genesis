@@ -6,7 +6,7 @@ import torch
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.constants import IMAGE_TYPE
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import qd_to_torch
 
 from .rasterizer_context import SegmentationColorMap
 
@@ -194,8 +194,8 @@ class GenesisGeomRetriever:
 
     # FIXME: Use a kernel to do it efficiently
     def retrieve_rigid_state_torch(self):
-        geom_pos = ti_to_torch(self.rigid_solver.vgeoms_state.pos)
-        geom_rot = ti_to_torch(self.rigid_solver.vgeoms_state.quat)
+        geom_pos = qd_to_torch(self.rigid_solver.vgeoms_state.pos)
+        geom_rot = qd_to_torch(self.rigid_solver.vgeoms_state.quat)
         geom_pos = geom_pos.transpose(0, 1).contiguous()
         geom_rot = geom_rot.transpose(0, 1).contiguous()
         return geom_pos, geom_rot

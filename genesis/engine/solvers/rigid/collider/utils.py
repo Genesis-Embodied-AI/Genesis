@@ -1,9 +1,9 @@
-import gstaichi as ti
+import quadrants as qd
 import genesis.utils.array_class as array_class
 from genesis.constants import GEOM_TYPE
 
 
-@ti.func
+@qd.func
 def func_det3(
     v1,
     v2,
@@ -19,7 +19,7 @@ def func_det3(
     )
 
 
-@ti.func
+@qd.func
 def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
     return not (
         (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
@@ -27,7 +27,7 @@ def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, 
     )
 
 
-@ti.func
+@qd.func
 def func_is_discrete_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
@@ -39,7 +39,7 @@ def func_is_discrete_geom(
     return geom_type == GEOM_TYPE.MESH or geom_type == GEOM_TYPE.BOX
 
 
-@ti.func
+@qd.func
 def func_is_discrete_geoms(
     geoms_info: array_class.GeomsInfo,
     i_ga,
@@ -51,9 +51,9 @@ def func_is_discrete_geoms(
     return func_is_discrete_geom(geoms_info, i_ga) and func_is_discrete_geom(geoms_info, i_gb)
 
 
-@ti.func
+@qd.func
 def func_is_equal_vec(a, b, eps):
     """
     Check if two vectors are equal within a small tolerance.
     """
-    return (ti.abs(a - b) < eps).all()
+    return (qd.abs(a - b) < eps).all()

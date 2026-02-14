@@ -96,10 +96,10 @@ class Tensor(torch.Tensor):
         obj.scene = None
         return obj
 
-    def _backward_from_ti(self, ti_kernel, *args):
+    def _backward_from_qd(self, qd_kernel, *args):
         temp_grad = gs.zeros_like(self, requires_grad=False)
         temp_grad.assert_contiguous()
-        ti_kernel(*args, temp_grad)
+        qd_kernel(*args, temp_grad)
         self.backward(gradient=temp_grad, retain_graph=True)
 
     def assert_contiguous(self):

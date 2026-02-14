@@ -1,10 +1,10 @@
-import gstaichi as ti
+import quadrants as qd
 
 
 from ..base import Material
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Base(Material):
     """
     The base class of MPM materials.
@@ -48,7 +48,7 @@ class Base(Material):
         self.hessian_invariant = hessian_invariant
         self.hessian_ready = False
 
-        # lame parameters: https://github.com/taichi-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
+        # lame parameters: https://github.com/quadrants-dev/taichi_elements/blob/d19678869a28b09a32ef415b162e35dc929b792d/engine/mpm_solver.py#L203
         self._mu = E / (2.0 * (1.0 + nu))
         self._lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
 
@@ -58,19 +58,19 @@ class Base(Material):
     def build(self, fem_solver):
         pass
 
-    @ti.func
+    @qd.func
     def pre_compute(self, J, F, i_e, i_b):
         pass
 
-    @ti.func
+    @qd.func
     def update_stress(self, mu, lam, J, F, actu, m_dir):
         raise NotImplementedError
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_hessian(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         raise NotImplementedError
 
-    @ti.func
+    @qd.func
     def compute_energy(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         raise NotImplementedError
 
