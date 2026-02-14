@@ -116,6 +116,30 @@ def usd_principal_axes_to_numpy(usd_quat: Gf.Quatf) -> np.ndarray | None:
     return quat
 
 
+def usd_inertia_to_numpy(inertia: Gf.Vec3f) -> np.ndarray | None:
+    """
+    Convert USD diagonal inertia to numpy diagonal matrix, handling default and invalid values.
+
+    The USD Physics MassAPI defines diagonalInertia with default value (0, 0, 0),
+    which is valid but means the inertia should be ignored/computed from geometry.
+    This function returns None for the default ignored value or invalid values (non-finite).
+
+    Parameters
+    ----------
+    inertia : Gf.Vec3f
+        USD diagonal inertia attribute value.
+
+    Returns
+    -------
+    np.ndarray | None
+        Valid diagonal inertia matrix (3x3), or None if default ignored or invalid.
+    """
+    diagonal_inertia = usd_diagonal_inertia_to_numpy(inertia)
+    if diagonal_inertia is None:
+        return None
+    return np.diag(diagonal_inertia)
+
+
 def usd_diagonal_inertia_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray | None:
     """
     Convert USD diagonal inertia to numpy array, handling default and invalid values.
@@ -138,8 +162,8 @@ def usd_diagonal_inertia_to_numpy(usd_pos: Gf.Vec3f) -> np.ndarray | None:
     # Default is (0, 0, 0) which means ignored - only return if non-zero and valid
     if np.allclose(inertia, 0):
         return None
-    # Check for invalid values (negative or inf/nan)
-    if not np.all(inertia >= 0):
+    # Check for invalid values (non-finite)
+    if not all(math.isfinite(e) for e in inertia):
         return None
     return inertia
 
@@ -163,10 +187,10 @@ def usd_mass_to_float(usd_mass: float) -> float | None:
         Valid mass value, or None if default ignored or invalid.
     """
     # Default is 0 which means ignored
-    if usd_mass <= 0:
+    if usd_mass == 0:
         return None
-    # Check for invalid values (inf or nan)
-    if np.isinf(usd_mass) or np.isnan(usd_mass):
+    # Check for invalid values (non-finite)
+    if not math.isfinite(usd_mass):
         return None
     return float(usd_mass)
 

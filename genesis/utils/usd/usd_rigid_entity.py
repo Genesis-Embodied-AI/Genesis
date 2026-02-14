@@ -14,6 +14,7 @@ from .usd_utils import (
     get_attr_value_by_candidates,
     usd_center_of_mass_to_numpy,
     usd_diagonal_inertia_to_numpy,
+    usd_inertia_to_numpy,
     usd_mass_to_float,
     usd_pos_to_numpy,
     usd_principal_axes_to_numpy,
@@ -45,9 +46,7 @@ def _parse_joint_axis_pos(
     context: UsdContext, joint: UsdPhysics.Joint, child_link: Usd.Prim, is_body1: bool
 ) -> Tuple[str, np.ndarray, np.ndarray]:
     joint_pos_attr = joint.GetLocalPos1Attr() if is_body1 else joint.GetLocalPos0Attr()
-    joint_pos = usd_pos_to_numpy(joint_pos_attr.Get() if joint_pos_attr.HasValue() else None)
-    if joint_pos is None:
-        joint_pos = gu.zero_pos()
+    joint_pos = usd_pos_to_numpy(joint_pos_attr.Get()) if joint_pos_attr.HasValue() else gu.zero_pos()
     T = context.compute_transform(child_link)
     joint_pos = gu.transform_by_T(joint_pos, T)
     Q, S = context.compute_gs_transform(child_link)
@@ -103,13 +102,7 @@ def _parse_link(
         principal_axes_attr = mass_api.GetPrincipalAxesAttr()
         l_info["inertial_quat"] = usd_principal_axes_to_numpy(principal_axes_attr.Get())
         inertia_attr = mass_api.GetDiagonalInertiaAttr()
-        diagonal_inertia = usd_diagonal_inertia_to_numpy(inertia_attr.Get())
-        # Always set inertial_i as a diagonal matrix to avoid None values
-        # If invalid, use zeros which will trigger recomputation in rigid_entity.py
-        if diagonal_inertia is not None:
-            l_info["inertial_i"] = np.diag(diagonal_inertia)
-        else:
-            l_info["inertial_i"] = np.diag(gu.zero_pos())
+        l_info["inertial_i"] = usd_inertia_to_numpy(inertia_attr.Get())
         mass_attr = mass_api.GetMassAttr()
         l_info["inertial_mass"] = usd_mass_to_float(mass_attr.Get())
 
