@@ -338,3 +338,102 @@ class UsdContext:
             if real_path.is_file():
                 gs.logger.warning(f"Replacing symlink {asset_path} with real file {real_path}.")
                 shutil.copy2(real_path, asset_path)
+
+
+def find_joints_in_range(prim_range: Usd.PrimRange) -> list[Usd.Prim]:
+    """
+    Find all joints in a prim range.
+
+    Parameters
+    ----------
+    prim_range : Usd.PrimRange
+        A prim range to search.
+
+    Returns
+    -------
+    list[Usd.Prim]
+        List of joint prims found in the range.
+    """
+    joints: list[Usd.Prim] = []
+    for prim in prim_range:
+        if prim.IsA(UsdPhysics.Joint):
+            joints.append(prim)
+    return joints
+
+
+def find_rigid_bodies_in_range(prim_range: Usd.PrimRange) -> set[str]:
+    """
+    Find all rigid bodies in a prim range.
+
+    When a rigid body is found, its children are pruned from the search since they
+    are part of that rigid body and shouldn't be counted separately.
+
+    Parameters
+    ----------
+    prim_range : Usd.PrimRange
+        A prim range to search. Must support PruneChildren().
+
+    Returns
+    -------
+    set[str]
+        Set of rigid body prim paths (as strings).
+    """
+    rigid_bodies: set[str] = set()
+    prim_iter = iter(prim_range)
+    for prim in prim_iter:
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
+            rigid_bodies.add(str(prim.GetPath()))
+            prim_iter.PruneChildren()
+    return rigid_bodies
+
+
+def extract_links_referenced_by_joints(
+    stage: Usd.Stage, joints: list[Usd.Prim], check_rigid_body: bool = True
+) -> set[str]:
+    """
+    Extract links referenced by joints.
+
+    Parameters
+    ----------
+    stage : Usd.Stage
+        The USD stage.
+    joints : list[Usd.Prim]
+        List of joint prims to analyze.
+    check_rigid_body : bool, optional
+        If True, only include links that are rigid bodies (have RigidBodyAPI or CollisionAPI).
+        If False, include all links referenced by joints. Default is True.
+
+    Returns
+    -------
+    set[str]
+        Set of link prim paths (as strings) referenced by the joints.
+    """
+    links_referenced: set[str] = set()
+    for joint_prim in joints:
+        joint = UsdPhysics.Joint(joint_prim)
+        body0_targets = joint.GetBody0Rel().GetTargets()
+        body1_targets = joint.GetBody1Rel().GetTargets()
+
+        if body0_targets:
+            body0_path = str(body0_targets[0])
+            if check_rigid_body:
+                body0_prim = stage.GetPrimAtPath(body0_path)
+                if body0_prim.IsValid() and (
+                    body0_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body0_prim.HasAPI(UsdPhysics.CollisionAPI)
+                ):
+                    links_referenced.add(body0_path)
+            else:
+                links_referenced.add(body0_path)
+
+        if body1_targets:
+            body1_path = str(body1_targets[0])
+            if check_rigid_body:
+                body1_prim = stage.GetPrimAtPath(body1_path)
+                if body1_prim.IsValid() and (
+                    body1_prim.HasAPI(UsdPhysics.RigidBodyAPI) or body1_prim.HasAPI(UsdPhysics.CollisionAPI)
+                ):
+                    links_referenced.add(body1_path)
+            else:
+                links_referenced.add(body1_path)
+
+    return links_referenced

@@ -48,5 +48,6 @@ except ImportError as e:
 
 # USD support is available - import the parser modules
 from .usd_stage import parse_usd_stage
+from .usd_entity import parse_usd_single_entity
 from .usd_rigid_entity import parse_usd_rigid_entity
 from .usd_context import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT

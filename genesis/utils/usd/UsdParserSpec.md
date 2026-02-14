@@ -107,3 +107,8 @@ $$
 $$
 P' = P^{l_1'} = (Q^w_{l_1'})^{-1} \cdot P^w
 $$
+
+## ArticulationRootFree Strategy
+
+
+

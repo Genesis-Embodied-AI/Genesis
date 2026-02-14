@@ -503,6 +503,7 @@ class Scene(RBC):
         entities : List[genesis.Entity]
             The created entities.
         """
+        morph.import_mode = "stage"
         entity_morphs = []
         if isinstance(morph, gs.morphs.USD):
             from genesis.utils.usd import parse_usd_stage

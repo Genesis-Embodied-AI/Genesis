@@ -3,7 +3,7 @@ from typing import Dict, List
 
 import numpy as np
 import trimesh
-from pxr import Usd, UsdGeom
+from pxr import Usd, UsdGeom, UsdPhysics
 
 import genesis as gs
 from genesis.utils import geom as gu
@@ -36,6 +36,13 @@ def parse_prim_geoms(
 ):
     if not prim.IsActive():
         return
+
+    # Check if this prim is a link (rigid body) that belongs to a different entity
+    # If so, stop recursing to avoid parsing geometries from other entities
+    if prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
+        if str(prim.GetPath()) not in link_path_to_idx:
+            # This is a link from a different entity, stop recursing
+            return
 
     if str(prim.GetPath()) in link_path_to_idx:
         link_prim = prim
@@ -279,7 +286,7 @@ def parse_prim_geoms(
         is_guide = str(gprim.GetPurposeAttr().Get() or "default") == "guide"
         is_visible = str(gprim.ComputeVisibility()) != "invisible"
         is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
-        is_collision = (is_visible) and (match_collision or not (match_collision or match_visual))
+        is_collision = match_collision or not (match_collision or match_visual)
 
         g_infos = links_g_infos[link_path_to_idx[str(link_prim.GetPath())]]
         if is_visual:
@@ -312,7 +319,13 @@ def parse_prim_geoms(
                     )
                 )
 
-    for child in prim.GetChildren():
+    predicate = Usd.TraverseInstanceProxies()
+    prim_range = Usd.PrimRange(prim, predicate)
+    iterator = iter(prim_range)
+    # skip the first prim (current prim)
+    next(iterator)
+    for child in iterator:
         parse_prim_geoms(
             context, child, link_prim, links_g_infos, link_path_to_idx, morph, surface, match_visual, match_collision
         )
+        iterator.PruneChildren()

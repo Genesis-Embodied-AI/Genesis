@@ -37,8 +37,7 @@ class JointAnimator:
         self.init_phase = np.arcsin(normalized_init_pos)
 
         # make the control more sensitive
-        self.rigid.set_dofs_frictionloss(gu.default_dofs_kp(n_dofs))
-        self.rigid.set_dofs_kp(gu.default_dofs_kp(n_dofs))
+        # self.rigid.set_dofs_kp(gu.default_dofs_kp(n_dofs))
 
     def animate(self, scene: gs.Scene):
         t = scene.t * scene.dt
@@ -65,6 +64,11 @@ def main():
             camera_fov=40,
         ),
         show_viewer=args.vis,
+        sim_options=gs.options.SimOptions(
+            dt=1e-3,
+            gravity=(0, 0, -9.81),
+        ),
+        show_FPS=False,
     )
 
     asset_path = snapshot_download(
@@ -84,7 +88,7 @@ def main():
             pos=(0, 0, 0.9),
             euler=(0, 0, 180),
         ),
-        # vis_mode="collision",
+        vis_mode="collision",
         # visualize_contact=True,
     )
 
