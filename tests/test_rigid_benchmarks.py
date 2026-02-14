@@ -458,7 +458,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
         franka.control_dofs_position(qpos0)
 
     if n_envs > 0 and is_randomized:
-        vel0 = 0.4 * torch.clip(torch.randn((n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device), -1.0, 1.0)
+        vel0 = 0.3 * torch.clip(torch.randn((n_envs, franka.n_dofs), dtype=gs.tc_float, device=gs.device), -1.0, 1.0)
         vel0[:, [link.dof_start for link in franka.links if not link.name.startswith("link") and link.n_dofs]] = 0.0
     else:
         vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
