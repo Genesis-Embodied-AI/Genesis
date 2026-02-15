@@ -6,8 +6,8 @@ forces capsule-capsule and sphere-capsule collisions to use GJK instead of
 analytical methods, allowing direct comparison between the two approaches.
 """
 
+import copy
 import importlib.util
-import random
 from pathlib import Path
 from typing import Callable, cast, TYPE_CHECKING
 import xml.etree.ElementTree as ET
@@ -153,9 +153,6 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = content.replace("from . import ", "from genesis.engine.solvers.rigid.collider import ")
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
 
-    # # disable fastcache
-    # content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
-
     lines = content.split("\n")
 
     # Disable capsule-capsule analytical path
@@ -209,8 +206,9 @@ class AnalyticalVsGJKSceneCreator:
         self.entities_analytical = []
         self.entities_gjk = []
 
-    def setup_scenes_before(self) -> tuple[gs.Scene, gs.Scene]:
-        # Scene 1: Using ORIGINAL analytical sphere-capsule detection (before any monkey-patching)
+    def setup_scenes(self) -> tuple[gs.Scene, gs.Scene]:
+        """Build both scenes WITHOUT any monkey-patching."""
+        # Scene 1: Using ORIGINAL analytical collision detection
         self.scene_analytical = gs.Scene(
             show_viewer=False,
             rigid_options=gs.options.RigidOptions(
@@ -220,22 +218,7 @@ class AnalyticalVsGJKSceneCreator:
         )
         self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
 
-        # NOW monkey-patch for the GJK scene
-        temp_narrowphase_path = create_modified_narrowphase_file(tmp_path=self.tmp_path)
-        spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
-        narrowphase_modified = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(narrowphase_modified)
-        from genesis.engine.solvers.rigid.collider import narrowphase
-
-        # Monkey-patch the @ti.kernel (not the @ti.func) so that fastcache sees a different
-        # filepath in the cache key and forces recompilation with the modified code.
-        self.monkeypatch.setattr(
-            narrowphase,
-            "func_narrow_phase_convex_vs_convex",
-            narrowphase_modified.func_narrow_phase_convex_vs_convex,
-        )
-
-        # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
+        # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
             show_viewer=False,
             rigid_options=gs.options.RigidOptions(
@@ -248,31 +231,57 @@ class AnalyticalVsGJKSceneCreator:
 
         return self.scene_analytical, self.scene_gjk
 
-    def update_pos_quat(self, entity_idx: int, pos, euler) -> None:
+    def apply_gjk_patch(self) -> None:
+        """
+        Monkey-patch the @ti.kernel for narrowphase with the modified version from a tmp file.
+
+        This replaces the entire kernel object so that:
+        - The new kernel has its own empty materialized_kernels cache
+        - Fastcache sees a different filepath in the cache key (the tmp file),
+          so it won't find a stale on-disk cache hit
+        """
+        temp_narrowphase_path = create_modified_narrowphase_file(tmp_path=self.tmp_path)
+        spec = importlib.util.spec_from_file_location("narrowphase_modified", temp_narrowphase_path)
+        narrowphase_modified = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(narrowphase_modified)
+        from genesis.engine.solvers.rigid.collider import narrowphase
+
+        self.monkeypatch.setattr(
+            narrowphase,
+            "func_narrow_phase_convex_vs_convex",
+            narrowphase_modified.func_narrow_phase_convex_vs_convex,
+        )
+
+    def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
-
         self.entities_analytical[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
-        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
-
-        # Zero out velocities to prevent motion during step
-        zero_vel = np.zeros(6, dtype=gs.np_float)  # 3 linear + 3 angular
+        zero_vel = np.zeros(6, dtype=gs.np_float)
         self.entities_analytical[entity_idx].set_dofs_velocity(zero_vel)
+
+    def update_pos_quat_gjk(self, entity_idx: int, pos, euler) -> None:
+        quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
+        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
+        zero_vel = np.zeros(6, dtype=gs.np_float)
         self.entities_gjk[entity_idx].set_dofs_velocity(zero_vel)
 
-    def step(self):
+    def step_analytical(self):
         self.scene_analytical.step()
+
+    def step_gjk(self):
         self.scene_gjk.step()
 
-    def checks_after(self):
-        # Check if GJK was used (bit 16)
+    def check_analytical_errno(self):
+        """Verify that the analytical scene did NOT use the GJK path (bit 16 unset)."""
         analytical_used_gjk = (self.scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-        gjk_used_gjk = (self.scene_gjk._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-
-        # Verify that analytical scene did NOT use GJK, and GJK scene DID use GJK
         assert not analytical_used_gjk, (
             f"Analytical scene should not use GJK (errno={self.scene_analytical._sim.rigid_solver._errno[0]})"
         )
-        assert gjk_used_gjk, f"GJK scene should use GJK (errno={self.scene_gjk._sim.rigid_solver._errno[0]})"
+
+    def check_gjk_errno(self):
+        """Verify that the GJK scene DID use the GJK path (bit 16 set)."""
+        errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
+        gjk_used_gjk = (errno_val & (1 << 16)) != 0
+        assert gjk_used_gjk, f"GJK scene should use GJK (errno={errno_val})"
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -281,6 +290,11 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
+
+    Two-phase approach to avoid kernel caching interference:
+    1. Run ALL analytical scenarios first (original kernel)
+    2. Apply monkey-patch (replaces the @ti.kernel with a new object from a tmp file)
+    3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
         # (pos0, euler0, pos1, euler1, should_collide, description)
@@ -301,17 +315,47 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
-    scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
+    scene_analytical, scene_gjk = scene_creator.setup_scenes()
 
+    # Phase 1: Run all analytical scenarios (original, unpatched kernel)
+    analytical_results = {}
     for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
         try:
-            scene_creator.update_pos_quat(entity_idx=0, pos=pos0, euler=euler0)
-            scene_creator.update_pos_quat(entity_idx=1, pos=pos1, euler=euler1)
-            scene_creator.step()
-            scene_creator.checks_after()
+            scene_creator.update_pos_quat_analytical(entity_idx=0, pos=pos0, euler=euler0)
+            scene_creator.update_pos_quat_analytical(entity_idx=1, pos=pos1, euler=euler1)
+            scene_creator.step_analytical()
+            scene_creator.check_analytical_errno()
 
-            contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            has_collision = contacts is not None and len(contacts["geom_a"]) > 0
+            assert has_collision == should_collide, (
+                f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
+            )
+            # Deep-copy so subsequent steps can't corrupt stored data
+            analytical_results[description] = copy.deepcopy(contacts)
+        except Exception as e:
+            raise AssertionError(
+                f"\nFAILED TEST SCENARIO (analytical phase): {description}\n"
+                f"Capsule 0: pos={pos0}, euler={euler0}\n"
+                f"Capsule 1: pos={pos1}, euler={euler1}\n"
+                f"Expected collision: {should_collide}\n"
+                f"Backend: {backend}\n"
+                f"Radius: {radius}, Half-length: {half_length}\n"
+            ) from e
+
+    # Phase 2: Apply monkey-patch (replace @ti.kernel with version from tmp file)
+    scene_creator.apply_gjk_patch()
+
+    # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
+    for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
+        try:
+            scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
+            scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
+            scene_creator.step_gjk()
+            scene_creator.check_gjk_errno()
+
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            contacts_analytical = analytical_results[description]
 
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
@@ -319,7 +363,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
-            assert has_collision_analytical == should_collide
+            assert has_collision_gjk == should_collide
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
@@ -380,15 +424,14 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
                 else:
                     assert pos_diff < 0.05
         except Exception as e:
-            failed_scenario_msg = f"""
-FAILED TEST SCENARIO: {description}
-Capsule 0: pos={pos0}, euler={euler0}
-Capsule 1: pos={pos1}, euler={euler1}
-Expected collision: {should_collide}
-Backend: {backend}
-Radius: {radius}, Half-length: {half_length}
-"""
-            raise AssertionError(failed_scenario_msg) from e
+            raise AssertionError(
+                f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
+                f"Capsule 0: pos={pos0}, euler={euler0}\n"
+                f"Capsule 1: pos={pos1}, euler={euler1}\n"
+                f"Expected collision: {should_collide}\n"
+                f"Backend: {backend}\n"
+                f"Radius: {radius}, Half-length: {half_length}\n"
+            ) from e
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -463,6 +506,11 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
+
+    Two-phase approach to avoid kernel caching interference:
+    1. Run ALL analytical scenarios first (original kernel)
+    2. Apply monkey-patch (replaces the @ti.kernel with a new object from a tmp file)
+    3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu)
@@ -472,7 +520,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False),
         ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False),
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False),
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True),
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", False),
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
     ]
 
@@ -486,23 +534,54 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
-    scene_analytical, scene_gjk = scene_creator.setup_scenes_before()
+    scene_analytical, scene_gjk = scene_creator.setup_scenes()
 
+    # Phase 1: Run all analytical scenarios (original, unpatched kernel)
+    analytical_results = {}
     for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
         if skip_gpu and backend == gs.gpu:
-            print(f"\nTest: {description} - SKIPPED on GPU")
             continue
 
         try:
-            scene_creator.update_pos_quat(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
-            scene_creator.update_pos_quat(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
+            scene_creator.update_pos_quat_analytical(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
+            scene_creator.update_pos_quat_analytical(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
+            scene_creator.step_analytical()
+            scene_creator.check_analytical_errno()
 
-            scene_creator.step()
+            contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            has_collision = contacts is not None and len(contacts["geom_a"]) > 0
+            assert has_collision == should_collide, (
+                f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
+            )
+            # Deep-copy so subsequent steps can't corrupt stored data
+            analytical_results[description] = copy.deepcopy(contacts)
+        except Exception as e:
+            raise AssertionError(
+                f"\nFAILED TEST SCENARIO (analytical phase): {description}\n"
+                f"Sphere: pos={sphere_pos}\n"
+                f"Capsule: pos={capsule_pos}, euler={capsule_euler}\n"
+                f"Expected collision: {should_collide}\n"
+                f"Backend: {backend}\n"
+                f"Sphere radius: {sphere_radius}\n"
+                f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
+            ) from e
 
-            scene_creator.checks_after()
+    # Phase 2: Apply monkey-patch (replace @ti.kernel with version from tmp file)
+    scene_creator.apply_gjk_patch()
 
-            contacts_analytical = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+    # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
+    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
+        if skip_gpu and backend == gs.gpu:
+            continue
+
+        try:
+            scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
+            scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
+            scene_creator.step_gjk()
+            scene_creator.check_gjk_errno()
+
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+            contacts_analytical = analytical_results[description]
 
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
@@ -510,7 +589,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
-            assert has_collision_analytical == should_collide
+            assert has_collision_gjk == should_collide
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
@@ -535,13 +614,12 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
                 pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
                 assert pos_diff < 0.05, f"Position mismatch! Diff: {pos_diff:.6f}"
         except Exception as e:
-            failed_scenario_msg = f"""
-FAILED TEST SCENARIO: {description}
-Sphere: pos={sphere_pos}
-Capsule: pos={capsule_pos}, euler={capsule_euler}
-Expected collision: {should_collide}
-Backend: {backend}
-Sphere radius: {sphere_radius}
-Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}
-"""
-            raise AssertionError(failed_scenario_msg) from e
+            raise AssertionError(
+                f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
+                f"Sphere: pos={sphere_pos}\n"
+                f"Capsule: pos={capsule_pos}, euler={capsule_euler}\n"
+                f"Expected collision: {should_collide}\n"
+                f"Backend: {backend}\n"
+                f"Sphere radius: {sphere_radius}\n"
+                f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
+            ) from e
