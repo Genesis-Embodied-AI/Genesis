@@ -265,23 +265,18 @@ class AnalyticalVsGJKSceneCreator:
         self.entities_gjk[entity_idx].set_dofs_velocity(zero_vel)
 
     def step_analytical(self):
+        """Clear errno, step, then verify analytical path was used (bit 16 unset)."""
+        self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
+        errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
+        assert (errno_val & (1 << 16)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
 
     def step_gjk(self):
+        """Clear errno, step, then verify GJK path was used (bit 16 set)."""
+        self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
-
-    def check_analytical_errno(self):
-        """Verify that the analytical scene did NOT use the GJK path (bit 16 unset)."""
-        analytical_used_gjk = (self.scene_analytical._sim.rigid_solver._errno[0] & (1 << 16)) != 0
-        assert not analytical_used_gjk, (
-            f"Analytical scene should not use GJK (errno={self.scene_analytical._sim.rigid_solver._errno[0]})"
-        )
-
-    def check_gjk_errno(self):
-        """Verify that the GJK scene DID use the GJK path (bit 16 set)."""
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        gjk_used_gjk = (errno_val & (1 << 16)) != 0
-        assert gjk_used_gjk, f"GJK scene should use GJK (errno={errno_val})"
+        assert (errno_val & (1 << 16)) != 0, f"GJK scene should use GJK (errno={errno_val})"
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -324,7 +319,6 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_analytical(entity_idx=1, pos=pos1, euler=euler1)
             scene_creator.step_analytical()
-            scene_creator.check_analytical_errno()
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             has_collision = contacts is not None and len(contacts["geom_a"]) > 0
@@ -352,7 +346,6 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
             scene_creator.step_gjk()
-            scene_creator.check_gjk_errno()
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
@@ -546,7 +539,6 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_analytical(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
             scene_creator.step_analytical()
-            scene_creator.check_analytical_errno()
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             has_collision = contacts is not None and len(contacts["geom_a"]) > 0
@@ -578,7 +570,6 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
             scene_creator.step_gjk()
-            scene_creator.check_gjk_errno()
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
