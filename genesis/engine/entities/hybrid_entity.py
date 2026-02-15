@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 import trimesh
 
 import genesis as gs

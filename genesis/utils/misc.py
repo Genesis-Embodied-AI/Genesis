@@ -13,14 +13,14 @@ from itertools import combinations
 from typing import Any, NoReturn, Optional, Type, Sequence
 
 import cpuinfo
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import psutil
 import pyglet
 import torch
 
-from gstaichi.lang.util import to_pytorch_type, to_numpy_type
-from gstaichi._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
+from quadrants.lang.util import to_pytorch_type, to_numpy_type
+from quadrants._kernels import tensor_to_ext_arr, matrix_to_ext_arr, ndarray_to_ext_arr, ndarray_matrix_to_ext_arr
 
 import genesis as gs
 
@@ -399,7 +399,7 @@ def ti_to_python(
     copy: bool | None = None,
     to_torch: bool = True,
 ) -> torch.Tensor | np.ndarray:
-    """Converts a GsTaichi field / ndarray instance to a PyTorch tensor / Numpy array.
+    """Converts a Quadrants field / ndarray instance to a PyTorch tensor / Numpy array.
 
     Args:
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
@@ -444,7 +444,7 @@ def ti_to_python(
                     out = value._T_np if transpose else value._np
                 break
             except AttributeError:
-                # "Cache" no-owning python-side views of the original GsTaichi memory buffer as a hidden attribute
+                # "Cache" no-owning python-side views of the original Quadrants memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
                 if issubclass(data_type, ti.MatrixField) and value.m == 1:
                     value_tc = value_tc.reshape((*batch_shape, value.n))
@@ -602,7 +602,7 @@ def ti_to_torch(
     *,
     copy: bool | None = None,
 ) -> torch.Tensor:
-    """Converts a GsTaichi field / ndarray instance to a PyTorch tensor.
+    """Converts a Quadrants field / ndarray instance to a PyTorch tensor.
 
     Args:
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.
@@ -652,7 +652,7 @@ def ti_to_numpy(
     *,
     copy: bool | None = None,
 ) -> np.ndarray:
-    """Converts a GsTaichi field / ndarray instance to a Numpy array.
+    """Converts a Quadrants field / ndarray instance to a Numpy array.
 
     Args:
         value (ti.Field | ti.Ndarray): Field or Ndarray to be converted.

@@ -14,7 +14,7 @@ These functions are extracted from the main rigid_solver module to improve
 code organization and maintainability.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

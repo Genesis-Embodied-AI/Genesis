@@ -4,7 +4,7 @@ Support function utilities for GJK algorithm.
 This module contains support point computation functions used by both GJK and EPA algorithms.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

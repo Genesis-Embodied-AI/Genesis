@@ -2,7 +2,7 @@ import functools
 from pathlib import Path
 
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 import torch
 import trimesh
 

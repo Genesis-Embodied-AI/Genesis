@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 
 from .base import Base
 

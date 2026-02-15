@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 import cv2
 
 import genesis as gs

@@ -2,7 +2,7 @@ import os
 import xml.etree.ElementTree as ET
 
 import torch
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 from genesis.utils.misc import get_assets_dir

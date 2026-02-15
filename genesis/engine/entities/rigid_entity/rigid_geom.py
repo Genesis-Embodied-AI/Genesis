@@ -3,7 +3,7 @@ import pickle as pkl
 from itertools import chain
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
+import quadrants as ti
 import igl
 import numpy as np
 import skimage

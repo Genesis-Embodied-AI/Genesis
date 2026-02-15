@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import trimesh
 

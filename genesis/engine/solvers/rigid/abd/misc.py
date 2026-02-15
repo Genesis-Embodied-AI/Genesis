@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -141,7 +141,7 @@ def kernel_init_dof_fields(
     # taichi variables
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
-    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to gstaichi
+    # we will use RigidGlobalInfo as typing after Hugh adds array_struct feature to quadrants
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
