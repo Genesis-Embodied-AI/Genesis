@@ -515,7 +515,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     analytical_results = {}
     for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
         if skip_gpu and backend == gs.gpu:
-            continue
+            pytest.xfail(
+                reason="gjk broken on gpu for this condition currently. "
+                "(fails to provide contact, when we can see on paper that there should be one)."
+            )
 
         try:
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
