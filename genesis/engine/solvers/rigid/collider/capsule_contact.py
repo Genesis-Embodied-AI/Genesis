@@ -5,7 +5,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 
-vec3 = ti.types.Vector[3, gs.ti_float]
+vec3 = ti.types.vector[3, gs.ti_float]
 
 
 @ti.func
@@ -21,6 +21,23 @@ def j_cross_vec(vec: vec3) -> vec3:
 @ti.func
 def k_cross_vec(vec: vec3) -> vec3:
     return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
+
+
+@ti.func
+def transform_vec_by_normalized_quat(
+    v: vec3,
+    quat: ti.types.vector[4, gs.ti_float],
+) -> vec3:
+    """
+    Assumptions:
+    - quat must be normalized
+    """
+    q_w, q_x, q_y, q_z = quat
+    q_xx, _q_xy, q_xz, q_wx = q_x * q_x, q_x * q_y, q_x * q_z, q_x * q_w
+    q_yy, q_yz, q_wy = q_y * q_y, q_y * q_z, q_y * q_w
+    q_zz, _q_wz = q_z * q_z, q_z * q_w
+    q_ww = q_w * q_w
+    return ti.Vector([2.0 * q_xz + 2.0 * q_wy, -2.0 * q_wx + 2.0 * q_yz, q_ww - q_xx - q_yy + q_zz], dt=gs.ti_float)
 
 
 @ti.func
@@ -126,8 +143,8 @@ def func_capsule_capsule_contact(
     local_z_unit = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
     # Get segment axes in world space
-    axis_a_unit = gu.ti_transform_by_quat(local_z_unit, quat_a)
-    axis_b_unit = gu.ti_transform_by_quat(local_z_unit, quat_b)
+    axis_a_unit = transform_vec_by_normalized_quat(local_z_unit, quat_a)
+    axis_b_unit = transform_vec_by_normalized_quat(local_z_unit, quat_b)
 
     # Compute segment endpoints in world space
     P1 = pos_a - halflength_a * axis_a_unit
@@ -222,8 +239,8 @@ def func_sphere_capsule_contact(
     capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 
     # Capsule is aligned along local Z-axis
-    local_z = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    capsule_axis = gu.ti_transform_by_quat(local_z, capsule_quat)
+    local_z_unit = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    capsule_axis = transform_vec_by_normalized_quat(local_z_unit, capsule_quat)
 
     # Compute capsule segment endpoints
     P1 = capsule_center - capsule_halflength * capsule_axis
