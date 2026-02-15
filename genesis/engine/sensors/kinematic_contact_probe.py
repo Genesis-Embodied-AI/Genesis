@@ -150,6 +150,7 @@ def _kernel_kinematic_contact_probe(
     probe_positions_local: ti.types.ndarray(),
     probe_normals_local: ti.types.ndarray(),
     probe_sensor_idx: ti.types.ndarray(),
+    probe_max_raycast_range: ti.f32,
     links_state: array_class.LinksState,
     radii: ti.types.ndarray(),
     stiffness: ti.types.ndarray(),
@@ -164,7 +165,6 @@ def _kernel_kinematic_contact_probe(
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    default_raycast_depth: ti.f32,
     output: ti.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
@@ -219,7 +219,7 @@ def _kernel_kinematic_contact_probe(
                         probe_pos,
                         probe_normal,
                         radius,
-                        default_raycast_depth,
+                        probe_max_raycast_range,
                         i_g,
                         i_b,
                         geoms_info,
@@ -271,13 +271,12 @@ class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
     probe_normals: torch.Tensor = make_tensor_field((0, 3))
+    probe_max_raycast_range: float = 0.0
 
     n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
     sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
     sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
     total_n_probes: int = 0
-
-    default_raycast_depth: float = 1.0
 
 
 @register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
@@ -342,6 +341,11 @@ class KinematicContactProbe(
             self._shared_metadata.probe_normals, self._probe_local_normal, expand=(n_probes, 3), dim=0
         )
 
+        if self._shared_metadata.probe_max_raycast_range < gs.EPS:
+            link_aabb = self._link.get_vAABB()
+            max_range = torch.linalg.norm(link_aabb[1] - link_aabb[0], dim=-1).max()
+            self._shared_metadata.probe_max_raycast_range = max_range.item()
+
         self._shared_metadata.total_n_probes += n_probes
 
         if isinstance(self._options.radius, Sequence):
@@ -377,6 +381,7 @@ class KinematicContactProbe(
             probe_positions_local=shared_metadata.probe_positions,
             probe_normals_local=shared_metadata.probe_normals,
             probe_sensor_idx=shared_metadata.probe_sensor_idx,
+            probe_max_raycast_range=shared_metadata.probe_max_raycast_range,
             links_state=solver.links_state,
             radii=shared_metadata.radii,
             stiffness=shared_metadata.stiffness,
@@ -391,7 +396,6 @@ class KinematicContactProbe(
             free_verts_state=solver.free_verts_state,
             verts_info=solver.verts_info,
             faces_info=solver.faces_info,
-            default_raycast_depth=shared_metadata.default_raycast_depth,
             output=shared_ground_truth_cache,
         )
 

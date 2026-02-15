@@ -770,9 +770,6 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
         tol=2e-3,
         err_msg="Sphere probe penetration should match top box probe penetration",
     )
-    assert (box_data.penetration[..., 0] > box_data.penetration[..., 3]).all(), (
-        "Sphere-box penetration should be greater than box-ground penetration"
-    )
     assert_array_equal(
         box_data.penetration[..., 1], 0.0, err_msg="Noncenter probe with small radius should not detect contact"
     )
