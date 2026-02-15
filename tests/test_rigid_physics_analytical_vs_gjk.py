@@ -218,7 +218,8 @@ class AnalyticalVsGJKSceneCreator:
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
-            show_viewer=self.show_viewer, rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
+            show_viewer=self.show_viewer,
+            rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
@@ -507,7 +508,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         scene.build()
 
     scene_creator = AnalyticalVsGJKSceneCreator(
-        monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path, show_viewer=show_viewer,
+        monkeypatch=monkeypatch,
+        build_scene=build_scene,
+        tmp_path=tmp_path,
+        show_viewer=show_viewer,
     )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
 
