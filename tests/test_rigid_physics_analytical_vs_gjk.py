@@ -198,7 +198,7 @@ def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radiu
 
 
 class AnalyticalVsGJKSceneCreator:
-    def __init__(self, monkeypatch, build_scene: Callable, tmp_path: Path) -> None:
+    def __init__(self, monkeypatch, build_scene: Callable, tmp_path: Path, show_viewer: bool) -> None:
         self.monkeypatch = monkeypatch
         self.build_scene = build_scene
         self.tmp_path = tmp_path
@@ -206,16 +206,17 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_gjk: gs.Scene
         self.entities_analytical = []
         self.entities_gjk = []
+        self.show_viewer = show_viewer
 
     def setup_scenes(self) -> tuple[gs.Scene, gs.Scene]:
         """Build both scenes WITHOUT any monkey-patching."""
         # Scene 1: Using ORIGINAL analytical collision detection
-        self.scene_analytical = gs.Scene(show_viewer=False)
+        self.scene_analytical = gs.Scene(show_viewer=self.show_viewer)
         self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
-            show_viewer=False, rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
+            show_viewer=self.show_viewer, rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
@@ -269,7 +270,7 @@ class AnalyticalVsGJKSceneCreator:
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
+def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
@@ -297,7 +298,9 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         entities.append(scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius))
         scene.build()
 
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
+    scene_creator = AnalyticalVsGJKSceneCreator(
+        monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path, show_viewer=show_viewer
+    )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
@@ -417,7 +420,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_capsule_analytical_accuracy(tmp_path: Path):
+def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool):
     """
     Test that analytical capsule-capsule gives exact results for simple cases.
     """
@@ -429,7 +432,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path):
     # Sum of radii: 0.2
     # Expected penetration: 0.2 - 0.15 = 0.05
 
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(show_viewer=show_viewer)
 
     _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
@@ -477,7 +480,7 @@ def create_sphere_mjcf(name, pos, radius):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
+def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
@@ -508,7 +511,9 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         entities.append(scene_add_capsule(tmp_path, scene, half_length=capsule_half_length, radius=capsule_radius))
         scene.build()
 
-    scene_creator = AnalyticalVsGJKSceneCreator(monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path)
+    scene_creator = AnalyticalVsGJKSceneCreator(
+        monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path, show_viewer=show_viewer,
+    )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
