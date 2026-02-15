@@ -637,7 +637,7 @@ def initialize_genesis(
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since quadrants 2.2.1 but let's do it anyway
+        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 
