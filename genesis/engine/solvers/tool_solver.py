@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.states.solvers import ToolSolverState

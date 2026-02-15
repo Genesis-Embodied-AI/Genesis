@@ -6,7 +6,7 @@ Sutherland-Hodgman polygon clipping for finding multiple contact points
 between colliding geometric entities (face-face, edge-face pairs).
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

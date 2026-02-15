@@ -8,13 +8,13 @@ import weakref
 from warnings import warn
 from contextlib import redirect_stdout
 
-# Import gstaichi while collecting its output without printing directly
+# Import quadrants while collecting its output without printing directly
 _ti_outputs = io.StringIO()
 
 os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
 with redirect_stdout(_ti_outputs):
-    import gstaichi as ti
+    import quadrants as ti
 
 try:
     import torch
@@ -130,7 +130,7 @@ def init(
     if is_cpu_fallback:
         logger.warning("Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
 
-    # Configure GsTaichi fast cache and array type
+    # Configure Quadrants fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
     is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if backend == _gs_backend.metal else "1")) == "0"
     if use_ndarray is None:
@@ -138,16 +138,16 @@ def init(
     else:
         _use_ndarray = use_ndarray
         if _use_ndarray and is_ndarray_disabled:
-            raise_exception("Genesis previous initialized. GsTaichi dynamic array mode cannot be disabled anymore.")
+            raise_exception("Genesis previous initialized. Quadrants dynamic array mode cannot be disabled anymore.")
     if _use_ndarray and backend == _gs_backend.metal:
-        raise_exception("GsTaichi dynamic array mode is not supported on Apple Metal GPU backend.")
+        raise_exception("Quadrants dynamic array mode is not supported on Apple Metal GPU backend.")
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_fastcache is None:
         _use_fastcache = not is_fastcache_disabled and _use_ndarray
     else:
         _use_fastcache = use_fastcache
         if use_fastcache and is_fastcache_disabled:
-            raise_exception("Genesis previous initialized. GsTaichi fast cache mode cannot be disabled anymore.")
+            raise_exception("Genesis previous initialized. Quadrants fast cache mode cannot be disabled anymore.")
     use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue
@@ -270,7 +270,7 @@ def init(
             random_seed=seed,
         )
 
-    # init gstaichi
+    # init quadrants
     ti_debug = debug and (os.environ.get("TI_DEBUG") != "0")
     with redirect_stdout(_ti_outputs):
         ti.init(
@@ -318,11 +318,11 @@ def init(
 
     # Dealing with default backend
     if use_fastcache:
-        logger.debug("[GsTaichi] Enabling pure kernels for fast cache mode.")
+        logger.debug("[Quadrants] Enabling pure kernels for fast cache mode.")
     if use_ndarray:
-        logger.debug("[GsTaichi] Enabling GsTaichi dynamic array type to avoid scene-specific compilation.")
+        logger.debug("[Quadrants] Enabling Quadrants dynamic array type to avoid scene-specific compilation.")
     if backend == _gs_backend.amdgpu:
-        logger.debug("[GsTaichi] Beware AMD GPU backend is still experimental and may be unstable.")
+        logger.debug("[Quadrants] Beware AMD GPU backend is still experimental and may be unstable.")
 
     if _IS_OLD_TORCH:
         logger.warning(
@@ -392,7 +392,7 @@ def destroy():
             scene = scene_ref()
             scene.destroy()
 
-    # Reset gstaichi
+    # Reset quadrants
     ti.reset()
 
     # Restore original taichi logging facilities

@@ -1,4 +1,4 @@
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 from genesis.engine.states.entities import SPHEntityState

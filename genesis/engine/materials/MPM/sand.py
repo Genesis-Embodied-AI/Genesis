@@ -1,5 +1,5 @@
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 

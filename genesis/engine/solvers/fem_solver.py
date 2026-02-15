@@ -2,7 +2,7 @@
 
 import numpy as np
 import igl
-import gstaichi as ti
+import quadrants as ti
 import torch
 
 import genesis as gs

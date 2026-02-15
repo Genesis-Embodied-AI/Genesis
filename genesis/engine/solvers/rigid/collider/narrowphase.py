@@ -8,7 +8,7 @@ terrain detection, box-box contact, and multi-contact search algorithms.
 import sys
 from enum import IntEnum
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

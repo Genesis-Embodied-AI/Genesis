@@ -33,10 +33,10 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         print(f"Backend '{backend}' not available on this machine", file=sys.stderr)
         sys.exit(RET_SKIP)
 
-    # Skip test if gstaichi ndarray mode is enabled but not supported by this specific test
+    # Skip test if quadrants ndarray mode is enabled but not supported by this specific test
     if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_ENABLE_NDARRAY") == "1":
         print(
-            "Using gstaichi ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
+            "Using quadrants ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
             "31 kernel parameters, which is not enough for most solvers.",
             file=sys.stderr,
         )
@@ -64,7 +64,7 @@ def _initialize_genesis(backend: gs.constants.backend | str):
     ],
 )
 def test_to_torch(ti_type_spec, batch_shape, arg_shape):
-    import gstaichi as ti
+    import quadrants as ti
 
     for _ in range(10):
         TI_TYPE_MAP = {
@@ -194,7 +194,7 @@ def test_static(
 
 
 def gs_num_envs_child(args: list[str]):
-    import gstaichi as ti
+    import quadrants as ti
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
