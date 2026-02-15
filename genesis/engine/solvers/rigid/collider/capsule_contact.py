@@ -285,6 +285,6 @@ def func_sphere_capsule_contact(
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces
-        contact_pos = sphere_center - (sphere_radius - gs.ti_float(0.5) * penetration) * normal_unit
+        contact_pos = sphere_center - (sphere_radius - 0.5 * penetration) * normal_unit
 
     return is_col, normal_unit * normal_dir, contact_pos, penetration
