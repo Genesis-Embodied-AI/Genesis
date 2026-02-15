@@ -1,5 +1,5 @@
-from typing import Optional
 import math
+from typing import Optional
 
 import numpy as np
 
@@ -478,7 +478,7 @@ class Plastic(Surface):
     roughness : float | None, optional
         Roughness of the surface. Shortcut for `roughness_texture` with a single value.
     metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
+        Metalness of the surface. Shortcut for `metallic_texture` with a single value.
     emissive : tuple | None, optional
         Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
