@@ -7,11 +7,11 @@ import genesis as gs
 
 @ti.func
 def func_closest_points_on_segments(
-    seg_a_p1: gu.vec3,
-    seg_a_p2: gu.vec3,
-    seg_b_p1: gu.vec3,
-    seg_b_p2: gu.vec3,
-    EPS: gs.ti_float,
+    seg_a_p1,
+    seg_a_p2,
+    seg_b_p1,
+    seg_b_p2,
+    EPS,
 ):
     """
     Compute closest points on two line segments using analytical solution.
