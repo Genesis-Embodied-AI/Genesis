@@ -4,6 +4,27 @@ Unit test comparing analytical capsule-capsule contact detection with GJK.
 This test creates a modified version of narrowphase.py in a temporary file that
 forces capsule-capsule and sphere-capsule collisions to use GJK instead of
 analytical methods, allowing direct comparison between the two approaches.
+
+# errno
+
+We abuse errno in this test, because it is considerably easier, and needs much less code, than
+attempting to add a new tensor into one of the existing structures, and have that work for both
+ndarray and field, via monkey-patching.
+
+errno is NOT designed for how we use it. Nevertheless with a couple of reasonable-ish assumptions
+we can work with it.
+
+Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including
+test code) will ever set errno to any value except 0.
+Assumption 2: when taking a step, nothing in Genesis production code will set errno to any value at all -
+including 0 - when running normally.
+
+Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them,
+our tests will almost certainly fail.
+
+Note that as part of our use of errno, we take full responsibilty ourselves for resetting it to 0 before each
+test scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example
+by setting errno to 0 in set_qpos.
 """
 
 import copy
@@ -259,14 +280,16 @@ class AnalyticalVsGJKSceneCreator:
         self.entities_gjk[entity_idx].zero_all_dofs_velocity()
 
     def step_analytical(self):
-        """Clear errno, step, then verify analytical path was used (bit 16 unset)."""
+        # see section '# errno' above for discussion on our abusing errno, and the assumptions
+        # which we make
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
         assert (errno_val & (ERRNO_CALLED_GJK)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
 
     def step_gjk(self):
-        """Clear errno, step, then verify GJK path was used (bit 16 set)."""
+        # see section '# errno' above for discussion on our abusing errno, and the assumptions
+        # which we make
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
