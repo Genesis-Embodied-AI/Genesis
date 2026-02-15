@@ -31,8 +31,8 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
         worldbody,
         "body",
         name=name,
-        pos=f"{pos[0]} {pos[1]} {pos[2]}",
-        euler=f"{euler[0]} {euler[1]} {euler[2]}",
+        pos=" ".join(map(str, pos)),
+        euler=" ".join(map(str, euler)),
     )
     ET.SubElement(body, "geom", type="capsule", size=f"{radius} {half_length}")
     ET.SubElement(body, "joint", name=f"{name}_joint", type="free")
