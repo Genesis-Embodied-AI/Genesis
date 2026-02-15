@@ -23,7 +23,6 @@ def k_cross_vec(vec: vec3) -> vec3:
     return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
 
 
-
 @ti.func
 def func_closest_points_on_segments(
     seg_a_p1: ti.types.vector(3, gs.ti_float),
