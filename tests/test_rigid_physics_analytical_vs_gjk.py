@@ -420,7 +420,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool):
+def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: float):
     """
     Test that analytical capsule-capsule gives exact results for simple cases.
     """
@@ -447,15 +447,15 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool):
     penetration = contacts["penetration"][0]
     expected_pen = 0.05
 
-    assert abs(penetration - expected_pen) < 1e-5, (
+    assert abs(penetration - expected_pen) < tol, (
         f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
     )
 
     normal = np.array(contacts["normal"][0])
 
     # Check normal is along X axis
-    assert abs(abs(normal[0]) - 1.0) < 1e-5, f"Normal should be along X axis, got {normal}"
-    assert abs(normal[1]) < 1e-5 and abs(normal[2]) < 1e-5, f"Normal should be along X axis, got {normal}"
+    assert abs(abs(normal[0]) - 1.0) < tol, f"Normal should be along X axis, got {normal}"
+    assert abs(normal[1]) < tol and abs(normal[2]) < tol, f"Normal should be along X axis, got {normal}"
 
 
 def create_sphere_mjcf(name, pos, radius):
