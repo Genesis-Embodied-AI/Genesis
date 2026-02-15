@@ -37,13 +37,6 @@ def parse_prim_geoms(
     if not prim.IsActive():
         return
 
-    # Check if this prim is a link (rigid body) that belongs to a different entity
-    # If so, stop recursing to avoid parsing geometries from other entities
-    if prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI):
-        if str(prim.GetPath()) not in link_path_to_idx:
-            # This is a link from a different entity, stop recursing
-            return
-
     if str(prim.GetPath()) in link_path_to_idx:
         link_prim = prim
 

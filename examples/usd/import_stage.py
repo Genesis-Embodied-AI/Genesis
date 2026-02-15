@@ -88,7 +88,7 @@ def main():
             pos=(0, 0, 0.9),
             euler=(0, 0, 180),
         ),
-        vis_mode="collision",
+        # vis_mode="collision",
         # visualize_contact=True,
     )
 
