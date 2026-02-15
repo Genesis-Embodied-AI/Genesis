@@ -153,6 +153,9 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = content.replace("from . import ", "from genesis.engine.solvers.rigid.collider import ")
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
 
+    # disable fastcache
+    content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
+
     lines = content.split("\n")
 
     # Disable capsule-capsule analytical path
