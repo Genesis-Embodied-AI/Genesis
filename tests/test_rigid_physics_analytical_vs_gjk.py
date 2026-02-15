@@ -272,6 +272,7 @@ class AnalyticalVsGJKSceneCreator:
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.required
 def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
@@ -387,6 +388,7 @@ Radius: {radius}, Half-length: {half_length}
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.required
 def test_capsule_analytical_accuracy(tmp_path: Path):
     """
     Test that analytical capsule-capsule gives exact results for simple cases.
@@ -452,6 +454,7 @@ def create_sphere_mjcf(name, pos, radius):
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.required
 def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
