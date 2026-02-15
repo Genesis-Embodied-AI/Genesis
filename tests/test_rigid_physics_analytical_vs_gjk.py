@@ -153,8 +153,8 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = content.replace("from . import ", "from genesis.engine.solvers.rigid.collider import ")
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
 
-    # disable fastcache
-    content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
+    # # disable fastcache
+    # content = content.replace("@ti.kernel(fastcache=gs.use_fastcache)", "@ti.kernel()")
 
     lines = content.split("\n")
 
@@ -227,8 +227,12 @@ class AnalyticalVsGJKSceneCreator:
         spec.loader.exec_module(narrowphase_modified)
         from genesis.engine.solvers.rigid.collider import narrowphase
 
+        # Monkey-patch the @ti.kernel (not the @ti.func) so that fastcache sees a different
+        # filepath in the cache key and forces recompilation with the modified code.
         self.monkeypatch.setattr(
-            narrowphase, "func_convex_convex_contact", narrowphase_modified.func_convex_convex_contact
+            narrowphase,
+            "func_narrow_phase_convex_vs_convex",
+            narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )
 
         # Scene 2: Force GJK for sphere-capsule (using modified narrowphase)
