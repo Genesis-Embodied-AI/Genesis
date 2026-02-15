@@ -2,6 +2,7 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
+from . import utils
 import genesis.utils.array_class as array_class
 
 
@@ -57,7 +58,7 @@ def func_capsule_capsule_contact(
     Q1 = pos_b - halflength_b * axis_b_unit
     Q2 = pos_b + halflength_b * axis_b_unit
 
-    Pa, Pb = gu.func_closest_points_on_segments(P1, P2, Q1, Q2, EPS)
+    Pa, Pb = utils.func_closest_points_on_segments(P1, P2, Q1, Q2, EPS)
 
     # from B to A
     diff = Pa - Pb
