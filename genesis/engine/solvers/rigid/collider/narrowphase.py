@@ -914,30 +914,30 @@ def func_convex_convex_contact(
                         )
                         + contact_pos_0
                     )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
+                    contact_pos = 0.5 * (contact_point_a + contact_point_b)                    
 
-                # First-order correction of the normal direction.
-                # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                # the minimal rotation that makes the corrected twisted normal as closed as possible to the
-                # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
-                # Rodrigues' rotation formula.
-                twist_rotvec = ti.math.clamp(
-                    normal.cross(normal_0),
-                    -collider_info.mc_perturbation[None],
-                    collider_info.mc_perturbation[None],
-                )
-                normal = normal + twist_rotvec.cross(normal)
+                    # First-order correction of the normal direction.
+                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
+                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
+                    # the minimal rotation that makes the corrected twisted normal as closed as possible to the
+                    # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
+                    # Rodrigues' rotation formula.
+                    twist_rotvec = ti.math.clamp(
+                        normal.cross(normal_0),
+                        -collider_info.mc_perturbation[None],
+                        collider_info.mc_perturbation[None],
+                    )
+                    normal = normal + twist_rotvec.cross(normal)
 
-                # Make sure that the penetration is still positive before adding contact point.
-                # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                # contact points and thefore more continuous contact forces, without changing the mean-field
-                # dynamics since zero-penetration contact points should not induce any force.
-                penetration = normal.dot(contact_point_b - contact_point_a)
-                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
-                    # Only change penetration to the initial one, because the normal vector could change abruptly
-                    # under MuJoCo's GJK-EPA.
-                    penetration = penetration_0
+                    # Make sure that the penetration is still positive before adding contact point.
+                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
+                    # contact points and thefore more continuous contact forces, without changing the mean-field
+                    # dynamics since zero-penetration contact points should not induce any force.
+                    penetration = normal.dot(contact_point_b - contact_point_a)
+                    if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                        # Only change penetration to the initial one, because the normal vector could change abruptly
+                        # under MuJoCo's GJK-EPA.
+                        penetration = penetration_0
 
                 # Discard contact point is repeated
                 repeated = False
