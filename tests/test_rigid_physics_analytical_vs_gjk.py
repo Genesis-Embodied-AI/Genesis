@@ -312,7 +312,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             scene_creator.step_analytical()
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-            has_collision = contacts is not None and len(contacts["geom_a"]) > 0
+            has_collision = len(contacts["geom_a"]) > 0
             assert has_collision == should_collide, (
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
             )
@@ -438,14 +438,11 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool):
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
 
     scene.build()
-
     cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)], dtype=gs.np_float))
-
     scene.step()
 
     contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-
-    assert contacts is not None and len(contacts["geom_a"]) > 0
+    assert len(contacts["geom_a"]) > 0
 
     penetration = contacts["penetration"][0]
     expected_pen = 0.05
@@ -528,7 +525,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             scene_creator.step_analytical()
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-            has_collision = contacts is not None and len(contacts["geom_a"]) > 0
+            has_collision = len(contacts["geom_a"]) > 0
             assert has_collision == should_collide, (
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
             )
@@ -561,8 +558,8 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
 
-            has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
-            has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
+            has_collision_analytical = len(contacts_analytical["geom_a"]) > 0
+            has_collision_gjk = len(contacts_gjk["geom_a"]) > 0
 
             assert has_collision_analytical == has_collision_gjk, (
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
