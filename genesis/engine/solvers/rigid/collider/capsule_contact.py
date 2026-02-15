@@ -214,6 +214,8 @@ def func_sphere_capsule_contact(
     ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multicontact).
     gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multicontact).
     """
+    EPS = rigid_global_info.EPS[None]
+
     # Ensure sphere is always i_ga and capsule is i_gb
     normal_dir = 1
     sphere_pos = ga_pos
@@ -225,8 +227,6 @@ def func_sphere_capsule_contact(
         capsule_pos = ga_pos
         capsule_q = ga_quat
         normal_dir = -1
-
-    EPS = rigid_global_info.EPS[None]
 
     sphere_center = sphere_pos
     sphere_radius = geoms_info.data[i_ga][0]
