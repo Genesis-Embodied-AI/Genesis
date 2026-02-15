@@ -218,20 +218,18 @@ def func_sphere_capsule_contact(
 
     # Ensure sphere is always i_ga and capsule is i_gb
     normal_dir = 1
-    sphere_pos = ga_pos
-    capsule_pos = gb_pos
+    sphere_center = ga_pos
+    capsule_center = gb_pos
     capsule_q = gb_quat
     if geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
         i_ga, i_gb = i_gb, i_ga
-        sphere_pos = gb_pos
-        capsule_pos = ga_pos
+        sphere_center = gb_pos
+        capsule_center = ga_pos
         capsule_q = ga_quat
         normal_dir = -1
 
-    sphere_center = sphere_pos
     sphere_radius = geoms_info.data[i_ga][0]
 
-    capsule_center = capsule_pos
     capsule_quat = capsule_q
     capsule_radius = geoms_info.data[i_gb][0]
     capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
