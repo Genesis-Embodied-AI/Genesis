@@ -119,8 +119,7 @@ def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
                 if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
                     call_line_idx = i
                     break
-
-    if call_line_idx is None:
+    else:
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
     # Get indentation from the call line
