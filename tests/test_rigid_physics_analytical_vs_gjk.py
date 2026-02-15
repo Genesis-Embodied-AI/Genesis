@@ -25,6 +25,10 @@ our tests will almost certainly fail.
 Note that as part of our use of errno, we take full responsibilty ourselves for resetting it to 0 before each
 test scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example
 by setting errno to 0 in set_qpos.
+
+Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity,
+we make resetting errno explicit in this test, to decouple these tests from the future evolution of how errno
+works.
 """
 
 import copy
@@ -280,16 +284,14 @@ class AnalyticalVsGJKSceneCreator:
         self.entities_gjk[entity_idx].zero_all_dofs_velocity()
 
     def step_analytical(self):
-        # see section '# errno' above for discussion on our abusing errno, and the assumptions
-        # which we make
+        # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
         assert (errno_val & (ERRNO_CALLED_GJK)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
 
     def step_gjk(self):
-        # see section '# errno' above for discussion on our abusing errno, and the assumptions
-        # which we make
+        # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
