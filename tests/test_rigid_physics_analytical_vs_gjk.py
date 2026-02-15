@@ -168,7 +168,9 @@ def create_modified_narrowphase_file(tmp_path: Path):
     lines = insert_errno_before_call(
         lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
     )
-    lines = insert_errno_before_call(lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection")
+    lines = insert_errno_before_call(
+        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
+    )
 
     content = "\n".join(lines)
 
