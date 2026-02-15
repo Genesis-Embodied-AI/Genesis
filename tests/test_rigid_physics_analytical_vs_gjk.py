@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from .utils import assert_allclose
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidGeom
@@ -451,11 +452,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
         f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
     )
 
-    normal = np.array(contacts["normal"][0])
-
-    # Check normal is along X axis
-    assert abs(abs(normal[0]) - 1.0) < tol, f"Normal should be along X axis, got {normal}"
-    assert abs(normal[1]) < tol and abs(normal[2]) < tol, f"Normal should be along X axis, got {normal}"
+    assert_allclose(contacts["normal"][0], (1.0, 0.0, 0.0), tol=tol)
 
 
 def create_sphere_mjcf(name, pos, radius):
