@@ -890,9 +890,8 @@ def func_convex_convex_contact(
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col:
-                # For perturbed iterations (i_detection > 0), correct contact position and normal
-                # This applies to all collision methods when multi-contact is enabled,
-                # except mujoco compatible
+                # For perturbed iterations (i_detection > 0), correct contact position and normal. This applies to all
+                # collision methods when multi-contact is enabled, except mujoco compatible.
 
                 # 1. Project the contact point on both geometries
                 # 2. Revert the effect of small rotation
