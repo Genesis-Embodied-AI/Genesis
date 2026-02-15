@@ -1,49 +1,49 @@
-import gstaichi as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 
-vec3 = ti.types.vector(3, gs.ti_float)
+vec3 = qd.types.vector(3, gs.ti_float)
 
 
-@ti.func
+@qd.func
 def i_cross_vec(vec: vec3) -> vec3:
-    return ti.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
+    return qd.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
 
 
-@ti.func
+@qd.func
 def j_cross_vec(vec: vec3) -> vec3:
-    return ti.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
+    return qd.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
 
 
-@ti.func
+@qd.func
 def k_cross_vec(vec: vec3) -> vec3:
-    return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
+    return qd.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
 
 
-@ti.func
+@qd.func
 def transform_vec_by_normalized_quat_fast(
     v: vec3,
-    quat: ti.types.vector(4, gs.ti_float),
-) -> ti.types.vector[3, gs.ti_float]:
+    quat: qd.types.vector(4, gs.ti_float),
+) -> vec3:
     """
     Assumptions:
     - quat must be normalized
     """
     q_w, q_x, q_y, q_z = quat
-    u = ti.Vector([q_x, q_y, q_z])
+    u = qd.Vector([q_x, q_y, q_z])
     t = 2.0 * u.cross(v)
     return v + q_w * t + u.cross(t)
 
 
-@ti.func
+@qd.func
 def func_closest_points_on_segments(
-    seg_a_p1: ti.types.vector(3, gs.ti_float),
-    seg_a_p2: ti.types.vector(3, gs.ti_float),
-    seg_b_p1: ti.types.vector(3, gs.ti_float),
-    seg_b_p2: ti.types.vector(3, gs.ti_float),
+    seg_a_p1: vec3,
+    seg_a_p2: vec3,
+    seg_b_p1: vec3,
+    seg_b_p2: vec3,
     EPS: gs.ti_float,
 ):
     """
@@ -72,7 +72,7 @@ def func_closest_points_on_segments(
         # Segments are parallel or one/both are degenerate
         s = 0.0
         if b_squared_len > EPS:
-            t = ti.math.clamp(e / b_squared_len, 0.0, 1.0)
+            t = qd.math.clamp(e / b_squared_len, 0.0, 1.0)
         else:
             t = 0.0
     else:
@@ -80,13 +80,13 @@ def func_closest_points_on_segments(
         s = (dot_product_dir * e - b_squared_len * d) / denom
         t = (a_squared_len * e - dot_product_dir * d) / denom
 
-        s = ti.math.clamp(s, 0.0, 1.0)
+        s = qd.math.clamp(s, 0.0, 1.0)
 
         # Recompute t for clamped s
-        t = ti.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
+        t = qd.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Recompute s for clamped t (ensures we're on segment boundaries)
-        s_new = ti.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
+        s_new = qd.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Use refined s if it improves the solution
         if a_squared_len > EPS:
@@ -98,7 +98,7 @@ def func_closest_points_on_segments(
     return seg_a_closest, seg_b_closest
 
 
-@ti.func
+@qd.func
 def func_capsule_capsule_contact(
     i_ga,
     i_gb,
@@ -138,7 +138,7 @@ def func_capsule_capsule_contact(
     halflength_b = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 
     # Capsules are aligned along local Z-axis by convention
-    local_z_unit = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
     # Get segment axes in world space
     axis_a_unit = transform_vec_by_normalized_quat_fast(local_z_unit, quat_a)
@@ -159,12 +159,12 @@ def func_capsule_capsule_contact(
     combined_radius_sq = combined_radius * combined_radius
 
     is_col = False
-    normal_unit = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
-    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
+    contact_pos = qd.Vector.zero(gs.ti_float, 3)
     penetration = gs.ti_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
-        dist = ti.sqrt(dist_sq)
+        dist = qd.sqrt(dist_sq)
 
         # Compute contact normal (from B to A, pointing into geom A)
         if dist > EPS:
@@ -178,7 +178,7 @@ def func_capsule_capsule_contact(
                 normal_unit = normal_dir / normal_dir_len
             else:
                 # Axes are parallel, use any perpendicular
-                if ti.abs(axis_a_unit[0]) < 0.9:
+                if qd.abs(axis_a_unit[0]) < 0.9:
                     normal_unit = i_cross_vec(axis_a_unit)
                 else:
                     normal_unit = j_cross_vec(axis_a_unit)
@@ -190,7 +190,7 @@ def func_capsule_capsule_contact(
     return is_col, normal_unit, contact_pos, penetration
 
 
-@ti.func
+@qd.func
 def func_sphere_capsule_contact(
     i_ga,
     i_gb,
@@ -237,7 +237,7 @@ def func_sphere_capsule_contact(
     capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 
     # Capsule is aligned along local Z-axis
-    local_z_unit = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
     capsule_axis = transform_vec_by_normalized_quat_fast(local_z_unit, capsule_quat)
 
     # Compute capsule segment endpoints
@@ -254,7 +254,7 @@ def func_sphere_capsule_contact(
     t = gs.ti_float(0.5)
     if segment_length_sq > EPS:
         t = (sphere_center - P1).dot(segment_vec) / segment_length_sq
-        t = ti.math.clamp(t, 0.0, 1.0)
+        t = qd.math.clamp(t, 0.0, 1.0)
 
     closest_point = P1 + t * segment_vec
 
@@ -265,12 +265,12 @@ def func_sphere_capsule_contact(
     combined_radius_sq = combined_radius * combined_radius
 
     is_col = False
-    normal_unit = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
-    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
+    contact_pos = qd.Vector.zero(gs.ti_float, 3)
     penetration = gs.ti_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
-        dist = ti.sqrt(dist_sq)
+        dist = qd.sqrt(dist_sq)
 
         # Compute contact normal (from capsule to sphere, i.e., B to A)
         if dist > EPS:
@@ -278,7 +278,7 @@ def func_sphere_capsule_contact(
         else:
             # Sphere center is exactly on capsule axis
             # Use any perpendicular direction to the capsule axis
-            if ti.abs(capsule_axis[0]) < 0.9:
+            if qd.abs(capsule_axis[0]) < 0.9:
                 normal_unit = i_cross_vec(capsule_axis)
             else:
                 normal_unit = j_cross_vec(capsule_axis)
