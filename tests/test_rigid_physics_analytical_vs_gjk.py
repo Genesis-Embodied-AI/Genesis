@@ -123,11 +123,10 @@ def insert_errno_before_call(lines, function_call_pattern, errno_bit, comment):
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
     # Get indentation from the call line
-    indent = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
-    indent_str = lines[call_line_idx][:indent]
+    indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
 
     # Insert errno marker on the line before the call
-    errno_line = f"{indent_str}errno[i_b] |= 1 << {errno_bit}  # {comment}"
+    errno_line = f"{' ' * indent_size}errno[i_b] |= 1 << {errno_bit}  # {comment}"
     lines.insert(call_line_idx, errno_line)
 
     return lines
