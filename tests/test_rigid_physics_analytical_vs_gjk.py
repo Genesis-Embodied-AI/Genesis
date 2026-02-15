@@ -258,7 +258,7 @@ class AnalyticalVsGJKSceneCreator:
 
     def update_pos_quat_gjk(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
-        self.entities_gjk[entity_idx].set_qpos(np.array([*pos, *quat], dtype=gs.np_float))
+        self.entities_gjk[entity_idx].set_qpos((*pos, *quat))
         zero_vel = np.zeros(6, dtype=gs.np_float)
         self.entities_gjk[entity_idx].set_dofs_velocity(zero_vel)
 
