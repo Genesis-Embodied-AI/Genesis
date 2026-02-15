@@ -520,7 +520,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
         ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False),
         ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False),
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False),
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", False),
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True),
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
     ]
 
