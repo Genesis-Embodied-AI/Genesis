@@ -375,16 +375,15 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
                 else:
                     assert pos_diff < 0.05
         except Exception as e:
-            print(f"\n{'=' * 80}")
-            print(f"FAILED TEST SCENARIO: {description}")
-            print(f"{'=' * 80}")
-            print(f"Capsule 0: pos={pos0}, euler={euler0}")
-            print(f"Capsule 1: pos={pos1}, euler={euler1}")
-            print(f"Expected collision: {should_collide}")
-            print(f"Backend: {backend}")
-            print(f"Radius: {radius}, Half-length: {half_length}")
-            print(f"{'=' * 80}")
-            raise
+            failed_scenario_msg = f"""
+FAILED TEST SCENARIO: {description}
+Capsule 0: pos={pos0}, euler={euler0}
+Capsule 1: pos={pos1}, euler={euler1}
+Expected collision: {should_collide}
+Backend: {backend}
+Radius: {radius}, Half-length: {half_length}
+"""
+            raise AssertionError(failed_scenario_msg) from e
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
@@ -529,14 +528,13 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
                 pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
                 assert pos_diff < 0.05, f"Position mismatch! Diff: {pos_diff:.6f}"
         except Exception as e:
-            print(f"\n{'=' * 80}")
-            print(f"FAILED TEST SCENARIO: {description}")
-            print(f"{'=' * 80}")
-            print(f"Sphere: pos={sphere_pos}")
-            print(f"Capsule: pos={capsule_pos}, euler={capsule_euler}")
-            print(f"Expected collision: {should_collide}")
-            print(f"Backend: {backend}")
-            print(f"Sphere radius: {sphere_radius}")
-            print(f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}")
-            print(f"{'=' * 80}")
-            raise
+            failed_scenario_msg = f"""
+FAILED TEST SCENARIO: {description}
+Sphere: pos={sphere_pos}
+Capsule: pos={capsule_pos}, euler={capsule_euler}
+Expected collision: {should_collide}
+Backend: {backend}
+Sphere radius: {sphere_radius}
+Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}
+"""
+            raise AssertionError(failed_scenario_msg) from e
