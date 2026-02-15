@@ -321,7 +321,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
-        except Exception as e:
+        except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (analytical phase): {description}\n"
                 f"Capsule 0: pos={pos0}, euler={euler0}\n"
@@ -410,7 +410,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                         assert pos_diff < POS_TOL
                 else:
                     assert pos_diff < POS_TOL
-        except Exception as e:
+        except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
                 f"Capsule 0: pos={pos0}, euler={euler0}\n"
@@ -536,7 +536,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
-        except Exception as e:
+        except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (analytical phase): {description}\n"
                 f"Sphere: pos={sphere_pos}\n"
@@ -592,7 +592,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 assert normal_agreement > normal_tol, f"Normal mismatch! agreement: {normal_agreement:.4f}"
 
                 assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
-        except Exception as e:
+        except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
                 f"Sphere: pos={sphere_pos}\n"
