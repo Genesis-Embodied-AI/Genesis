@@ -278,8 +278,8 @@ class AnalyticalVsGJKSceneCreator:
         assert (errno_val & (ERRNO_CALLED_GJK)) != 0, f"GJK scene should use GJK (errno={errno_val})"
 
 
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical capsule-capsule collision with GJK by monkey-patching narrowphase.
@@ -426,8 +426,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
             ) from e
 
 
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_capsule_analytical_accuracy(tmp_path: Path):
     """
     Test that analytical capsule-capsule gives exact results for simple cases.
@@ -492,8 +492,8 @@ def create_sphere_mjcf(name, pos, radius):
     return mjcf
 
 
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path):
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
