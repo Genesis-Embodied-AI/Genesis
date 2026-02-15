@@ -833,3 +833,70 @@ def test_usd_bake(usd_file, tmp_path):
         else:
             assert is_any_baked
             break
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("scale", [1.0, 2.0])
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
+    """
+    Test that USD MassAPI with invalid default values produces equivalent results to MJCF.
+
+    USD Physics MassAPI defines some attributes with invalid default values:
+    - centerOfMass: default (-inf, -inf, -inf) - invalid, should be recomputed
+    - principalAxes: default (0, 0, 0, 0) - invalid quaternion, should be recomputed
+    - diagonalInertia: default (0, 0, 0) - valid but means ignored, should be recomputed
+    - mass: default 0 - valid but means ignored, should be recomputed
+
+    This test creates equivalent MJCF and USD scenes where mass properties are computed
+    from geometry (MJCF has no inertial element, USD has MassAPI with invalid defaults).
+    Both should produce equivalent results.
+    """
+    mjcf = ET.Element("mujoco", model="massapi_test")
+    default = ET.SubElement(mjcf, "default")
+    ET.SubElement(default, "joint", armature="0.0")
+
+    worldbody = ET.SubElement(mjcf, "worldbody")
+
+    floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
+    ET.SubElement(floor, "geom", type="plane", pos="0. 0. 0.", size="40. 40. 40.")
+
+    box = ET.SubElement(worldbody, "body", name="/worldbody/test_box", pos="0. 0. 0.3")
+    ET.SubElement(box, "geom", type="box", size="0.2 0.2 0.2", pos="0. 0. 0.")
+    ET.SubElement(box, "joint", name="/worldbody/test_box_joint", type="free")
+
+    xml_tree = ET.ElementTree(mjcf)
+    xml_file = str(asset_tmp_path / "massapi_test.xml")
+    xml_tree.write(xml_file, encoding="utf-8", xml_declaration=True)
+
+    usd_file = str(asset_tmp_path / "massapi_test.usda")
+
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/worldbody", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    floor = UsdGeom.Plane.Define(stage, "/worldbody/floor")
+    floor.GetAxisAttr().Set("Z")
+    floor.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.0))
+    floor.GetWidthAttr().Set(80.0)
+    floor.GetLengthAttr().Set(80.0)
+    UsdPhysics.CollisionAPI.Apply(floor.GetPrim())
+
+    box = UsdGeom.Cube.Define(stage, "/worldbody/test_box")
+    box.AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, 0.3))
+    box.GetSizeAttr().Set(0.4)  # 0.2 half-extent * 2
+
+    box_rigid = UsdPhysics.RigidBodyAPI.Apply(box.GetPrim())
+    box_rigid.GetKinematicEnabledAttr().Set(False)
+
+    mass_api = UsdPhysics.MassAPI.Apply(box.GetPrim())
+
+    stage.Save()
+
+    mjcf_scene = build_mjcf_scene(xml_file, scale=scale)
+    usd_scene = build_usd_scene(usd_file, scale=scale)
+
+    compare_scene(mjcf_scene, usd_scene, tol=tol)

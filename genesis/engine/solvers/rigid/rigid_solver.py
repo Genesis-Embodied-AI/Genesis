@@ -2103,7 +2103,8 @@ class RigidSolver(Solver):
             ):
                 qs_data = data[(slice(None), *qs_mask)]
                 if qpos.ndim == 2:
-                    qs_data.masked_scatter_(envs_idx[:, None], qpos)
+                    # Note that it is necessary to create a new temporary view because it will be modified in-place
+                    qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
@@ -2322,7 +2323,8 @@ class RigidSolver(Solver):
                         dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
                     if velocity.ndim == 2:
-                        dofs_vel.masked_scatter_(envs_idx[:, None], velocity)
+                        # Note that it is necessary to create a new temporary view because it will be modified in-place
+                        dofs_vel.masked_scatter_(envs_idx[:, None], velocity.view_as(velocity))
                     else:
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)
                         torch.where(envs_idx[:, None], velocity, dofs_vel, out=dofs_vel)
@@ -2541,7 +2543,6 @@ class RigidSolver(Solver):
         envs_idx=None,
         *,
         ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        to_torch: bool = True,
     ):
         if not gs.use_zerocopy:
             _, links_idx, envs_idx = self._sanitize_io_variables(
@@ -2562,7 +2563,7 @@ class RigidSolver(Solver):
 
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_quat(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_quat(self, links_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.links_state.quat, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -2592,7 +2593,7 @@ class RigidSolver(Solver):
         kernel_get_links_vel(tensor, links_idx, envs_idx, ref, self.links_state, self._static_rigid_sim_config)
         return _tensor
 
-    def get_links_ang(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_ang(self, links_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.links_state.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -2610,11 +2611,11 @@ class RigidSolver(Solver):
         )
         return _tensor
 
-    def get_links_acc_ang(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_acc_ang(self, links_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.links_state.cacc_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_root_COM(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_root_COM(self, links_idx=None, envs_idx=None):
         """
         Returns the center of mass (COM) of the entire kinematic tree to which the specified links belong.
 
@@ -2624,11 +2625,11 @@ class RigidSolver(Solver):
         tensor = ti_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_mass_shift(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_mass_shift(self, links_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.links_state.mass_shift, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
-    def get_links_COM_shift(self, links_idx=None, envs_idx=None, *, to_torch=True):
+    def get_links_COM_shift(self, links_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.links_state.i_pos_shift, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
@@ -2650,6 +2651,10 @@ class RigidSolver(Solver):
 
     def get_geoms_pos(self, geoms_idx=None, envs_idx=None):
         tensor = ti_to_torch(self.geoms_state.pos, envs_idx, geoms_idx, transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_geoms_quat(self, geoms_idx=None, envs_idx=None):
+        tensor = ti_to_torch(self.geoms_state.quat, envs_idx, geoms_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_qpos(self, qs_idx=None, envs_idx=None):

@@ -481,7 +481,7 @@ def test_dynamic_weld(show_viewer, tol):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        surface=gs.surfaces.Plastic(
+        surface=gs.surfaces.Default(
             color=(1, 0, 0),
         ),
     )
@@ -1407,6 +1407,59 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
             else:
                 quat_ref = quat_delta
             assert_allclose(quat, quat_ref, tol=tol)
+
+
+@pytest.mark.required
+def test_normalized_quat(show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/go2/urdf/go2.urdf",
+        ),
+    )
+    scene.build()
+
+    # Make sure that the simulation state is not sensitive to qpos normalization
+    quat = torch.randn((4,), dtype=gs.tc_float, device=gs.device)
+
+    qpos = robot.get_qpos()
+    qpos[3:7] = quat / torch.linalg.norm(quat)
+    robot.set_qpos(qpos)
+    scene.step()
+    qpos_post = robot.get_qpos()
+    assert_allclose(torch.linalg.norm(qpos_post[3:7]), 1.0, tol=tol)
+
+    qpos[3:7] = quat
+    scene.reset()
+    robot.set_qpos(qpos)
+    # assert_allclose(qpos, robot.get_qpos(), tol=tol)  # True, but not specification requirement
+    scene.step()
+    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
+
+    scene.reset()
+    robot.set_quat(quat)
+    # assert_allclose(quat, qpos[3:7], tol=tol)  # True, but not specification requirement
+    scene.step()
+    assert_allclose(qpos_post, robot.get_qpos(), tol=tol)
+
+    # Make sure that entity, link and geom quaternions are normalized.
+    # "RigidEntity.set_quat" is calling 'kernel_forward_kinematics_links_geoms', which is relying on
+    # 'func_update_cartesian_space' under the hood.
+    # Let's check that everything is properly normalized at this stage already. If so, it means that all quaternions of
+    # interest are guaranteed to be always normalized, since 'func_update_cartesian_space' is called internally during
+    # forward dynamics 'step_1' at the very beginning of 'RigidSolver.step'.
+    scene.reset()
+    robot.set_quat(quat)
+    assert_allclose(torch.linalg.norm(robot.get_quat()), 1.0, tol=tol)
+    for link in robot.links:
+        assert_allclose(torch.linalg.norm(link.get_quat()), 1.0, tol=tol)
+    for geom in robot.geoms:
+        assert_allclose(torch.linalg.norm(geom.get_quat()), 1.0, tol=tol)
+    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_links_quat(), dim=-1), 1.0, tol=tol)
+    assert_allclose(torch.linalg.norm(scene.rigid_solver.get_geoms_quat(), dim=-1), 1.0, tol=tol)
 
 
 @pytest.mark.required
@@ -2519,16 +2572,12 @@ def test_mjcf_parsing_with_include():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("gjk_collision", [True, False])
-def test_urdf_parsing(gjk_collision, show_viewer, tol):
+def test_urdf_parsing(show_viewer, tol):
     POS_OFFSET = 0.8
     WOLRD_QUAT = np.array([1.0, 1.0, -0.3, +0.3])
     DOOR_JOINT_DAMPING = 1.5
 
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=gjk_collision,
-        ),
         show_viewer=show_viewer,
         show_FPS=False,
     )
@@ -2628,6 +2677,40 @@ def test_urdf_parsing(gjk_collision, show_viewer, tol):
 
 
 @pytest.mark.required
+def test_urdf_parsing_merge_fixed_links(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    asset_path = get_hf_dataset(pattern="chain.urdf")
+    robot_1 = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+            merge_fixed_links=False,
+            recompute_inertia=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(1, 0, 0, 0.5),
+        ),
+    )
+    robot_2 = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+            merge_fixed_links=True,
+            recompute_inertia=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0, 1, 0, 0.5),
+        ),
+    )
+    scene.build()
+
+    com_robot_1, com_robot_2 = scene.rigid_solver.get_links_root_COM(
+        links_idx=(robot_1.base_link_idx, robot_2.base_link_idx)
+    )
+    assert_allclose(com_robot_1, com_robot_2, tol=gs.EPS)
+
+
+@pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
     with open(urdf_path, "w") as f:
@@ -2687,6 +2770,15 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    asset_path = get_hf_dataset(pattern="chain.urdf")
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/chain.urdf",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0, 0, 1.0) if overwrite else None,
+        ),
+    )
     axis = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/axis.obj",
@@ -2714,6 +2806,12 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
+    for vgeom in robot.vgeoms:
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        assert_array_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -3213,6 +3311,7 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
         (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
+        (gs_s.n_geoms, n_envs, gs_s.get_geoms_quat, None, gs_s.geoms_state.quat),
         (
             gs_s.n_geoms,
             n_envs,

@@ -159,7 +159,7 @@ def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [(0.5, 2.0, 8.0), (2.0, 2.0, 2.0)])
 @pytest.mark.parametrize("mesh_file", ["meshes/camera/camera.glb", "meshes/axis.obj"])
-def test_morph_scale(scale, mesh_file, show_viewer, tmp_path):
+def test_morph_scale(scale, mesh_file, tmp_path):
     urdf_path = tmp_path / "model.urdf"
     urdf_path.write_text(
         f"""<robot name="cannon">
@@ -172,7 +172,7 @@ def test_morph_scale(scale, mesh_file, show_viewer, tmp_path):
          """
     )
 
-    scene = gs.Scene(show_viewer=show_viewer)
+    scene = gs.Scene(show_viewer=False)
     obj_orig = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=mesh_file,

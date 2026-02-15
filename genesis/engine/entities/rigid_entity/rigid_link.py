@@ -110,9 +110,9 @@ class RigidLink(RBC):
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
         self._inertial_pos: "np.typing.ArrayLike | None" = inertial_pos
-        if inertial_quat is not None:
-            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
-        self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
+        if inertial_quat is None:
+            inertial_quat = (1.0, 0.0, 0.0, 0.0)
+        self._inertial_quat: "np.typing.ArrayLike" = np.asarray(inertial_quat, dtype=gs.np_float)
         if inertial_mass is not None:
             inertial_mass = float(inertial_mass)
         self._inertial_mass: float | None = inertial_mass
@@ -272,9 +272,13 @@ class RigidLink(RBC):
 
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
             if not self._is_fixed:
-                if not self._geoms and not self._vgeoms:
+                if (
+                    not self._geoms
+                    and not self._vgeoms
+                    and any(joint.type is not gs.JOINT_TYPE.FIXED for joint in self.joints)
+                ):
                     gs.logger.info(
-                        f"Link mass is not specified and no geoms found for link '{self.name}'. Mass is set to 'gs.EPS'."
+                        f"Link mass not specified and no geoms found for link '{self.name}'. Setting mass to 'gs.EPS'."
                     )
                 elif not self._geoms:
                     gs.logger.info(

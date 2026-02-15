@@ -726,7 +726,7 @@ class RigidEntity(Entity):
         for l_info, link_j_infos in zip(l_infos, links_j_infos):
             if not all(j_info["type"] == gs.JOINT_TYPE.FIXED for j_info in link_j_infos) and (
                 (l_info.get("inertial_mass") is None or l_info["inertial_mass"] <= 0.0)
-                or (l_info.get("inertial_i") is None or np.diag(l_info["inertial_i"]) <= 0.0).any()
+                or (l_info.get("inertial_i") is None or (np.diag(l_info["inertial_i"]) <= 0.0).any())
             ):
                 if l_info.get("inertial_mass") is not None or l_info.get("inertial_i") is not None:
                     gs.logger.debug(
