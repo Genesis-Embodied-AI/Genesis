@@ -27,8 +27,7 @@ test scenario. We do not assume - nor require - any existing Genesis code to han
 by setting errno to 0 in set_qpos.
 
 Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity,
-we make resetting errno explicit in this test, to decouple these tests from the future evolution of how errno
-works.
+we make resetting errno explicit in this test.
 """
 
 import copy
