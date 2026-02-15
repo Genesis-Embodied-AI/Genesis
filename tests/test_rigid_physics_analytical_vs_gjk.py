@@ -15,9 +15,9 @@ errno is NOT designed for how we use it. Nevertheless with a couple of reasonabl
 we can work with it.
 
 Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including
-test code) will ever set errno to any value except 0.
-Assumption 2: when taking a step, nothing in Genesis production code will set errno to any value at all -
-including 0 - when running normally.
+test code) will ever set bit 16 of errno to any value except 0.
+Assumption 2: when taking a step, nothing in Genesis production code will set bit 16 of errno to any value
+at all - including 0 - when running normally.
 
 Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them,
 our tests will almost certainly fail.
