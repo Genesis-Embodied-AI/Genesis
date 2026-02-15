@@ -892,7 +892,7 @@ def func_convex_convex_contact(
             elif multi_contact and is_col:
                 # For perturbed iterations (i_detection > 0), correct contact position and normal. This applies to all
                 # collision methods when multi-contact is enabled, except mujoco compatible.
-
+                #
                 # 1. Project the contact point on both geometries
                 # 2. Revert the effect of small rotation
                 # 3. Update contact point
