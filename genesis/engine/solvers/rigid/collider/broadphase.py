@@ -9,19 +9,10 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+
 from .utils import (
     func_is_geom_aabbs_overlap,
 )
-
-
-@qd.func
-def func_point_in_geom_aabb(
-    i_g,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    point: qd.types.vector(3),
-):
-    return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
 
 
 @qd.func
