@@ -889,7 +889,7 @@ def func_convex_convex_contact(
                 else:
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            elif multi_contact and is_col_0 > 0 and is_col > 0:
+            elif multi_contact and is_col:
                 # For perturbed iterations (i_detection > 0), correct contact position and normal
                 # This applies to ALL collision methods when multi-contact is enabled
 
