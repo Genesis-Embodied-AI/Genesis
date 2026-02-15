@@ -5,99 +5,6 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 
-vec3 = qd.types.vector(3, gs.ti_float)
-
-
-@qd.func
-def i_cross_vec(vec: vec3) -> vec3:
-    return qd.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
-
-
-@qd.func
-def j_cross_vec(vec: vec3) -> vec3:
-    return qd.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
-
-
-@qd.func
-def k_cross_vec(vec: vec3) -> vec3:
-    return qd.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
-
-
-@qd.func
-def transform_vec_by_normalized_quat_fast(
-    v: vec3,
-    quat: qd.types.vector(4, gs.ti_float),
-) -> vec3:
-    """
-    Assumptions:
-    - quat must be normalized
-    """
-    q_w, q_x, q_y, q_z = quat
-    u = qd.Vector([q_x, q_y, q_z])
-    t = 2.0 * u.cross(v)
-    return v + q_w * t + u.cross(t)
-
-
-@qd.func
-def func_closest_points_on_segments(
-    seg_a_p1: vec3,
-    seg_a_p2: vec3,
-    seg_b_p1: vec3,
-    seg_b_p2: vec3,
-    EPS: gs.ti_float,
-):
-    """
-    Compute closest points on two line segments using analytical solution.
-
-    References
-    ----------
-    Real-Time Collision Detection by Christer Ericson, Chapter 5.1.9
-    """
-    segment_a_dir = seg_a_p2 - seg_a_p1
-    segment_b_dir = seg_b_p2 - seg_b_p1
-    vec_between_segment_origins = seg_a_p1 - seg_b_p1
-
-    a_squared_len = segment_a_dir.dot(segment_a_dir)
-    dot_product_dir = segment_a_dir.dot(segment_b_dir)
-    b_squared_len = segment_b_dir.dot(segment_b_dir)
-    d = segment_a_dir.dot(vec_between_segment_origins)
-    e = segment_b_dir.dot(vec_between_segment_origins)
-
-    denom = a_squared_len * b_squared_len - dot_product_dir * dot_product_dir
-
-    s = gs.ti_float(0.0)
-    t = gs.ti_float(0.0)
-
-    if denom < EPS:
-        # Segments are parallel or one/both are degenerate
-        s = 0.0
-        if b_squared_len > EPS:
-            t = qd.math.clamp(e / b_squared_len, 0.0, 1.0)
-        else:
-            t = 0.0
-    else:
-        # General case: solve for optimal parameters
-        s = (dot_product_dir * e - b_squared_len * d) / denom
-        t = (a_squared_len * e - dot_product_dir * d) / denom
-
-        s = qd.math.clamp(s, 0.0, 1.0)
-
-        # Recompute t for clamped s
-        t = qd.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
-
-        # Recompute s for clamped t (ensures we're on segment boundaries)
-        s_new = qd.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
-
-        # Use refined s if it improves the solution
-        if a_squared_len > EPS:
-            s = s_new
-
-    seg_a_closest = seg_a_p1 + s * segment_a_dir
-    seg_b_closest = seg_b_p1 + t * segment_b_dir
-
-    return seg_a_closest, seg_b_closest
-
-
 @qd.func
 def func_capsule_capsule_contact(
     i_ga,
@@ -141,8 +48,8 @@ def func_capsule_capsule_contact(
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
     # Get segment axes in world space
-    axis_a_unit = transform_vec_by_normalized_quat_fast(local_z_unit, quat_a)
-    axis_b_unit = transform_vec_by_normalized_quat_fast(local_z_unit, quat_b)
+    axis_a_unit = gu.transform_vec_by_normalized_quat_fast(local_z_unit, quat_a)
+    axis_b_unit = gu.transform_vec_by_normalized_quat_fast(local_z_unit, quat_b)
 
     # Compute segment endpoints in world space
     P1 = pos_a - halflength_a * axis_a_unit
@@ -150,7 +57,7 @@ def func_capsule_capsule_contact(
     Q1 = pos_b - halflength_b * axis_b_unit
     Q2 = pos_b + halflength_b * axis_b_unit
 
-    Pa, Pb = func_closest_points_on_segments(P1, P2, Q1, Q2, EPS)
+    Pa, Pb = gu.func_closest_points_on_segments(P1, P2, Q1, Q2, EPS)
 
     # from B to A
     diff = Pa - Pb
@@ -179,9 +86,9 @@ def func_capsule_capsule_contact(
             else:
                 # Axes are parallel, use any perpendicular
                 if qd.abs(axis_a_unit[0]) < 0.9:
-                    normal_unit = i_cross_vec(axis_a_unit)
+                    normal_unit = gu.i_cross_vec(axis_a_unit)
                 else:
-                    normal_unit = j_cross_vec(axis_a_unit)
+                    normal_unit = gu.j_cross_vec(axis_a_unit)
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces
@@ -236,7 +143,7 @@ def func_sphere_capsule_contact(
 
     # Capsule is aligned along local Z-axis
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    capsule_axis = transform_vec_by_normalized_quat_fast(local_z_unit, capsule_quat)
+    capsule_axis = gu.transform_vec_by_normalized_quat_fast(local_z_unit, capsule_quat)
 
     # Compute capsule segment endpoints
     P1 = capsule_center - capsule_halflength * capsule_axis
@@ -277,9 +184,9 @@ def func_sphere_capsule_contact(
             # Sphere center is exactly on capsule axis
             # Use any perpendicular direction to the capsule axis
             if qd.abs(capsule_axis[0]) < 0.9:
-                normal_unit = i_cross_vec(capsule_axis)
+                normal_unit = gu.i_cross_vec(capsule_axis)
             else:
-                normal_unit = j_cross_vec(capsule_axis)
+                normal_unit = gu.j_cross_vec(capsule_axis)
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces
