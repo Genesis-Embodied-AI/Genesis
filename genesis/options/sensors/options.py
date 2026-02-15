@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
-import torch
 from pydantic import Field
 
 import genesis as gs

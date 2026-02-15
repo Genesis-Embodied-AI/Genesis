@@ -289,8 +289,6 @@ class KinematicContactProbe(
 ):
     """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
 
-    _update_on_read: bool = True
-
     def __init__(
         self,
         sensor_options: KinematicContactProbeOptions,

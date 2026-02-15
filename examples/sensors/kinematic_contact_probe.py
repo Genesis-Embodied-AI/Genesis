@@ -50,9 +50,9 @@ def _build_probe_grid(grid_n: int, platform_size: float, platform_height: float)
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive KinematicContactProbe Visualization")
-    parser.add_argument("-v", "--vis", action="store_true", default=False, help="Show visualization GUI")
+    parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
-    parser.add_argument("-t", "--seconds", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
@@ -94,14 +94,13 @@ def main():
         )
     )
 
-    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE], dtype=np.float32)
+    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.02], dtype=np.float32)
 
     pusher = scene.add_entity(
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
             pos=tuple(pusher_start),
-            fixed=True,
         ),
         surface=gs.surfaces.Default(
             color=(0.15, 0.55, 0.95, 1.0),
