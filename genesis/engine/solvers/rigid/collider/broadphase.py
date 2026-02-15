@@ -9,19 +9,10 @@ import gstaichi as ti
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+
 from .utils import (
     func_is_geom_aabbs_overlap,
 )
-
-
-@ti.func
-def func_point_in_geom_aabb(
-    i_g,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    point: ti.types.vector(3),
-):
-    return (point < geoms_state.aabb_max[i_g, i_b]).all() and (point > geoms_state.aabb_min[i_g, i_b]).all()
 
 
 @ti.func
@@ -36,6 +27,33 @@ def func_find_intersect_midpoint(
     intersect_lower = ti.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])
     intersect_upper = ti.min(geoms_state.aabb_max[i_ga, i_b], geoms_state.aabb_max[i_gb, i_b])
     return 0.5 * (intersect_lower + intersect_upper)
+
+
+@ti.func
+def func_check_weld_constraint(
+    link_idx_a: ti.i32,
+    link_idx_b: ti.i32,
+    i_b: ti.i32,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    equalities_info: array_class.EqualitiesInfo,
+):
+    """
+    Check if two links are connected by a dynamic weld constraint.
+
+    Returns True if NOT welded (collision valid), False if welded (collision filtered).
+    """
+    is_valid = True
+    for i_eq in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
+        if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
+            weld_link_a = equalities_info.eq_obj1id[i_eq, i_b]
+            weld_link_b = equalities_info.eq_obj2id[i_eq, i_b]
+            if (weld_link_a == link_idx_a and weld_link_b == link_idx_b) or (
+                weld_link_a == link_idx_b and weld_link_b == link_idx_a
+            ):
+                is_valid = False
+                break
+    return is_valid
 
 
 @ti.func
@@ -59,12 +77,7 @@ def func_check_collision_valid(
         i_lb = geoms_info.link_idx[i_gb]
 
         # Filter out collision pairs that are involved in dynamically registered weld equality constraints
-        for i_eq in range(rigid_global_info.n_equalities[None], constraint_state.ti_n_equalities[i_b]):
-            if equalities_info.eq_type[i_eq, i_b] == gs.EQUALITY_TYPE.WELD:
-                i_leqa = equalities_info.eq_obj1id[i_eq, i_b]
-                i_leqb = equalities_info.eq_obj2id[i_eq, i_b]
-                if (i_leqa == i_la and i_leqb == i_lb) or (i_leqa == i_lb and i_leqb == i_la):
-                    is_valid = False
+        is_valid = func_check_weld_constraint(i_la, i_lb, i_b, rigid_global_info, constraint_state, equalities_info)
 
         # hibernated <-> fixed links
         if ti.static(static_rigid_sim_config.use_hibernation):

@@ -181,6 +181,70 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
             gs.raise_exception(f"resolution must be a float or tuple of 3 floats, got: {self.resolution}")
 
 
+class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+    """
+    Kinematic contact probe for detecting contact without affecting physics simulation.
+
+    The returned "force" is non-physical estimate: F = stiffness * penetration * probe_normal.
+
+    Note
+    ----
+    If the probe is attached to a fixed entity, it will not detect contacts with other fixed entities.
+
+    Parameters
+    ----------
+    probe_local_pos : Sequence[tuple[float, float, float]]
+        Probe positions in link-local frame. One (x, y, z) tuple per probe.
+    probe_local_normal : Sequence[tuple[float, float, float]]
+        Probe sensing directions in link-local frame. Penetration is measured along this axis.
+    radius : Sequence[float] | float
+        Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
+    stiffness : float
+        User-defined coefficient for force estimation. Default: 1000.0.
+    """
+
+    probe_local_pos: Sequence[Tuple3FType] = [(0.0, 0.0, 0.0)]
+    probe_local_normal: Sequence[Tuple3FType] = [(0.0, 0.0, 1.0)]
+    radius: Sequence[float] | float = 0.005
+    stiffness: float = 1000.0
+
+    debug_sphere_color: tuple[float, float, float, float] = (1.0, 0.5, 0.0, 0.4)
+    debug_contact_color: tuple[float, float, float, float] = (1.0, 0.2, 0.0, 0.8)
+
+    def model_post_init(self, _):
+        if np.any(np.array(self.radius) < 0):
+            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
+        if self.stiffness < 0:
+            gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
+
+        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
+        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
+        norms = np.linalg.norm(probe_local_normal, axis=1)
+        bad_idx = np.where(norms < gs.EPS)[0]
+        if bad_idx.size > 0:
+            idx = int(bad_idx[0])
+            gs.raise_exception(f"probe_local_normal[{idx}] must be non-zero, got: {probe_local_normal[idx].tolist()}")
+
+        if len(probe_local_pos) != len(probe_local_normal):
+            gs.raise_exception(
+                "probe_local_pos and probe_local_normal must have the same length. "
+                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
+            )
+        if isinstance(self.radius, Sequence) and len(self.radius) != len(probe_local_pos):
+            gs.raise_exception(
+                "If radius is a sequence, it must have the same length as probe_local_pos. "
+                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
+            )
+
+    def _validate_probe_arrays(self, values: Sequence[Tuple3FType]) -> np.ndarray:
+        array = np.array(values, dtype=float)
+        if array.ndim != 2 or array.shape[1] != 3:
+            gs.raise_exception(f"Probe locals array must have shape (N, 3), got: {array.shape}")
+        if array.shape[0] == 0:
+            gs.raise_exception("Probe locals array must have at least one entry")
+        return array
+
+
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)

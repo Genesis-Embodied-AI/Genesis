@@ -11,26 +11,22 @@ from enum import IntEnum
 import gstaichi as ti
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
-from . import mpr
-from . import gjk
-from . import diff_gjk
 
-from .broadphase import func_point_in_geom_aabb
+from . import diff_gjk, gjk, mpr
+from .box_contact import (
+    func_box_box_contact,
+    func_plane_box_contact,
+)
 from .contact import (
     func_add_contact,
-    func_set_contact,
     func_add_diff_contact_input,
     func_compute_tolerance,
     func_contact_orthogonals,
     func_rotate_frame,
-)
-
-from .box_contact import (
-    func_plane_box_contact,
-    func_box_box_contact,
+    func_set_contact,
 )
 
 
@@ -45,6 +41,19 @@ class CCD_ALGORITHM_CODE(IntEnum):
     GJK = 2
     # MuJoCo GJK
     MJ_GJK = 3
+
+
+@ti.func
+def func_point_in_geom_aabb(
+    i_g: ti.i32,
+    i_b: ti.i32,
+    geoms_state: array_class.GeomsState,
+    point: ti.types.vector(3, gs.ti_float),
+    expansion: gs.ti_float = 0.0,
+):
+    aabb_min = geoms_state.aabb_min[i_g, i_b] - expansion
+    aabb_max = geoms_state.aabb_max[i_g, i_b] + expansion
+    return (point >= aabb_min).all() and (point <= aabb_max).all()
 
 
 @ti.func
