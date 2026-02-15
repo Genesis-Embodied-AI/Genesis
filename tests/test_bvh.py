@@ -42,7 +42,7 @@ def test_expand_bits():
     Test the expand_bits function for LBVH.
     A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
     """
-    import gstaichi as ti
+    import quadrants as ti
 
     @ti.kernel
     def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):
@@ -124,7 +124,7 @@ def test_build_tree(lbvh):
 @pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
-    import gstaichi as ti
+    import quadrants as ti
 
     @ti.kernel
     def query_kernel(lbvh: ti.template(), aabbs: ti.template()):

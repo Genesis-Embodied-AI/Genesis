@@ -14,7 +14,7 @@ These functions are used by the RigidSolver class to perform physics simulation
 of articulated rigid body systems.
 """
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.geom as gu

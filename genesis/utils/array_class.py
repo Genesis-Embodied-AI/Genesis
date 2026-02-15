@@ -3,7 +3,7 @@ import math
 from enum import IntEnum
 from functools import partial
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 

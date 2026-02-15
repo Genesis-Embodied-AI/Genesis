@@ -279,7 +279,7 @@ def test_mpm_particle_constraints(show_viewer):
 
 
 def test_sf_solver(show_viewer):
-    import gstaichi as ti
+    import quadrants as ti
 
     res = 384
     orbit_tau = 0.2

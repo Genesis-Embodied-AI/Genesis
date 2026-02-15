@@ -1,7 +1,7 @@
 import math
 from typing import TYPE_CHECKING, Literal
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 

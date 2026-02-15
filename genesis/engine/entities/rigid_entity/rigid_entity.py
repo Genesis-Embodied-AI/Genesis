@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 import trimesh

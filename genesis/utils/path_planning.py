@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import time
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
+import quadrants as ti
 import torch
 import torch.nn.functional as F
 

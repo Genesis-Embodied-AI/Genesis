@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Type
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 

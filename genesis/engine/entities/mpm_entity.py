@@ -1,6 +1,6 @@
 import functools
 
-import gstaichi as ti
+import quadrants as ti
 import torch
 
 import genesis as gs

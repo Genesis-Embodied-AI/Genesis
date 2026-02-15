@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Callable, Iterable, Literal
 
 import numpy as np
 import torch
-import gstaichi as ti
-from gstaichi.lang import impl
+import quadrants as ti
+from quadrants.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -104,7 +104,7 @@ class Scene(RBC):
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
-        # Delay simulator import to allow specifying gstaichi array type at init
+        # Delay simulator import to allow specifying quadrants array type at init
         from genesis.engine.simulator import Simulator
 
         # Handling of default arguments
@@ -273,7 +273,7 @@ class Scene(RBC):
         else:
             if sim_options.requires_grad and gs.use_ndarray:
                 gs.logger.info(
-                    "Use GsTaichi dynamic array mode while enabling gradient computation is not recommended. Please "
+                    "Use Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
                 )
         if rigid_options.box_box_detection is None:

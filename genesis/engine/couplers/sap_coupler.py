@@ -3,7 +3,7 @@ import math
 
 import igl
 import numpy as np
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 import genesis.utils.element as eu

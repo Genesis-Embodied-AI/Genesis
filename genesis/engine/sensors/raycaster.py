@@ -2,7 +2,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import gstaichi as ti
+import quadrants as ti
 import numpy as np
 import torch
 

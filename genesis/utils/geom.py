@@ -6,7 +6,7 @@ import numba as nb
 import torch
 import torch.nn.functional as F
 
-import gstaichi as ti
+import quadrants as ti
 
 import genesis as gs
 
