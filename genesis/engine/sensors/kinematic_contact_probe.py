@@ -1,5 +1,3 @@
-"""Kinematic contact probe for contact detection without physics side effects."""
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Sequence, Type
 
