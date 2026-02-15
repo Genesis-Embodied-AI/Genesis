@@ -5,29 +5,26 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 
-vec3 = ti.types.vector[3, gs.ti_float]
-
-
 @ti.func
-def i_cross_vec(vec: vec3) -> vec3:
+def i_cross_vec(vec: ti.types.vector[3, gs.ti_float]) -> ti.types.vector[3, gs.ti_float]:
     return ti.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
 
 
 @ti.func
-def j_cross_vec(vec: vec3) -> vec3:
+def j_cross_vec(vec: ti.types.vector[3, gs.ti_float]) -> ti.types.vector[3, gs.ti_float]:
     return ti.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
 
 
 @ti.func
-def k_cross_vec(vec: vec3) -> vec3:
+def k_cross_vec(vec: ti.types.vector[3, gs.ti_float]) -> ti.types.vector[3, gs.ti_float]:
     return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
 
 
 @ti.func
 def transform_vec_by_normalized_quat(
-    v: vec3,
+    v: ti.types.vector[3, gs.ti_float],
     quat: ti.types.vector[4, gs.ti_float],
-) -> vec3:
+) -> ti.types.vector[3, gs.ti_float]:
     """
     Assumptions:
     - quat must be normalized
