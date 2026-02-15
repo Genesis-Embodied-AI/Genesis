@@ -891,26 +891,30 @@ def func_convex_convex_contact(
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
             elif multi_contact and is_col:
                 # For perturbed iterations (i_detection > 0), correct contact position and normal
-                # This applies to ALL collision methods when multi-contact is enabled
+                # This applies to all collision methods when multi-contact is enabled,
+                # except mujoco compatible
 
                 # 1. Project the contact point on both geometries
                 # 2. Revert the effect of small rotation
                 # 3. Update contact point
-                contact_point_a = (
-                    gu.ti_transform_by_quat(
-                        (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                        gu.ti_inv_quat(qrot),
+                if ti.static(
+                    collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
+                ):
+                    contact_point_a = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                            gu.ti_inv_quat(qrot),
+                        )
+                        + contact_pos_0
                     )
-                    + contact_pos_0
-                )
-                contact_point_b = (
-                    gu.ti_transform_by_quat(
-                        (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                        qrot,
+                    contact_point_b = (
+                        gu.ti_transform_by_quat(
+                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+                            qrot,
+                        )
+                        + contact_pos_0
                     )
-                    + contact_pos_0
-                )
-                contact_pos = 0.5 * (contact_point_a + contact_point_b)
+                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
                 # First-order correction of the normal direction.
                 # The way the contact normal gets twisted by applying perturbation of geometry poses is
