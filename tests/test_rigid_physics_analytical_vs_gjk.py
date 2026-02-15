@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidGeom
 
 
+ERRNO_CALLED_GJK = 1 << 16
+
+
 def create_capsule_mjcf(name, pos, euler, radius, half_length):
     """Helper function to create an MJCF file with a single capsule."""
     mjcf = ET.Element("mujoco", model=name)
@@ -168,7 +171,7 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = "\n".join(lines)
 
     # Debug: Check if errno was actually inserted
-    errno_count = content.count("errno[i_b] |= 1 << 16")
+    errno_count = content.count("errno[i_b] |= ERRNO_CALLED_GJK")
     assert errno_count >= 1
 
     temp_narrowphase_path = tmp_path / "narrow.py"
@@ -265,14 +268,14 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
-        assert (errno_val & (1 << 16)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
+        assert (errno_val & (ERRNO_CALLED_GJK)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
 
     def step_gjk(self):
         """Clear errno, step, then verify GJK path was used (bit 16 set)."""
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        assert (errno_val & (1 << 16)) != 0, f"GJK scene should use GJK (errno={errno_val})"
+        assert (errno_val & (ERRNO_CALLED_GJK)) != 0, f"GJK scene should use GJK (errno={errno_val})"
 
 
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
