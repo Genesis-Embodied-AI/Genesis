@@ -8,9 +8,9 @@ analytical methods, allowing direct comparison between the two approaches.
 
 import copy
 import importlib.util
-from pathlib import Path
-from typing import Callable, cast, TYPE_CHECKING
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, cast
 
 import numpy as np
 import pytest
