@@ -914,7 +914,7 @@ def func_convex_convex_contact(
                         )
                         + contact_pos_0
                     )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)                    
+                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
                     # First-order correction of the normal direction.
                     # The way the contact normal gets twisted by applying perturbation of geometry poses is
