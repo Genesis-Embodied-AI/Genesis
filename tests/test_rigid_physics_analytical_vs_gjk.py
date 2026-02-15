@@ -173,10 +173,7 @@ def create_modified_narrowphase_file(tmp_path: Path):
     errno_count = content.count("errno[i_b] |= 1 << 16")
     assert errno_count >= 1
 
-    randint = random.randint(0, 1000000)
-    id = gs.UID()
-    temp_narrowphase_path = tmp_path / f"narrow_{id}.py"
-
+    temp_narrowphase_path = tmp_path / "narrow.py"
     with open(temp_narrowphase_path, "w") as f:
         f.write(content)
 
