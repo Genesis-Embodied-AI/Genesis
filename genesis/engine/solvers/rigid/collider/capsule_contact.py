@@ -5,6 +5,25 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 
+vec3 = ti.types.Vector[3, gs.ti_float]
+
+
+@ti.func
+def i_cross_vec(vec: vec3) -> vec3:
+    return ti.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
+
+
+@ti.func
+def j_cross_vec(vec: vec3) -> vec3:
+    return ti.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
+
+
+@ti.func
+def k_cross_vec(vec: vec3) -> vec3:
+    return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
+
+
+
 @ti.func
 def func_closest_points_on_segments(
     seg_a_p1: ti.types.vector(3, gs.ti_float),
@@ -91,10 +110,6 @@ def func_capsule_capsule_contact(
     gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multicontact).
     """
     EPS = rigid_global_info.EPS[None]
-    is_col = False
-    normal = ti.Vector.zero(gs.ti_float, 3)
-    contact_pos = ti.Vector.zero(gs.ti_float, 3)
-    penetration = gs.ti_float(0.0)
 
     # Get capsule A parameters
     pos_a = ga_pos
@@ -109,52 +124,56 @@ def func_capsule_capsule_contact(
     halflength_b = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
 
     # Capsules are aligned along local Z-axis by convention
-    local_z = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    local_z_unit = ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
 
     # Get segment axes in world space
-    axis_a = gu.ti_transform_by_quat(local_z, quat_a)
-    axis_b = gu.ti_transform_by_quat(local_z, quat_b)
+    axis_a_unit = gu.ti_transform_by_quat(local_z_unit, quat_a)
+    axis_b_unit = gu.ti_transform_by_quat(local_z_unit, quat_b)
 
     # Compute segment endpoints in world space
-    P1 = pos_a - halflength_a * axis_a
-    P2 = pos_a + halflength_a * axis_a
-    Q1 = pos_b - halflength_b * axis_b
-    Q2 = pos_b + halflength_b * axis_b
+    P1 = pos_a - halflength_a * axis_a_unit
+    P2 = pos_a + halflength_a * axis_a_unit
+    Q1 = pos_b - halflength_b * axis_b_unit
+    Q2 = pos_b + halflength_b * axis_b_unit
 
     Pa, Pb = func_closest_points_on_segments(P1, P2, Q1, Q2, EPS)
 
-    diff = Pb - Pa
+    # from B to A
+    diff = Pa - Pb
     dist_sq = diff.dot(diff)
     combined_radius = radius_a + radius_b
     combined_radius_sq = combined_radius * combined_radius
 
+    is_col = False
+    normal_unit = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    penetration = gs.ti_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
         dist = ti.sqrt(dist_sq)
 
         # Compute contact normal (from B to A, pointing into geom A)
         if dist > EPS:
-            # Negative because func_add_contact expects normal from B to A
-            normal = -diff / dist
+            normal_unit = diff / dist
         else:
             # Segments are coincident, use arbitrary perpendicular direction
             # Try cross product with axis_a first
-            normal = axis_a.cross(axis_b)
-            normal_len = normal.dot(normal)
-            if normal_len < EPS:
+            normal_dir = axis_a_unit.cross(axis_b_unit)
+            normal_dir_len = normal_dir.dot(normal_dir)
+            if normal_dir_len > EPS:
+                normal_unit = normal_dir / normal_dir_len
+            else:
                 # Axes are parallel, use any perpendicular
-                if ti.abs(axis_a[0]) < 0.9:
-                    normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(axis_a)
+                if ti.abs(axis_a_unit[0]) < 0.9:
+                    normal_unit = i_cross_vec(axis_a_unit)
                 else:
-                    normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(axis_a)
-                normal_len = normal.dot(normal)
-            normal = -normal / normal_len
+                    normal_unit = j_cross_vec(axis_a_unit)
 
         penetration = combined_radius - dist
-        # Contact position at midpoint between surfaces (consistent with GJK convention)
-        contact_pos = Pa - radius_a * normal + gs.ti_float(0.5) * penetration * normal
+        # Contact position at midpoint between surfaces
+        contact_pos = Pa - radius_a * normal_unit + gs.ti_float(0.5) * penetration * normal_unit
 
-    return is_col, normal, contact_pos, penetration
+    return is_col, normal_unit, contact_pos, penetration
 
 
 @ti.func
@@ -194,10 +213,6 @@ def func_sphere_capsule_contact(
         normal_dir = -1
 
     EPS = rigid_global_info.EPS[None]
-    is_col = False
-    normal = ti.Vector.zero(gs.ti_float, 3)
-    contact_pos = ti.Vector.zero(gs.ti_float, 3)
-    penetration = gs.ti_float(0.0)
 
     sphere_center = sphere_pos
     sphere_radius = geoms_info.data[i_ga][0]
@@ -235,24 +250,27 @@ def func_sphere_capsule_contact(
     combined_radius = sphere_radius + capsule_radius
     combined_radius_sq = combined_radius * combined_radius
 
+    is_col = False
+    normal_unit = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
+    contact_pos = ti.Vector.zero(gs.ti_float, 3)
+    penetration = gs.ti_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
         dist = ti.sqrt(dist_sq)
 
         # Compute contact normal (from capsule to sphere, i.e., B to A)
         if dist > EPS:
-            normal = diff / dist
+            normal_unit = diff / dist
         else:
             # Sphere center is exactly on capsule axis
             # Use any perpendicular direction to the capsule axis
             if ti.abs(capsule_axis[0]) < 0.9:
-                normal = ti.Vector([1.0, 0.0, 0.0], dt=gs.ti_float).cross(capsule_axis)
+                normal_unit = i_cross_vec(capsule_axis)
             else:
-                normal = ti.Vector([0.0, 1.0, 0.0], dt=gs.ti_float).cross(capsule_axis)
-            normal = gu.ti_normalize(normal, EPS)
+                normal_unit = j_cross_vec(capsule_axis)
 
         penetration = combined_radius - dist
-        # Contact position at midpoint between surfaces (consistent with GJK convention)
-        contact_pos = sphere_center - (sphere_radius - gs.ti_float(0.5) * penetration) * normal
+        # Contact position at midpoint between surfaces
+        contact_pos = sphere_center - (sphere_radius - gs.ti_float(0.5) * penetration) * normal_unit
 
-    return is_col, normal * normal_dir, contact_pos, penetration
+    return is_col, normal_unit * normal_dir, contact_pos, penetration
