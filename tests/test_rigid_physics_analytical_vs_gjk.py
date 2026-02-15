@@ -210,23 +210,12 @@ class AnalyticalVsGJKSceneCreator:
     def setup_scenes(self) -> tuple[gs.Scene, gs.Scene]:
         """Build both scenes WITHOUT any monkey-patching."""
         # Scene 1: Using ORIGINAL analytical collision detection
-        self.scene_analytical = gs.Scene(
-            show_viewer=False,
-            rigid_options=gs.options.RigidOptions(
-                dt=0.01,
-                gravity=(0, 0, 0),
-            ),
-        )
+        self.scene_analytical = gs.Scene(show_viewer=False)
         self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
-            show_viewer=False,
-            rigid_options=gs.options.RigidOptions(
-                dt=0.01,
-                gravity=(0, 0, 0),
-                use_gjk_collision=True,
-            ),
+            show_viewer=False, rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
@@ -440,13 +429,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path):
     # Sum of radii: 0.2
     # Expected penetration: 0.2 - 0.15 = 0.05
 
-    scene = gs.Scene(
-        show_viewer=False,
-        rigid_options=gs.options.RigidOptions(
-            dt=0.01,
-            gravity=(0, 0, 0),
-        ),
-    )
+    scene = gs.Scene(show_viewer=False)
 
     _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
