@@ -1,4 +1,3 @@
-import quadrants as ti
 import numpy as np
 import torch
 
@@ -8,7 +7,6 @@ import genesis.utils.particle as pu
 from genesis.repr_base import RBC
 
 
-@ti.data_oriented
 class Emitter(RBC):
     """
     A particle emitter for fluid or material simulation.

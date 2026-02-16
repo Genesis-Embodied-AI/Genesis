@@ -1,12 +1,9 @@
 import sys
 import platform
 
-import quadrants as ti
-
 from .base import Base
 
 
-@ti.data_oriented
 class Particle(Base):
     """
     The liquid material class for PBD.

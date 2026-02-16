@@ -1,20 +1,20 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 
 from .base import Base
 
 
-@ti.func
+@qd.func
 def partialJpartialF(F):
     pJpF0 = F[:, 1].cross(F[:, 2])
     pJpF1 = F[:, 2].cross(F[:, 0])
     pJpF2 = F[:, 0].cross(F[:, 1])
-    pJpF = ti.Matrix.cols([pJpF0, pJpF1, pJpF2])
+    pJpF = qd.Matrix.cols([pJpF0, pJpF1, pJpF2])
     return pJpF
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Elastic(Base):
     """
     The elastic material class for FEM.
@@ -78,39 +78,39 @@ class Elastic(Base):
         self._model = model
 
     def build_linear_corotated(self, fem_solver):
-        self.R = ti.field(dtype=gs.ti_mat3, shape=(fem_solver._B, fem_solver.n_elements))
+        self.R = qd.field(dtype=gs.qd_mat3, shape=(fem_solver._B, fem_solver.n_elements))
 
-    @ti.func
+    @qd.func
     def pre_compute_linear_corotated(self, J, F, i_e, i_b):
-        # Computing Polar Decomposition instead of calling `R, P = ti.polar_decompose(F)` since `P` is not needed here
-        U, S, V = ti.svd(F)
+        # Computing Polar Decomposition instead of calling `R, P = qd.polar_decompose(F)` since `P` is not needed here
+        U, S, V = qd.svd(F)
         R = U @ V.transpose()
         self.R[i_b, i_e] = R
 
-    @ti.func
+    @qd.func
     def update_stress_linear(self, mu, lam, J, F, actu, m_dir):
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        I = qd.Matrix.identity(dt=gs.qd_float, n=3)
         stress = mu * (F + F.transpose() - 2 * I) + lam * (F - I).trace() * I
 
         return stress
 
-    @ti.func
+    @qd.func
     def update_stress_stable_neohookean(self, mu, lam, J, F, actu, m_dir):
         IC = F.norm_sqr()
         dJdF0 = F[:, 1].cross(F[:, 2])
         dJdF1 = F[:, 2].cross(F[:, 0])
         dJdF2 = F[:, 0].cross(F[:, 1])
-        dJdF = ti.Matrix.cols([dJdF0, dJdF1, dJdF2])
+        dJdF = qd.Matrix.cols([dJdF0, dJdF1, dJdF2])
         alpha = 1 + 0.75 * mu / lam
         stress = mu * (1 - 1 / (IC + 1)) * F + lam * (J - alpha) * dJdF
 
         return stress
 
-    @ti.func
+    @qd.func
     def update_stress_linear_corotated(self, mu, lam, J, F, actu, m_dir):
         gs.raise_exception("Linear corotated stress update is not implemented yet.")
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_hessian_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         """
         Compute the energy, gradient, and Hessian for linear elasticity.
@@ -123,20 +123,20 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
-        hessian_field: ti.Matrix
+        hessian_field: qd.Matrix
             The Hessian of the energy with respect to the deformation gradient F.
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Notes
@@ -146,7 +146,7 @@ class Elastic(Base):
         https://github.com/theodorekim/HOBAKv1/blob/main/src/Hyperelastic/Volume/LINEAR.cpp
 
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        I = qd.Matrix.identity(dt=gs.qd_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
@@ -154,11 +154,11 @@ class Elastic(Base):
         gradient = 2.0 * mu * eps + lam * trEps * I
 
         # Zero out the matrix
-        for i in ti.static(ti.grouped(ti.ndrange(3, 3))):
+        for i in qd.static(qd.grouped(qd.ndrange(3, 3))):
             hessian_field[i_b, i, i_e].fill(0.0)
 
         # Identity part
-        for i, k in ti.static(ti.ndrange(3, 3)):
+        for i, k in qd.static(qd.ndrange(3, 3)):
             hessian_field[i_b, i, i, i_e][k, k] = mu
 
         # Diagonal terms
@@ -177,7 +177,7 @@ class Elastic(Base):
         hessian_field[i_b, 1, 2, i_e][1, 2] = hessian_field[i_b, 2, 1, i_e][2, 1] = lam
         return energy, gradient
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy, gradient for linear elasticity.
@@ -190,18 +190,18 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Notes
@@ -210,7 +210,7 @@ class Elastic(Base):
         It is adapted from the HOBAKv1 implementation for linear elasticity:
         https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        I = qd.Matrix.identity(dt=gs.qd_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
@@ -219,7 +219,7 @@ class Elastic(Base):
 
         return energy, gradient
 
-    @ti.func
+    @qd.func
     def compute_energy_linear(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy for linear elasticity.
@@ -232,11 +232,11 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
 
         Returns
@@ -250,14 +250,14 @@ class Elastic(Base):
         It is adapted from the HOBAKv1 implementation for linear elasticity:
         https://github.com/theodorekim/HOBAKv1/blob/8420c51b795735d8fb912e0f8810f935d96fb636/src/Hyperelastic/Volume/LINEAR.cpp
         """
-        I = ti.Matrix.identity(dt=gs.ti_float, n=3)
+        I = qd.Matrix.identity(dt=gs.qd_float, n=3)
         eps = 0.5 * (F + F.transpose()) - I
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
 
         return energy
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_hessian_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         """
         Compute the energy, gradient, and Hessian for the stable Neo-Hookean model.
@@ -270,20 +270,20 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in stable Neo-Hookean).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in stable Neo-Hookean).
-        hessian_field: ti.Matrix
+        hessian_field: qd.Matrix
             The Hessian of the energy with respect to the deformation gradient F.
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Raises
@@ -299,7 +299,7 @@ class Elastic(Base):
         """
         raise NotImplementedError("Hessian computation is not implemented for stable_neohookean model.")
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy, gradient for the stable Neo-Hookean model.
@@ -312,18 +312,18 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in stable Neo-Hookean).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in stable Neo-Hookean).
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Raises
@@ -338,7 +338,7 @@ class Elastic(Base):
         """
         gs.raise_exception("Gradient computation is not implemented for stable_neohookean model.")
 
-    @ti.func
+    @qd.func
     def compute_energy_stable_neohookean(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy for the stable Neo-Hookean model.
@@ -351,11 +351,11 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in stable Neo-Hookean).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in stable Neo-Hookean).
 
         Returns
@@ -377,7 +377,7 @@ class Elastic(Base):
 
         return energy
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_hessian_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b, hessian_field):
         """
         Compute the energy, gradient, and Hessian for linear elasticity.
@@ -390,20 +390,20 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
-        hessian_field: ti.Matrix
+        hessian_field: qd.Matrix
             The Hessian of the energy with respect to the deformation gradient F.
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Notes
@@ -417,7 +417,7 @@ class Elastic(Base):
         F_hat = R.transpose() @ F
         # E = 1/2(F_hat + F_hat.transpose()) - I
         eps = 0.5 * (F_hat + F_hat.transpose())
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
@@ -425,19 +425,19 @@ class Elastic(Base):
         gradient = 2.0 * mu * R @ eps + lam * trEps * R
 
         # Zero out the matrix
-        for i in ti.static(ti.grouped(ti.ndrange(3, 3))):
+        for i in qd.static(qd.grouped(qd.ndrange(3, 3))):
             hessian_field[i_b, i, i_e].fill(0.0)
 
         # Identity part
-        for i, k in ti.static(ti.ndrange(3, 3)):
+        for i, k in qd.static(qd.ndrange(3, 3)):
             hessian_field[i_b, i, i, i_e][k, k] = mu
 
-        for i, j, alpha, beta in ti.ndrange(3, 3, 3, 3):
+        for i, j, alpha, beta in qd.ndrange(3, 3, 3, 3):
             hessian_field[i_b, j, beta, i_e][i, alpha] += mu * R[i, beta] * R[alpha, j] + lam * R[alpha, beta] * R[i, j]
 
         return energy, gradient
 
-    @ti.func
+    @qd.func
     def compute_energy_gradient_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy, gradient for linear elasticity.
@@ -450,18 +450,18 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
 
         Returns
         -------
         energy: float
             The computed energy.
-        gradient: ti.Matrix
+        gradient: qd.Matrix
             The gradient of the energy with respect to the deformation gradient F.
 
         Notes
@@ -474,7 +474,7 @@ class Elastic(Base):
         F_hat = self.R[i_b, i_e].transpose() @ F
         # E = 1/2(F_hat + F_hat.transpose()) - I
         eps = 0.5 * (F_hat + F_hat.transpose())
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2
@@ -482,7 +482,7 @@ class Elastic(Base):
 
         return energy, gradient
 
-    @ti.func
+    @qd.func
     def compute_energy_linear_corotated(self, mu, lam, J, F, actu, m_dir, i_e, i_b):
         """
         Compute the energy for linear elasticity.
@@ -495,11 +495,11 @@ class Elastic(Base):
             The second Lame parameter (related to volume change).
         J: float
             The determinant of the deformation gradient F.
-        F: ti.Matrix
+        F: qd.Matrix
             The deformation gradient matrix.
-        actu: ti.Matrix
+        actu: qd.Matrix
             The activation matrix (not used in linear elasticity).
-        m_dir: ti.Matrix
+        m_dir: qd.Matrix
             The material direction (not used in linear elasticity).
 
         Returns
@@ -517,7 +517,7 @@ class Elastic(Base):
         F_hat = self.R[i_b, i_e].transpose() @ F
         # E = 1/2(F_hat + F_hat.transpose()) - I
         eps = 0.5 * (F_hat + F_hat.transpose())
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             eps[i, i] -= 1.0
         trEps = eps.trace()
         energy = mu * eps.norm_sqr() + 0.5 * lam * trEps**2

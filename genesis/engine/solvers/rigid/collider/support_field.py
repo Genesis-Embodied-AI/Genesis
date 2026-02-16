@@ -1,7 +1,7 @@
 import math
 from typing import TYPE_CHECKING
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 
 import genesis as gs
@@ -95,79 +95,79 @@ class SupportField:
         return self._is_active
 
 
-@ti.kernel
+@qd.kernel
 def _kernel_init_support(
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     support_field_info: array_class.SupportFieldInfo,
-    support_cell_start: ti.types.ndarray(),
-    support_v: ti.types.ndarray(),
-    support_vid: ti.types.ndarray(),
+    support_cell_start: qd.types.ndarray(),
+    support_v: qd.types.ndarray(),
+    support_vid: qd.types.ndarray(),
 ):
     n_geoms = support_field_info.support_cell_start.shape[0]
     n_support_cells = support_field_info.support_v.shape[0]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i in range(n_geoms):
         support_field_info.support_cell_start[i] = support_cell_start[i]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i in range(n_support_cells):
         support_field_info.support_vid[i] = support_vid[i]
-        for j in ti.static(range(3)):
+        for j in qd.static(range(3)):
             support_field_info.support_v[i][j] = support_v[i, j]
 
 
-@ti.func
+@qd.func
 def _func_support_world(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
     """
     support position for a world direction
     """
 
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
     v_, vid = _func_support_mesh(support_field_info, d_mesh, i_g)
-    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
     return v, v_, vid
 
 
-@ti.func
+@qd.func
 def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh, i_g):
     """
     support point at mesh frame coordinate.
     """
-    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = ti.acos(d_mesh[2])  # [0, pi]
+    theta = qd.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
+    phi = qd.acos(d_mesh[2])  # [0, pi]
 
     support_res = support_field_info.support_res[None]
-    dot_max = gs.ti_float(-1e20)
-    v = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+    dot_max = gs.qd_float(-1e20)
+    v = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
     vid = 0
 
     ii = (theta + math.pi) / math.pi / 2 * support_res
     jj = phi / math.pi * support_res
 
     for i4 in range(4):
-        i, j = gs.ti_int(0), gs.ti_int(0)
+        i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.ti_int(ti.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii) % support_res)
         else:
-            i = gs.ti_int(ti.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii) % support_res)
 
         if i4 // 2 > 0:
-            j = gs.ti_int(ti.math.clamp(ti.math.ceil(jj), 0, support_res - 1))
+            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
             if j == support_res - 1:
                 j = support_res - 2
         else:
-            j = gs.ti_int(ti.math.clamp(ti.math.floor(jj), 0, support_res - 1))
+            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj), 0, support_res - 1))
             if j == 0:
                 j = 1
 
-        support_idx = gs.ti_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
+        support_idx = gs.qd_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
         _vid = support_field_info.support_vid[support_idx]
         pos = support_field_info.support_v[support_idx]
         dot = pos.dot(d_mesh)
@@ -180,13 +180,13 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
     return v, vid
 
 
-@ti.func
+@qd.func
 def _func_support_sphere(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     shrink,
 ):
     sphere_center = pos
@@ -194,47 +194,47 @@ def _func_support_sphere(
 
     # Shrink the sphere to a point
     v = sphere_center
-    v_ = ti.Vector.zero(gs.ti_float, 3)
+    v_ = qd.Vector.zero(gs.qd_float, 3)
     vid = -1
     if not shrink:
         v += d * sphere_radius
 
         # Local position of the support point
-        local_d = gu.ti_inv_transform_by_quat(d, quat)
+        local_d = gu.qd_inv_transform_by_quat(d, quat)
         v_ = local_d * sphere_radius
 
     return v, v_, vid
 
 
-@ti.func
+@qd.func
 def _func_support_ellipsoid(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
     ellipsoid_center = pos
-    ellipsoid_scaled_axis = ti.Vector(
+    ellipsoid_scaled_axis = qd.Vector(
         [
             geoms_info.data[i_g][0] ** 2,
             geoms_info.data[i_g][1] ** 2,
             geoms_info.data[i_g][2] ** 2,
         ],
-        dt=gs.ti_float,
+        dt=gs.qd_float,
     )
-    ellipsoid_scaled_axis = gu.ti_transform_by_quat(ellipsoid_scaled_axis, quat)
-    dist = ellipsoid_scaled_axis / ti.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
+    ellipsoid_scaled_axis = gu.qd_transform_by_quat(ellipsoid_scaled_axis, quat)
+    dist = ellipsoid_scaled_axis / qd.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
     return ellipsoid_center + d * dist
 
 
-@ti.func
+@qd.func
 def _func_support_capsule(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     shrink,
 ):
     """
@@ -244,24 +244,24 @@ def _func_support_capsule(
     The i_g parameter is only used for read-only metadata access (radius, halflength)
     from geoms_info, which is thread-safe. Does not access geoms_state.
     """
-    res = gs.ti_vec3(0, 0, 0)
+    res = gs.qd_vec3(0, 0, 0)
     capsule_center = pos
     capsule_radius = geoms_info.data[i_g][0]
     capsule_halflength = 0.5 * geoms_info.data[i_g][1]
 
     if shrink:
-        local_dir = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
+        local_dir = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
         res[2] = capsule_halflength if local_dir[2] >= 0.0 else -capsule_halflength
-        res = gu.ti_transform_by_trans_quat(res, capsule_center, quat)
+        res = gu.qd_transform_by_trans_quat(res, capsule_center, quat)
     else:
-        capsule_axis = gu.ti_transform_by_quat(ti.Vector([0.0, 0.0, 1.0], dt=gs.ti_float), quat)
+        capsule_axis = gu.qd_transform_by_quat(qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), quat)
         capsule_endpoint_side = -1.0 if d.dot(capsule_axis) < 0.0 else 1.0
         capsule_endpoint = capsule_center + capsule_halflength * capsule_endpoint_side * capsule_axis
         res = capsule_endpoint + d * capsule_radius
     return res
 
 
-@ti.func
+@qd.func
 def _func_support_prism(
     collider_state: array_class.ColliderState,
     d,
@@ -282,46 +282,46 @@ def _func_support_prism(
     return collider_state.prism[ibest, i_b], ibest
 
 
-@ti.func
+@qd.func
 def _func_support_box(
     geoms_info: array_class.GeomsInfo,
     d,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
-    d_box = gu.ti_inv_transform_by_quat(d, quat)
+    d_box = gu.qd_inv_transform_by_quat(d, quat)
 
-    v_ = ti.Vector(
+    v_ = qd.Vector(
         [
             (-1.0 if d_box[0] < 0.0 else 1.0) * geoms_info.data[i_g][0] * 0.5,
             (-1.0 if d_box[1] < 0.0 else 1.0) * geoms_info.data[i_g][1] * 0.5,
             (-1.0 if d_box[2] < 0.0 else 1.0) * geoms_info.data[i_g][2] * 0.5,
         ],
-        dt=gs.ti_float,
+        dt=gs.qd_float,
     )
     vid = (v_[0] > 0.0) * 1 + (v_[1] > 0.0) * 2 + (v_[2] > 0.0) * 4
     vid += geoms_info.vert_start[i_g]
-    v = gu.ti_transform_by_trans_quat(v_, pos, quat)
+    v = gu.qd_transform_by_trans_quat(v_, pos, quat)
     return v, v_, vid
 
 
-@ti.func
+@qd.func
 def _func_count_supports_world(
     support_field_info: array_class.SupportFieldInfo,
     d,
     i_g,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
     """
     Count the number of valid support points for the given world direction.
     Only needs quat since counting doesn't depend on position.
     """
-    d_mesh = gu.ti_transform_by_quat(d, gu.ti_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat(d, gu.qd_inv_quat(quat))
     return _func_count_supports_mesh(support_field_info, d_mesh, i_g)
 
 
-@ti.func
+@qd.func
 def _func_count_supports_mesh(
     support_field_info: array_class.SupportFieldInfo,
     d_mesh,
@@ -330,33 +330,33 @@ def _func_count_supports_mesh(
     """
     Count the number of valid support points for a mesh in the given direction.
     """
-    theta = ti.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
-    phi = ti.acos(d_mesh[2])  # [0, pi]
+    theta = qd.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
+    phi = qd.acos(d_mesh[2])  # [0, pi]
 
     support_res = support_field_info.support_res[None]
-    dot_max = gs.ti_float(-1e20)
+    dot_max = gs.qd_float(-1e20)
 
     ii = (theta + math.pi) / math.pi / 2 * support_res
     jj = phi / math.pi * support_res
 
-    count = gs.ti_int(0)
+    count = gs.qd_int(0)
     for i4 in range(4):
-        i, j = gs.ti_int(0), gs.ti_int(0)
+        i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.ti_int(ti.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii) % support_res)
         else:
-            i = gs.ti_int(ti.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii) % support_res)
 
         if i4 // 2 > 0:
-            j = gs.ti_int(ti.math.clamp(ti.math.ceil(jj), 0, support_res - 1))
+            j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
             if j == support_res - 1:
                 j = support_res - 2
         else:
-            j = gs.ti_int(ti.math.clamp(ti.math.floor(jj), 0, support_res - 1))
+            j = gs.qd_int(qd.math.clamp(qd.math.floor(jj), 0, support_res - 1))
             if j == 0:
                 j = 1
 
-        support_idx = gs.ti_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
+        support_idx = gs.qd_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
         _vid = support_field_info.support_vid[support_idx]
         pos = support_field_info.support_v[support_idx]
         dot = pos.dot(d_mesh)
@@ -369,10 +369,10 @@ def _func_count_supports_mesh(
     return count
 
 
-@ti.func
+@qd.func
 def _func_count_supports_box(
     d,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
     """
     Count the number of valid support points for a box in the given direction.
@@ -382,9 +382,9 @@ def _func_count_supports_box(
     If the direction has 1 zero component, there are 2 possible support points. If the direction has 2 zero
     components, there are 4 possible support points.
     """
-    d_box = gu.ti_inv_transform_by_quat(d, quat)
+    d_box = gu.qd_inv_transform_by_quat(d, quat)
 
-    return 2 ** (d_box == 0.0).cast(gs.ti_int).sum()
+    return 2 ** (d_box == 0.0).cast(gs.qd_int).sum()
 
 
 from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module

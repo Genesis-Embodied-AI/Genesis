@@ -1,11 +1,11 @@
-import quadrants as ti
+import quadrants as qd
+
+import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.constants import GEOM_TYPE
-from genesis import utils as gu
-import genesis as gs
 
 
-@ti.func
+@qd.func
 def func_closest_points_on_segments(
     seg_a_p1,
     seg_a_p2,
@@ -32,14 +32,14 @@ def func_closest_points_on_segments(
 
     denom = a_squared_len * b_squared_len - dot_product_dir * dot_product_dir
 
-    s = gs.ti_float(0.0)
-    t = gs.ti_float(0.0)
+    s = gs.qd_float(0.0)
+    t = gs.qd_float(0.0)
 
     if denom < EPS:
         # Segments are parallel or one/both are degenerate
         s = 0.0
         if b_squared_len > EPS:
-            t = ti.math.clamp(e / b_squared_len, 0.0, 1.0)
+            t = qd.math.clamp(e / b_squared_len, 0.0, 1.0)
         else:
             t = 0.0
     else:
@@ -47,13 +47,13 @@ def func_closest_points_on_segments(
         s = (dot_product_dir * e - b_squared_len * d) / denom
         t = (a_squared_len * e - dot_product_dir * d) / denom
 
-        s = ti.math.clamp(s, 0.0, 1.0)
+        s = qd.math.clamp(s, 0.0, 1.0)
 
         # Recompute t for clamped s
-        t = ti.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
+        t = qd.math.clamp((dot_product_dir * s + e) / b_squared_len if b_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Recompute s for clamped t (ensures we're on segment boundaries)
-        s_new = ti.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
+        s_new = qd.math.clamp((dot_product_dir * t - d) / a_squared_len if a_squared_len > EPS else 0.0, 0.0, 1.0)
 
         # Use refined s if it improves the solution
         if a_squared_len > EPS:
@@ -65,7 +65,7 @@ def func_closest_points_on_segments(
     return seg_a_closest, seg_b_closest
 
 
-@ti.func
+@qd.func
 def func_det3(
     v1,
     v2,
@@ -81,7 +81,7 @@ def func_det3(
     )
 
 
-@ti.func
+@qd.func
 def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
     return not (
         (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()
@@ -89,7 +89,7 @@ def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, 
     )
 
 
-@ti.func
+@qd.func
 def func_is_discrete_geom(
     geoms_info: array_class.GeomsInfo,
     i_g,
@@ -101,7 +101,7 @@ def func_is_discrete_geom(
     return geom_type == GEOM_TYPE.MESH or geom_type == GEOM_TYPE.BOX
 
 
-@ti.func
+@qd.func
 def func_is_discrete_geoms(
     geoms_info: array_class.GeomsInfo,
     i_ga,
@@ -113,9 +113,9 @@ def func_is_discrete_geoms(
     return func_is_discrete_geom(geoms_info, i_ga) and func_is_discrete_geom(geoms_info, i_gb)
 
 
-@ti.func
+@qd.func
 def func_is_equal_vec(a, b, eps):
     """
     Check if two vectors are equal within a small tolerance.
     """
-    return (ti.abs(a - b) < eps).all()
+    return (qd.abs(a - b) < eps).all()

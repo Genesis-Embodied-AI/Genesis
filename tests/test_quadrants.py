@@ -9,7 +9,7 @@ import pytest
 import numpy as np
 
 import genesis as gs
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import qd_to_torch
 
 from .utils import assert_allclose
 
@@ -33,10 +33,10 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         print(f"Backend '{backend}' not available on this machine", file=sys.stderr)
         sys.exit(RET_SKIP)
 
-    # Skip test if quadrants ndarray mode is enabled but not supported by this specific test
+    # Skip test if Quadrants ndarray mode is enabled but not supported by this specific test
     if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_ENABLE_NDARRAY") == "1":
         print(
-            "Using quadrants ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
+            "Using Quadrants ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
             "31 kernel parameters, which is not enough for most solvers.",
             file=sys.stderr,
         )
@@ -51,7 +51,7 @@ def _initialize_genesis(backend: gs.constants.backend | str):
 
 @pytest.mark.parametrize("batch_shape", [(2, 3, 5), ()])
 @pytest.mark.parametrize(
-    "ti_type_spec, arg_shape",
+    "qd_type_spec, arg_shape",
     [
         (("field", "scalar"), ()),
         (("field", "vector"), (7,)),
@@ -63,29 +63,29 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         (("ndarray", "matrix"), (7, 11)),
     ],
 )
-def test_to_torch(ti_type_spec, batch_shape, arg_shape):
-    import quadrants as ti
+def test_to_torch(qd_type_spec, batch_shape, arg_shape):
+    import quadrants as qd
 
     for _ in range(10):
-        TI_TYPE_MAP = {
-            ("field", "scalar"): ti.field,
-            ("field", "vector"): ti.Vector.field,
-            ("field", "matrix"): ti.Matrix.field,
-            ("ndarray", "scalar"): ti.ndarray,
-            ("ndarray", "vector"): ti.Vector.ndarray,
-            ("ndarray", "matrix"): ti.Matrix.ndarray,
+        QD_TYPE_MAP = {
+            ("field", "scalar"): qd.field,
+            ("field", "vector"): qd.Vector.field,
+            ("field", "matrix"): qd.Matrix.field,
+            ("ndarray", "scalar"): qd.ndarray,
+            ("ndarray", "vector"): qd.Vector.ndarray,
+            ("ndarray", "matrix"): qd.Matrix.ndarray,
         }
 
         np_arg = np.asarray(np.random.rand(*batch_shape, *arg_shape), dtype=np.float32)
-        ti_arg = TI_TYPE_MAP[ti_type_spec](*arg_shape, dtype=ti.f32, shape=batch_shape)
-        ti_arg.from_numpy(np_arg)
-        assert_allclose(ti_to_torch(ti_arg), ti_arg.to_numpy(), tol=gs.EPS)
+        qd_arg = QD_TYPE_MAP[qd_type_spec](*arg_shape, dtype=qd.f32, shape=batch_shape)
+        qd_arg.from_numpy(np_arg)
+        assert_allclose(qd_to_torch(qd_arg), qd_arg.to_numpy(), tol=gs.EPS)
 
-        # Restart taichi runtime
-        arch_idx = int(ti.cfg.arch)
-        debug = ti.cfg.debug
-        ti.reset()
-        ti.init(arch=ti._lib.core.Arch(arch_idx), debug=debug)
+        # Restart quadrants runtime
+        arch_idx = int(qd.cfg.arch)
+        debug = qd.cfg.debug
+        qd.reset()
+        qd.init(arch=qd._lib.core.Arch(arch_idx), debug=debug)
         gc.collect()
 
 
@@ -179,8 +179,8 @@ def test_static(
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
         env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
-        env["TI_OFFLINE_CACHE"] = "1"
-        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env["QD_OFFLINE_CACHE"] = "1"
+        env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
         proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
         return_code = proc.returncode
@@ -194,7 +194,7 @@ def test_static(
 
 
 def gs_num_envs_child(args: list[str]):
-    import quadrants as ti
+    import quadrants as qd
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", type=str, choices=["cpu", "gpu"], default="cpu")
@@ -221,7 +221,7 @@ def gs_num_envs_child(args: list[str]):
     scene.build(n_envs=args.n_envs, env_spacing=(0.5, 0.5))
 
     scene.rigid_solver.collider.detection()
-    ti.sync()
+    qd.sync()
 
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
 
@@ -255,8 +255,8 @@ def test_num_envs(use_ndarray: bool, enable_fastcache: bool, test_backend: str, 
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
         env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
-        env["TI_OFFLINE_CACHE"] = "1"
-        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env["QD_OFFLINE_CACHE"] = "1"
+        env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
         # notes:
         # - if we use fastcache, we won't get as far as fe-ll-cache
         # - ndarray and fastcache therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
@@ -373,8 +373,8 @@ def test_ndarray_no_compile(
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1"
         env["GS_ENABLE_FASTCACHE"] = "1"
-        env["TI_OFFLINE_CACHE"] = "1"
-        env["TI_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
+        env["QD_OFFLINE_CACHE"] = "1"
+        env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
         proc = subprocess.run(cmd_line, capture_output=True, text=True, encoding="utf-8", env=env, cwd=MODULE_ROOT_DIR)
         return_code = proc.returncode

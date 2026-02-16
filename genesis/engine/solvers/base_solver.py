@@ -1,12 +1,12 @@
 from typing import TYPE_CHECKING
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import qd_to_torch
 from genesis.engine.entities.base_entity import Entity
 from genesis.repr_base import RBC
 
@@ -39,7 +39,7 @@ class Solver(RBC):
         self._B = self._sim._B
         if self._init_gravity is not None:
             gravity = np.tile(np.asarray(self._init_gravity, dtype=gs.np_float), (self._B, 1))
-            self._gravity = array_class.V(dtype=gs.ti_vec3, shape=(self._B,))
+            self._gravity = array_class.V(dtype=gs.qd_vec3, shape=(self._B,))
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built
@@ -51,20 +51,20 @@ class Solver(RBC):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         gravity = torch.as_tensor(gravity, dtype=gs.tc_float, device=gs.device).expand((len(envs_idx), 3)).contiguous()
         assert gravity.shape == (len(envs_idx), 3), "Input gravity array should match (n_envs, 3)"
-        if isinstance(self._gravity, ti.Field):
+        if isinstance(self._gravity, qd.Field):
             _kernel_set_gravity_field(gravity, envs_idx, self._gravity)
         else:
             _kernel_set_gravity_ndarray(gravity, envs_idx, self._gravity)
 
     def get_gravity(self, envs_idx=None):
-        tensor = ti_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
 
         for attr_name, value in self.__dict__.items():
-            if not isinstance(value, (ti.Field, ti.Ndarray)):
+            if not isinstance(value, (qd.Field, qd.Ndarray)):
                 continue
 
             key_base = ".".join((self.__class__.__name__, attr_name))
@@ -81,7 +81,7 @@ class Solver(RBC):
             for attr_name, struct in self.data_manager.__dict__.items():
                 for sub_name in dir(struct):
                     sub_arr = getattr(struct, sub_name)
-                    if isinstance(sub_arr, (ti.Field, ti.Ndarray)):
+                    if isinstance(sub_arr, (qd.Field, qd.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
                         arrays[store_name] = sub_arr.to_numpy()
 
@@ -89,7 +89,7 @@ class Solver(RBC):
 
     def load_ckpt_from_numpy(self, arr_dict: dict[str, np.ndarray]) -> None:
         for attr_name, value in self.__dict__.items():
-            if not isinstance(value, (ti.Field, ti.Ndarray)):
+            if not isinstance(value, (qd.Field, qd.Ndarray)):
                 continue
 
             key_base = ".".join((self.__class__.__name__, attr_name))
@@ -118,7 +118,7 @@ class Solver(RBC):
             for attr_name, struct in self.data_manager.__dict__.items():
                 for sub_name in dir(struct):
                     sub_arr = getattr(struct, sub_name)
-                    if isinstance(sub_arr, (ti.Field, ti.Ndarray)):
+                    if isinstance(sub_arr, (qd.Field, qd.Ndarray)):
                         store_name = f"{self.__class__.__name__}.data_manager.{attr_name}.{sub_name}"
                         if store_name in arr_dict:
                             sub_arr.from_numpy(arr_dict[store_name])
@@ -170,15 +170,15 @@ class Solver(RBC):
         return repr_str
 
 
-@ti.kernel
-def _kernel_set_gravity_field(tensor: ti.types.ndarray(), envs_idx: ti.types.ndarray(), gravity: ti.template()):
+@qd.kernel
+def _kernel_set_gravity_field(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.template()):
     for i_b_ in range(envs_idx.shape[0]):
-        for j in ti.static(range(3)):
+        for j in qd.static(range(3)):
             gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]
 
 
-@ti.kernel
-def _kernel_set_gravity_ndarray(tensor: ti.types.ndarray(), envs_idx: ti.types.ndarray(), gravity: ti.types.ndarray()):
+@qd.kernel
+def _kernel_set_gravity_ndarray(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.types.ndarray()):
     for i_b_ in range(envs_idx.shape[0]):
-        for j in ti.static(range(3)):
+        for j in qd.static(range(3)):
             gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]

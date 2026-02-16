@@ -1,9 +1,8 @@
-import quadrants as ti
+import quadrants as qd
 
 from ..base import Material
 
 
-@ti.data_oriented
 class Base(Material):
     """
     The base class of PBD materials.
@@ -13,5 +12,4 @@ class Base(Material):
     This class should *not* be instantiated directly.
     """
 
-    def __init__(self):
-        super().__init__()
+    pass

@@ -1,11 +1,11 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 
 from .elasto_plastic import ElastoPlastic
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Snow(ElastoPlastic):
     """
     The snow material class for MPM.
@@ -59,23 +59,23 @@ class Snow(ElastoPlastic):
             use_von_mises=False,
         )
 
-    @ti.func
+    @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
-        S_new = ti.Matrix.zero(gs.ti_float, 3, 3)
+        S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
         Jp_new = Jp
-        for d in ti.static(range(3)):
+        for d in qd.static(range(3)):
             S_new[d, d] = min(max(S[d, d], 1 - self._yield_lower), 1 + self._yield_higher)
             Jp_new *= S[d, d] / S_new[d, d]
         F_new = U @ S_new @ V.transpose()
         return F_new, S_new, Jp_new
 
-    @ti.func
+    @qd.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
         # Hardening coefficient: material harder when compressed
-        h = ti.exp(10 * (1.0 - Jp))
+        h = qd.exp(10 * (1.0 - Jp))
         mu, lam = self._mu * h, self._lam * h
 
         r = U @ V.transpose()
-        stress = 2 * mu * (F_new - r) @ F_new.transpose() + ti.Matrix.identity(gs.ti_float, 3) * lam * J * (J - 1)
+        stress = 2 * mu * (F_new - r) @ F_new.transpose() + qd.Matrix.identity(gs.qd_float, 3) * lam * J * (J - 1)
 
         return stress

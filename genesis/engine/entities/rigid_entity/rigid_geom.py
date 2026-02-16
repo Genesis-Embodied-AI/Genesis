@@ -3,7 +3,6 @@ import pickle as pkl
 from itertools import chain
 from typing import TYPE_CHECKING
 
-import quadrants as ti
 import igl
 import numpy as np
 import skimage
@@ -14,7 +13,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
+from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 if TYPE_CHECKING:
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
@@ -28,7 +27,6 @@ if TYPE_CHECKING:
 NUM_VERTS_VISUAL_GEOM_AABB = 200
 
 
-@ti.data_oriented
 class RigidGeom(RBC):
     """
     A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed from a single mesh. This can be accessed via `link.geoms`.
@@ -346,7 +344,7 @@ class RigidGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -354,7 +352,7 @@ class RigidGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -366,9 +364,9 @@ class RigidGeom(RBC):
 
         verts_idx = slice(self.verts_state_start, self.verts_state_end)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
         else:
-            tensor = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor
@@ -807,7 +805,6 @@ class RigidGeom(RBC):
         return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
-@ti.data_oriented
 class RigidVisGeom(RBC):
     """
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
@@ -873,7 +870,7 @@ class RigidVisGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -881,7 +878,7 @@ class RigidVisGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 
@@ -82,7 +82,6 @@ class IMUData(NamedTuple):
 
 
 @register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
-@ti.data_oriented
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
     NoisySensorMixin[IMUSharedMetadata],

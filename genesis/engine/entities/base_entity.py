@@ -1,7 +1,4 @@
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-import quadrants as ti
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -10,7 +7,6 @@ if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-@ti.data_oriented
 class Entity(RBC):
     """
     Base class for all types of entities.

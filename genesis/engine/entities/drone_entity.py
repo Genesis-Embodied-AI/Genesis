@@ -2,7 +2,6 @@ import os
 import xml.etree.ElementTree as ET
 
 import torch
-import quadrants as ti
 
 import genesis as gs
 from genesis.utils.misc import get_assets_dir
@@ -10,7 +9,6 @@ from genesis.utils.misc import get_assets_dir
 from .rigid_entity import RigidEntity
 
 
-@ti.data_oriented
 class DroneEntity(RigidEntity):
     def _load_scene(self, morph, surface):
         super()._load_scene(morph, surface)

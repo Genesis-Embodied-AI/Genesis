@@ -30,7 +30,7 @@ DURATION_RECORD = 15.0
 
 pytestmark = [
     pytest.mark.benchmarks,
-    pytest.mark.taichi_offline_cache(False),
+    pytest.mark.disable_cache(False),
 ]
 
 
@@ -737,7 +737,7 @@ def box_pyramid_6(solver, n_envs, gjk):
 @pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     """G1 humanoid robot falling from above a plane."""
-    import quadrants as ti
+    import quadrants as qd
 
     # This is sufficient, as long as we use sync
     duration_warmup = 20.0
@@ -788,7 +788,7 @@ def g1_fall(solver, n_envs, gjk):
 
     num_steps = 0
     is_recording = False
-    ti.sync()
+    qd.sync()
     time_start = time.time()
     while True:
         random_forces.uniform_(-max_force, max_force)
@@ -798,11 +798,11 @@ def g1_fall(solver, n_envs, gjk):
         if is_recording:
             num_steps += 1
             if time_elapsed > duration_record:
-                ti.sync()
+                qd.sync()
                 time_elapsed = time.time() - time_start
                 break
         elif time_elapsed > duration_warmup:
-            ti.sync()
+            qd.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)

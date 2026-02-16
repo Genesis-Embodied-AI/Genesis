@@ -19,10 +19,10 @@ jobs:
       FORCE_COLOR: 1
       PY_COLORS: 1
       GS_CACHE_FILE_PATH: ".cache/genesis"
-      TI_OFFLINE_CACHE: "1"
-      TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
-      TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
-      TI_DEBUG: "0"
+      QD_OFFLINE_CACHE: "1"
+      QD_OFFLINE_CACHE_CLEANING_POLICY: "never"
+      QD_OFFLINE_CACHE_FILE_PATH: ".cache/quadrants"
+      QD_DEBUG: "0"
       OMNI_KIT_ACCEPT_EULA: "yes"
 
     steps:
@@ -52,12 +52,11 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install '.[dev,usd]'
 
-      - name: Get quadrants version
+      - name: Get Quadrants version
         id: quadrants_version
         shell: bash
         run: |
           QUADRANTS_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('quadrants'))")
-          echo "QUADRANTS_VERSION=${QUADRANTS_VERSION}"
           echo "QUADRANTS_VERSION=${QUADRANTS_VERSION}" >> $GITHUB_OUTPUT
 
       - name: Restore cache

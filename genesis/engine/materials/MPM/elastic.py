@@ -1,11 +1,11 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 
 from .base import Base
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Elastic(Base):
     """
     The elastic material class for MPM.
@@ -56,25 +56,25 @@ class Elastic(Base):
 
         self._model = model
 
-    @ti.func
+    @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
         F_new = F_tmp
         S_new = S
         Jp_new = Jp
         return F_new, S_new, Jp_new
 
-    @ti.func
+    @qd.func
     def update_stress_corotation(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + ti.Matrix.identity(
-            gs.ti_float, 3
+        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + qd.Matrix.identity(
+            gs.qd_float, 3
         ) * self._lam * J * (J - 1)
 
         return stress
 
-    @ti.func
+    @qd.func
     def update_stress_neohooken(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        stress = self._mu * (F_tmp @ F_tmp.transpose()) + ti.Matrix.identity(gs.ti_float, 3) * (
-            self._lam * ti.log(J) - self._mu
+        stress = self._mu * (F_tmp @ F_tmp.transpose()) + qd.Matrix.identity(gs.qd_float, 3) * (
+            self._lam * qd.log(J) - self._mu
         )
 
         return stress

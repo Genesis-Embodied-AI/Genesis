@@ -6,7 +6,7 @@ Sutherland-Hodgman polygon clipping for finding multiple contact points
 between colliding geometric entities (face-face, edge-face pairs).
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -18,7 +18,7 @@ from .utils import (
 )
 
 
-@ti.func
+@qd.func
 def func_multi_contact(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -27,10 +27,10 @@ def func_multi_contact(
     gjk_info: array_class.GJKInfo,
     i_ga,
     i_gb,
-    pos_a: ti.types.vector(3, dtype=gs.ti_float),
-    quat_a: ti.types.vector(4, dtype=gs.ti_float),
-    pos_b: ti.types.vector(3, dtype=gs.ti_float),
-    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     i_f,
 ):
@@ -239,8 +239,8 @@ def func_multi_contact(
             else:
                 nface2 = nface
 
-        approx_dir = gs.ti_vec3(0.0, 0.0, 0.0)
-        normal = gs.ti_vec3(0.0, 0.0, 0.0)
+        approx_dir = gs.qd_vec3(0.0, 0.0, 0.0)
+        normal = gs.qd_vec3(0.0, 0.0, 0.0)
         if edgecon1:
             # Face 1 is an edge, so clip face 1 against face 2
             approx_dir = gjk_state.contact_faces[i_b, j].normal2 * dir.norm()
@@ -258,7 +258,7 @@ def func_multi_contact(
         func_clip_polygon(gjk_state, gjk_info, i_b, nface1, nface2, edgecon1, edgecon2, normal, approx_dir)
 
 
-@ti.func
+@qd.func
 def func_simplex_dim(
     v1i,
     v2i,
@@ -296,13 +296,13 @@ def func_simplex_dim(
     return dim, rv1i, rv2i, rv3i, rv1, rv2, rv3
 
 
-@ti.func
+@qd.func
 def func_potential_box_normals(
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dim,
     v1,
@@ -337,7 +337,7 @@ def func_potential_box_normals(
     is_degenerate_simplex = False
 
     c = 0
-    xyz = gs.ti_ivec3(0, 0, 0)
+    xyz = gs.qd_ivec3(0, 0, 0)
     for i in range(3):
         # 1 when every vertex has positive xyz coordinate,
         # -1 when every vertex has negative xyz coordinate,
@@ -346,17 +346,17 @@ def func_potential_box_normals(
 
     for i in range(1 if dim == 3 else 3):
         # Determine the normal vector in the local space
-        local_n = gs.ti_vec3(xyz[0], xyz[1], xyz[2])
+        local_n = gs.qd_vec3(xyz[0], xyz[1], xyz[2])
         w = 1
 
         if dim == 2:
             w = xyz[i]
 
         if dim == 2 or dim == 1:
-            local_n = gs.ti_vec3(0, 0, 0)
+            local_n = gs.qd_vec3(0, 0, 0)
             local_n[i] = xyz[i]
 
-        global_n = gu.ti_transform_by_quat(local_n, quat)
+        global_n = gu.qd_transform_by_quat(local_n, quat)
 
         if dim == 3:
             gjk_state.contact_normals[i_b, 0].normal = global_n
@@ -419,7 +419,7 @@ def func_potential_box_normals(
     return n_normals
 
 
-@ti.func
+@qd.func
 def func_cmp_bit(
     v1,
     v2,
@@ -459,12 +459,12 @@ def func_cmp_bit(
     return res
 
 
-@ti.func
+@qd.func
 def func_box_normal_from_collision_normal(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dir,
 ):
@@ -476,19 +476,19 @@ def func_box_normal_from_collision_normal(
     or `geoms_state.quat`.
     """
     # Every box face normal
-    normals = ti.Vector(
+    normals = qd.Vector(
         [1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0],
-        dt=gs.ti_float,
+        dt=gs.qd_float,
     )
 
     # Get local collision normal
-    local_dir = gu.ti_transform_by_quat(dir, gu.ti_inv_quat(quat))
+    local_dir = gu.qd_transform_by_quat(dir, gu.qd_inv_quat(quat))
     local_dir = local_dir.normalized()
 
     # Determine the closest face normal
     flag = RETURN_CODE.FAIL
     for i in range(6):
-        n = gs.ti_vec3(normals[3 * i + 0], normals[3 * i + 1], normals[3 * i + 2])
+        n = gs.qd_vec3(normals[3 * i + 0], normals[3 * i + 1], normals[3 * i + 2])
         if local_dir.dot(n) > gjk_info.contact_face_tol[None]:
             flag = RETURN_CODE.SUCCESS
             gjk_state.contact_normals[i_b, 0].normal = n
@@ -498,7 +498,7 @@ def func_box_normal_from_collision_normal(
     return flag
 
 
-@ti.func
+@qd.func
 def func_potential_mesh_normals(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -506,7 +506,7 @@ def func_potential_mesh_normals(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dim,
     v1,
@@ -540,7 +540,7 @@ def func_potential_mesh_normals(
 
     for i_f in range(face_start, face_end):
         face = faces_info[i_f].verts_idx
-        has_vs = gs.ti_ivec3(0, 0, 0)
+        has_vs = gs.qd_ivec3(0, 0, 0)
         if v1 == face[0] or v1 == face[1] or v1 == face[2]:
             has_vs[0] = 1
         if v2 == face[0] or v2 == face[1] or v2 == face[2]:
@@ -560,7 +560,7 @@ def func_potential_mesh_normals(
             # Compute the face normal
             n = (v2pos - v1pos).cross(v3pos - v1pos)
             n = n.normalized()
-            n = gu.ti_transform_by_quat(n, quat)
+            n = gu.qd_transform_by_quat(n, quat)
 
             gjk_state.contact_normals[i_b, n_normals].normal = n
             gjk_state.contact_normals[i_b, n_normals].id = i_f
@@ -578,7 +578,7 @@ def func_potential_mesh_normals(
     return n_normals
 
 
-@ti.func
+@qd.func
 def func_find_aligned_faces(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -589,10 +589,10 @@ def func_find_aligned_faces(
     """
     Find if any two faces from [contact_faces] are aligned.
     """
-    res = gs.ti_ivec2(0, 0)
+    res = gs.qd_ivec2(0, 0)
     flag = RETURN_CODE.FAIL
 
-    for i, j in ti.ndrange(nv, nw):
+    for i, j in qd.ndrange(nv, nw):
         ni = gjk_state.contact_faces[i_b, i].normal1
         nj = gjk_state.contact_faces[i_b, j].normal2
         if ni.dot(nj) < -gjk_info.contact_face_tol[None]:
@@ -604,14 +604,14 @@ def func_find_aligned_faces(
     return res, flag
 
 
-@ti.func
+@qd.func
 def func_potential_box_edge_normals(
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dim,
     v1,
@@ -654,12 +654,12 @@ def func_potential_box_edge_normals(
         z = g_size_z if (v1i & 4) else -g_size_z
 
         for i in range(3):
-            bv = gs.ti_vec3(-x, y, z)
+            bv = gs.qd_vec3(-x, y, z)
             if i == 1:
-                bv = gs.ti_vec3(x, -y, z)
+                bv = gs.qd_vec3(x, -y, z)
             elif i == 2:
-                bv = gs.ti_vec3(x, y, -z)
-            ev = gu.ti_transform_by_trans_quat(bv, pos, quat)
+                bv = gs.qd_vec3(x, y, -z)
+            ev = gu.qd_transform_by_trans_quat(bv, pos, quat)
             r = func_safe_normalize(gjk_info, ev - v1)
 
             gjk_state.contact_normals[i_b, i].endverts = ev
@@ -670,7 +670,7 @@ def func_potential_box_edge_normals(
     return n_normals
 
 
-@ti.func
+@qd.func
 def func_potential_mesh_edge_normals(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -678,8 +678,8 @@ def func_potential_mesh_edge_normals(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dim,
     v1,
@@ -732,7 +732,7 @@ def func_potential_mesh_edge_normals(
 
                 # Compute the edge normal
                 v2_pos = verts_info.init_pos[t_v2i]
-                v2_pos = gu.ti_transform_by_trans_quat(v2_pos, pos, quat)
+                v2_pos = gu.qd_transform_by_trans_quat(v2_pos, pos, quat)
                 t_res = func_safe_normalize(gjk_info, v2_pos - v1)
 
                 gjk_state.contact_normals[i_b, n_normals].normal = t_res
@@ -745,7 +745,7 @@ def func_potential_mesh_edge_normals(
     return n_normals
 
 
-@ti.func
+@qd.func
 def func_safe_normalize(
     gjk_info: array_class.GJKInfo,
     v,
@@ -767,7 +767,7 @@ def func_safe_normalize(
     return v
 
 
-@ti.func
+@qd.func
 def func_find_aligned_edge_face(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -779,10 +779,10 @@ def func_find_aligned_edge_face(
     """
     Find if an edge and face from [contact_faces] are aligned.
     """
-    res = gs.ti_ivec2(0, 0)
+    res = gs.qd_ivec2(0, 0)
     flag = RETURN_CODE.FAIL
 
-    for i, j in ti.ndrange(nedge, nface):
+    for i, j in qd.ndrange(nedge, nface):
         ni = gjk_state.contact_faces[i_b, i].normal1
         nj = gjk_state.contact_faces[i_b, j].normal2
 
@@ -793,7 +793,7 @@ def func_find_aligned_edge_face(
             # The second normal is the face normal
             nj = gjk_state.contact_faces[i_b, j].normal1
 
-        if ti.abs(ni.dot(nj)) < gjk_info.contact_edge_tol[None]:
+        if qd.abs(ni.dot(nj)) < gjk_info.contact_edge_tol[None]:
             res[0] = i
             res[1] = j
             flag = RETURN_CODE.SUCCESS
@@ -802,13 +802,13 @@ def func_find_aligned_edge_face(
     return res, flag
 
 
-@ti.func
+@qd.func
 def func_box_face(
     geoms_info: array_class.GeomsInfo,
     gjk_state: array_class.GJKState,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     i_o,
     face_idx,
@@ -830,9 +830,9 @@ def func_box_face(
 
     nface = 4 if face_idx >= 0 and face_idx < 6 else 0
 
-    vs = ti.Vector([0.0 for _ in range(3 * 4)], dt=gs.ti_float)
+    vs = qd.Vector([0.0 for _ in range(3 * 4)], dt=gs.qd_float)
     if nface:
-        for i in ti.static(range(4)):
+        for i in qd.static(range(4)):
             b0 = i & 1
             b1 = i >> 1
             # +1, +1, -1, -1
@@ -843,7 +843,7 @@ def func_box_face(
             # Flip sv based on [side]
             sv = sv * side
 
-            s = gs.ti_vec3(0, 0, 0)
+            s = gs.qd_vec3(0, 0, 0)
             s[axis] = side
             s[(axis + 1) % 3] = su
             s[(axis + 2) % 3] = sv
@@ -854,8 +854,8 @@ def func_box_face(
 
     # Transform the vertices to the global coordinates
     for i in range(nface):
-        v = gs.ti_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
-        v = gu.ti_transform_by_trans_quat(v, pos, quat)
+        v = gs.qd_vec3(vs[3 * i + 0], vs[3 * i + 1], vs[3 * i + 2]) * 0.5
+        v = gu.qd_transform_by_trans_quat(v, pos, quat)
         if i_o == 0:
             gjk_state.contact_faces[i_b, i].vert1 = v
         else:
@@ -864,14 +864,14 @@ def func_box_face(
     return nface
 
 
-@ti.func
+@qd.func
 def func_mesh_face(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     gjk_state: array_class.GJKState,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     i_o,
     face_idx,
@@ -887,7 +887,7 @@ def func_mesh_face(
     for i in range(nvert):
         i_v = faces_info[face_idx].verts_idx[i]
         v = verts_info.init_pos[i_v]
-        v = gu.ti_transform_by_trans_quat(v, pos, quat)
+        v = gu.qd_transform_by_trans_quat(v, pos, quat)
         if i_o == 0:
             gjk_state.contact_faces[i_b, i].vert1 = v
         else:
@@ -896,7 +896,7 @@ def func_mesh_face(
     return nvert
 
 
-@ti.func
+@qd.func
 def func_clip_polygon(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -913,9 +913,9 @@ def func_clip_polygon(
 
     Parameters:
     ----------
-    normal: gs.ti_vec3
+    normal: gs.qd_vec3
         The normal of the clipping polygon.
-    approx_dir: gs.ti_vec3
+    approx_dir: gs.qd_vec3
         Preferred separation direction for the clipping.
     """
     clipping_polygon = 1 if not edgecon1 else 2
@@ -949,7 +949,7 @@ def func_clip_polygon(
             gjk_state.contact_halfspaces[i_b, i].dist = v1.dot(res)
 
         # Initialize buffers to store the clipped polygons
-        nclipped = gs.ti_ivec2(0, 0)
+        nclipped = gs.qd_ivec2(0, 0)
         nclipped[0] = nface2 if clipping_polygon == 1 else nface1
 
         # These values are swapped during the clipping process.
@@ -1056,7 +1056,7 @@ def func_clip_polygon(
                 gjk_state.n_witness[i_b] = n_witness
 
 
-@ti.func
+@qd.func
 def func_halfspace(
     gjk_info: array_class.GJKInfo,
     a,
@@ -1069,7 +1069,7 @@ def func_halfspace(
     return (p - a).dot(n) > -gjk_info.FLOAT_MIN[None]
 
 
-@ti.func
+@qd.func
 def func_plane_intersect(
     gjk_info: array_class.GJKInfo,
     pn,
@@ -1089,11 +1089,11 @@ def func_plane_intersect(
         The parameter t that defines the intersection point on the line segment.
     """
     t = gjk_info.FLOAT_MAX[None]
-    ip = gs.ti_vec3(0, 0, 0)
+    ip = gs.qd_vec3(0, 0, 0)
 
     dir = v2 - v1
     normal_dot = pn.dot(dir)
-    if ti.abs(normal_dot) > gjk_info.FLOAT_MIN[None]:
+    if qd.abs(normal_dot) > gjk_info.FLOAT_MIN[None]:
         t = (pd - pn.dot(v1)) / normal_dot
         if t >= 0 and t <= 1:
             ip = v1 + t * dir
@@ -1101,7 +1101,7 @@ def func_plane_intersect(
     return t, ip
 
 
-@ti.func
+@qd.func
 def func_approximate_polygon_with_quad(
     gjk_state: array_class.GJKState,
     i_b,
@@ -1112,8 +1112,8 @@ def func_approximate_polygon_with_quad(
     Find a convex quadrilateral that approximates the given N-gon [polygon]. We find it by selecting the four
     vertices in the polygon that form the maximum area quadrilateral.
     """
-    i_v = gs.ti_ivec4(0, 1, 2, 3)
-    i_v0 = gs.ti_ivec4(0, 1, 2, 3)
+    i_v = gs.qd_ivec4(0, 1, 2, 3)
+    i_v0 = gs.qd_ivec4(0, 1, 2, 3)
     m = func_quadrilateral_area(gjk_state, i_b, polygon_start, i_v[0], i_v[1], i_v[2], i_v[3])
 
     # 1: change b, 2: change c, 3: change d
@@ -1164,7 +1164,7 @@ def func_approximate_polygon_with_quad(
     return i_v
 
 
-@ti.func
+@qd.func
 def func_quadrilateral_area(
     gjk_state: array_class.GJKState,
     i_b,

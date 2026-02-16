@@ -15,7 +15,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
-from genesis.utils.misc import get_assets_dir, tensor_to_array, ti_to_torch
+from genesis.utils.misc import get_assets_dir, tensor_to_array, qd_to_torch
 
 from .utils import (
     assert_allclose,
@@ -554,12 +554,12 @@ def test_dynamic_weld_scene_reset():
     n_eq_base = solver._rigid_global_info.n_equalities[None]
 
     solver.add_weld_constraint(box1.base_link_idx, box2.base_link_idx)
-    assert solver.constraint_solver.constraint_state.ti_n_equalities[0] == n_eq_base + 1
-    assert solver.constraint_solver.constraint_state.ti_n_equalities[1] == n_eq_base + 1
+    assert solver.constraint_solver.constraint_state.qd_n_equalities[0] == n_eq_base + 1
+    assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
 
     scene.reset(state=scene.get_state(), envs_idx=[0])
-    assert solver.constraint_solver.constraint_state.ti_n_equalities[0] == n_eq_base
-    assert solver.constraint_solver.constraint_state.ti_n_equalities[1] == n_eq_base + 1
+    assert solver.constraint_solver.constraint_state.qd_n_equalities[0] == n_eq_base
+    assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
 
 
 @pytest.mark.required
@@ -1258,7 +1258,7 @@ def test_position_control(show_viewer):
     dofs_armature[:, 1] += tensor_to_array(MOTORS_KD * scene.sim._substep_dt)
     scene.rigid_solver.dofs_info.armature.from_numpy(dofs_armature)
 
-    force_range = ti_to_torch(scene.rigid_solver.dofs_info.force_range)
+    force_range = qd_to_torch(scene.rigid_solver.dofs_info.force_range)
     for i in range(200):
         dofs_pos = robot.get_qpos(envs_idx=1)
         dofs_vel = robot.get_dofs_velocity(envs_idx=1)
@@ -3250,7 +3250,7 @@ def test_data_accessor(n_envs, batched, tol):
     # Check attribute getters / setters.
     # First, without any any row or column masking:
     # * Call 'Get' -> Call 'Set' with random value -> Call 'Get'
-    # * Compare first 'Get' ouput with taichi value
+    # * Compare first 'Get' ouput with Quadrants value
     # Then, for any possible combinations of row and column masking:
     # * Call 'Get' -> Call 'Set' with 'Get' output -> Call 'Get'
     # * Compare first 'Get' output with last 'Get' output
@@ -3285,7 +3285,7 @@ def test_data_accessor(n_envs, batched, tol):
             and value.device == gs.device
         )
 
-    for arg1_max, arg2_max, getter_or_spec, setter, ti_data in (
+    for arg1_max, arg2_max, getter_or_spec, setter, qd_data in (
         # SOLVER
         (gs_s.n_links, n_envs, gs_s.get_links_pos, None, gs_s.links_state.pos),
         (gs_s.n_links, n_envs, gs_s.get_links_quat, None, gs_s.links_state.quat),
@@ -3390,10 +3390,10 @@ def test_data_accessor(n_envs, batched, tol):
                 datas = [torch.ones((*batch_shape, *shape)) for shape in spec]
             else:
                 datas = torch.ones((*batch_shape, *spec))
-        if ti_data is not None:
-            true = ti_to_torch(ti_data)
-            ti_ndim = getattr(ti_data, "ndim", len(getattr(ti_data, "element_shape", ())))
-            true = true.movedim(true.ndim - ti_ndim - 1, 0)
+        if qd_data is not None:
+            true = qd_to_torch(qd_data)
+            qd_ndim = getattr(qd_data, "ndim", len(getattr(qd_data, "element_shape", ())))
+            true = true.movedim(true.ndim - qd_ndim - 1, 0)
             if is_tuple:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
@@ -3991,7 +3991,7 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     # Force parallelism on CPU to trigger any cross-entity race condition
     if gs.backend == gs.cpu:
         monkeypatch.setenv("GS_PARA_LEVEL", "2")
-        monkeypatch.setenv("TI_NUM_THREADS", "3")
+        monkeypatch.setenv("QD_NUM_THREADS", "3")
 
     EULER_OFFSET = (0, 0, 45)
 
