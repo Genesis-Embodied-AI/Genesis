@@ -583,8 +583,9 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False, 0.05, (1, 0, 0)),
         # Sphere at capsule centre: dist = 0, pen = sum of radii = 0.2, normal is degenerate
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False, 0.2, None),
-        # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15^2+0.05^2) ≈ 0.1581
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True, None, None),
+        # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15²+0.05²) ≈ 0.1581
+        # pen = 0.2 - sqrt(0.025) ≈ 0.041886, normal along (3, 0, 1)
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True, 0.041886, (3, 0, 1)),
         # Horizontal capsule (axis along X after 90° Y rotation), sphere offset in Y: pen = 0.05
         ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False, 0.05, (0, 1, 0)),
     ]
