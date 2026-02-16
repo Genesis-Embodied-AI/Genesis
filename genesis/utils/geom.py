@@ -16,6 +16,36 @@ import genesis as gs
 
 
 @ti.func
+def i_cross_vec(vec):
+    return ti.Vector([0.0, -vec[2], vec[1]], dt=gs.ti_float)
+
+
+@ti.func
+def j_cross_vec(vec):
+    return ti.Vector([vec[2], 0.0, -vec[0]], dt=gs.ti_float)
+
+
+@ti.func
+def k_cross_vec(vec):
+    return ti.Vector([-vec[1], vec[0], 0.0], dt=gs.ti_float)
+
+
+@ti.func
+def transform_vec_by_normalized_quat_fast(
+    v,
+    quat,
+):
+    """
+    Assumptions:
+    - quat must be normalized
+    """
+    q_w, q_x, q_y, q_z = quat
+    u = ti.Vector([q_x, q_y, q_z])
+    t = 2.0 * u.cross(v)
+    return v + q_w * t + u.cross(t)
+
+
+@ti.func
 def ti_xyz_to_quat(xyz):
     """
     Convert intrinsic x-y-z Euler angles to quaternion.

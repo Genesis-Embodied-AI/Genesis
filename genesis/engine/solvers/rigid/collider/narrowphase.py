@@ -33,6 +33,8 @@ from .box_contact import (
     func_box_box_contact,
 )
 
+from . import capsule_contact
+
 
 class CCD_ALGORITHM_CODE(IntEnum):
     """Convex collision detection algorithm codes."""
@@ -635,7 +637,31 @@ def func_convex_convex_contact(
                 )
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
+                    is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
+                        geoms_info=geoms_info,
+                        rigid_global_info=rigid_global_info,
+                    )
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                    is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
+                        geoms_info=geoms_info,
+                        rigid_global_info=rigid_global_info,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = ti.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
                     )
@@ -863,9 +889,16 @@ def func_convex_convex_contact(
                 else:
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
-            elif multi_contact and is_col_0 > 0 and is_col > 0:
-                if ti.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
-                    # Project contact points and correct for perturbation
+            elif multi_contact and is_col:
+                # For perturbed iterations (i_detection > 0), correct contact position and normal. This applies to all
+                # collision methods when multi-contact is enabled, except mujoco compatible.
+                #
+                # 1. Project the contact point on both geometries
+                # 2. Revert the effect of small rotation
+                # 3. Update contact point
+                if ti.static(
+                    collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
+                ):
                     contact_point_a = (
                         gu.ti_transform_by_quat(
                             (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
@@ -900,10 +933,10 @@ def func_convex_convex_contact(
                     # contact points and thefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
-                    # Only change penetration to the initial one, because the normal vector could change abruptly
-                    # under MuJoCo's GJK-EPA.
-                    penetration = penetration_0
+                    if ti.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                        # Only change penetration to the initial one, because the normal vector could change abruptly
+                        # under MuJoCo's GJK-EPA.
+                        penetration = penetration_0
 
                 # Discard contact point is repeated
                 repeated = False

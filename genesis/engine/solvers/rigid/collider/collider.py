@@ -43,7 +43,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
 )
-
+from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
@@ -55,7 +55,6 @@ from .narrowphase import (
     func_plane_box_contact,
     func_convex_convex_contact,
     func_box_box_contact,
-    func_narrow_phase_convex_vs_convex,
     func_narrow_phase_diff_convex_vs_convex,
     func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
@@ -460,7 +459,7 @@ class Collider:
             self._solver._errno,
         )
         if self._collider_static_config.has_convex_convex:
-            func_narrow_phase_convex_vs_convex(
+            narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
