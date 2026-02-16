@@ -2253,7 +2253,7 @@ def update_bracket_no_eval_local(
     return flag, p_alpha, p_cost, p_grad, p_hess, p_next_alpha
 
 
-@ti.func
+@qd.func
 def func_linesearch_and_apply_alpha(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2895,7 +2895,7 @@ def func_solve_init(
     )
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in ti.ndrange(_B):
+    for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
