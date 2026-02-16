@@ -92,6 +92,45 @@ git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
 pip install -e ".[dev]"
 ```
+建议在移动 HEAD 后系统地执行 `pip install -e ".[dev]"`，以确保所有依赖项和入口点都是最新的。
+
+### 使用 uv
+
+[uv](https://docs.astral.sh/uv/) 是一个快速的 Python 包和项目管理器。
+
+**安装 uv：**
+```bash
+# macOS 和 Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**使用 uv 快速开始：**
+```bash
+git clone https://github.com/Genesis-Embodied-AI/Genesis.git
+cd Genesis
+uv sync
+```
+
+然后为您的平台安装 PyTorch：
+
+```bash
+# NVIDIA GPU（以 CUDA 12.6 为例）
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# 仅 CPU（Linux/Windows）
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Apple Silicon（Metal/MPS）
+uv pip install torch
+```
+
+运行示例：
+```bash
+uv run examples/rigid/single_franka.py
+```
 
 ## Docker
 
