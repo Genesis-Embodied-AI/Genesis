@@ -846,20 +846,26 @@ def test_usd_bake(usd_file, tmp_path):
     RETRY_DELAY = 30.0
 
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
-    usd_file = os.path.join(asset_path, usd_file)
+    usd_fullpath = os.path.join(asset_path, usd_file)
 
     # Note that bootstrapping omni-kit by multiple workers concurrently is causing failure.
     # There is no easy way to get around this limitation except retrying after some delay...
     retry_idx = 0
     while True:
-        usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="visual", is_stage=False, fixed=True)
+        is_stage = usd_file == "usd/franka_mocap_teleop/table_scene.usd"
+        usd_scene = build_usd_scene(
+            usd_fullpath,
+            scale=1.0,
+            vis_mode="visual",
+            is_stage=is_stage,
+            fixed=True,
+        )
 
         is_any_baked = False
         for vgeom in usd_scene.entities[0].vgeoms:
-            vmesh = vgeom.vmesh
-            bake_success = vmesh.metadata["bake_success"]
+            bake_success = vgeom.vmesh.metadata["bake_success"]
             try:
-                assert bake_success is None or bake_success
+                assert bake_success
             except AssertionError:
                 if retry_idx < RETRY_NUM:
                     usd_scene.destroy()

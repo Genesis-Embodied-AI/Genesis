@@ -7,13 +7,17 @@ import genesis as gs
 from genesis.utils import geom as gu
 from genesis.utils import urdf as urdf_utils
 
-from .usd_context import UsdContext
+from .usd_context import (
+    UsdContext,
+    extract_links_referenced_by_joints,
+    find_joints_in_range,
+    find_rigid_bodies_in_range,
+)
 from .usd_geometry import parse_prim_geoms
 from .usd_utils import (
     AXES_VECTOR,
     get_attr_value_by_candidates,
     usd_center_of_mass_to_numpy,
-    usd_diagonal_inertia_to_numpy,
     usd_inertia_to_numpy,
     usd_mass_to_float,
     usd_pos_to_numpy,
@@ -446,6 +450,85 @@ def _parse_links(
     return l_infos, links_j_infos
 
 
+def sanitize_usd_morph(morph: gs.morphs.USD) -> gs.morphs.USD:
+    """
+    Add articulated rigid body hierarchy to USD if not specified.
+
+    This function processes a USD morph and determines whether it represents:
+    - A pure rigid body (no joints in subtree)
+    - A pure articulation (has joints, all links are connected)
+    - Mixed case (error - has both joints and unreferenced rigid bodies)
+
+    Parameters
+    ----------
+    morph : gs.morphs.USD
+        The USD morph to parse. joint_prims should be None - this function will
+        analyze the prim_path subtree to find joints and determine the entity type.
+
+    Returns
+    -------
+    l_infos : list
+        List of link info dictionaries.
+    links_j_infos : list
+        List of lists of joint info dictionaries.
+    links_g_infos : list
+        List of lists of geometry info dictionaries.
+    eqs_info : list
+        List of equality constraint info dictionaries.
+    """
+    context: UsdContext = morph.usd_ctx
+    stage: Usd.Stage = context.stage
+
+    # Early return if already available
+    if morph.joint_prims is not None:
+        return morph
+
+    # Get the entity prim
+    if morph.prim_path is None:
+        gs.logger.debug("USD morph has no prim path. Fallback to its default prim path.")
+        entity_prim = stage.GetDefaultPrim()
+    else:
+        entity_prim = stage.GetPrimAtPath(morph.prim_path)
+    if not entity_prim.IsValid():
+        if morph.prim_path is None:
+            err_msg = (
+                f"Invalid default prim path {entity_prim} in USD file {morph.file}. Please specify 'morph.prim_path'."
+            )
+        else:
+            err_msg = f"Invalid user-specified prim path {entity_prim} in USD file {morph.file}."
+        gs.raise_exception(err_msg)
+
+    # Analyze the entity_prim subtree
+    # Find all joints in the subtree
+    joints_in_subtree = find_joints_in_range(Usd.PrimRange(entity_prim))
+
+    # Find all rigid bodies in the subtree
+    rigid_bodies_in_subtree = find_rigid_bodies_in_range(Usd.PrimRange(entity_prim))
+
+    # Extract links referenced by joints (don't check rigid body here, we'll filter later)
+    links_referenced_by_joints = extract_links_referenced_by_joints(stage, joints_in_subtree, check_rigid_body=False)
+
+    # Determine entity type
+    has_joints = len(joints_in_subtree) > 0
+    has_unreferenced_rigid_bodies = len(rigid_bodies_in_subtree - links_referenced_by_joints) > 0
+
+    # Check for mixed case error, because scene.add_entity(...) only return 1 entity.
+    if has_joints and has_unreferenced_rigid_bodies:
+        unreferenced = rigid_bodies_in_subtree - links_referenced_by_joints
+        gs.raise_exception(
+            f"Mixed entity detected at {entity_prim.GetPath()}: "
+            f"has {len(joints_in_subtree)} joints but also has {len(unreferenced)} rigid bodies "
+            f"not referenced by joints: {list(unreferenced)[:5]}. "
+            "Use scene.add_stage() to handle mixed entities, or ensure all rigid bodies are connected by joints."
+        )
+
+    # Pure articulation case (has joints, all rigid bodies are referenced)
+    if has_joints:
+        morph.joint_prims = [str(joint.GetPath()) for joint in joints_in_subtree]
+
+    return morph
+
+
 def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     """
     Unified parser for USD rigid entities (both articulations and rigid bodies).
@@ -472,6 +555,8 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     eqs_info : list
         List of equality constraint info dictionaries.
     """
+    morph = sanitize_usd_morph(morph)
+
     context: UsdContext = morph.usd_ctx
     context.find_all_materials()
     stage: Usd.Stage = context.stage

@@ -1542,7 +1542,6 @@ class USD(FileMorph):
     usd_ctx: Any = None
     prim_path: Optional[str] = None
     joint_prims: Optional[List[str]] = None
-    import_mode: Literal["stage", "entity"] = "entity"
 
     def __init__(self, **data):
         super().__init__(**data)

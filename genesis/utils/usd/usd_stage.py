@@ -168,8 +168,6 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
     context: UsdContext = morph.usd_ctx
     usd_stage: Usd.Stage = context.stage
 
-    assert morph.import_mode == "stage", "Import mode must be 'stage' when using parse_usd_stage()."
-
     # joint_prims should be None at this point - it's an internal field set by parser functions
     # parse_usd_stage() will detect and set it on the morphs it creates
     assert morph.joint_prims is None, (

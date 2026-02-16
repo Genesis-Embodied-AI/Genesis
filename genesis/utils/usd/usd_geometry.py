@@ -198,7 +198,7 @@ def parse_prim_geoms(
                     {
                         "mesh_path": context.stage_file,  # unbaked file or cache
                         "name": subset_geom_id,
-                        "bake_success": subset_bake_success,
+                        "bake_success": bool(subset_bake_success),
                     }
                 )
                 meshes.append(mesh)
@@ -269,7 +269,7 @@ def parse_prim_geoms(
             tmesh.apply_transform(geom_ST)
             metadata = {
                 "name": geom_id,
-                "bake_success": bake_success,
+                "bake_success": bool(bake_success),
             }
             meshes.append(gs.Mesh.from_trimesh(tmesh, surface=geom_surface, metadata=metadata))
 
