@@ -1375,7 +1375,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
             res=(640, 480),
             run_in_thread=False,
             # Disable text rendering as it is messing up with pixel matching when using old CPU-based Mesa driver
-            disable_help_text=False,
+            enable_help_text=False,
         ),
         vis_options=gs.options.VisOptions(
             visualize_mpm_boundary=True,
