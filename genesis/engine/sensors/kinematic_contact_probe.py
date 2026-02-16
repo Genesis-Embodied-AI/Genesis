@@ -8,7 +8,7 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_verts_for_geom
+from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_verts
 from genesis.engine.solvers.rigid.collider.utils import func_point_in_geom_aabb
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
@@ -168,6 +168,8 @@ def _kernel_kinematic_contact_probe(
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output.shape[0]
 
+    func_update_all_verts(geoms_info, geoms_state, verts_info, fixed_verts_state, free_verts_state)
+
     for i_b, i_p in ti.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
 
@@ -207,11 +209,6 @@ def _kernel_kinematic_contact_probe(
                 if contact_link == sensor_link_idx and func_point_in_geom_aabb(
                     i_g, i_b, geoms_state, probe_pos, radius
                 ):
-                    # Update vertices only for geoms that passed filtering
-                    func_update_verts_for_geom(
-                        i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state
-                    )
-
                     # Raycast + sphere penetration test per geom
                     penetration = _probe_geom_penetration(
                         probe_pos,
