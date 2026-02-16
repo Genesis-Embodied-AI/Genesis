@@ -183,13 +183,16 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
 
 class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
-    Kinematic contact probe for detecting contact without affecting physics simulation.
+    A tactile sensor which queries contact depth relative to given probe normals and within the radius of the probe
+    positions along a rigid entity link.
 
-    The returned "force" is non-physical estimate: F = stiffness * penetration * probe_normal.
+    The returned force is an spring-like (kinematic) estimate based on contact depth, computed as
+    F = stiffness * penetration * probe_normal, as opposed to the actual impulse force on the link from the contact
+    obtained from the physics solver.
 
     Note
     ----
-    If the probe is attached to a fixed entity, it will not detect contacts with other fixed entities.
+    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
 
     Parameters
     ----------
