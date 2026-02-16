@@ -287,14 +287,14 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
-        assert (errno_val & (ERRNO_CALLED_GJK)) == 0, f"Analytical scene should not use GJK (errno={errno_val})"
+        assert (errno_val & ERRNO_CALLED_GJK) == 0, "Analytical scene should not use GJK."
 
     def step_gjk(self):
         # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        assert (errno_val & (ERRNO_CALLED_GJK)) != 0, f"GJK scene should use GJK (errno={errno_val})"
+        assert (errno_val & ERRNO_CALLED_GJK) != 0, "GJK scene should use GJK."
 
 
 @pytest.mark.required
@@ -342,9 +342,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             has_collision = len(contacts["geom_a"]) > 0
-            assert has_collision == should_collide, (
-                f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
-            )
+            assert has_collision == should_collide, "Analytical collision mismatch!"
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
@@ -373,9 +371,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             has_collision_analytical = contacts_analytical is not None and len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = contacts_gjk is not None and len(contacts_gjk["geom_a"]) > 0
 
-            assert has_collision_analytical == has_collision_gjk, (
-                f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-            )
+            assert has_collision_analytical == has_collision_gjk, "Collision detection mismatch!"
             assert has_collision_gjk == should_collide
 
             # If both detected a collision, compare the contact details
@@ -388,16 +384,11 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
                 pos_analytical = np.array(contacts_analytical["position"][0])
                 pos_gjk = np.array(contacts_gjk["position"][0])
-
-                pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
-                assert abs(pen_analytical - pen_gjk) < pen_tol, (
-                    f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
-                )
+                assert_allclose(pen_analytical, pen_gjk, atol=POS_TOL, rtol=0.1, err_msg="Penetration mismatch!")
 
                 normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-                assert normal_agreement > 0.95, f"Normal mismatch! agreement: {normal_agreement:.4f}"
+                assert normal_agreement > 0.95, "Normal mismatch!"
 
-                pos_diff = np.linalg.norm(pos_analytical - pos_gjk)
                 if description in ["parallel_light", "parallel_deep"]:
                     n_analytical = len(contacts_analytical["geom_a"])
                     n_gjk = len(contacts_gjk["geom_a"])
@@ -419,7 +410,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                         )
                         all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
 
-                        for i, pos_a in enumerate(all_analytical_positions):
+                        for pos_a in all_analytical_positions:
                             min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
                             assert min_dist < POS_TOL
 
@@ -427,15 +418,15 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                         if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):  # Both vertical
                             expected_xy = np.array([pos1[0] / 2, 0.0])  # Midpoint between capsules
                             for pos_a in all_analytical_positions:
-                                assert np.linalg.norm(pos_a[:2] - expected_xy) < POS_TOL
-                                assert -0.26 < pos_a[2] < 0.26
+                                assert_allclose(pos_a[:2], expected_xy, tol=POS_TOL)
+                                assert_allclose(pos_a[2], 0.0, tol=0.26)
                             for pos_g in all_gjk_positions:
-                                assert np.linalg.norm(pos_g[:2] - expected_xy) < POS_TOL
+                                assert_allclose(pos_g[:2], expected_xy, tol=POS_TOL)
                                 assert -0.26 < pos_g[2] < 0.26
                     else:
-                        assert pos_diff < POS_TOL
+                        assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
                 else:
-                    assert pos_diff < POS_TOL
+                    assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
         except AssertionError as e:
             raise AssertionError(
                 f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
@@ -475,10 +466,7 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
 
     penetration = contacts["penetration"][0]
     expected_pen = 0.05
-
-    assert abs(penetration - expected_pen) < POS_TOL, (
-        f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
-    )
+    assert_allclose(penetration, expected_pen, tol=POS_TOL, err_msg="Analytical solution not exact!")
 
     assert_allclose(contacts["normal"][0], (-1.0, 0.0, 0.0), tol=tol)
 
@@ -557,9 +545,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
             contacts = scene_analytical.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             has_collision = len(contacts["geom_a"]) > 0
-            assert has_collision == should_collide, (
-                f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
-            )
+            assert has_collision == should_collide, "Analytical collision mismatch"
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
@@ -578,9 +564,6 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
     for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
-        if skip_gpu and backend == gs.gpu:
-            continue
-
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
@@ -592,9 +575,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             has_collision_analytical = len(contacts_analytical["geom_a"]) > 0
             has_collision_gjk = len(contacts_gjk["geom_a"]) > 0
 
-            assert has_collision_analytical == has_collision_gjk, (
-                f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
-            )
+            assert has_collision_analytical == has_collision_gjk, "Collision detection mismatch!"
             assert has_collision_gjk == should_collide
 
             # If both detected a collision, compare the contact details
@@ -607,15 +588,11 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
                 pos_analytical = np.array(contacts_analytical["position"][0])
                 pos_gjk = np.array(contacts_gjk["position"][0])
-
-                pen_tol = max(0.01, 0.1 * max(pen_analytical, pen_gjk))
-                assert abs(pen_analytical - pen_gjk) < pen_tol, (
-                    f"Penetration mismatch! Analytical: {pen_analytical:.6f}, GJK: {pen_gjk:.6f}"
-                )
+                assert_allclose(pen_analytical, pen_gjk, atol=POS_TOL, rtol=0.1, err_msg="Penetration mismatch!")
 
                 normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
                 normal_tol = 0.5 if description == "sphere_at_capsule_center" else 0.95
-                assert normal_agreement > normal_tol, f"Normal mismatch! agreement: {normal_agreement:.4f}"
+                assert normal_agreement > normal_tol, "Normal mismatch!"
 
                 assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
         except AssertionError as e:
