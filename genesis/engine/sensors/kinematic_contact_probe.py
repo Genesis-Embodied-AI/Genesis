@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, Sequence, Type
+from typing import TYPE_CHECKING, NamedTuple, Type
 
 import numpy as np
 import quadrants as qd
@@ -345,10 +345,10 @@ class KinematicContactProbe(
 
         self._shared_metadata.total_n_probes += n_probes
 
-        if isinstance(self._options.radius, Sequence):
-            radii_tensor = torch.tensor(self._options.radius, dtype=gs.tc_float, device=gs.device)
-        else:
+        if isinstance(self._options.radius, float):
             radii_tensor = torch.full((n_probes,), self._options.radius, dtype=gs.tc_float, device=gs.device)
+        else:
+            radii_tensor = torch.tensor(self._options.radius, dtype=gs.tc_float, device=gs.device)
 
         self._shared_metadata.radii = concat_with_tensor(
             self._shared_metadata.radii, radii_tensor, expand=(n_probes,), dim=0

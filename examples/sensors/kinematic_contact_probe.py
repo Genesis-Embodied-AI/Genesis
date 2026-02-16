@@ -93,7 +93,7 @@ def main():
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
-            pos=tuple(pusher_start),
+            pos=pusher_start,
         ),
         surface=gs.surfaces.Default(
             color=(0.15, 0.55, 0.95, 1.0),
