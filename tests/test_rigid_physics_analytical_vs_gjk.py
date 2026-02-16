@@ -49,6 +49,49 @@ if TYPE_CHECKING:
 ERRNO_CALLED_GJK = 1 << 16
 POS_TOL = 1e-2  # otherwise tests fail
 
+# Tolerances for checking results against hand-computed expected values.
+# Analytical solutions should be near-exact; GJK is iterative so needs more slack.
+#
+# Penetration tolerance: absolute error in metres.
+# Normal tolerance: maximum allowed value of (1 - |dot(actual, expected)|).
+#   e.g. 1e-5 means the normal must agree to within ~0.26 degrees,
+#        1e-2 means within ~8 degrees.
+ANALYTICAL_PEN_TOL = 1e-5
+ANALYTICAL_NORMAL_TOL = 1e-5
+GJK_PEN_TOL = 1e-2
+GJK_NORMAL_TOL = 1e-2
+
+
+def _check_expected_values(contacts, description, exp_pen, exp_normal, method_name, pen_tol, normal_tol):
+    """Check that contacts match the expected penetration and/or normal, when provided.
+
+    Parameters
+    ----------
+    pen_tol : float
+        Maximum absolute penetration error (metres).
+    normal_tol : float
+        Maximum allowed ``1 - |dot(actual, expected)|``.
+    """
+    if not contacts or len(contacts["geom_a"]) == 0:
+        return
+
+    if exp_pen is not None:
+        pen = contacts["penetration"][0]
+        assert abs(pen - exp_pen) < pen_tol, (
+            f"[{method_name}] {description}: penetration {pen:.6f} != expected {exp_pen:.6f} (tol={pen_tol})"
+        )
+
+    if exp_normal is not None:
+        normal = np.array(contacts["normal"][0])
+        exp_n = np.array(exp_normal, dtype=float)
+        exp_n_len = np.linalg.norm(exp_n)
+        if exp_n_len > 1e-12:
+            dot_err = 1.0 - abs(np.dot(normal, exp_n / exp_n_len))
+            assert dot_err < normal_tol, (
+                f"[{method_name}] {description}: normal {normal} vs expected {exp_n / exp_n_len}, "
+                f"1-|dot|={dot_err:.6e} >= {normal_tol}"
+            )
+
 
 def create_capsule_mjcf(name, pos, euler, radius, half_length):
     """Helper function to create an MJCF file with a single capsule."""
@@ -310,13 +353,17 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
-        # (pos0, euler0, pos1, euler1, should_collide, description)
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0), True, "perpendicular_close"),
-        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light"),
-        ((0, 0, 0), (0, 90, 0), (0, 0.17, 0.17), (0, 90, 0), False, "horizontal_displaced"),
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep"),
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0), True, "perpendicular_center"),
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 45, 0), True, "diagonal_rotated"),
+        # (pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal)
+        # Segments cross at origin (distance=0), pen = sum of radii, normal is degenerate
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0), True, "perpendicular_close", 0.2, None),
+        # Parallel vertical, seg distance = 0.18, pen = 0.2 - 0.18 = 0.02
+        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light", 0.02, (-1, 0, 0)),
+        ((0, 0, 0), (0, 90, 0), (0, 0.17, 0.17), (0, 90, 0), False, "horizontal_displaced", None, None),
+        # Parallel vertical, seg distance = 0.15, pen = 0.2 - 0.15 = 0.05
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep", 0.05, (-1, 0, 0)),
+        # Segments cross at origin (distance=0), pen = sum of radii, normal is degenerate
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0), True, "perpendicular_center", 0.2, None),
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 45, 0), True, "diagonal_rotated", None, None),
     ]
 
     radius = 0.1
@@ -334,7 +381,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
-    for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
+    for pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal in test_cases:
         try:
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_analytical(entity_idx=1, pos=pos1, euler=euler1)
@@ -344,6 +391,10 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             has_collision = len(contacts["geom_a"]) > 0
             assert has_collision == should_collide, (
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
+            )
+            _check_expected_values(
+                contacts, description, exp_pen, exp_normal,
+                "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL,
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -361,7 +412,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
-    for pos0, euler0, pos1, euler1, should_collide, description in test_cases:
+    for pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal in test_cases:
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
@@ -377,6 +428,11 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
             assert has_collision_gjk == should_collide
+
+            _check_expected_values(
+                contacts_gjk, description, exp_pen, exp_normal,
+                "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL,
+            )
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
@@ -514,15 +570,23 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
-        # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu)
-        ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", False),
-        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", False),
-        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", False),
-        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False),
-        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False),
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False),
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True),
-        ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False),
+        # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu,
+        #  exp_pen, exp_normal)
+        # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
+        ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", False, 0.05, (0, 0, 1)),
+        # Sphere beside cylinder: dist to axis = 0.18, pen = 0.02
+        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", False, 0.02, (1, 0, 0)),
+        # dist to axis = sqrt(0.17^2+0.17^2) ≈ 0.24 > 0.2, no collision
+        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", False, None, None),
+        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False, None, None),
+        # Sphere beside cylinder: dist to axis = 0.15, pen = 0.05
+        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False, 0.05, (1, 0, 0)),
+        # Sphere at capsule centre: dist = 0, pen = sum of radii = 0.2, normal is degenerate
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False, 0.2, None),
+        # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15^2+0.05^2) ≈ 0.1581
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True, None, None),
+        # Horizontal capsule (axis along X after 90° Y rotation), sphere offset in Y: pen = 0.05
+        ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False, 0.05, (0, 1, 0)),
     ]
 
     sphere_radius = 0.1
@@ -544,7 +608,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
+    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, exp_pen, exp_normal in test_cases:
         if skip_gpu and backend == gs.gpu:
             pytest.xfail(
                 reason="gjk broken on gpu for this condition currently. "
@@ -560,6 +624,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             has_collision = len(contacts["geom_a"]) > 0
             assert has_collision == should_collide, (
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
+            )
+            _check_expected_values(
+                contacts, description, exp_pen, exp_normal,
+                "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL,
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -578,7 +646,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
+    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, exp_pen, exp_normal in test_cases:
         if skip_gpu and backend == gs.gpu:
             continue
 
@@ -597,6 +665,11 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Collision detection mismatch! Analytical: {has_collision_analytical}, GJK: {has_collision_gjk}"
             )
             assert has_collision_gjk == should_collide
+
+            _check_expected_values(
+                contacts_gjk, description, exp_pen, exp_normal,
+                "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL,
+            )
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
