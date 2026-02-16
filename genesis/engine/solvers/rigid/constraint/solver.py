@@ -2999,7 +2999,7 @@ def func_solve_iter(
 
 
 @ti.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=1, active=1, repeat_after=50
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after=100
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
