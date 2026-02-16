@@ -1,6 +1,6 @@
 import functools
 
-import quadrants as ti
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -20,7 +20,7 @@ def assert_muscle(method):
     return wrapper
 
 
-@ti.data_oriented
+@qd.data_oriented
 class MPMEntity(ParticleEntity):
     """
     MPM-based particle entity.
@@ -116,8 +116,8 @@ class MPMEntity(ParticleEntity):
         """
         self._reset_frame_grad(self._sim.cur_substep_local)
 
-    @ti.kernel
-    def _reset_frame_grad(self, f: ti.i32):
+    @qd.kernel
+    def _reset_frame_grad(self, f: qd.i32):
         """
         Clear all gradients for particle properties at the given substep.
 
@@ -126,7 +126,7 @@ class MPMEntity(ParticleEntity):
         f : int
             The current substep index.
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             self._solver.particles.grad[f, i_global, i_b].pos = 0
             self._solver.particles.grad[f, i_global, i_b].vel = 0
@@ -168,8 +168,8 @@ class MPMEntity(ParticleEntity):
             state.Jp.assert_contiguous()
             self._kernel_add_frame_particles_Jp_grad(self._sim.cur_substep_local, state.Jp.grad)
 
-    @ti.kernel
-    def _kernel_add_frame_particles_pos_grad(self, f: ti.i32, poss_grad: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_add_frame_particles_pos_grad(self, f: qd.i32, poss_grad: qd.types.ndarray()):
         """
         Accumulate gradients to particle positions at the given substep.
 
@@ -180,13 +180,13 @@ class MPMEntity(ParticleEntity):
         poss_grad : ndarray
             Gradient of particle positions, shape (B, n_particles, 3).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 self._solver.particles.grad[f, i_global, i_b].pos[j] += poss_grad[i_b, i_p, j]
 
-    @ti.kernel
-    def _kernel_add_frame_particles_vel_grad(self, f: ti.i32, vels_grad: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_add_frame_particles_vel_grad(self, f: qd.i32, vels_grad: qd.types.ndarray()):
         """
         Accumulate gradients to particle velocities at the given substep.
 
@@ -197,13 +197,13 @@ class MPMEntity(ParticleEntity):
         vels_grad : ndarray
             Gradient of particle velocities, shape (B, n_particles, 3).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 self._solver.particles.grad[f, i_global, i_b].vel[j] += vels_grad[i_b, i_p, j]
 
-    @ti.kernel
-    def _kernel_add_frame_particles_C_grad(self, f: ti.i32, C_grad: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_add_frame_particles_C_grad(self, f: qd.i32, C_grad: qd.types.ndarray()):
         """
         Accumulate gradients to affine matrices C at the given substep.
 
@@ -214,14 +214,14 @@ class MPMEntity(ParticleEntity):
         C_grad : ndarray
             Gradient of C matrices, shape (B, n_particles, 3, 3).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
-            for j in ti.static(range(3)):
-                for k in ti.static(range(3)):
+            for j in qd.static(range(3)):
+                for k in qd.static(range(3)):
                     self._solver.particles.grad[f, i_global, i_b].C[j, k] += C_grad[i_b, i_p, j, k]
 
-    @ti.kernel
-    def _kernel_add_frame_particles_F_grad(self, f: ti.i32, F_grad: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_add_frame_particles_F_grad(self, f: qd.i32, F_grad: qd.types.ndarray()):
         """
         Accumulate gradients to deformation gradients F at the given substep.
 
@@ -232,14 +232,14 @@ class MPMEntity(ParticleEntity):
         F_grad : ndarray
             Gradient of F matrices, shape (B, n_particles, 3, 3).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
-            for j in ti.static(range(3)):
-                for k in ti.static(range(3)):
+            for j in qd.static(range(3)):
+                for k in qd.static(range(3)):
                     self._solver.particles.grad[f, i_global, i_b].F[j, k] += F_grad[i_b, i_p, j, k]
 
-    @ti.kernel
-    def _kernel_add_frame_particles_Jp_grad(self, f: ti.i32, Jp_grad: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_add_frame_particles_Jp_grad(self, f: qd.i32, Jp_grad: qd.types.ndarray()):
         """
         Accumulate gradients to plastic volume ratios Jp at the given substep.
 
@@ -250,7 +250,7 @@ class MPMEntity(ParticleEntity):
         Jp_grad : ndarray
             Gradient of Jp values, shape (B, n_particles).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             self._solver.particles.grad[f, i_global, i_b].Jp += Jp_grad[i_b, i_p]
 
@@ -270,7 +270,7 @@ class MPMEntity(ParticleEntity):
         if isinstance(self.material, gs.materials.MPM.Muscle):
             _tgt_actu = self._tgt_buffer["actu"].pop()
             if _tgt_actu is not None and _tgt_actu.requires_grad:
-                _tgt_actu._backward_from_ti(self._set_particles_actu_grad)
+                _tgt_actu._backward_from_qd(self._set_particles_actu_grad)
 
         super().process_input_grad()
 
@@ -301,16 +301,16 @@ class MPMEntity(ParticleEntity):
 
         return state
 
-    @ti.kernel
+    @qd.kernel
     def get_frame(
         self,
-        f: ti.i32,
-        pos: ti.types.ndarray(),  # shape [B, n_particles, 3]
-        vel: ti.types.ndarray(),  # shape [B, n_particles, 3]
-        C: ti.types.ndarray(),  # shape [B, n_particles, 3, 3]
-        F: ti.types.ndarray(),  # shape [B, n_particles, 3, 3]
-        Jp: ti.types.ndarray(),  # shape [B, n_particles]
-        active: ti.types.ndarray(),  # shape [B, n_particles]
+        f: qd.i32,
+        pos: qd.types.ndarray(),  # shape [B, n_particles, 3]
+        vel: qd.types.ndarray(),  # shape [B, n_particles, 3]
+        C: qd.types.ndarray(),  # shape [B, n_particles, 3, 3]
+        F: qd.types.ndarray(),  # shape [B, n_particles, 3, 3]
+        Jp: qd.types.ndarray(),  # shape [B, n_particles]
+        active: qd.types.ndarray(),  # shape [B, n_particles]
     ):
         """
         Extract the state of particles at the given substep.
@@ -332,14 +332,14 @@ class MPMEntity(ParticleEntity):
         active : ndarray
             Particle activeness state, shape (B, n_particles).
         """
-        for i_p, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_global = i_p + self._particle_start
             # Copy pos, vel
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_p, j] = self._solver.particles[f, i_global, i_b].pos[j]
                 vel[i_b, i_p, j] = self._solver.particles[f, i_global, i_b].vel[j]
                 # Copy C, F
-                for k in ti.static(range(3)):
+                for k in qd.static(range(3)):
                     C[i_b, i_p, j, k] = self._solver.particles[f, i_global, i_b].C[j, k]
                     F[i_b, i_p, j, k] = self._solver.particles[f, i_global, i_b].F[j, k]
             # Copy Jp, active

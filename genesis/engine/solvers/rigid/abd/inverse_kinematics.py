@@ -5,7 +5,7 @@ This module contains the inverse kinematics kernel for computing joint configura
 that achieve desired end-effector poses.
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -14,31 +14,31 @@ import genesis.utils.array_class as array_class
 
 
 # FIXME: RigidEntity is not compatible with fast cache
-@ti.kernel(fastcache=False)
+@qd.kernel(fastcache=False)
 def kernel_rigid_entity_inverse_kinematics(
-    rigid_entity: ti.template(),
-    links_idx: ti.types.ndarray(),
-    poss: ti.types.ndarray(),
-    quats: ti.types.ndarray(),
-    n_links: ti.i32,
-    dofs_idx: ti.types.ndarray(),
-    n_dofs: ti.i32,
-    links_idx_by_dofs: ti.types.ndarray(),
-    n_links_by_dofs: ti.i32,
-    custom_init_qpos: ti.i32,
-    init_qpos: ti.types.ndarray(),
-    max_samples: ti.i32,
-    max_solver_iters: ti.i32,
-    damping: ti.f32,
-    pos_tol: ti.f32,
-    rot_tol: ti.f32,
-    pos_mask_: ti.types.ndarray(),
-    rot_mask_: ti.types.ndarray(),
-    link_pos_mask: ti.types.ndarray(),
-    link_rot_mask: ti.types.ndarray(),
-    max_step_size: ti.f32,
-    respect_joint_limit: ti.i32,
-    envs_idx: ti.types.ndarray(),
+    rigid_entity: qd.template(),
+    links_idx: qd.types.ndarray(),
+    poss: qd.types.ndarray(),
+    quats: qd.types.ndarray(),
+    n_links: qd.i32,
+    dofs_idx: qd.types.ndarray(),
+    n_dofs: qd.i32,
+    links_idx_by_dofs: qd.types.ndarray(),
+    n_links_by_dofs: qd.i32,
+    custom_init_qpos: qd.i32,
+    init_qpos: qd.types.ndarray(),
+    max_samples: qd.i32,
+    max_solver_iters: qd.i32,
+    damping: qd.f32,
+    pos_tol: qd.f32,
+    rot_tol: qd.f32,
+    pos_mask_: qd.types.ndarray(),
+    rot_mask_: qd.types.ndarray(),
+    link_pos_mask: qd.types.ndarray(),
+    link_rot_mask: qd.types.ndarray(),
+    max_step_size: qd.f32,
+    respect_joint_limit: qd.i32,
+    envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     joints_state: array_class.JointsState,
@@ -47,13 +47,13 @@ def kernel_rigid_entity_inverse_kinematics(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     EPS = rigid_global_info.EPS[None]
 
-    # convert to ti Vector
-    pos_mask = ti.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.ti_float)
-    rot_mask = ti.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.ti_float)
+    # convert to qd Vector
+    pos_mask = qd.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.qd_float)
+    rot_mask = qd.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.qd_float)
     n_error_dims = 6 * n_links
 
     for i_b_ in range(envs_idx.shape[0]):
@@ -93,18 +93,18 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
+                    tgt_pos_i = qd.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
-                    tgt_quat_i = ti.Vector(
+                    tgt_quat_i = qd.Vector(
                         [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
-                    err_rot_i = gu.ti_quat_to_rotvec(
-                        gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i), EPS
+                    err_rot_i = gu.qd_quat_to_rotvec(
+                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i), EPS
                     )
                     for k in range(3):
                         err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
@@ -126,7 +126,7 @@ def kernel_rigid_entity_inverse_kinematics(
                     rigid_entity._func_get_jacobian(
                         tgt_link_idx=i_l_ee,
                         i_b=i_b,
-                        p_local=ti.Vector.zero(gs.ti_float, 3),
+                        p_local=qd.Vector.zero(gs.qd_float, 3),
                         pos_mask=pos_mask,
                         rot_mask=rot_mask,
                         dofs_info=dofs_info,
@@ -137,7 +137,7 @@ def kernel_rigid_entity_inverse_kinematics(
 
                     # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
                     for i_dof in range(n_dofs):
-                        for i_error in ti.static(range(6)):
+                        for i_error in qd.static(range(6)):
                             i_row = i_ee * 6 + i_error
                             i_dof_ = dofs_idx[i_dof]
                             rigid_entity._IK_jacobian[i_row, i_dof, i_b] = rigid_entity._jacobian[i_error, i_dof_, i_b]
@@ -183,7 +183,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         )
 
                 for i_d in range(rigid_entity.n_dofs):
-                    rigid_entity._IK_delta_qpos[i_d, i_b] = ti.math.clamp(
+                    rigid_entity._IK_delta_qpos[i_d, i_b] = qd.math.clamp(
                         rigid_entity._IK_delta_qpos[i_d, i_b], -max_step_size, max_step_size
                     )
 
@@ -221,18 +221,18 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     i_l_ee = links_idx[i_ee]
 
-                    tgt_pos_i = ti.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
+                    tgt_pos_i = qd.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
                     err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
                         solved = False
 
-                    tgt_quat_i = ti.Vector(
+                    tgt_quat_i = qd.Vector(
                         [quats[i_ee, i_b_, 0], quats[i_ee, i_b_, 1], quats[i_ee, i_b_, 2], quats[i_ee, i_b_, 3]]
                     )
-                    err_rot_i = gu.ti_quat_to_rotvec(
-                        gu.ti_transform_quat_by_quat(gu.ti_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i), EPS
+                    err_rot_i = gu.qd_quat_to_rotvec(
+                        gu.qd_transform_quat_by_quat(gu.qd_inv_quat(links_state.quat[i_l_ee, i_b]), tgt_quat_i), EPS
                     )
                     for k in range(3):
                         err_rot_i[k] *= rot_mask[k] * link_rot_mask[i_ee]
@@ -255,16 +255,16 @@ def kernel_rigid_entity_inverse_kinematics(
                 # copy to _IK_qpos if this sample is better
                 improved = True
                 for i_ee in range(n_links):
-                    error_pos_i = ti.Vector(
+                    error_pos_i = qd.Vector(
                         [rigid_entity._IK_err_pose[i_ee * 6 + i_error, i_b] for i_error in range(3)]
                     )
-                    error_rot_i = ti.Vector(
+                    error_rot_i = qd.Vector(
                         [rigid_entity._IK_err_pose[i_ee * 6 + i_error, i_b] for i_error in range(3, 6)]
                     )
-                    error_pos_best = ti.Vector(
+                    error_pos_best = qd.Vector(
                         [rigid_entity._IK_err_pose_best[i_ee * 6 + i_error, i_b] for i_error in range(3)]
                     )
-                    error_rot_best = ti.Vector(
+                    error_rot_best = qd.Vector(
                         [rigid_entity._IK_err_pose_best[i_ee * 6 + i_error, i_b] for i_error in range(3, 6)]
                     )
                     if error_pos_i.norm() > error_pos_best.norm() or error_rot_i.norm() > error_rot_best.norm():
@@ -281,20 +281,20 @@ def kernel_rigid_entity_inverse_kinematics(
                 if respect_joint_limit and i_sample < max_samples - 1:
                     for i_l_ in range(n_links_by_dofs):
                         i_l = links_idx_by_dofs[i_l_]
-                        I_l = [i_l, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_l
+                        I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
                         for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
-                            I_j = [i_j, i_b] if ti.static(static_rigid_sim_config.batch_joints_info) else i_j
+                            I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
                             i_d = joints_info.dof_start[I_j]
-                            I_d = [i_d, i_b] if ti.static(static_rigid_sim_config.batch_dofs_info) else i_d
+                            I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
 
                             dof_limit = dofs_info.limit[I_d]
                             if (
                                 joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE
                                 or joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC
-                            ) and not (ti.math.isinf(dof_limit[0]) or ti.math.isinf(dof_limit[1])):
+                            ) and not (qd.math.isinf(dof_limit[0]) or qd.math.isinf(dof_limit[1])):
                                 q_start = joints_info.q_start[I_j]
-                                rigid_global_info.qpos[q_start, i_b] = dof_limit[0] + ti.random() * (
+                                rigid_global_info.qpos[q_start, i_b] = dof_limit[0] + qd.random() * (
                                     dof_limit[1] - dof_limit[0]
                                 )
                 else:

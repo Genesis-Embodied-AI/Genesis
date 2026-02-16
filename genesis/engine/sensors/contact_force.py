@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Type
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 
@@ -10,8 +10,8 @@ from genesis.options.sensors import (
     Contact as ContactSensorOptions,
     ContactForce as ContactForceSensorOptions,
 )
-from genesis.utils.geom import inv_transform_by_quat, ti_inv_transform_by_quat, transform_by_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, ti_to_torch
+from genesis.utils.geom import inv_transform_by_quat, qd_inv_transform_by_quat, transform_by_quat
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, qd_to_torch
 
 from .base_sensor import (
     NoisySensorMetadataMixin,
@@ -33,39 +33,39 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@ti.kernel
+@qd.kernel
 def _kernel_get_contacts_forces(
-    contact_forces: ti.types.ndarray(),
-    link_a: ti.types.ndarray(),
-    link_b: ti.types.ndarray(),
-    links_quat: ti.types.ndarray(),
-    sensors_link_idx: ti.types.ndarray(),
-    output: ti.types.ndarray(),
+    contact_forces: qd.types.ndarray(),
+    link_a: qd.types.ndarray(),
+    link_b: qd.types.ndarray(),
+    links_quat: qd.types.ndarray(),
+    sensors_link_idx: qd.types.ndarray(),
+    output: qd.types.ndarray(),
 ):
-    for i_b, i_c, i_s in ti.ndrange(output.shape[0], link_a.shape[-1], sensors_link_idx.shape[-1]):
+    for i_b, i_c, i_s in qd.ndrange(output.shape[0], link_a.shape[-1], sensors_link_idx.shape[-1]):
         contact_data_link_a = link_a[i_b, i_c]
         contact_data_link_b = link_b[i_b, i_c]
         if contact_data_link_a == sensors_link_idx[i_s] or contact_data_link_b == sensors_link_idx[i_s]:
             j_s = i_s * 3  # per-sensor output dimension is 3
 
-            quat_a = ti.Vector.zero(gs.ti_float, 4)
-            quat_b = ti.Vector.zero(gs.ti_float, 4)
-            for j in ti.static(range(4)):
+            quat_a = qd.Vector.zero(gs.qd_float, 4)
+            quat_b = qd.Vector.zero(gs.qd_float, 4)
+            for j in qd.static(range(4)):
                 quat_a[j] = links_quat[i_b, contact_data_link_a, j]
                 quat_b[j] = links_quat[i_b, contact_data_link_b, j]
 
-            force_vec = ti.Vector.zero(gs.ti_float, 3)
-            for j in ti.static(range(3)):
+            force_vec = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
                 force_vec[j] = contact_forces[i_b, i_c, j]
 
-            force_a = ti_inv_transform_by_quat(-force_vec, quat_a)
-            force_b = ti_inv_transform_by_quat(force_vec, quat_b)
+            force_a = qd_inv_transform_by_quat(-force_vec, quat_a)
+            force_b = qd_inv_transform_by_quat(force_vec, quat_b)
 
             if contact_data_link_a == sensors_link_idx[i_s]:
-                for j in ti.static(range(3)):
+                for j in qd.static(range(3)):
                     output[i_b, j_s + j] += force_a[j]
             if contact_data_link_b == sensors_link_idx[i_s]:
-                for j in ti.static(range(3)):
+                for j in qd.static(range(3)):
                     output[i_b, j_s + j] += force_b[j]
 
 
@@ -80,7 +80,6 @@ class ContactSensorMetadata(SharedSensorMetadata):
 
 
 @register_sensor(ContactSensorOptions, ContactSensorMetadata, tuple)
-@ti.data_oriented
 class ContactSensor(Sensor):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
@@ -175,7 +174,6 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
 
 @register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
-@ti.data_oriented
 class ContactForceSensor(
     RigidSensorMixin[ContactForceSensorMetadata],
     NoisySensorMixin[ContactForceSensorMetadata],

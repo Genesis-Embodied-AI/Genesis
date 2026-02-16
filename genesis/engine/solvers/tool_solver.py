@@ -1,4 +1,4 @@
-import quadrants as ti
+import quadrants as qd
 
 from genesis.engine.boundaries import FloorBoundary
 from genesis.engine.states.solvers import ToolSolverState
@@ -8,7 +8,7 @@ from genesis.utils.misc import *
 from .base_solver import Solver
 
 
-@ti.data_oriented
+@qd.data_oriented
 class ToolSolver(Solver):
     """
     Note
@@ -117,8 +117,8 @@ class ToolSolver(Solver):
         for entity in self._entities:
             entity.load_ckpt(ckpt_name=ckpt_name)
 
-    @ti.func
+    @qd.func
     def pbd_collide(self, f, pos_world, thickness, dt):
-        for entity in ti.static(self._entities):
+        for entity in qd.static(self._entities):
             pos_world = entity.pbd_collide(f, pos_world, thickness, dt)
         return pos_world

@@ -5,65 +5,65 @@ This module contains functions for adding contacts, computing tolerances,
 and managing contact data including reset/clear operations.
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 
 
-@ti.func
+@qd.func
 def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
-    vecres = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
+    vecres = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
     vecres[0] = vecin[i0] * f0
     vecres[1] = vecin[i1] * f1
     vecres[2] = vecin[i2] * f2
     return vecres
 
 
-@ti.func
+@qd.func
 def rotmatx(matin, i0, i1, i2, f0, f1, f2):
-    matres = ti.Matrix.zero(gs.ti_float, 3, 3)
+    matres = qd.Matrix.zero(gs.qd_float, 3, 3)
     matres[0, :] = matin[i0, :] * f0
     matres[1, :] = matin[i1, :] * f1
     matres[2, :] = matin[i2, :] * f2
     return matres
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_reset(
-    envs_idx: ti.types.ndarray(),
-    static_rigid_sim_config: ti.template(),
+    envs_idx: qd.types.ndarray(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    cache_only: ti.template(),
+    cache_only: qd.template(),
 ):
     max_possible_pairs = collider_state.contact_cache.normal.shape[0]
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
 
-        if ti.static(not cache_only):
+        if qd.static(not cache_only):
             collider_state.first_time[i_b] = True
 
         for i_pair in range(max_possible_pairs):
-            collider_state.contact_cache.normal[i_pair, i_b] = ti.Vector.zero(gs.ti_float, 3)
+            collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
 # only used with hibernation ??
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_collider_clear(
-    envs_idx: ti.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
 ):
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
 
-        if ti.static(static_rigid_sim_config.use_hibernation):
+        if qd.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts_hibernated[i_b] = 0
 
             # advect hibernated contacts
@@ -71,8 +71,8 @@ def kernel_collider_clear(
                 i_la = collider_state.contact_data.link_a[i_c, i_b]
                 i_lb = collider_state.contact_data.link_b[i_c, i_b]
 
-                I_la = [i_la, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_la
-                I_lb = [i_lb, i_b] if ti.static(static_rigid_sim_config.batch_links_info) else i_lb
+                I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
+                I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
 
                 # pair of hibernated-fixed links -> hibernated contact
                 # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
@@ -102,7 +102,7 @@ def kernel_collider_clear(
         # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
         for i_c in range(collider_state.n_contacts[i_b]):
             should_clear = True
-            if ti.static(static_rigid_sim_config.use_hibernation):
+            if qd.static(static_rigid_sim_config.use_hibernation):
                 # Only clear if this is not a hibernated contact
                 should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
             if should_clear:
@@ -111,38 +111,38 @@ def kernel_collider_clear(
                 collider_state.contact_data.geom_a[i_c, i_b] = -1
                 collider_state.contact_data.geom_b[i_c, i_b] = -1
                 collider_state.contact_data.penetration[i_c, i_b] = 0.0
-                collider_state.contact_data.pos[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-                collider_state.contact_data.normal[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
-                collider_state.contact_data.force[i_c, i_b] = ti.Vector.zero(gs.ti_float, 3)
+                collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
-        if ti.static(static_rigid_sim_config.use_hibernation):
+        if qd.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
         else:
             collider_state.n_contacts[i_b] = 0
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def collider_kernel_get_contacts(
-    is_padded: ti.template(),
-    iout: ti.types.ndarray(),
-    fout: ti.types.ndarray(),
-    static_rigid_sim_config: ti.template(),
+    is_padded: qd.template(),
+    iout: qd.types.ndarray(),
+    fout: qd.types.ndarray(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
 ):
     _B = collider_state.active_buffer.shape[1]
 
-    # TODO: Better implementation from quadrants for this kind of reduction.
-    n_contacts_max = gs.ti_int(0)
-    ti.loop_config(serialize=True)
+    # TODO: Better implementation from Quadrants for this kind of reduction.
+    n_contacts_max = gs.qd_int(0)
+    qd.loop_config(serialize=True)
     for i_b in range(_B):
         n_contacts = collider_state.n_contacts[i_b]
         if n_contacts > n_contacts_max:
             n_contacts_max = n_contacts
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        i_c_start = gs.ti_int(0)
-        if ti.static(is_padded):
+        i_c_start = gs.qd_int(0)
+        if qd.static(is_padded):
             i_c_start = i_b * n_contacts_max
         else:
             for j_b in range(i_b):
@@ -156,18 +156,18 @@ def collider_kernel_get_contacts(
             iout[i_c, 2] = collider_state.contact_data.geom_a[i_c_, i_b]
             iout[i_c, 3] = collider_state.contact_data.geom_b[i_c_, i_b]
             fout[i_c, 0] = collider_state.contact_data.penetration[i_c_, i_b]
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 fout[i_c, 1 + j] = collider_state.contact_data.pos[i_c_, i_b][j]
                 fout[i_c, 4 + j] = collider_state.contact_data.normal[i_c_, i_b][j]
                 fout[i_c, 7 + j] = collider_state.contact_data.force[i_c_, i_b][j]
 
 
-@ti.func
+@qd.func
 def func_add_contact(
     i_ga,
     i_gb,
-    normal: ti.types.vector(3),
-    contact_pos: ti.types.vector(3),
+    normal: qd.types.vector(3),
+    contact_pos: qd.types.vector(3),
     penetration,
     i_b,
     geoms_state: array_class.GeomsState,
@@ -187,7 +187,7 @@ def func_add_contact(
         collider_state.contact_data.normal[i_c, i_b] = normal
         collider_state.contact_data.pos[i_c, i_b] = contact_pos
         collider_state.contact_data.penetration[i_c, i_b] = penetration
-        collider_state.contact_data.friction[i_c, i_b] = ti.max(ti.max(friction_a, friction_b), 1e-2)
+        collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
         collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
             geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb]
         )
@@ -199,12 +199,12 @@ def func_add_contact(
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
-@ti.func
+@qd.func
 def func_set_contact(
     i_ga,
     i_gb,
-    normal: ti.types.vector(3),
-    contact_pos: ti.types.vector(3),
+    normal: qd.types.vector(3),
+    contact_pos: qd.types.vector(3),
     penetration,
     i_b,
     i_c,
@@ -226,13 +226,13 @@ def func_set_contact(
     collider_state.contact_data.normal[i_c, i_b] = normal
     collider_state.contact_data.pos[i_c, i_b] = contact_pos
     collider_state.contact_data.penetration[i_c, i_b] = penetration
-    collider_state.contact_data.friction[i_c, i_b] = ti.max(ti.max(friction_a, friction_b), 1e-2)
+    collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb])
     collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
 
 
-@ti.func
+@qd.func
 def func_add_diff_contact_input(
     i_ga,
     i_gb,
@@ -261,7 +261,7 @@ def func_add_diff_contact_input(
         ]
 
 
-@ti.func
+@qd.func
 def func_compute_tolerance(
     i_ga,
     i_gb,
@@ -278,16 +278,16 @@ def func_compute_tolerance(
     aabb_size = aabb_size_b
     if geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
         aabb_size_a = (geoms_init_AABB[i_ga, 7] - geoms_init_AABB[i_ga, 0]).norm()
-        aabb_size = ti.min(aabb_size_a, aabb_size_b)
+        aabb_size = qd.min(aabb_size_a, aabb_size_b)
 
     return 0.5 * tolerance * aabb_size
 
 
-@ti.func
+@qd.func
 def func_contact_orthogonals(
     i_ga,
     i_gb,
-    normal: ti.types.vector(3),
+    normal: qd.types.vector(3),
     i_b,
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -295,16 +295,16 @@ def func_contact_orthogonals(
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     EPS = rigid_global_info.EPS[None]
 
-    axis_0 = ti.Vector.zero(gs.ti_float, 3)
-    axis_1 = ti.Vector.zero(gs.ti_float, 3)
+    axis_0 = qd.Vector.zero(gs.qd_float, 3)
+    axis_1 = qd.Vector.zero(gs.qd_float, 3)
 
-    if ti.static(static_rigid_sim_config.enable_mujoco_compatibility):
+    if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
         # Choose between world axes Y or Z to avoid colinearity issue
-        if ti.abs(normal[1]) < 0.5:
+        if qd.abs(normal[1]) < 0.5:
             axis_0[1] = 1.0
         else:
             axis_0[2] = 1.0
@@ -329,11 +329,11 @@ def func_contact_orthogonals(
 
         # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
         i_l = geoms_info.link_idx[i_g]
-        rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
-        axis_idx = gs.ti_int(0)
-        axis_angle_max = gs.ti_float(0.0)
-        for i in ti.static(range(3)):
-            axis_angle = ti.abs(rot[:, i].dot(normal))
+        rot = gu.qd_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
+        axis_idx = gs.qd_int(0)
+        axis_angle_max = gs.qd_float(0.0)
+        for i in qd.static(range(3)):
+            axis_angle = qd.abs(rot[:, i].dot(normal))
             if axis_angle > axis_angle_max:
                 axis_angle_max = axis_angle
                 axis_idx = i
@@ -345,41 +345,41 @@ def func_contact_orthogonals(
     return axis_0, axis_1
 
 
-@ti.func
+@qd.func
 def func_rotate_frame(
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
-    contact_pos: ti.types.vector(3, dtype=gs.ti_float),
-    qrot: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
+    contact_pos: qd.types.vector(3, dtype=gs.qd_float),
+    qrot: qd.types.vector(4, dtype=gs.qd_float),
 ) -> tuple[
-    ti.types.vector(3, dtype=gs.ti_float),
-    ti.types.vector(4, dtype=gs.ti_float),
+    qd.types.vector(3, dtype=gs.qd_float),
+    qd.types.vector(4, dtype=gs.qd_float),
 ]:
     """
     Instead of modifying geoms_state in place, this function takes thread-local
     pos/quat and returns the updated values.
     """
-    new_quat = gu.ti_transform_quat_by_quat(quat, qrot)
+    new_quat = gu.qd_transform_quat_by_quat(quat, qrot)
 
     rel = contact_pos - pos
-    vec = gu.ti_transform_by_quat(rel, qrot)
+    vec = gu.qd_transform_by_quat(rel, qrot)
     vec = vec - rel
     new_pos = pos - vec
 
     return new_pos, new_quat
 
 
-@ti.kernel
+@qd.kernel
 def func_set_upstream_grad(
-    dL_dposition: ti.types.ndarray(),
-    dL_dnormal: ti.types.ndarray(),
-    dL_dpenetration: ti.types.ndarray(),
+    dL_dposition: qd.types.ndarray(),
+    dL_dnormal: qd.types.ndarray(),
+    dL_dpenetration: qd.types.ndarray(),
     collider_state: array_class.ColliderState,
 ):
     _B = dL_dposition.shape[0]
     _C = dL_dposition.shape[1]
-    for i_b, i_c in ti.ndrange(_B, _C):
-        for j in ti.static(range(3)):
+    for i_b, i_c in qd.ndrange(_B, _C):
+        for j in qd.static(range(3)):
             collider_state.contact_data.pos.grad[i_c, i_b][j] = dL_dposition[i_b, i_c, j]
             collider_state.contact_data.normal.grad[i_c, i_b][j] = dL_dnormal[i_b, i_c, j]
         collider_state.contact_data.penetration.grad[i_c, i_b] = dL_dpenetration[i_b, i_c]

@@ -1,10 +1,7 @@
-import quadrants as ti
-
 import genesis as gs
 from genesis.repr_base import RBC
 
 
-@ti.data_oriented
 class RigidEquality(RBC):
     """
     Equality class for rigid body entities.

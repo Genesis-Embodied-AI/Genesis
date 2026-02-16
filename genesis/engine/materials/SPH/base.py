@@ -1,12 +1,9 @@
 import sys
 import platform
 
-import quadrants as ti
-
 from ..base import Material
 
 
-@ti.data_oriented
 class Base(Material):
     """
     The base class of SPH materials.

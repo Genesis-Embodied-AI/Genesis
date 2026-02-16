@@ -5,7 +5,12 @@ import torch
 import genesis as gs
 import genesis.utils.geom as gu
 
-from .utils import assert_allclose, assert_array_equal
+from .utils import assert_allclose, assert_equal
+
+
+# ------------------------------------------------------------------------------------------
+# -------------------------------------- IMU Sensors ---------------------------------------
+# ------------------------------------------------------------------------------------------
 
 
 @pytest.mark.required
@@ -100,9 +105,9 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(DELAY_STEPS):
         scene.step()
 
-    assert_array_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
-    assert_array_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
-    assert_array_equal(imu_delayed.read().mag, true_imu_delayed_reading.mag)
+    assert_equal(imu_delayed.read().lin_acc, true_imu_delayed_reading.lin_acc)
+    assert_equal(imu_delayed.read().ang_vel, true_imu_delayed_reading.ang_vel)
+    assert_equal(imu_delayed.read().mag, true_imu_delayed_reading.mag)
 
     # check that position offset affects linear acceleration
     imu.set_pos_offset((0.5, 0.0, 0.0))
@@ -117,18 +122,18 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(20):
         scene.step()
 
-    assert_array_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
-    assert_array_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
-    assert_array_equal(imu.read_ground_truth().mag, imu_delayed.read_ground_truth().mag)
+    assert_equal(imu.read_ground_truth().lin_acc, imu_delayed.read_ground_truth().lin_acc)
+    assert_equal(imu.read_ground_truth().ang_vel, imu_delayed.read_ground_truth().ang_vel)
+    assert_equal(imu.read_ground_truth().mag, imu_delayed.read_ground_truth().mag)
 
     with np.testing.assert_raises(AssertionError, msg="Angular velocity should not be zero due to COM shift"):
         assert_allclose(imu.read_ground_truth().ang_vel, 0.0, tol=tol)
 
     with np.testing.assert_raises(AssertionError, msg="Delayed accl data should not be equal to the ground truth data"):
-        assert_array_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
+        assert_equal(imu_delayed.read().lin_acc - imu_delayed.read_ground_truth().lin_acc, 0.0)
 
     with np.testing.assert_raises(AssertionError, msg="Delayed mag data should not be equal to the ground truth data"):
-        assert_array_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
+        assert_equal(imu_delayed.read().mag - imu_delayed.read_ground_truth().mag, 0.0)
 
     box.set_COM_shift((0.0, 0.0, 0.0))
     box.set_quat((0.0, 0.0, 0.0, 1.0))  # pi rotation around z-axis
@@ -169,6 +174,11 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     scene.step()
     assert_allclose(imu.read().lin_acc, BIAS, tol=tol)
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
+
+
+# ------------------------------------------------------------------------------------------
+# ------------------------------------ Contact Sensors -------------------------------------
+# ------------------------------------------------------------------------------------------
 
 
 @pytest.mark.required
@@ -326,6 +336,11 @@ def test_rigid_tactile_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
 
 
+# ------------------------------------------------------------------------------------------
+# ------------------------------------ Raycast Sensors -------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_raycaster_hits(show_viewer, n_envs):
@@ -473,7 +488,7 @@ def test_raycaster_hits(show_viewer, n_envs):
     assert_allclose(spherical_distances, RAYCAST_HEIGHT, tol=5e-3)
 
     # Check that we can read image from depth camera
-    assert_array_equal(depth_camera.read_image().shape, batch_shape + NUM_RAYS_XY)
+    assert_equal(depth_camera.read_image().shape, batch_shape + NUM_RAYS_XY)
     # Note that the tolerance must be large because the sphere geometry is discretized
     assert_allclose(depth_camera.read_image(), RAYCAST_HEIGHT, tol=5e-3)
 

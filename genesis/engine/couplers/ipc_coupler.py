@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import trimesh
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
@@ -63,7 +63,7 @@ if POLYSCOPE_AVAILABLE:
     from uipc.gui import SceneGUI
 
 
-@ti.data_oriented
+@qd.data_oriented
 class IPCCoupler(RBC):
     """
     Coupler class for handling Incremental Potential Contact (IPC) simulation coupling.

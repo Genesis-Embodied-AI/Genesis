@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import quadrants as ti
 
 import genesis as gs
 from genesis.options.morphs import Morph
@@ -46,7 +45,6 @@ if TYPE_CHECKING:
 RATE_CHECK_ERRNO = 10
 
 
-@ti.data_oriented
 class Simulator(RBC):
     """
     A simulator is a scene-level simulation manager, which manages all simulation-related operations in the scene, including multiple solvers and the inter-solver coupler.

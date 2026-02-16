@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import time
 from typing import TYPE_CHECKING
 
-import quadrants as ti
+import quadrants as qd
 import torch
 import torch.nn.functional as F
 
@@ -19,7 +19,7 @@ class PathPlanner(ABC):
         self._entity = entity
         self._solver: "RigidSolver" = entity._solver
 
-        self.PENETRATION_EPS = 1e-5 if gs.ti_float == ti.f32 else 0.0
+        self.PENETRATION_EPS = 1e-5 if gs.qd_float == qd.f32 else 0.0
 
         for joint in entity.joints:
             if joint.type == gs.JOINT_TYPE.FREE:
@@ -136,21 +136,21 @@ class PathPlanner(ABC):
             unique_pairs = torch.unique(collision_pairs.cpu(), dim=0).to(device=gs.device)
         return unique_pairs
 
-    @ti.kernel
+    @qd.kernel
     def interpolate_path(
         self,
-        path: ti.types.ndarray(),  # [N, B, Dof]
-        sample_ind: ti.types.ndarray(),  # [B, 2]
-        mask: ti.types.ndarray(),  # [B]
-        tensor: ti.types.ndarray(),  # [N, B, Dof]
+        path: qd.types.ndarray(),  # [N, B, Dof]
+        sample_ind: qd.types.ndarray(),  # [B, 2]
+        mask: qd.types.ndarray(),  # [B]
+        tensor: qd.types.ndarray(),  # [N, B, Dof]
     ):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(path.shape[1]):
             for i_q in range(self._entity.n_qs):
                 for i_s in range(path.shape[0]):
                     tensor[i_s, i_b, i_q] = path[i_s, i_b, i_q]
 
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(path.shape[1]):
             if mask[i_b]:
                 num_samples = sample_ind[i_b, 1] - sample_ind[i_b, 0]
@@ -196,15 +196,15 @@ class PathPlanner(ABC):
             )
         return out
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_check_collision(
         self,
-        ignore_geom_pairs: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
-        is_plan_with_obj: ti.i32,
-        obj_geom_start: ti.i32,
-        obj_geom_end: ti.i32,
-        out: ti.types.ndarray(),
+        ignore_geom_pairs: qd.types.ndarray(),
+        envs_idx: qd.types.ndarray(),
+        is_plan_with_obj: qd.i32,
+        obj_geom_start: qd.i32,
+        obj_geom_end: qd.i32,
+        out: qd.types.ndarray(),
         collider_state: array_class.ColliderState,
     ):
         for i_b_ in range(envs_idx.shape[0]):
@@ -218,19 +218,19 @@ class PathPlanner(ABC):
                 obj_geom_start=obj_geom_start,
                 obj_geom_end=obj_geom_end,
             )
-            out[i_b_] = out[i_b_] or ti.cast(collision_detected, gs.ti_bool)
+            out[i_b_] = out[i_b_] or qd.cast(collision_detected, gs.qd_bool)
 
-    @ti.func
+    @qd.func
     def _func_check_collision(
         self,
         collider_state: array_class.ColliderState,
-        ignore_geom_pairs: ti.types.ndarray(),
-        i_b: ti.i32,
-        is_plan_with_obj: ti.i32 = False,
-        obj_geom_start: ti.i32 = -1,
-        obj_geom_end: ti.i32 = -1,
-    ) -> ti.i32:
-        is_collision_detected = ti.cast(False, gs.ti_int)
+        ignore_geom_pairs: qd.types.ndarray(),
+        i_b: qd.i32,
+        is_plan_with_obj: qd.i32 = False,
+        obj_geom_start: qd.i32 = -1,
+        obj_geom_end: qd.i32 = -1,
+    ) -> qd.i32:
+        is_collision_detected = qd.cast(False, gs.qd_int)
         for i_c in range(collider_state.n_contacts[i_b]):
             if not is_collision_detected:
                 i_ga = collider_state.contact_data.geom_a[i_c, i_b]
@@ -299,7 +299,7 @@ class PathPlanner(ABC):
         return path
 
 
-@ti.data_oriented
+@qd.data_oriented
 class RRT(PathPlanner):
     def __init__(self, entity):
         super().__init__(entity)
@@ -311,16 +311,16 @@ class RRT(PathPlanner):
             self._rrt_max_nodes = max_nodes
             self._rrt_pos_tol = pos_tol
             self._rrt_max_step_size = max_step_size
-            self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
-            self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
-            self.struct_rrt_node_info = ti.types.struct(
-                configuration=ti.types.vector(self._entity.n_qs, gs.ti_float),
-                parent_idx=gs.ti_int,
+            self._rrt_start_configuration = qd.field(dtype=gs.qd_float, shape=(self._entity.n_qs, self._solver._B))
+            self._rrt_goal_configuration = qd.field(dtype=gs.qd_float, shape=(self._entity.n_qs, self._solver._B))
+            self.struct_rrt_node_info = qd.types.struct(
+                configuration=qd.types.vector(self._entity.n_qs, gs.qd_float),
+                parent_idx=gs.qd_int,
             )
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
-            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
-            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=(self._solver._B,))
-            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
+            self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
+            self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))
+            self._rrt_goal_reached_node_idx = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._is_rrt_init = True
 
     def _reset_rrt_fields(self):
@@ -332,11 +332,11 @@ class RRT(PathPlanner):
         self._rrt_is_active.fill(False)
         self._rrt_goal_reached_node_idx.fill(-1)
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_init(
-        self, qpos_start: ti.types.ndarray(), qpos_goal: ti.types.ndarray(), envs_idx: ti.types.ndarray()
+        self, qpos_start: qd.types.ndarray(), qpos_goal: qd.types.ndarray(), envs_idx: qd.types.ndarray()
     ):
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             for i_q in range(self._entity.n_qs):
@@ -348,12 +348,12 @@ class RRT(PathPlanner):
             self._rrt_tree_size[i_b] = 1
             self._rrt_is_active[i_b] = True
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_step1(
         self,
-        q_limit_lower: ti.types.ndarray(),
-        q_limit_upper: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
+        q_limit_lower: qd.types.ndarray(),
+        q_limit_upper: qd.types.ndarray(),
+        envs_idx: qd.types.ndarray(),
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
         joints_state: array_class.JointsState,
@@ -377,20 +377,20 @@ class RRT(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                random_sample = ti.Vector(
+                random_sample = qd.Vector(
                     [
-                        q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                        q_limit_lower[i_q] + qd.random(dtype=gs.qd_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
                         for i_q in range(self._entity.n_qs)
                     ]
                 )
-                if ti.random() < self._rrt_goal_bias:
-                    random_sample = ti.Vector(
+                if qd.random() < self._rrt_goal_bias:
+                    random_sample = qd.Vector(
                         [self._rrt_goal_configuration[i_q, i_b] for i_q in range(self._entity.n_qs)]
                     )
 
                 # find nearest neighbor
                 nearest_neighbor_idx = -1
-                nearest_neighbor_dist = gs.ti_float(1e30)
+                nearest_neighbor_dist = gs.qd_float(1e30)
                 for i_n in range(self._rrt_tree_size[i_b]):
                     dist = (self._rrt_node_info.configuration[i_n, i_b] - random_sample).norm_sqr()
                     if dist < nearest_neighbor_dist:
@@ -400,10 +400,10 @@ class RRT(PathPlanner):
                 # steer from nearest neighbor to random sample
                 nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
                 direction = random_sample - nearest_config
-                steer_result = ti.Vector.zero(gs.ti_float, self._entity.n_qs)
+                steer_result = qd.Vector.zero(gs.qd_float, self._entity.n_qs)
                 for i_q in range(self._entity.n_qs):
                     # If the step size exceeds max_step_size, clip it
-                    if ti.abs(direction[i_q]) > self._rrt_max_step_size:
+                    if qd.abs(direction[i_q]) > self._rrt_max_step_size:
                         direction[i_q] = (-1.0 if direction[i_q] < 0.0 else 1.0) * self._rrt_max_step_size
                     steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
@@ -442,15 +442,15 @@ class RRT(PathPlanner):
                         is_backward=False,
                     )
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_step2(
         self,
-        ignore_geom_pairs: ti.types.ndarray(),
-        ignore_collision: ti.i32,
-        envs_idx: ti.types.ndarray(),
-        is_plan_with_obj: ti.i32,
-        obj_geom_start: ti.i32,
-        obj_geom_end: ti.i32,
+        ignore_geom_pairs: qd.types.ndarray(),
+        ignore_collision: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        is_plan_with_obj: qd.i32,
+        obj_geom_start: qd.i32,
+        obj_geom_end: qd.i32,
         collider_state: array_class.ColliderState,
     ):
         """
@@ -463,7 +463,7 @@ class RRT(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                is_collision_detected = ti.cast(False, gs.ti_int)
+                is_collision_detected = qd.cast(False, gs.qd_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
                         collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
@@ -477,7 +477,7 @@ class RRT(PathPlanner):
                     is_goal = True
                     for i_q in range(self._entity.n_qs):
                         if (
-                            ti.abs(
+                            qd.abs(
                                 self._solver.qpos[i_q + self._entity._q_start, i_b]
                                 - self._rrt_goal_configuration[i_q, i_b]
                             )
@@ -646,7 +646,7 @@ class RRT(PathPlanner):
         return sol, is_invalid
 
 
-@ti.data_oriented
+@qd.data_oriented
 class RRTConnect(PathPlanner):
     def __init__(self, entity):
         super().__init__(entity)
@@ -657,17 +657,17 @@ class RRTConnect(PathPlanner):
             self._rrt_goal_bias = goal_bias
             self._rrt_max_nodes = max_nodes
             self._rrt_max_step_size = max_step_size
-            self._rrt_start_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
-            self._rrt_goal_configuration = ti.field(dtype=gs.ti_float, shape=(self._entity.n_qs, self._solver._B))
-            self.struct_rrt_node_info = ti.types.struct(
-                configuration=ti.types.vector(self._entity.n_qs, gs.ti_float),
-                parent_idx=gs.ti_int,
-                child_idx=gs.ti_int,
+            self._rrt_start_configuration = qd.field(dtype=gs.qd_float, shape=(self._entity.n_qs, self._solver._B))
+            self._rrt_goal_configuration = qd.field(dtype=gs.qd_float, shape=(self._entity.n_qs, self._solver._B))
+            self.struct_rrt_node_info = qd.types.struct(
+                configuration=qd.types.vector(self._entity.n_qs, gs.qd_float),
+                parent_idx=gs.qd_int,
+                child_idx=gs.qd_int,
             )
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
-            self._rrt_tree_size = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
-            self._rrt_is_active = ti.field(dtype=gs.ti_bool, shape=(self._solver._B,))
-            self._rrt_goal_reached_node_idx = ti.field(dtype=gs.ti_int, shape=(self._solver._B,))
+            self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
+            self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))
+            self._rrt_goal_reached_node_idx = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._is_rrt_connect_init = True
 
     def _reset_rrt_connect_fields(self):
@@ -680,12 +680,12 @@ class RRTConnect(PathPlanner):
         self._rrt_is_active.fill(False)
         self._rrt_goal_reached_node_idx.fill(-1)
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_connect_init(
-        self, qpos_start: ti.types.ndarray(), qpos_goal: ti.types.ndarray(), envs_idx: ti.types.ndarray()
+        self, qpos_start: qd.types.ndarray(), qpos_goal: qd.types.ndarray(), envs_idx: qd.types.ndarray()
     ):
         # NOTE: run IK before this
-        ti.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self._solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             i_b = envs_idx[i_b_]
             for i_q in range(self._entity.n_qs):
@@ -699,14 +699,14 @@ class RRTConnect(PathPlanner):
             self._rrt_tree_size[i_b] = 2
             self._rrt_is_active[i_b] = True
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_connect_step1(
         self,
         qpos: array_class.V_ANNOTATION,
-        forward_pass: ti.i32,
-        q_limit_lower: ti.types.ndarray(),
-        q_limit_upper: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
+        forward_pass: qd.i32,
+        q_limit_lower: qd.types.ndarray(),
+        q_limit_upper: qd.types.ndarray(),
+        envs_idx: qd.types.ndarray(),
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
         joints_state: array_class.JointsState,
@@ -730,25 +730,25 @@ class RRTConnect(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                random_sample = ti.Vector(
+                random_sample = qd.Vector(
                     [
-                        q_limit_lower[i_q] + ti.random(dtype=gs.ti_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
+                        q_limit_lower[i_q] + qd.random(dtype=gs.qd_float) * (q_limit_upper[i_q] - q_limit_lower[i_q])
                         for i_q in range(self._entity.n_qs)
                     ]
                 )
-                if ti.random() < self._rrt_goal_bias:
+                if qd.random() < self._rrt_goal_bias:
                     if forward_pass:
-                        random_sample = ti.Vector(
+                        random_sample = qd.Vector(
                             [self._rrt_goal_configuration[i_q, i_b] for i_q in range(self._entity.n_qs)]
                         )
                     else:
-                        random_sample = ti.Vector(
+                        random_sample = qd.Vector(
                             [self._rrt_start_configuration[i_q, i_b] for i_q in range(self._entity.n_qs)]
                         )
 
                 # find nearest neighbor
                 nearest_neighbor_idx = -1
-                nearest_neighbor_dist = gs.ti_float(1e30)
+                nearest_neighbor_dist = gs.qd_float(1e30)
                 for i_n in range(self._rrt_tree_size[i_b]):
                     if forward_pass:
                         # NOTE: in forward pass, we only consider the previous forward pass nodes (which has parent_idx != -1)
@@ -766,10 +766,10 @@ class RRTConnect(PathPlanner):
                 # steer from nearest neighbor to random sample
                 nearest_config = self._rrt_node_info.configuration[nearest_neighbor_idx, i_b]
                 direction = random_sample - nearest_config
-                steer_result = ti.Vector.zero(gs.ti_float, self._entity.n_qs)
+                steer_result = qd.Vector.zero(gs.qd_float, self._entity.n_qs)
                 for i_q in range(self._entity.n_qs):
                     # If the step size exceeds max_step_size, clip it
-                    if ti.abs(direction[i_q]) > self._rrt_max_step_size:
+                    if qd.abs(direction[i_q]) > self._rrt_max_step_size:
                         direction[i_q] = (-1.0 if direction[i_q] < 0.0 else 1.0) * self._rrt_max_step_size
                     steer_result[i_q] = nearest_config[i_q] + direction[i_q]
 
@@ -811,16 +811,16 @@ class RRTConnect(PathPlanner):
                         is_backward=False,
                     )
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_rrt_connect_step2(
         self,
-        forward_pass: ti.i32,
-        ignore_geom_pairs: ti.types.ndarray(),
-        ignore_collision: ti.i32,
-        envs_idx: ti.types.ndarray(),
-        is_plan_with_obj: ti.i32,
-        obj_geom_start: ti.i32,
-        obj_geom_end: ti.i32,
+        forward_pass: qd.i32,
+        ignore_geom_pairs: qd.types.ndarray(),
+        ignore_collision: qd.i32,
+        envs_idx: qd.types.ndarray(),
+        is_plan_with_obj: qd.i32,
+        obj_geom_start: qd.i32,
+        obj_geom_end: qd.i32,
         collider_state: array_class.ColliderState,
         rigid_global_info: array_class.RigidGlobalInfo,
     ):
@@ -834,7 +834,7 @@ class RRTConnect(PathPlanner):
             i_b = envs_idx[i_b_]
 
             if self._rrt_is_active[i_b]:
-                is_collision_detected = ti.cast(False, gs.ti_int)
+                is_collision_detected = qd.cast(False, gs.qd_int)
                 if not ignore_collision:
                     is_collision_detected = self._func_check_collision(
                         collider_state, ignore_geom_pairs, i_b, is_plan_with_obj, obj_geom_start, obj_geom_end
@@ -858,7 +858,7 @@ class RRTConnect(PathPlanner):
                         is_connected = True
                         for i_q in range(self._entity.n_qs):
                             if (
-                                ti.abs(
+                                qd.abs(
                                     rigid_global_info.qpos[i_q + self._entity._q_start, i_b]
                                     - self._rrt_node_info.configuration[i_n, i_b][i_q]
                                 )

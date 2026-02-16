@@ -1,4 +1,4 @@
-import quadrants as ti
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -441,19 +441,19 @@ class RigidJoint(RBC):
         return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}, type: {self._type}"
 
 
-@ti.kernel
-def _kernel_get_anchor_pos(joint_idx: ti.i32, tensor: ti.types.ndarray(), joints_state: array_class.JointsState):
+@qd.kernel
+def _kernel_get_anchor_pos(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
     _B = joints_state.xanchor.shape[1]
     for i_b in range(_B):
         xpos = joints_state.xanchor[joint_idx, i_b]
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             tensor[i_b, i] = xpos[i]
 
 
-@ti.kernel
-def _kernel_get_anchor_axis(joint_idx: ti.i32, tensor: ti.types.ndarray(), joints_state: array_class.JointsState):
+@qd.kernel
+def _kernel_get_anchor_axis(joint_idx: qd.i32, tensor: qd.types.ndarray(), joints_state: array_class.JointsState):
     _B = joints_state.xaxis.shape[1]
     for i_b in range(_B):
         xaxis = joints_state.xaxis[joint_idx, i_b]
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             tensor[i_b, i] = xaxis[i]

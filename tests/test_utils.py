@@ -63,50 +63,50 @@ def test_warn_once_with_empty_message(clear_seen_fixture):
             mock_warning.assert_called_once_with("")
 
 
-def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args):
-    import quadrants as ti
+def _qd_kernel_wrapper(qd_func, num_inputs, num_outputs, *args):
+    import quadrants as qd
 
     if num_inputs == 1 and num_outputs == 1:
 
-        @ti.kernel
-        def kernel(ti_in: ti.template(), ti_out: ti.template()):
-            ti.loop_config(serialize=False)
-            for I in ti.grouped(ti.ndrange(*ti_in.shape)):
-                ti_out[I] = ti_func(ti_in[I], *args)
+        @qd.kernel
+        def kernel(qd_in: qd.template(), qd_out: qd.template()):
+            qd.loop_config(serialize=False)
+            for I in qd.grouped(qd.ndrange(*qd_in.shape)):
+                qd_out[I] = qd_func(qd_in[I], *args)
 
     elif num_inputs == 2 and num_outputs == 1:
 
-        @ti.kernel
-        def kernel(ti_in_1: ti.template(), ti_in_2: ti.template(), ti_out: ti.template()):
-            ti.loop_config(serialize=False)
-            for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I], *args)
+        @qd.kernel
+        def kernel(qd_in_1: qd.template(), qd_in_2: qd.template(), qd_out: qd.template()):
+            qd.loop_config(serialize=False)
+            for I in qd.grouped(qd.ndrange(*qd_in_1.shape)):
+                qd_out[I] = qd_func(qd_in_1[I], qd_in_2[I], *args)
 
     elif num_inputs == 3 and num_outputs == 1:
 
-        @ti.kernel
-        def kernel(ti_in_1: ti.template(), ti_in_2: ti.template(), ti_in_3: ti.template(), ti_out: ti.template()):
-            ti.loop_config(serialize=False)
-            for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I], *args)
+        @qd.kernel
+        def kernel(qd_in_1: qd.template(), qd_in_2: qd.template(), qd_in_3: qd.template(), qd_out: qd.template()):
+            qd.loop_config(serialize=False)
+            for I in qd.grouped(qd.ndrange(*qd_in_1.shape)):
+                qd_out[I] = qd_func(qd_in_1[I], qd_in_2[I], qd_in_3[I], *args)
 
     elif num_inputs == 4 and num_outputs == 2:
 
-        @ti.kernel
+        @qd.kernel
         def kernel(
-            ti_in_1: ti.template(),
-            ti_in_2: ti.template(),
-            ti_in_3: ti.template(),
-            ti_in_4: ti.template(),
-            ti_out_1: ti.template(),
-            ti_out_2: ti.template(),
+            qd_in_1: qd.template(),
+            qd_in_2: qd.template(),
+            qd_in_3: qd.template(),
+            qd_in_4: qd.template(),
+            qd_out_1: qd.template(),
+            qd_out_2: qd.template(),
         ):
-            ti.loop_config(serialize=False)
-            for I in ti.grouped(ti.ndrange(*ti_in_1.shape)):
-                ti_out_1[I], ti_out_2[I] = ti_func(ti_in_1[I], ti_in_2[I], ti_in_3[I], ti_in_4[I], *args)
+            qd.loop_config(serialize=False)
+            for I in qd.grouped(qd.ndrange(*qd_in_1.shape)):
+                qd_out_1[I], qd_out_2[I] = qd_func(qd_in_1[I], qd_in_2[I], qd_in_3[I], qd_in_4[I], *args)
 
     else:
-        raise NotImplementedError(f"Taichi func with arity in={num_inputs},out={num_outputs} not supported")
+        raise NotImplementedError(f"Quadrants func with arity in={num_inputs},out={num_outputs} not supported")
 
     return kernel
 
@@ -114,40 +114,40 @@ def _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args):
 @pytest.mark.slow  # ~110s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_geom_taichi_vs_tensor_consistency(batch_shape):
-    import quadrants as ti
+def test_geom_quadrants_vs_tensor_consistency(batch_shape):
+    import quadrants as qd
 
-    for ti_func, py_func, shapes_in, shapes_out, *args in (
-        (gu.ti_xyz_to_quat, gu.xyz_to_quat, [[3]], [[4]]),
-        (gu.ti_quat_to_R, gu.quat_to_R, [[4]], [[3, 3]], gs.EPS),
-        (gu.ti_quat_to_xyz, gu.quat_to_xyz, [[4]], [[3]], gs.EPS),
-        (gu.ti_trans_quat_to_T, gu.trans_quat_to_T, [[3], [4]], [[4, 4]], gs.EPS),
-        (gu.ti_transform_quat_by_quat, gu.transform_quat_by_quat, [[4], [4]], [[4]]),
-        (gu.ti_transform_by_quat, gu.transform_by_quat, [[3], [4]], [[3]]),
-        (gu.ti_inv_transform_by_quat, gu.inv_transform_by_quat, [[3], [4]], [[3]]),
-        (gu.ti_transform_by_T, gu.transform_by_T, [[3], [4, 4]], [[3]]),
-        (gu.ti_inv_transform_by_T, gu.inv_transform_by_T, [[3], [4, 4]], [[3]]),
-        (gu.ti_transform_by_trans_quat, gu.transform_by_trans_quat, [[3], [3], [4]], [[3]]),
-        (gu.ti_inv_transform_by_trans_quat, gu.inv_transform_by_trans_quat, [[3], [3], [4]], [[3]]),
-        (gu.ti_transform_pos_quat_by_trans_quat, gu.transform_pos_quat_by_trans_quat, [[3], [4], [3], [4]], [[3], [4]]),
+    for qd_func, py_func, shapes_in, shapes_out, *args in (
+        (gu.qd_xyz_to_quat, gu.xyz_to_quat, [[3]], [[4]]),
+        (gu.qd_quat_to_R, gu.quat_to_R, [[4]], [[3, 3]], gs.EPS),
+        (gu.qd_quat_to_xyz, gu.quat_to_xyz, [[4]], [[3]], gs.EPS),
+        (gu.qd_trans_quat_to_T, gu.trans_quat_to_T, [[3], [4]], [[4, 4]], gs.EPS),
+        (gu.qd_transform_quat_by_quat, gu.transform_quat_by_quat, [[4], [4]], [[4]]),
+        (gu.qd_transform_by_quat, gu.transform_by_quat, [[3], [4]], [[3]]),
+        (gu.qd_inv_transform_by_quat, gu.inv_transform_by_quat, [[3], [4]], [[3]]),
+        (gu.qd_transform_by_T, gu.transform_by_T, [[3], [4, 4]], [[3]]),
+        (gu.qd_inv_transform_by_T, gu.inv_transform_by_T, [[3], [4, 4]], [[3]]),
+        (gu.qd_transform_by_trans_quat, gu.transform_by_trans_quat, [[3], [3], [4]], [[3]]),
+        (gu.qd_inv_transform_by_trans_quat, gu.inv_transform_by_trans_quat, [[3], [3], [4]], [[3]]),
+        (gu.qd_transform_pos_quat_by_trans_quat, gu.transform_pos_quat_by_trans_quat, [[3], [4], [3], [4]], [[3], [4]]),
     ):
         num_inputs, num_outputs = len(shapes_in), len(shapes_out)
         shape_args = (*shapes_in, *shapes_out)
-        np_args, tc_args, ti_args, ti_outs = [], [], [], []
+        np_args, tc_args, qd_args, qd_outs = [], [], [], []
         for i in range(len(shape_args)):
             np_arg = np.random.rand(*batch_shape, *shape_args[i]).astype(gs.np_float)
 
             tc_arg = torch.as_tensor(np_arg, dtype=gs.tc_float, device=gs.device)
-            ti_type = ti.Vector if len(shape_args[i]) == 1 else ti.Matrix
-            ti_arg = ti_type.field(*shape_args[i], dtype=gs.ti_float, shape=batch_shape)
-            ti_arg.from_numpy(np_arg)
+            qd_type = qd.Vector if len(shape_args[i]) == 1 else qd.Matrix
+            qd_arg = qd_type.field(*shape_args[i], dtype=gs.qd_float, shape=batch_shape)
+            qd_arg.from_numpy(np_arg)
 
             if i < num_inputs:
                 np_args.append(np_arg)
                 tc_args.append(tc_arg)
-                ti_args.append(ti_arg)
+                qd_args.append(qd_arg)
             else:
-                ti_outs.append(ti_arg)
+                qd_outs.append(qd_arg)
 
         np_outs = py_func(*np_args)
         if not isinstance(np_outs, (list, tuple)):
@@ -160,11 +160,11 @@ def test_geom_taichi_vs_tensor_consistency(batch_shape):
             tc_outs = (tc_outs,)
         tc_outs = tuple(map(tensor_to_array, tc_outs))
 
-        kernel = _ti_kernel_wrapper(ti_func, num_inputs, num_outputs, *args)
-        kernel(*ti_args, *ti_outs)
+        kernel = _qd_kernel_wrapper(qd_func, num_inputs, num_outputs, *args)
+        kernel(*qd_args, *qd_outs)
 
-        for np_out, tc_out, ti_out in zip(np_outs, tc_outs, ti_outs):
-            np.testing.assert_allclose(np_out, ti_out.to_numpy(), atol=1e2 * gs.EPS)
+        for np_out, tc_out, qd_out in zip(np_outs, tc_outs, qd_outs):
+            np.testing.assert_allclose(np_out, qd_out.to_numpy(), atol=1e2 * gs.EPS)
             np.testing.assert_allclose(np_out, tc_out, atol=1e2 * gs.EPS)
 
 
@@ -233,17 +233,17 @@ def test_geom_numpy_vs_torch_consistency(batch_shape, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_geom_taichi_inverse(batch_shape):
-    import quadrants as ti
+def test_geom_quadrants_inverse(batch_shape):
+    import quadrants as qd
 
-    for ti_func, ti_func_inv, shapes_value_args, shapes_transform_args in (
-        (gu.ti_transform_by_T, gu.ti_inv_transform_by_T, [[3]], [[4, 4]]),
-        (gu.ti_transform_by_trans_quat, gu.ti_inv_transform_by_trans_quat, [[3]], [[3], [4]]),
-        (gu.ti_transform_motion_by_trans_quat, gu.ti_inv_transform_motion_by_trans_quat, [[3], [3]], [[3], [4]]),
+    for qd_func, qd_func_inv, shapes_value_args, shapes_transform_args in (
+        (gu.qd_transform_by_T, gu.qd_inv_transform_by_T, [[3]], [[4, 4]]),
+        (gu.qd_transform_by_trans_quat, gu.qd_inv_transform_by_trans_quat, [[3]], [[3], [4]]),
+        (gu.qd_transform_motion_by_trans_quat, gu.qd_inv_transform_motion_by_trans_quat, [[3], [3]], [[3], [4]]),
     ):
         shapes_in = (*shapes_value_args, *shapes_transform_args)
         num_inputs, num_outputs = len(shapes_in), len(shapes_value_args)
-        ti_value_in_args, ti_transform_args, ti_value_out_args, ti_value_inv_out_args = [], [], [], []
+        qd_value_in_args, qd_transform_args, qd_value_out_args, qd_value_inv_out_args = [], [], [], []
         for i, shape_arg in enumerate(map(tuple, (*shapes_in, *shapes_value_args, *shapes_value_args))):
             if shape_arg in ((4, 4), (3, 3)):
                 R = gu.rotvec_to_R(np.random.randn(*batch_shape, 3).clip(-1.0, 1.0).astype(gs.np_float))
@@ -255,55 +255,55 @@ def test_geom_taichi_inverse(batch_shape):
             else:
                 np_arg = np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float)
 
-            ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
-            ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
-            ti_arg.from_numpy(np_arg)
+            qd_type = qd.Vector if len(shape_arg) == 1 else qd.Matrix
+            qd_arg = qd_type.field(*shape_arg, dtype=gs.qd_float, shape=batch_shape)
+            qd_arg.from_numpy(np_arg)
 
             if i < len(shapes_value_args):
-                ti_value_in_args.append(ti_arg)
+                qd_value_in_args.append(qd_arg)
             elif i < num_inputs:
-                ti_transform_args.append(ti_arg)
+                qd_transform_args.append(qd_arg)
             elif i < num_inputs + num_outputs:
-                ti_value_out_args.append(ti_arg)
+                qd_value_out_args.append(qd_arg)
             else:
-                ti_value_inv_out_args.append(ti_arg)
+                qd_value_inv_out_args.append(qd_arg)
 
-        kernel = _ti_kernel_wrapper(ti_func, num_inputs, num_outputs)
-        kernel(*ti_value_in_args, *ti_transform_args, *ti_value_out_args)
-        kernel = _ti_kernel_wrapper(ti_func_inv, num_inputs, num_outputs)
-        kernel(*ti_value_out_args, *ti_transform_args, *ti_value_inv_out_args)
+        kernel = _qd_kernel_wrapper(qd_func, num_inputs, num_outputs)
+        kernel(*qd_value_in_args, *qd_transform_args, *qd_value_out_args)
+        kernel = _qd_kernel_wrapper(qd_func_inv, num_inputs, num_outputs)
+        kernel(*qd_value_out_args, *qd_transform_args, *qd_value_inv_out_args)
 
-        for ti_value_in_arg, ti_value_inv_out_arg in zip(ti_value_in_args, ti_value_inv_out_args):
-            np.testing.assert_allclose(ti_value_in_arg.to_numpy(), ti_value_inv_out_arg.to_numpy(), atol=1e2 * gs.EPS)
+        for qd_value_in_arg, qd_value_inv_out_arg in zip(qd_value_in_args, qd_value_inv_out_args):
+            np.testing.assert_allclose(qd_value_in_arg.to_numpy(), qd_value_inv_out_arg.to_numpy(), atol=1e2 * gs.EPS)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("batch_shape", [(10, 40, 25), ()])
-def test_geom_taichi_identity(batch_shape):
-    import quadrants as ti
+def test_geom_quadrants_identity(batch_shape):
+    import quadrants as qd
 
-    for ti_funcs, shape_args, funcs_args in (
-        ((gu.ti_xyz_to_quat, gu.ti_quat_to_xyz), ([3], [4]), ((), (gs.EPS,))),
-        ((gu.ti_xyz_to_quat, gu.ti_quat_to_R, gu.ti_R_to_xyz), ([3], [4], [3, 3]), ((), (gs.EPS,), (gs.EPS,))),
+    for qd_funcs, shape_args, funcs_args in (
+        ((gu.qd_xyz_to_quat, gu.qd_quat_to_xyz), ([3], [4]), ((), (gs.EPS,))),
+        ((gu.qd_xyz_to_quat, gu.qd_quat_to_R, gu.qd_R_to_xyz), ([3], [4], [3, 3]), ((), (gs.EPS,), (gs.EPS,))),
         (
-            (gu.ti_xyz_to_quat, gu.ti_quat_to_rotvec, gu.ti_rotvec_to_R, gu.ti_R_to_xyz),
+            (gu.qd_xyz_to_quat, gu.qd_quat_to_rotvec, gu.qd_rotvec_to_R, gu.qd_R_to_xyz),
             ([3], [4], [3], [3, 3]),
             ((), (gs.EPS,), (gs.EPS,), (gs.EPS,)),
         ),
-        ((gu.ti_rotvec_to_quat, gu.ti_quat_to_rotvec), ([3], [4]), ((gs.EPS,), (gs.EPS,))),
+        ((gu.qd_rotvec_to_quat, gu.qd_quat_to_rotvec), ([3], [4]), ((gs.EPS,), (gs.EPS,))),
     ):
-        ti_args = []
+        qd_args = []
         for shape_arg in (*shape_args, shape_args[0]):
-            ti_type = ti.Vector if len(shape_arg) == 1 else ti.Matrix
-            ti_arg = ti_type.field(*shape_arg, dtype=gs.ti_float, shape=batch_shape)
-            ti_arg.from_numpy(np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float))
-            ti_args.append(ti_arg)
+            qd_type = qd.Vector if len(shape_arg) == 1 else qd.Matrix
+            qd_arg = qd_type.field(*shape_arg, dtype=gs.qd_float, shape=batch_shape)
+            qd_arg.from_numpy(np.random.randn(*batch_shape, *shape_arg).clip(-1.0, 1.0).astype(gs.np_float))
+            qd_args.append(qd_arg)
 
-        for i, (ti_func, args) in enumerate(zip(ti_funcs, funcs_args)):
-            kernel = _ti_kernel_wrapper(ti_func, 1, 1, *args)
-            kernel(*ti_args[i : (i + 2)])
+        for i, (qd_func, args) in enumerate(zip(qd_funcs, funcs_args)):
+            kernel = _qd_kernel_wrapper(qd_func, 1, 1, *args)
+            kernel(*qd_args[i : (i + 2)])
 
-        np.testing.assert_allclose(ti_args[0].to_numpy(), ti_args[-1].to_numpy(), atol=1e2 * gs.EPS)
+        np.testing.assert_allclose(qd_args[0].to_numpy(), qd_args[-1].to_numpy(), atol=1e2 * gs.EPS)
 
 
 @pytest.mark.required

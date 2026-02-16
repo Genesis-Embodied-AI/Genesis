@@ -3,7 +3,7 @@ import os
 import time
 
 import numpy as np
-import quadrants as ti
+import quadrants as qd
 from PIL import Image
 
 import genesis as gs
@@ -52,11 +52,11 @@ def save_img_arr(arr, filename="img.png"):
 
 
 class Timer:
-    def __init__(self, skip=False, level=0, ti_sync=False):
+    def __init__(self, skip=False, level=0, qd_sync=False):
         self.accu_log = dict()
         self.skip = skip
         self.level = level
-        self.ti_sync = ti_sync
+        self.qd_sync = qd_sync
         self.msg_width = 0
         self.reset()
 
@@ -68,16 +68,16 @@ class Timer:
             except OSError:
                 column = 80
             print("─" * column)
-        if self.ti_sync and not self.skip:
-            ti.sync()
+        if self.qd_sync and not self.skip:
+            qd.sync()
         self.prev_time = self.init_time = time.perf_counter()
 
     def _stamp(self, msg="", _ratio=1.0):
         if self.skip:
             return
 
-        if self.ti_sync:
-            ti.sync()
+        if self.qd_sync:
+            qd.sync()
 
         self.cur_time = time.perf_counter()
         self.msg_width = max(self.msg_width, len(msg))
@@ -112,8 +112,8 @@ class Timer:
         if self.skip:
             return
 
-        if self.ti_sync:
-            ti.sync()
+        if self.qd_sync:
+            qd.sync()
 
         self.cur_time = time.perf_counter()
         self.msg_width = max(self.msg_width, len(msg))
@@ -147,7 +147,7 @@ class Timer:
 timers = dict()
 
 
-def create_timer(name=None, new=False, level=0, ti_sync=False, skip_first_call=False):
+def create_timer(name=None, new=False, level=0, qd_sync=False, skip_first_call=False):
     if name is None:
         return Timer()
     else:
@@ -157,7 +157,7 @@ def create_timer(name=None, new=False, level=0, ti_sync=False, skip_first_call=F
             timer.reset()
             return timer
         else:
-            timer = Timer(skip=skip_first_call, level=level, ti_sync=ti_sync)
+            timer = Timer(skip=skip_first_call, level=level, qd_sync=qd_sync)
             timers[name] = timer
             return timer
 

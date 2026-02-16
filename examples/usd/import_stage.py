@@ -5,7 +5,7 @@ import numpy as np
 from huggingface_hub import snapshot_download
 
 import genesis as gs
-from genesis.utils.misc import ti_to_numpy
+from genesis.utils.misc import qd_to_numpy
 import genesis.utils.geom as gu
 
 
@@ -19,7 +19,7 @@ class JointAnimator:
     def __init__(self, scene: gs.Scene):
         self.rigid = scene.sim.rigid_solver
         n_dofs = self.rigid.n_dofs
-        joint_limits = ti_to_numpy(self.rigid.dofs_info.limit)
+        joint_limits = qd_to_numpy(self.rigid.dofs_info.limit)
         joint_limits = np.clip(joint_limits, -np.pi, np.pi)
 
         init_positions = self.rigid.get_dofs_position().numpy()

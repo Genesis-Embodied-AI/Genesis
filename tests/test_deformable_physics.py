@@ -279,7 +279,7 @@ def test_mpm_particle_constraints(show_viewer):
 
 
 def test_sf_solver(show_viewer):
-    import quadrants as ti
+    import quadrants as qd
 
     res = 384
     orbit_tau = 0.2
@@ -303,8 +303,8 @@ def test_sf_solver(show_viewer):
         show_viewer=show_viewer,
     )
 
-    @ti.data_oriented
-    class Jet(object):
+    @qd.data_oriented
+    class Jet:
         def __init__(
             self,
             world_center,
@@ -316,7 +316,7 @@ def test_sf_solver(show_viewer):
             sub_orbit_radius,
             sub_orbit_tau,
         ):
-            self.world_center = ti.Vector(world_center)
+            self.world_center = qd.Vector(world_center)
             self.orbit_radius = orbit_radius
             self.orbit_radius_vel = orbit_radius_vel
             self.orbit_init_radian = math.radians(orbit_init_degree)
@@ -329,24 +329,24 @@ def test_sf_solver(show_viewer):
             self.sub_orbit_radius = sub_orbit_radius
             self.sub_orbit_tau = sub_orbit_tau
 
-        @ti.func
+        @qd.func
         def get_pos(self, t: float):
-            rel_pos = ti.Vector([self.orbit_radius + t * self.orbit_radius_vel, 0.0, 0.0])
-            rot_mat = ti.math.rot_by_axis(ti.Vector([0.0, 1.0, 0.0]), self.orbit_init_radian + t * self.orbit_tau)[
+            rel_pos = qd.Vector([self.orbit_radius + t * self.orbit_radius_vel, 0.0, 0.0])
+            rot_mat = qd.math.rot_by_axis(qd.Vector([0.0, 1.0, 0.0]), self.orbit_init_radian + t * self.orbit_tau)[
                 :3, :3
             ]
             rel_pos = rot_mat @ rel_pos
             return rel_pos
 
-        @ti.func
+        @qd.func
         def get_factor(self, i: int, j: int, k: int, dx: float, t: float):
             rel_pos = self.get_pos(t)
             tan_dir = self.get_tan_dir(t)
-            ijk = ti.Vector([i, j, k], dt=gs.ti_float) * dx
+            ijk = qd.Vector([i, j, k], dt=gs.qd_float) * dx
             dist = 2 * self.jet_radius
-            for q in ti.static(range(self.num_sub_jets)):
-                jet_pos = ti.Vector([0.0, self.sub_orbit_radius, 0.0])
-                rot_mat = ti.math.rot_by_axis(tan_dir, self.sub_orbit_radian_delta * q + self.sub_orbit_tau * t)[:3, :3]
+            for q in qd.static(range(self.num_sub_jets)):
+                jet_pos = qd.Vector([0.0, self.sub_orbit_radius, 0.0])
+                rot_mat = qd.math.rot_by_axis(tan_dir, self.sub_orbit_radian_delta * q + self.sub_orbit_tau * t)[:3, :3]
                 jet_pos = (rot_mat @ jet_pos) + self.world_center + rel_pos
                 dist_q = (ijk - jet_pos).norm(gs.EPS)
                 if dist_q < dist:
@@ -356,15 +356,15 @@ def test_sf_solver(show_viewer):
                 factor = 1.0
             return factor
 
-        @ti.func
+        @qd.func
         def get_inward_dir(self, t: float):
             neg_pos = -self.get_pos(t)
             return neg_pos.normalized(gs.EPS)
 
-        @ti.func
+        @qd.func
         def get_tan_dir(self, t: float):
             inward_dir = self.get_inward_dir(t)
-            tan_rot_mat = ti.math.rot_by_axis(ti.Vector([0.0, 1.0, 0.0]), 0.0)[:3, :3]
+            tan_rot_mat = qd.math.rot_by_axis(qd.Vector([0.0, 1.0, 0.0]), 0.0)[:3, :3]
             return tan_rot_mat @ inward_dir
 
     jet = [

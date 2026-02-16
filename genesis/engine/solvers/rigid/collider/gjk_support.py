@@ -4,7 +4,7 @@ Support function utilities for GJK algorithm.
 This module contains support point computation functions used by both GJK and EPA algorithms.
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -12,7 +12,7 @@ import genesis.utils.array_class as array_class
 from . import support_field
 
 
-@ti.func
+@qd.func
 def support_mesh(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
@@ -20,15 +20,15 @@ def support_mesh(
     gjk_info: array_class.GJKInfo,
     direction,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     i_o,
 ):
     """
     Find the support point on a mesh in the given direction.
     """
-    d_mesh = gu.ti_transform_by_quat(direction, gu.ti_inv_quat(quat))
+    d_mesh = gu.qd_transform_by_quat(direction, gu.qd_inv_quat(quat))
 
     # Exhaustively search for the vertex with maximum dot product
     fmax = -gjk_info.FLOAT_MAX[None]
@@ -56,24 +56,24 @@ def support_mesh(
 
     gjk_state.support_mesh_prev_vertex_id[i_b, i_o] = vid
 
-    v_world = gu.ti_transform_by_trans_quat(v, pos, quat)
+    v_world = gu.qd_transform_by_trans_quat(v, pos, quat)
     return v_world, vid
 
 
-@ti.func
+@qd.func
 def support_driver(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     direction,
     i_g,
-    pos: ti.types.vector(3, dtype=gs.ti_float),
-    quat: ti.types.vector(4, dtype=gs.ti_float),
+    pos: qd.types.vector(3, dtype=gs.qd_float),
+    quat: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     i_o,
     shrink_sphere,
@@ -81,8 +81,8 @@ def support_driver(
     """
     @ shrink_sphere: If True, use point and line support for sphere and capsule.
     """
-    v = ti.Vector.zero(gs.ti_float, 3)
-    v_ = ti.Vector.zero(gs.ti_float, 3)
+    v = qd.Vector.zero(gs.qd_float, 3)
+    v_ = qd.Vector.zero(gs.qd_float, 3)
     vid = -1
 
     geom_type = geoms_info.type[i_g]
@@ -95,7 +95,7 @@ def support_driver(
     elif geom_type == gs.GEOM_TYPE.BOX:
         v, v_, vid = support_field._func_support_box(geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
-        if ti.static(collider_static_config.has_terrain):
+        if qd.static(collider_static_config.has_terrain):
             v, vid = support_field._func_support_prism(collider_state, direction, i_b)
     elif geom_type == gs.GEOM_TYPE.MESH and static_rigid_sim_config.enable_mujoco_compatibility:
         # If mujoco-compatible, do exhaustive search for the vertex
@@ -105,13 +105,13 @@ def support_driver(
     return v, v_, vid
 
 
-@ti.func
+@qd.func
 def func_support(
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
@@ -119,10 +119,10 @@ def func_support(
     i_gb,
     i_b,
     dir,
-    pos_a: ti.types.vector(3, dtype=gs.ti_float),
-    quat_a: ti.types.vector(4, dtype=gs.ti_float),
-    pos_b: ti.types.vector(3, dtype=gs.ti_float),
-    quat_b: ti.types.vector(4, dtype=gs.ti_float),
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     shrink_sphere,
 ):
     """
@@ -130,13 +130,13 @@ def func_support(
 
     Parameters:
     ----------
-    dir: gs.ti_vec3
+    dir: gs.qd_vec3
         The direction in which to find the support points, from [ga] (obj 1) to [gb] (obj 2).
     """
-    support_point_obj1 = gs.ti_vec3(0, 0, 0)
-    support_point_obj2 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos1 = gs.ti_vec3(0, 0, 0)
-    support_point_localpos2 = gs.ti_vec3(0, 0, 0)
+    support_point_obj1 = gs.qd_vec3(0, 0, 0)
+    support_point_obj2 = gs.qd_vec3(0, 0, 0)
+    support_point_localpos1 = gs.qd_vec3(0, 0, 0)
+    support_point_localpos2 = gs.qd_vec3(0, 0, 0)
     support_point_id_obj1 = -1
     support_point_id_obj2 = -1
 

@@ -48,7 +48,7 @@
     #         PYTHON_VERSION: "3.12"
     #         GS_BACKEND: "cpu"
     #         GS_ENABLE_NDARRAY: "0"
-    #       # FIXME: Taichi compilation is taking so slow on Windows that running the unit tests
+    #       # FIXME: Quadrants compilation is taking so slow on Windows that running the unit tests
     #       # for static arrays takes about 400min, which is not acceptable. Disabling for now.
     #       # - OS: "windows-2025"
     #       #   PYTHON_VERSION: "3.12"
@@ -71,13 +71,13 @@
     #   GS_CACHE_FILE_PATH: ".cache/genesis"
     #   GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
     #   GS_TORCH_FORCE_CPU_DEVICE: ${{ startsWith(matrix.OS, 'macos-') && '1' || '0' }}
-    #   TI_OFFLINE_CACHE: "1"
-    #   TI_OFFLINE_CACHE_CLEANING_POLICY: "never"
-    #   TI_OFFLINE_CACHE_FILE_PATH: ".cache/taichi"
-    #   TI_ENABLE_CUDA: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
-    #   TI_ENABLE_AMDGPU: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
-    #   TI_ENABLE_METAL: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
-    #   TI_DEBUG: "0"
+    #   QD_OFFLINE_CACHE: "1"
+    #   QD_OFFLINE_CACHE_CLEANING_POLICY: "never"
+    #   QD_OFFLINE_CACHE_FILE_PATH: ".cache/quadrants"
+    #   QD_ENABLE_CUDA: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
+    #   QD_ENABLE_AMDGPU: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
+    #   QD_ENABLE_METAL: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
+    #   QD_DEBUG: "0"
     #   OMNI_KIT_ACCEPT_EULA: "yes"
 
 #     runs-on: ${{ matrix.OS }}
@@ -152,33 +152,33 @@
       #     QUADRANTS_VERSION=$(python -c "import importlib.metadata ; print(importlib.metadata.version('quadrants'))")
       #     echo "ARTIFACT_PREFIX=${OS_FAMILY}-${MACHINE_ARCH}-${QUADRANTS_VERSION}" >> $GITHUB_OUTPUT
 
-#       - name: Restore Taichi Kernel Cache
-#         if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
-#         uses: actions/cache/restore@v4
-#         with:
-#           path: .cache
-#           key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
-#           restore-keys: |
-#             ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
+      # - name: Restore Quadrants Kernel Cache
+      #   if: ${{ always() && steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: .cache
+      #     key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}
+      #     restore-keys: |
+      #       ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
       # - name: Run unit tests
       #   run: |
       #     pytest -v -ra --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
 
-#       - name: Save Updated Taichi Kernel Cache
-#         if: >-
-#           ${{ always() &&
-#               (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
-#               matrix.PYTHON_VERSION == '3.12' &&
-#               matrix.GS_BACKEND == 'cpu' &&
-#               matrix.GS_ENABLE_NDARRAY == '1' &&
-#               steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
-#         uses: actions/cache/save@v4
-#         with:
-#           path: .cache
-#           # Note that it is necessary to create a new archive systematically for now:
-#           # See: https://github.com/actions/cache/issues/1594
-#           key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
+      # - name: Save Updated Quadrants Kernel Cache
+      #   if: >-
+      #     ${{ always() &&
+      #         (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
+      #         matrix.PYTHON_VERSION == '3.12' &&
+      #         matrix.GS_BACKEND == 'cpu' &&
+      #         matrix.GS_ENABLE_NDARRAY == '1' &&
+      #         steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: .cache
+      #     # Note that it is necessary to create a new archive systematically for now:
+      #     # See: https://github.com/actions/cache/issues/1594
+      #     key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
 
 #   publish-pypi:
 #     name: Publish on PyPI

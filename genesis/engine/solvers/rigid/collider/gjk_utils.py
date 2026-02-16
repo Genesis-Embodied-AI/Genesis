@@ -4,7 +4,7 @@ Utility functions for GJK/EPA algorithms.
 This module contains shared utility functions used by both GJK and EPA algorithms.
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -12,7 +12,7 @@ from .constants import RETURN_CODE
 from .utils import func_det3
 
 
-@ti.func
+@qd.func
 def func_ray_triangle_intersection(
     ray_v1,
     ray_v2,
@@ -31,9 +31,9 @@ def func_ray_triangle_intersection(
     ray = ray_v2 - ray_v1
 
     # Signed volumes of the tetrahedrons formed by the ray and triangle edges
-    vols = gs.ti_vec3(0.0, 0.0, 0.0)
+    vols = gs.qd_vec3(0.0, 0.0, 0.0)
     for i in range(3):
-        v1, v2 = gs.ti_vec3(0.0, 0.0, 0.0), gs.ti_vec3(0.0, 0.0, 0.0)
+        v1, v2 = gs.qd_vec3(0.0, 0.0, 0.0), gs.qd_vec3(0.0, 0.0, 0.0)
         if i == 0:
             v1, v2 = tri_v1 - ray_v1, tri_v2 - ray_v1
         if i == 1:
@@ -45,7 +45,7 @@ def func_ray_triangle_intersection(
     return (vols >= 0.0).all() or (vols <= 0.0).all()
 
 
-@ti.func
+@qd.func
 def func_triangle_affine_coords(
     point,
     tri_v1,
@@ -56,8 +56,8 @@ def func_triangle_affine_coords(
     Compute the affine coordinates of the point with respect to the triangle.
     """
     # Compute minors of the triangle vertices
-    ms = gs.ti_vec3(0.0, 0.0, 0.0)
-    for i in ti.static(range(3)):
+    ms = gs.qd_vec3(0.0, 0.0, 0.0)
+    for i in qd.static(range(3)):
         i1, i2 = (i + 1) % 3, (i + 2) % 3
         if i == 1:
             i1, i2 = i2, i1
@@ -72,9 +72,9 @@ def func_triangle_affine_coords(
         )
 
     # Exclude one of the axes with the largest projection using the minors of the above linear system.
-    m_max = gs.ti_float(0.0)
-    i_x, i_y = gs.ti_int(0), gs.ti_int(0)
-    absms = ti.abs(ms)
+    m_max = gs.qd_float(0.0)
+    i_x, i_y = gs.qd_int(0), gs.qd_int(0)
+    absms = qd.abs(ms)
     for i in range(3):
         if absms[i] >= absms[(i + 1) % 3] and absms[i] >= absms[(i + 2) % 3]:
             # Remove the i-th row
@@ -84,7 +84,7 @@ def func_triangle_affine_coords(
                 i_x, i_y = i_y, i_x
             break
 
-    cs = gs.ti_vec3(0.0, 0.0, 0.0)
+    cs = gs.qd_vec3(0.0, 0.0, 0.0)
     for i in range(3):
         tv1, tv2 = tri_v2, tri_v3
         if i == 1:
@@ -106,7 +106,7 @@ def func_triangle_affine_coords(
     return cs / m_max
 
 
-@ti.func
+@qd.func
 def func_point_triangle_intersection(
     gjk_info: array_class.GJKInfo,
     point,
@@ -131,7 +131,7 @@ def func_point_triangle_intersection(
     return is_inside
 
 
-@ti.func
+@qd.func
 def func_point_plane_same_side(
     point,
     plane_v1,
@@ -156,7 +156,7 @@ def func_point_plane_same_side(
     return RETURN_CODE.SUCCESS if dot1 * dot2 > 0 else RETURN_CODE.FAIL
 
 
-@ti.func
+@qd.func
 def func_origin_tetra_intersection(
     tet_v1,
     tet_v2,
@@ -181,7 +181,7 @@ def func_origin_tetra_intersection(
     return flag
 
 
-@ti.func
+@qd.func
 def func_project_origin_to_plane(
     gjk_info: array_class.GJKInfo,
     v1,
@@ -191,15 +191,15 @@ def func_project_origin_to_plane(
     """
     Project the origin onto the plane defined by the simplex vertices.
     """
-    point, flag = gs.ti_vec3(0, 0, 0), RETURN_CODE.SUCCESS
+    point, flag = gs.qd_vec3(0, 0, 0), RETURN_CODE.SUCCESS
 
     d21 = v2 - v1
     d31 = v3 - v1
     d32 = v3 - v2
 
     for i in range(3):
-        n = gs.ti_vec3(0, 0, 0)
-        v = gs.ti_vec3(0, 0, 0)
+        n = gs.qd_vec3(0, 0, 0)
+        v = gs.qd_vec3(0, 0, 0)
         if i == 0:
             # Normal = (v1 - v2) x (v3 - v2)
             n = d32.cross(d21)

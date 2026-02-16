@@ -1,11 +1,8 @@
-import quadrants as ti
-
 import genesis as gs
 
 from .base import Material
 
 
-@ti.data_oriented
 class Rigid(Material):
     """
     The Rigid class represents a material used in rigid body simulation.

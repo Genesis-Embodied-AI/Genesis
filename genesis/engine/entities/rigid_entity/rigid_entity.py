@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Any
 from functools import wraps
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 import trimesh
@@ -24,7 +24,7 @@ from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
-from genesis.utils.misc import DeprecationError, broadcast_tensor, ti_to_numpy, ti_to_torch
+from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
 from ..base_entity import Entity
@@ -111,7 +111,7 @@ def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
     return total_mass, total_com, total_inertia
 
 
-@ti.data_oriented
+@qd.data_oriented
 class RigidEntity(Entity):
     """
     Entity class in rigid body systems. One rigid entity can be a robot, a terrain, a floating rigid body, etc.
@@ -844,7 +844,7 @@ class RigidEntity(Entity):
         if self.n_dofs == 0:
             return
 
-        self._jacobian = ti.field(dtype=gs.ti_float, shape=(6, self.n_dofs, self._solver._B))
+        self._jacobian = qd.field(dtype=gs.qd_float, shape=(6, self.n_dofs, self._solver._B))
 
         # compute joint limit in q space
         q_limit_lower = []
@@ -867,19 +867,19 @@ class RigidEntity(Entity):
         # for storing intermediate results
         self._IK_n_tgts = self._solver._options.IK_max_targets
         self._IK_error_dim = self._IK_n_tgts * 6
-        self._IK_mat = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-        self._IK_inv = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-        self._IK_L = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-        self._IK_U = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-        self._IK_y = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
-        self._IK_qpos_orig = ti.field(dtype=gs.ti_float, shape=(self.n_qs, self._solver._B))
-        self._IK_qpos_best = ti.field(dtype=gs.ti_float, shape=(self.n_qs, self._solver._B))
-        self._IK_delta_qpos = ti.field(dtype=gs.ti_float, shape=(self.n_dofs, self._solver._B))
-        self._IK_vec = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
-        self._IK_err_pose = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
-        self._IK_err_pose_best = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self._solver._B))
-        self._IK_jacobian = ti.field(dtype=gs.ti_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
-        self._IK_jacobian_T = ti.field(dtype=gs.ti_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
+        self._IK_mat = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_inv = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_L = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_U = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_y = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._IK_error_dim, self._solver._B))
+        self._IK_qpos_orig = qd.field(dtype=gs.qd_float, shape=(self.n_qs, self._solver._B))
+        self._IK_qpos_best = qd.field(dtype=gs.qd_float, shape=(self.n_qs, self._solver._B))
+        self._IK_delta_qpos = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._solver._B))
+        self._IK_vec = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_err_pose = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_err_pose_best = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self._solver._B))
+        self._IK_jacobian = qd.field(dtype=gs.qd_float, shape=(self._IK_error_dim, self.n_dofs, self._solver._B))
+        self._IK_jacobian_T = qd.field(dtype=gs.qd_float, shape=(self.n_dofs, self._IK_error_dim, self._solver._B))
 
     def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
         if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
@@ -1267,13 +1267,13 @@ class RigidEntity(Entity):
                 links_state=sol.links_state,
             )
 
-        jacobian = ti_to_torch(self._jacobian, transpose=True, copy=True)
+        jacobian = qd_to_torch(self._jacobian, transpose=True, copy=True)
         if self._solver.n_envs == 0:
             jacobian = jacobian[0]
 
         return jacobian
 
-    @ti.func
+    @qd.func
     def _impl_get_jacobian(
         self,
         tgt_link_idx,
@@ -1288,25 +1288,25 @@ class RigidEntity(Entity):
             tgt_link_idx=tgt_link_idx,
             i_b=i_b,
             p_local=p_vec,
-            pos_mask=ti.Vector.one(gs.ti_int, 3),
-            rot_mask=ti.Vector.one(gs.ti_int, 3),
+            pos_mask=qd.Vector.one(gs.qd_int, 3),
+            rot_mask=qd.Vector.one(gs.qd_int, 3),
             dofs_info=dofs_info,
             joints_info=joints_info,
             links_info=links_info,
             links_state=links_state,
         )
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_get_jacobian(
         self,
-        tgt_link_idx: ti.i32,
-        p_local: ti.types.ndarray(),
+        tgt_link_idx: qd.i32,
+        p_local: qd.types.ndarray(),
         dofs_info: array_class.DofsInfo,
         joints_info: array_class.JointsInfo,
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
     ):
-        p_vec = ti.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.ti_float)
+        p_vec = qd.Vector([p_local[0], p_local[1], p_local[2]], dt=gs.qd_float)
         for i_b in range(self._solver._B):
             self._impl_get_jacobian(
                 tgt_link_idx=tgt_link_idx,
@@ -1318,10 +1318,10 @@ class RigidEntity(Entity):
                 links_state=links_state,
             )
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_get_jacobian_zero(
         self,
-        tgt_link_idx: ti.i32,
+        tgt_link_idx: qd.i32,
         dofs_info: array_class.DofsInfo,
         joints_info: array_class.JointsInfo,
         links_info: array_class.LinksInfo,
@@ -1331,14 +1331,14 @@ class RigidEntity(Entity):
             self._impl_get_jacobian(
                 tgt_link_idx=tgt_link_idx,
                 i_b=i_b,
-                p_vec=ti.Vector.zero(gs.ti_float, 3),
+                p_vec=qd.Vector.zero(gs.qd_float, 3),
                 dofs_info=dofs_info,
                 joints_info=joints_info,
                 links_info=links_info,
                 links_state=links_state,
             )
 
-    @ti.func
+    @qd.func
     def _func_get_jacobian(
         self,
         tgt_link_idx,
@@ -1351,28 +1351,28 @@ class RigidEntity(Entity):
         links_info: array_class.LinksInfo,
         links_state: array_class.LinksState,
     ):
-        for i_row, i_d in ti.ndrange(6, self.n_dofs):
+        for i_row, i_d in qd.ndrange(6, self.n_dofs):
             self._jacobian[i_row, i_d, i_b] = 0.0
 
-        tgt_link_pos = links_state.pos[tgt_link_idx, i_b] + gu.ti_transform_by_quat(
+        tgt_link_pos = links_state.pos[tgt_link_idx, i_b] + gu.qd_transform_by_quat(
             p_local, links_state.quat[tgt_link_idx, i_b]
         )
         i_l = tgt_link_idx
         while i_l > -1:
-            I_l = [i_l, i_b] if ti.static(self.solver._options.batch_links_info) else i_l
+            I_l = [i_l, i_b] if qd.static(self.solver._options.batch_links_info) else i_l
 
             dof_offset = 0
             for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
-                I_j = [i_j, i_b] if ti.static(self.solver._options.batch_joints_info) else i_j
+                I_j = [i_j, i_b] if qd.static(self.solver._options.batch_joints_info) else i_j
 
                 if joints_info.type[I_j] == gs.JOINT_TYPE.FIXED:
                     pass
 
                 elif joints_info.type[I_j] == gs.JOINT_TYPE.REVOLUTE:
                     i_d = joints_info.dof_start[I_j]
-                    I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                    I_d = [i_d, i_b] if qd.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    rotation = gu.ti_transform_by_quat(dofs_info.motion_ang[I_d], links_state.quat[i_l, i_b])
+                    rotation = gu.qd_transform_by_quat(dofs_info.motion_ang[I_d], links_state.quat[i_l, i_b])
                     translation = rotation.cross(tgt_link_pos - links_state.pos[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
@@ -1384,9 +1384,9 @@ class RigidEntity(Entity):
 
                 elif joints_info.type[I_j] == gs.JOINT_TYPE.PRISMATIC:
                     i_d = joints_info.dof_start[I_j]
-                    I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                    I_d = [i_d, i_b] if qd.static(self.solver._options.batch_dofs_info) else i_d
                     i_d_jac = i_d + dof_offset - self._dof_start
-                    translation = gu.ti_transform_by_quat(dofs_info.motion_vel[I_d], links_state.quat[i_l, i_b])
+                    translation = gu.qd_transform_by_quat(dofs_info.motion_vel[I_d], links_state.quat[i_l, i_b])
 
                     self._jacobian[0, i_d_jac, i_b] = translation[0] * pos_mask[0]
                     self._jacobian[1, i_d_jac, i_b] = translation[1] * pos_mask[1]
@@ -1394,17 +1394,17 @@ class RigidEntity(Entity):
 
                 elif joints_info.type[I_j] == gs.JOINT_TYPE.FREE:
                     # translation
-                    for i_d_ in ti.static(range(3)):
+                    for i_d_ in qd.static(range(3)):
                         i_d = joints_info.dof_start[I_j] + i_d_
                         i_d_jac = i_d + dof_offset - self._dof_start
 
                         self._jacobian[i_d_, i_d_jac, i_b] = 1.0 * pos_mask[i_d_]
 
                     # rotation
-                    for i_d_ in ti.static(range(3)):
+                    for i_d_ in qd.static(range(3)):
                         i_d = joints_info.dof_start[I_j] + i_d_ + 3
                         i_d_jac = i_d + dof_offset - self._dof_start
-                        I_d = [i_d, i_b] if ti.static(self.solver._options.batch_dofs_info) else i_d
+                        I_d = [i_d, i_b] if qd.static(self.solver._options.batch_dofs_info) else i_d
                         rotation = dofs_info.motion_ang[I_d]
                         translation = rotation.cross(tgt_link_pos - links_state.pos[i_l, i_b])
 
@@ -1691,11 +1691,11 @@ class RigidEntity(Entity):
             self._solver._static_rigid_sim_config,
         )
 
-        qpos = ti_to_torch(self._IK_qpos_best, transpose=True, copy=True)
+        qpos = qd_to_torch(self._IK_qpos_best, transpose=True, copy=True)
         qpos = qpos[0] if self._solver.n_envs == 0 else qpos[envs_idx]
 
         if return_error:
-            error_pose = ti_to_torch(self._IK_err_pose_best, transpose=True, copy=True).reshape(
+            error_pose = qd_to_torch(self._IK_err_pose_best, transpose=True, copy=True).reshape(
                 (-1, self._IK_n_tgts, 6)
             )[:, :n_links]
             error_pose = error_pose[0] if self._solver.n_envs == 0 else error_pose[envs_idx]
@@ -1759,15 +1759,15 @@ class RigidEntity(Entity):
             links_quat = links_quat[0]
         return links_pos, links_quat
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_forward_kinematics(
         self,
-        links_pos: ti.types.ndarray(),
-        links_quat: ti.types.ndarray(),
-        qpos: ti.types.ndarray(),
-        qs_idx: ti.types.ndarray(),
-        links_idx: ti.types.ndarray(),
-        envs_idx: ti.types.ndarray(),
+        links_pos: qd.types.ndarray(),
+        links_quat: qd.types.ndarray(),
+        qpos: qd.types.ndarray(),
+        qs_idx: qd.types.ndarray(),
+        links_idx: qd.types.ndarray(),
+        envs_idx: qd.types.ndarray(),
         links_state: array_class.LinksState,
         links_info: array_class.LinksInfo,
         joints_state: array_class.JointsState,
@@ -1776,10 +1776,10 @@ class RigidEntity(Entity):
         dofs_info: array_class.DofsInfo,
         entities_info: array_class.EntitiesInfo,
         rigid_global_info: array_class.RigidGlobalInfo,
-        static_rigid_sim_config: ti.template(),
+        static_rigid_sim_config: qd.template(),
     ):
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in qd.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             # save original qpos
             # NOTE: reusing the IK_qpos_orig as cache (should not be a problem)
             self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]] = rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]]
@@ -1787,7 +1787,7 @@ class RigidEntity(Entity):
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
         # run FK
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
@@ -1804,20 +1804,20 @@ class RigidEntity(Entity):
                 is_backward=False,
             )
 
-        ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-        for i_l_, i_b_ in ti.ndrange(links_idx.shape[0], envs_idx.shape[0]):
-            for i in ti.static(range(3)):
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            for i in qd.static(range(3)):
                 links_pos[i_b_, i_l_, i] = links_state.pos[links_idx[i_l_], envs_idx[i_b_]][i]
-            for i in ti.static(range(4)):
+            for i in qd.static(range(4)):
                 links_quat[i_b_, i_l_, i] = links_state.quat[links_idx[i_l_], envs_idx[i_b_]][i]
 
         # restore original qpos
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_q_, i_b_ in ti.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_q_, i_b_ in qd.ndrange(qs_idx.shape[0], envs_idx.shape[0]):
             rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = self._IK_qpos_orig[qs_idx[i_q_], envs_idx[i_b_]]
 
         # run FK
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b_ in range(envs_idx.shape[0]):
             gs.engine.solvers.rigid.rigid_solver.func_forward_kinematics_entity(
                 self._idx_in_solver,
@@ -2006,22 +2006,22 @@ class RigidEntity(Entity):
             data_kwargs = self._tgt_buffer[index][key]
 
             match key:
-                # We need to unpack the data_kwargs because [_backward_from_ti] only supports positional arguments
+                # We need to unpack the data_kwargs because [_backward_from_qd] only supports positional arguments
                 case "set_pos":
                     pos = data_kwargs.pop("pos")
                     if pos.requires_grad:
-                        pos._backward_from_ti(self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+                        pos._backward_from_qd(self.set_pos_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_quat":
                     quat = data_kwargs.pop("quat")
                     if quat.requires_grad:
-                        quat._backward_from_ti(self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
+                        quat._backward_from_qd(self.set_quat_grad, data_kwargs["envs_idx"], data_kwargs["relative"])
 
                 case "set_dofs_velocity":
                     velocity = data_kwargs.pop("velocity")
                     # [velocity] could be None when we want to zero the velocity (see set_dofs_velocity of RigidSolver)
                     if velocity is not None and velocity.requires_grad:
-                        velocity._backward_from_ti(
+                        velocity._backward_from_qd(
                             self.set_dofs_velocity_grad,
                             data_kwargs["dofs_idx_local"],
                             data_kwargs["envs_idx"],
@@ -2556,11 +2556,11 @@ class RigidEntity(Entity):
 
         if n_fixed_verts > 0:
             verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
-            fixed_verts_state = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
+            fixed_verts_state = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
             tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
         if n_free_vertices > 0:
             verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
-            free_verts_state = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
+            free_verts_state = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
             tensor[:, self._free_verts_idx_local] = free_verts_state
 
         if self._solver.n_envs == 0:
@@ -3157,7 +3157,7 @@ class RigidEntity(Entity):
             The net force applied on each links due to direct external contacts.
         """
         links_idx = slice(self.link_start, self.link_end)
-        tensor = ti_to_torch(self._solver.links_state.contact_force, envs_idx, links_idx, transpose=True, copy=True)
+        tensor = qd_to_torch(self._solver.links_state.contact_force, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     def set_friction_ratio(self, friction_ratio, links_idx_local=None, envs_idx=None):
@@ -3286,7 +3286,7 @@ class RigidEntity(Entity):
         """
         if self._enable_heterogeneous:
             links_idx = slice(self.link_start, self.link_end)
-            links_mass = ti_to_numpy(self._solver.links_info.inertial_mass, None, links_idx, transpose=True)
+            links_mass = qd_to_numpy(self._solver.links_info.inertial_mass, None, links_idx, transpose=True)
             return links_mass.sum(axis=1)
 
         # Original behavior: sum link masses to scalar
@@ -3614,29 +3614,29 @@ class RigidEntity(Entity):
         return self._is_local_collision_mask
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_free_verts(
-    tensor: ti.types.ndarray(),
-    free_verts_idx_local: ti.types.ndarray(),
-    verts_state_start: ti.i32,
+    tensor: qd.types.ndarray(),
+    free_verts_idx_local: qd.types.ndarray(),
+    verts_state_start: qd.i32,
     free_verts_state: array_class.VertsState,
 ):
     n_verts = free_verts_idx_local.shape[0]
     _B = tensor.shape[0]
-    for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
+    for i_v_, i, i_b in qd.ndrange(n_verts, 3, _B):
         i_v = i_v_ + verts_state_start
         tensor[i_b, free_verts_idx_local[i_v_], i] = free_verts_state.pos[i_v, i_b][i]
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_get_fixed_verts(
-    tensor: ti.types.ndarray(),
-    fixed_verts_idx_local: ti.types.ndarray(),
-    verts_state_start: ti.i32,
+    tensor: qd.types.ndarray(),
+    fixed_verts_idx_local: qd.types.ndarray(),
+    verts_state_start: qd.i32,
     fixed_verts_state: array_class.VertsState,
 ):
     n_verts = fixed_verts_idx_local.shape[0]
     _B = tensor.shape[0]
-    for i_v_, i, i_b in ti.ndrange(n_verts, 3, _B):
+    for i_v_, i, i_b in qd.ndrange(n_verts, 3, _B):
         i_v = i_v_ + verts_state_start
         tensor[i_b, fixed_verts_idx_local[i_v_], i] = fixed_verts_state.pos[i_v][i]

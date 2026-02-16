@@ -253,7 +253,7 @@ class AnalyticalVsGJKSceneCreator:
 
     def apply_gjk_patch(self) -> None:
         """
-        Monkey-patch the @ti.kernel for narrowphase with the modified version from a tmp file.
+        Monkey-patch the @qd.kernel for narrowphase with the modified version from a tmp file.
 
         This replaces the entire kernel object so that:
         - The new kernel has its own empty materialized_kernels cache
@@ -306,7 +306,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
     Two-phase approach to avoid kernel caching interference:
     1. Run ALL analytical scenarios first (original kernel)
-    2. Apply monkey-patch (replaces the @ti.kernel with a new object from a tmp file)
+    2. Apply monkey-patch (replaces the @qd.kernel with a new object from a tmp file)
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
@@ -357,7 +357,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                 f"Radius: {radius}, Half-length: {half_length}\n"
             ) from e
 
-    # Phase 2: Apply monkey-patch (replace @ti.kernel with version from tmp file)
+    # Phase 2: Apply monkey-patch (replace @qd.kernel with version from tmp file)
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
@@ -509,7 +509,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     Two-phase approach to avoid kernel caching interference:
     1. Run ALL analytical scenarios first (original kernel)
-    2. Apply monkey-patch (replaces the @ti.kernel with a new object from a tmp file)
+    2. Apply monkey-patch (replaces the @qd.kernel with a new object from a tmp file)
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
     """
     test_cases = [
@@ -573,7 +573,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
             ) from e
 
-    # Phase 2: Apply monkey-patch (replace @ti.kernel with version from tmp file)
+    # Phase 2: Apply monkey-patch (replace @qd.kernel with version from tmp file)
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)

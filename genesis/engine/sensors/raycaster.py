@@ -2,7 +2,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 
@@ -16,14 +16,14 @@ from genesis.options.sensors import (
     RaycastPattern,
 )
 from genesis.utils.geom import (
-    ti_normalize,
-    ti_transform_by_quat,
-    ti_transform_by_trans_quat,
+    qd_normalize,
+    qd_transform_by_quat,
+    qd_transform_by_trans_quat,
     transform_by_quat,
     transform_by_trans_quat,
 )
 from genesis.utils.misc import concat_with_tensor, make_tensor_field
-from genesis.utils.raycast_ti import bvh_ray_cast, kernel_update_verts_and_aabbs
+from genesis.utils.raycast_qd import bvh_ray_cast, kernel_update_verts_and_aabbs
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
@@ -39,29 +39,29 @@ if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
 
 
-@ti.kernel
+@qd.kernel
 def kernel_cast_rays(
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    bvh_nodes: ti.template(),
-    bvh_morton_codes: ti.template(),  # maps sorted leaves to original triangle indices
-    links_pos: ti.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
-    links_quat: ti.types.ndarray(ndim=3),  # [n_env, n_sensors, 4]
-    ray_starts: ti.types.ndarray(ndim=2),  # [n_points, 3]
-    ray_directions: ti.types.ndarray(ndim=2),  # [n_points, 3]
-    max_ranges: ti.types.ndarray(ndim=1),  # [n_sensors]
-    no_hit_values: ti.types.ndarray(ndim=1),  # [n_sensors]
-    is_world_frame: ti.types.ndarray(ndim=1),  # [n_sensors]
-    points_to_sensor_idx: ti.types.ndarray(ndim=1),  # [n_points]
-    sensor_cache_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
-    sensor_point_offsets: ti.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
-    sensor_point_counts: ti.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
-    output_hits: ti.types.ndarray(ndim=2),  # [n_env, total_cache_size]
+    bvh_nodes: qd.template(),
+    bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
+    links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
+    links_quat: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 4]
+    ray_starts: qd.types.ndarray(ndim=2),  # [n_points, 3]
+    ray_directions: qd.types.ndarray(ndim=2),  # [n_points, 3]
+    max_ranges: qd.types.ndarray(ndim=1),  # [n_sensors]
+    no_hit_values: qd.types.ndarray(ndim=1),  # [n_sensors]
+    is_world_frame: qd.types.ndarray(ndim=1),  # [n_sensors]
+    points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
+    sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
+    sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
+    sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
+    output_hits: qd.types.ndarray(ndim=2),  # [n_env, total_cache_size]
 ):
     """
-    Taichi kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
+    Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
 
     The result `output_hits` will be a 2D array of shape (n_env, total_cache_size) where in the second dimension,
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
@@ -69,20 +69,20 @@ def kernel_cast_rays(
 
     n_points = ray_starts.shape[0]
     # batch, point
-    for i_b, i_p in ti.ndrange(output_hits.shape[0], n_points):
+    for i_b, i_p in qd.ndrange(output_hits.shape[0], n_points):
         i_s = points_to_sensor_idx[i_p]
 
         # --- 1. Setup Ray ---
-        link_pos = ti.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
-        link_quat = ti.math.vec4(
+        link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
+        link_quat = qd.math.vec4(
             links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]
         )
 
-        ray_start_local = ti.math.vec3(ray_starts[i_p, 0], ray_starts[i_p, 1], ray_starts[i_p, 2])
-        ray_start_world = ti_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
+        ray_start_local = qd.math.vec3(ray_starts[i_p, 0], ray_starts[i_p, 1], ray_starts[i_p, 2])
+        ray_start_world = qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
 
-        ray_dir_local = ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = ti_normalize(ti_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
+        ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
+        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
 
         # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
@@ -121,8 +121,8 @@ def kernel_cast_rays(
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
             else:
                 # Local frame output along provided local ray direction
-                hit_point = dist * ti_normalize(
-                    ti.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
+                hit_point = dist * qd_normalize(
+                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
                 )
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
@@ -166,7 +166,6 @@ class RaycasterData(NamedTuple):
 
 
 @register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
-@ti.data_oriented
 class RaycasterSensor(RigidSensorMixin, Sensor):
     def __init__(
         self,
