@@ -1,3 +1,4 @@
+import math
 from typing import TYPE_CHECKING
 
 import quadrants as qd
@@ -7,19 +8,17 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
 from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
+from genesis.utils.misc import qd_to_numpy
 from genesis.utils.raycast import RayHit
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
 
 
-NO_HIT_DISTANCE = -1.0
-
-
 @qd.func
 def get_triangle_vertices(
-    i_f: qd.i32,
-    i_b: qd.i32,
+    i_f: gs.qd_int,
+    i_b: gs.qd_int,
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
@@ -46,25 +45,26 @@ def get_triangle_vertices(
 
 @qd.func
 def bvh_ray_cast(
-    ray_start: qd.types.vector(3, qd.f32),
-    ray_dir: qd.types.vector(3, qd.f32),
-    max_range: qd.f32,
-    i_b: qd.i32,
+    ray_start: gs.qd_vec3,
+    ray_dir: gs.qd_vec3,
+    max_range: gs.qd_float,
+    i_b: gs.qd_int,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    eps: gs.qd_float,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
 
     Returns
     -------
-    hit_face : qd.i32
+    hit_face : gs.qd_int
         index of the hit triangle (-1 if no hit)
-    hit_distance : qd.f32
+    hit_distance : gs.qd_float
         distance to hit point (unchanged max_range if no hit)
     hit_normal : qd.math.vec3
         normal vector at hit point (zero vector if no hit)
@@ -76,7 +76,7 @@ def bvh_ray_cast(
     hit_normal = qd.math.vec3(0.0, 0.0, 0.0)
 
     # Stack for non-recursive BVH traversal
-    node_stack = qd.Vector.zero(qd.i32, STACK_SIZE)
+    node_stack = qd.Vector.zero(gs.qd_int, qd.static(STACK_SIZE))
     node_stack[0] = 0  # Start at root node
     stack_idx = 1
 
@@ -87,13 +87,13 @@ def bvh_ray_cast(
         node = bvh_nodes[i_b, node_idx]
 
         # Check if ray hits the node's bounding box
-        aabb_t = ray_aabb_intersection(ray_start, ray_dir, node.bound.min, node.bound.max)
+        aabb_t = ray_aabb_intersection(ray_start, ray_dir, node.bound.min, node.bound.max, eps)
 
         if aabb_t >= 0.0 and aabb_t < closest_distance:
             if node.left == -1:  # Leaf node
                 # Get original triangle/face index
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
-                i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], qd.i32)
+                i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
 
                 # Get triangle vertices
                 tri_vertices = get_triangle_vertices(
@@ -102,7 +102,7 @@ def bvh_ray_cast(
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
                 # Perform ray-triangle intersection
-                hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2)
+                hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2, eps)
 
                 if hit_result.w > 0.0 and hit_result.x < closest_distance and hit_result.x >= 0.0:
                     closest_distance = hit_result.x
@@ -123,11 +123,12 @@ def bvh_ray_cast(
 
 @qd.func
 def ray_triangle_intersection(
-    ray_start: qd.types.vector(3, qd.f32),
-    ray_dir: qd.types.vector(3, qd.f32),
-    v0: qd.types.vector(3, qd.f32),
-    v1: qd.types.vector(3, qd.f32),
-    v2: qd.types.vector(3, qd.f32),
+    ray_start: gs.qd_vec3,
+    ray_dir: gs.qd_vec3,
+    v0: gs.qd_vec3,
+    v1: gs.qd_vec3,
+    v2: gs.qd_vec3,
+    eps: gs.qd_float,
 ):
     """
     Moller-Trumbore ray-triangle intersection.
@@ -157,7 +158,7 @@ def ray_triangle_intersection(
     q = qd.Vector.zero(gs.qd_float, 3)
 
     # If determinant is near zero, ray lies in plane of triangle
-    if qd.abs(a) < gs.EPS:
+    if qd.abs(a) < eps:
         valid = False
 
     if valid:
@@ -180,7 +181,7 @@ def ray_triangle_intersection(
         t = f * edge2.dot(q)
 
         # Ray intersection
-        if t <= gs.EPS:
+        if t <= eps:
             valid = False
 
     if valid:
@@ -191,10 +192,11 @@ def ray_triangle_intersection(
 
 @qd.func
 def ray_aabb_intersection(
-    ray_start: qd.types.vector(3, qd.f32),
-    ray_dir: qd.types.vector(3, qd.f32),
-    aabb_min: qd.types.vector(3, qd.f32),
-    aabb_max: qd.types.vector(3, qd.f32),
+    ray_start: gs.qd_vec3,
+    ray_dir: gs.qd_vec3,
+    aabb_min: gs.qd_vec3,
+    aabb_max: gs.qd_vec3,
+    eps: gs.qd_float,
 ):
     """
     Fast ray-AABB intersection test.
@@ -204,7 +206,7 @@ def ray_aabb_intersection(
 
     # Use the slab method for ray-AABB intersection
     sign = qd.select(ray_dir >= 0.0, 1.0, -1.0)
-    ray_dir = sign * qd.max(qd.abs(ray_dir), gs.EPS)
+    ray_dir = sign * qd.max(qd.abs(ray_dir), eps)
     inv_dir = 1.0 / ray_dir
 
     t1 = (aabb_min - ray_start) * inv_dir
@@ -281,9 +283,10 @@ def kernel_cast_ray(
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
-    max_range: qd.f32,
+    max_range: gs.qd_float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
     result: array_class.RaycastResult,
+    eps: gs.qd_float,
 ):
     """
     Quadrants kernel for casting a single ray.
@@ -295,7 +298,7 @@ def kernel_cast_ray(
     ray_direction_world = qd.math.vec3(ray_direction[0], ray_direction[1], ray_direction[2])
 
     # Initialize result with no hit
-    result.distance[None] = NO_HIT_DISTANCE
+    result.distance[None] = qd.math.nan
     result.geom_idx[None] = -1
     result.hit_point[None] = qd.math.vec3(0.0, 0.0, 0.0)
     result.normal[None] = qd.math.vec3(0.0, 0.0, 0.0)
@@ -319,6 +322,7 @@ def kernel_cast_ray(
             verts_info=verts_info,
             fixed_verts_state=fixed_verts_state,
             free_verts_state=free_verts_state,
+            eps=eps,
         )
 
         # Update global closest if this environment had a closer hit
@@ -374,13 +378,13 @@ class Raycaster:
         self.update()
 
     def _raycast_from_result(self, result: array_class.RaycastResult) -> "RayHit | None":
-        distance = float(result.distance.to_numpy())
-        if distance < NO_HIT_DISTANCE + gs.EPS:
+        distance = float(qd_to_numpy(result.distance))
+        if math.isnan(distance):
             return None
 
-        geom_idx = int(result.geom_idx.to_numpy())
-        position = result.hit_point.to_numpy()
-        normal = result.normal.to_numpy()
+        geom_idx = int(qd_to_numpy(result.geom_idx))
+        position = qd_to_numpy(result.hit_point)
+        normal = qd_to_numpy(result.normal)
 
         # Get the geom object from the solver
         geom = None
@@ -432,16 +436,17 @@ class Raycaster:
             A tuple containing distance, position, normal, and geom.
         """
         kernel_cast_ray(
-            fixed_verts_state=self.solver.fixed_verts_state,
-            free_verts_state=self.solver.free_verts_state,
-            verts_info=self.solver.verts_info,
-            faces_info=self.solver.faces_info,
-            bvh_nodes=self.bvh.nodes,
-            bvh_morton_codes=self.bvh.morton_codes,
-            ray_start=np.ascontiguousarray(ray_origin, dtype=gs.np_float),
-            ray_direction=np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            max_range=max_range,
-            envs_idx=envs_idx if envs_idx is not None else self.envs_idx,
-            result=self.result,
+            self.solver.fixed_verts_state,
+            self.solver.free_verts_state,
+            self.solver.verts_info,
+            self.solver.faces_info,
+            self.bvh.nodes,
+            self.bvh.morton_codes,
+            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
+            np.ascontiguousarray(ray_direction, dtype=gs.np_float),
+            max_range,
+            envs_idx if envs_idx is not None else self.envs_idx,
+            self.result,
+            gs.EPS,
         )
         return self._raycast_from_result(self.result)
