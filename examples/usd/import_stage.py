@@ -5,7 +5,7 @@ import numpy as np
 from huggingface_hub import snapshot_download
 
 import genesis as gs
-from genesis.utils.misc import qd_to_numpy
+from genesis.utils.misc import tensor_to_array
 import genesis.utils.geom as gu
 
 
@@ -17,37 +17,24 @@ class JointAnimator:
     """
 
     def __init__(self, scene: gs.Scene):
-        self.rigid = scene.sim.rigid_solver
-        n_dofs = self.rigid.n_dofs
-        joint_limits = qd_to_numpy(self.rigid.dofs_info.limit)
-        joint_limits = np.clip(joint_limits, -np.pi, np.pi)
+        self.rigid_solver = scene.sim.rigid_solver
+        self.joint_lower, self.joint_upper = map(tensor_to_array, self.rigid_solver.get_dofs_limit())
 
-        init_positions = self.rigid.get_dofs_position().numpy()
-
-        self.joint_lower = joint_limits[:, 0]
-        self.joint_upper = joint_limits[:, 1]
-
-        valid_range_mask = (self.joint_upper - self.joint_lower) > gs.EPS
-
+        init_positions = tensor_to_array(self.rigid_solver.get_dofs_position())
         normalized_init_pos = np.where(
-            valid_range_mask,
+            (self.joint_upper - self.joint_lower) > gs.EPS,
             2.0 * (init_positions - self.joint_lower) / (self.joint_upper - self.joint_lower) - 1.0,
             0.0,
         )
         self.init_phase = np.arcsin(normalized_init_pos)
 
-        # make the control more sensitive
-        self.rigid.set_dofs_frictionloss(gu.default_dofs_kp(n_dofs))
-        self.rigid.set_dofs_kp(gu.default_dofs_kp(n_dofs))
+        self.rigid_solver.set_dofs_kp(gu.default_dofs_kp(self.rigid_solver.n_dofs))
 
     def animate(self, scene: gs.Scene):
         t = scene.t * scene.dt
         theta = np.pi * t + self.init_phase
-        theta = theta % (2 * np.pi)
-        sin_values = np.sin(theta)
-        normalized = (sin_values + 1.0) / 2.0
-        target = self.joint_lower + (self.joint_upper - self.joint_lower) * normalized
-        self.rigid.control_dofs_position(target)
+        target = (self.joint_upper + self.joint_lower + (self.joint_upper - self.joint_lower) * np.sin(theta)) / 2
+        self.rigid_solver.control_dofs_position(target)
 
 
 def main():
@@ -65,6 +52,7 @@ def main():
             camera_fov=40,
         ),
         show_viewer=args.vis,
+        show_FPS=False,
     )
 
     asset_path = snapshot_download(

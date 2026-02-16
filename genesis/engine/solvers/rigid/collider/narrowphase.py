@@ -11,29 +11,24 @@ from enum import IntEnum
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
-from . import mpr
-from . import gjk
-from . import diff_gjk
 
-from .broadphase import func_point_in_geom_aabb
+from . import capsule_contact, diff_gjk, gjk, mpr
+from .box_contact import (
+    func_box_box_contact,
+    func_plane_box_contact,
+)
 from .contact import (
     func_add_contact,
-    func_set_contact,
     func_add_diff_contact_input,
     func_compute_tolerance,
     func_contact_orthogonals,
     func_rotate_frame,
+    func_set_contact,
 )
-
-from .box_contact import (
-    func_plane_box_contact,
-    func_box_box_contact,
-)
-
-from . import capsule_contact
+from .utils import func_point_in_geom_aabb
 
 
 class CCD_ALGORITHM_CODE(IntEnum):
@@ -103,7 +98,7 @@ def func_contact_vertex_sdf(
 
     for i_v in range(geoms_info.vert_start[i_ga], geoms_info.vert_end[i_ga]):
         vertex_pos = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], ga_pos, ga_quat)
-        if func_point_in_geom_aabb(i_gb, i_b, geoms_state, vertex_pos):
+        if func_point_in_geom_aabb(geoms_state, i_gb, i_b, vertex_pos):
             new_penetration = -sdf.sdf_func_world_local(geoms_info, sdf_info, vertex_pos, i_gb, gb_pos, gb_quat)
             if new_penetration > penetration:
                 is_col = True

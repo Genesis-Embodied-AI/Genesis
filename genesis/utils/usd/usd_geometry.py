@@ -3,7 +3,7 @@ from typing import Dict, List
 
 import numpy as np
 import trimesh
-from pxr import Usd, UsdGeom
+from pxr import Usd, UsdGeom, UsdPhysics
 
 import genesis as gs
 from genesis.utils import geom as gu
@@ -198,7 +198,7 @@ def parse_prim_geoms(
                     {
                         "mesh_path": context.stage_file,  # unbaked file or cache
                         "name": subset_geom_id,
-                        "bake_success": subset_bake_success,
+                        "bake_success": bool(subset_bake_success),
                     }
                 )
                 meshes.append(mesh)
@@ -269,7 +269,7 @@ def parse_prim_geoms(
             tmesh.apply_transform(geom_ST)
             metadata = {
                 "name": geom_id,
-                "bake_success": bake_success,
+                "bake_success": bool(bake_success),
             }
             meshes.append(gs.Mesh.from_trimesh(tmesh, surface=geom_surface, metadata=metadata))
 
@@ -279,7 +279,7 @@ def parse_prim_geoms(
         is_guide = str(gprim.GetPurposeAttr().Get() or "default") == "guide"
         is_visible = str(gprim.ComputeVisibility()) != "invisible"
         is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
-        is_collision = (is_visible) and (match_collision or not (match_collision or match_visual))
+        is_collision = match_collision or not (match_collision or match_visual)
 
         g_infos = links_g_infos[link_path_to_idx[str(link_prim.GetPath())]]
         if is_visual:
@@ -312,7 +312,13 @@ def parse_prim_geoms(
                     )
                 )
 
-    for child in prim.GetChildren():
+    predicate = Usd.TraverseInstanceProxies()
+    prim_range = Usd.PrimRange(prim, predicate)
+    iterator = iter(prim_range)
+    # skip the first prim (current prim)
+    next(iterator)
+    for child in iterator:
         parse_prim_geoms(
             context, child, link_prim, links_g_infos, link_path_to_idx, morph, surface, match_visual, match_collision
         )
+        iterator.PruneChildren()

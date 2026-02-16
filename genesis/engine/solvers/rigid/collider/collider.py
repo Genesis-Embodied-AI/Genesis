@@ -24,7 +24,6 @@ from . import support_field
 
 # Import and re-export from submodules for backward compatibility
 from .broadphase import (
-    func_point_in_geom_aabb,
     func_find_intersect_midpoint,
     func_check_collision_valid,
     func_collision_clear,
