@@ -7,7 +7,6 @@ import genesis.utils.geom as gu
 
 from .utils import assert_allclose, assert_equal
 
-
 # ------------------------------------------------------------------------------------------
 # -------------------------------------- IMU Sensors ---------------------------------------
 # ------------------------------------------------------------------------------------------
@@ -770,7 +769,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
         tol=2e-3,
         err_msg="Sphere probe penetration should match top box probe penetration",
     )
-    assert_array_equal(
+    assert_equal(
         box_data.penetration[..., 1], 0.0, err_msg="Noncenter probe with small radius should not detect contact"
     )
     assert (box_data.penetration[..., 2] > tol).all(), "Noncenter probe with large radius should detect contact"

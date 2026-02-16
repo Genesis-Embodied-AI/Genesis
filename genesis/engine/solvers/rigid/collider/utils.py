@@ -82,6 +82,19 @@ def func_det3(
 
 
 @qd.func
+def func_point_in_geom_aabb(
+    geoms_state: array_class.GeomsState,
+    i_g: qd.i32,
+    i_b: qd.i32,
+    point: qd.types.vector(3, qd.f32),
+    expansion: qd.f32 = 0.0,
+):
+    aabb_min = geoms_state.aabb_min[i_g, i_b] - expansion
+    aabb_max = geoms_state.aabb_max[i_g, i_b] + expansion
+    return (point > aabb_min).all() and (point < aabb_max).all()
+
+
+@qd.func
 def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, i_b):
     return not (
         (geoms_state.aabb_max[i_ga, i_b] <= geoms_state.aabb_min[i_gb, i_b]).any()

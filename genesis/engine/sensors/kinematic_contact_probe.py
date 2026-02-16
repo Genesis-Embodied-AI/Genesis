@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Sequence, Type
 
 import numpy as np
-import quadrants as ti
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -12,7 +12,7 @@ from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_
 from genesis.engine.solvers.rigid.collider.utils import func_point_in_geom_aabb
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
-from genesis.utils.raycast_ti import get_triangle_vertices, ray_triangle_intersection
+from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
 
 from .base_sensor import (
     NoisySensorMetadataMixin,
@@ -32,21 +32,21 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@ti.func
+@qd.func
 def _probe_geom_penetration(
-    probe_pos: ti.types.vector(3, gs.ti_float),
-    probe_normal: ti.types.vector(3, gs.ti_float),
-    radius: gs.ti_float,
-    max_range: gs.ti_float,
-    i_g: ti.i32,
-    i_b: ti.i32,
+    probe_pos: qd.types.vector(3, qd.f32),
+    probe_normal: qd.types.vector(3, qd.f32),
+    radius: qd.f32,
+    max_range: qd.f32,
+    i_g: qd.i32,
+    i_b: qd.i32,
     geoms_info: array_class.GeomsInfo,
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
 ):
-    best = gs.ti_float(0.0)
+    best = qd.f32(0.0)
     neg_normal = -probe_normal
     face_start = geoms_info.face_start[i_g]
     face_end = geoms_info.face_end[i_g]
@@ -78,13 +78,13 @@ def _probe_geom_penetration(
     return best
 
 
-@ti.func
+@qd.func
 def _closest_point_on_triangle(
-    point: ti.types.vector(3, gs.ti_float),
-    v0: ti.types.vector(3, gs.ti_float),
-    v1: ti.types.vector(3, gs.ti_float),
-    v2: ti.types.vector(3, gs.ti_float),
-) -> ti.types.vector(3, gs.ti_float):
+    point: qd.types.vector(3, qd.f32),
+    v0: qd.types.vector(3, qd.f32),
+    v1: qd.types.vector(3, qd.f32),
+    v2: qd.types.vector(3, qd.f32),
+) -> qd.types.vector(3, qd.f32):
     """
     Find the point on the surface of a triangle closest to a given point.
 
@@ -135,7 +135,7 @@ def _closest_point_on_triangle(
                             closest = v1 + w * (v2 - v1)
                         else:
                             # Inside the triangle face
-                            denom = gs.ti_float(1.0) / (va + vb + vc)
+                            denom = qd.f32(1.0) / (va + vb + vc)
                             v = vb * denom
                             w = vc * denom
                             closest = v0 + v * ab + w * ac
@@ -143,40 +143,43 @@ def _closest_point_on_triangle(
     return closest
 
 
-@ti.kernel
+@qd.kernel
 def _kernel_kinematic_contact_probe(
-    probe_positions_local: ti.types.ndarray(),
-    probe_normals_local: ti.types.ndarray(),
-    probe_sensor_idx: ti.types.ndarray(),
-    probe_max_raycast_range: ti.f32,
+    probe_positions_local: qd.types.ndarray(),
+    probe_normals_local: qd.types.ndarray(),
+    probe_sensor_idx: qd.types.ndarray(),
+    probe_max_raycast_range: qd.f32,
     links_state: array_class.LinksState,
-    radii: ti.types.ndarray(),
-    stiffness: ti.types.ndarray(),
-    links_idx: ti.types.ndarray(),
-    n_probes_per_sensor: ti.types.ndarray(),
-    sensor_cache_start: ti.types.ndarray(),
-    sensor_probe_start: ti.types.ndarray(),
+    radii: qd.types.ndarray(),
+    stiffness: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    n_probes_per_sensor: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
     collider_state: array_class.ColliderState,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    static_rigid_sim_config: qd.template(),
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    output: ti.types.ndarray(),
+    output: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output.shape[0]
 
-    func_update_all_verts(geoms_info, geoms_state, verts_info, fixed_verts_state, free_verts_state)
+    func_update_all_verts(
+        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+    )
 
-    for i_b, i_p in ti.ndrange(n_batches, total_n_probes):
+    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
 
-        probe_pos_local = ti.Vector(
+        probe_pos_local = qd.Vector(
             [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
         )
-        probe_normal_local = ti.Vector(
+        probe_normal_local = qd.Vector(
             [probe_normals_local[i_p, 0], probe_normals_local[i_p, 1], probe_normals_local[i_p, 2]]
         )
 
@@ -187,10 +190,10 @@ def _kernel_kinematic_contact_probe(
         link_pos = links_state.pos[sensor_link_idx, i_b]
         link_quat = links_state.quat[sensor_link_idx, i_b]
 
-        probe_pos = link_pos + gu.ti_transform_by_quat(probe_pos_local, link_quat)
-        probe_normal = gu.ti_transform_by_quat(probe_normal_local, link_quat)
+        probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
+        probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
 
-        max_penetration = gs.ti_float(0.0)
+        max_penetration = qd.f32(0.0)
 
         # Iterate over contacts directly from collider state
         n_contacts = collider_state.n_contacts[i_b]
@@ -201,13 +204,13 @@ def _kernel_kinematic_contact_probe(
             c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
 
             # Check if either side of this contact involves one of our sensor links;
-            for side in ti.static(range(2)):
+            for side in qd.static(range(2)):
                 contact_link = c_link_a if side == 0 else c_link_b
                 i_g = c_geom_b if side == 0 else c_geom_a
 
                 # Is this contact relevant to this sensor?
                 if contact_link == sensor_link_idx and func_point_in_geom_aabb(
-                    i_g, i_b, geoms_state, probe_pos, radius
+                    geoms_state, i_g, i_b, probe_pos, radius
                 ):
                     # Raycast + sphere penetration test per geom
                     penetration = _probe_geom_penetration(
@@ -226,7 +229,7 @@ def _kernel_kinematic_contact_probe(
                     if penetration > max_penetration:
                         max_penetration = penetration
 
-        force_local = ti.Vector.zero(gs.ti_float, 3)
+        force_local = qd.Vector.zero(qd.f32, 3)
         if max_penetration > 0:
             force_local = stiff * max_penetration * -probe_normal_local
 
@@ -263,19 +266,19 @@ class KinematicContactProbeMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     radii: torch.Tensor = make_tensor_field((0,))
     stiffness: torch.Tensor = make_tensor_field((0,))
 
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
     probe_normals: torch.Tensor = make_tensor_field((0, 3))
     probe_max_raycast_range: float = 0.0
 
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=torch.int32)
+    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     total_n_probes: int = 0
 
 
 @register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
-@ti.data_oriented
+@qd.data_oriented
 class KinematicContactProbe(
     RigidSensorMixin[KinematicContactProbeMetadata],
     NoisySensorMixin[KinematicContactProbeMetadata],
@@ -298,8 +301,7 @@ class KinematicContactProbe(
         self._debug_objects: list["Mesh | None"] = []
         self._probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
         self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        norms = self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
-        self._probe_local_normal /= norms
+        self._probe_local_normal /= self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
 
     def build(self):
         super().build()
@@ -323,7 +325,7 @@ class KinematicContactProbe(
 
         self._shared_metadata.probe_sensor_idx = concat_with_tensor(
             self._shared_metadata.probe_sensor_idx,
-            torch.full((n_probes,), sensor_idx, dtype=torch.int32, device=gs.device),
+            torch.full((n_probes,), sensor_idx, dtype=gs.tc_int, device=gs.device),
             expand=(n_probes,),
             dim=0,
         )
@@ -389,6 +391,7 @@ class KinematicContactProbe(
             geoms_info=solver.geoms_info,
             fixed_verts_state=solver.fixed_verts_state,
             free_verts_state=solver.free_verts_state,
+            static_rigid_sim_config=solver._static_rigid_sim_config,
             verts_info=solver.verts_info,
             faces_info=solver.faces_info,
             output=shared_ground_truth_cache,

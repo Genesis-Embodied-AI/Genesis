@@ -30,20 +30,16 @@ OBJ_SIZE = PLATFORM_SIZE / 8.0
 
 def _build_probe_grid(grid_n: int, platform_size: float, platform_height: float):
     spacing = platform_size / (grid_n + 1)
-    positions, normals, radii = [], [], []
     centre = (grid_n - 1) / 2.0
 
-    for i in range(grid_n):
-        for j in range(grid_n):
-            x = (i - centre) * spacing
-            y = (j - centre) * spacing
-            z = platform_height / 2  # top surface in link-local frame
-
-            r = PROBE_RADIUS + i * (PROBE_RADIUS / 10.0)
-
-            positions.append((x, y, z))
-            normals.append((0.0, 0.0, 1.0))
-            radii.append(float(r))
+    i = np.repeat(np.arange(grid_n), grid_n)
+    j = np.tile(np.arange(grid_n), grid_n)
+    x = (i - centre) * spacing
+    y = (j - centre) * spacing
+    z = np.full_like(x, platform_height / 2)  # top surface in link-local frame
+    positions = np.stack([x, y, z], axis=-1)
+    normals = np.tile([0.0, 0.0, 1.0], (grid_n * grid_n, 1))
+    radii = PROBE_RADIUS + i * (PROBE_RADIUS / 10.0)
 
     return positions, normals, radii
 
@@ -58,9 +54,6 @@ def main():
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, -9.81),
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(-PLATFORM_SIZE * 2, 0.0, PLATFORM_HEIGHT + 1.5),
             camera_lookat=(0.0, 0.0, PLATFORM_HEIGHT),
@@ -100,7 +93,7 @@ def main():
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
-            pos=tuple(pusher_start),
+            pos=pusher_start,
         ),
         surface=gs.surfaces.Default(
             color=(0.15, 0.55, 0.95, 1.0),

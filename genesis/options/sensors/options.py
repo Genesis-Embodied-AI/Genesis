@@ -220,10 +220,8 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
         probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
         norms = np.linalg.norm(probe_local_normal, axis=1)
-        bad_idx = np.where(norms < gs.EPS)[0]
-        if bad_idx.size > 0:
-            idx = int(bad_idx[0])
-            gs.raise_exception(f"probe_local_normal[{idx}] must be non-zero, got: {probe_local_normal[idx].tolist()}")
+        if np.any(norms < gs.EPS):
+            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {probe_local_normal}")
 
         if len(probe_local_pos) != len(probe_local_normal):
             gs.raise_exception(
