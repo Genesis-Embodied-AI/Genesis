@@ -150,6 +150,9 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
     - Each connected component becomes one articulation entity
     - Pure rigid bodies (not referenced by any joint) become separate entities
 
+    Joint prims are not stored on morphs; they are deduced dynamically when each
+    entity is parsed via parse_usd_rigid_entity.
+
     Parameters
     ----------
     stage : gs.morphs.USD
@@ -161,19 +164,11 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
     morphs: List[gs.morphs.USD]
         A list of USD morphs, one for each rigid entity found in the stage. Each morph is
         a copy of the input stage with its `prim_path` set to the topmost common ancestor
-        of all links in the component, and `joint_prims` set to the list of joint prim paths
-        in that component. Pure rigid bodies have no `joint_prims`.
-        The list is guaranteed to be non-empty (raises an exception if no entities are found).
+        of all links in the component. The list is guaranteed to be non-empty (raises
+        an exception if no entities are found).
     """
     context: UsdContext = morph.usd_ctx
     usd_stage: Usd.Stage = context.stage
-
-    # joint_prims should be None at this point - it's an internal field set by parser functions
-    # parse_usd_stage() will detect and set it on the morphs it creates
-    assert morph.joint_prims is None, (
-        f"stage.joint_prims should be None when entering parse_usd_stage(). "
-        f"This is an internal field set by parser functions, not user input. Got: {morph.joint_prims}."
-    )
 
     # Find all joints in the stage
     all_joints = find_joints_in_range(Usd.PrimRange(usd_stage.GetPseudoRoot()))
@@ -200,7 +195,6 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
             # Create morph for this connected component
             entity_morph = morph.copy()
             entity_morph.prim_path = common_ancestor_path
-            entity_morph.joint_prims = [str(joint.GetPath()) for joint in component_joints]
             morphs.append(entity_morph)
 
     # Process pure rigid bodies (not referenced by joints)
@@ -210,7 +204,6 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
     for rigid_body_path in pure_rigid_bodies:
         entity_morph = morph.copy()
         entity_morph.prim_path = rigid_body_path
-        entity_morph.joint_prims = None  # No joints for pure rigid bodies
         morphs.append(entity_morph)
 
     if not morphs:

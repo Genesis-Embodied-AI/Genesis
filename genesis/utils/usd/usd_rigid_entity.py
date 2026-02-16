@@ -351,8 +351,9 @@ def _parse_link(
 def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim, joint_prims: List[str] | None = None):
     link_path_joints = {}
 
-    # Get joints to process - joint_prims should be provided by the caller (parse_usd_entity or parse_usd_stage)
-    # If None, it means no joints (pure rigid body case)
+    # Get joints to process - joint_prims is computed by parse_usd_rigid_entity (from the stage,
+    # as joints that reference links in the entity subtree) and passed here.
+    # If None, it means no joints (pure rigid body case).
     if joint_prims is not None:
         # Use provided joint prims
         joint_prim_objs = [stage.GetPrimAtPath(joint_path) for joint_path in joint_prims]
@@ -450,66 +451,45 @@ def _parse_links(
     return l_infos, links_j_infos
 
 
-def sanitize_usd_morph(morph: gs.morphs.USD) -> gs.morphs.USD:
+def _compute_joint_prim_paths(stage: Usd.Stage, entity_prim: Usd.Prim) -> List[str] | None:
     """
-    Add articulated rigid body hierarchy to USD if not specified.
+    Compute joint prim paths for an entity. Joints are those that reference (body0 or body1)
+    any rigid body in the entity subtree, so that entities whose prim_path is a link (e.g.
+    common ancestor of a single link) still get joints that are siblings of that link.
 
-    This function processes a USD morph and determines whether it represents:
-    - A pure rigid body (no joints in subtree)
-    - A pure articulation (has joints, all links are connected)
-    - Mixed case (error - has both joints and unreferenced rigid bodies)
+    This determines whether the entity is:
+    - A pure rigid body (no joints referencing links in subtree)
+    - A pure articulation (has joints, all rigid bodies in subtree are referenced by them)
+    - Mixed case (error: has both joints and unreferenced rigid bodies in subtree)
 
-    Parameters
-    ----------
-    morph : gs.morphs.USD
-        The USD morph to parse. joint_prims should be None - this function will
-        analyze the prim_path subtree to find joints and determine the entity type.
-
-    Returns
-    -------
-    l_infos : list
-        List of link info dictionaries.
-    links_j_infos : list
-        List of lists of joint info dictionaries.
-    links_g_infos : list
-        List of lists of geometry info dictionaries.
-    eqs_info : list
-        List of equality constraint info dictionaries.
+    Raises
+    ------
+    gs.GenesisException
+        If mixed entity is detected (both joints and unreferenced rigid bodies in subtree).
     """
-    context: UsdContext = morph.usd_ctx
-    stage: Usd.Stage = context.stage
-
-    # Early return if already available
-    if morph.joint_prims is not None:
-        return morph
-
-    # Get the entity prim
-    if morph.prim_path is None:
-        gs.logger.debug("USD morph has no prim path. Fallback to its default prim path.")
-        entity_prim = stage.GetDefaultPrim()
-    else:
-        entity_prim = stage.GetPrimAtPath(morph.prim_path)
-    if not entity_prim.IsValid():
-        if morph.prim_path is None:
-            err_msg = (
-                f"Invalid default prim path {entity_prim} in USD file {morph.file}. Please specify 'morph.prim_path'."
-            )
-        else:
-            err_msg = f"Invalid user-specified prim path {entity_prim} in USD file {morph.file}."
-        gs.raise_exception(err_msg)
-
-    # Analyze the entity_prim subtree
-    # Find all joints in the subtree
-    joints_in_subtree = find_joints_in_range(Usd.PrimRange(entity_prim))
-
-    # Find all rigid bodies in the subtree
+    # Find all rigid bodies in the entity_prim subtree
     rigid_bodies_in_subtree = find_rigid_bodies_in_range(Usd.PrimRange(entity_prim))
 
-    # Extract links referenced by joints (don't check rigid body here, we'll filter later)
-    links_referenced_by_joints = extract_links_referenced_by_joints(stage, joints_in_subtree, check_rigid_body=False)
+    # Find all joints in the stage (filter to those referencing links in subtree below)
+    all_joints = find_joints_in_range(Usd.PrimRange(stage.GetPseudoRoot()))
 
-    # Determine entity type
-    has_joints = len(joints_in_subtree) > 0
+    # Joints belonging to this entity: those that reference any link in the entity subtree
+    joints_for_entity = []
+    for joint_prim in all_joints:
+        joint = UsdPhysics.Joint(joint_prim)
+        body0_targets = joint.GetBody0Rel().GetTargets()
+        body1_targets = joint.GetBody1Rel().GetTargets()
+        body0_path = str(body0_targets[0]) if body0_targets else None
+        body1_path = str(body1_targets[0]) if body1_targets else None
+        if (body0_path and body0_path in rigid_bodies_in_subtree) or (
+            body1_path and body1_path in rigid_bodies_in_subtree
+        ):
+            joints_for_entity.append(joint_prim)
+
+    links_referenced_by_joints = extract_links_referenced_by_joints(stage, joints_for_entity, check_rigid_body=False)
+
+    # Determine entity type (has joints vs pure rigid body, and mixed-case check)
+    has_joints = len(joints_for_entity) > 0
     has_unreferenced_rigid_bodies = len(rigid_bodies_in_subtree - links_referenced_by_joints) > 0
 
     # Check for mixed case error, because scene.add_entity(...) only return 1 entity.
@@ -517,16 +497,17 @@ def sanitize_usd_morph(morph: gs.morphs.USD) -> gs.morphs.USD:
         unreferenced = rigid_bodies_in_subtree - links_referenced_by_joints
         gs.raise_exception(
             f"Mixed entity detected at {entity_prim.GetPath()}: "
-            f"has {len(joints_in_subtree)} joints but also has {len(unreferenced)} rigid bodies "
+            f"has {len(joints_for_entity)} joints but also has {len(unreferenced)} rigid bodies "
             f"not referenced by joints: {list(unreferenced)[:5]}. "
             "Use scene.add_stage() to handle mixed entities, or ensure all rigid bodies are connected by joints."
         )
 
     # Pure articulation case (has joints, all rigid bodies are referenced)
     if has_joints:
-        morph.joint_prims = [str(joint.GetPath()) for joint in joints_in_subtree]
+        return [str(joint.GetPath()) for joint in joints_for_entity]
 
-    return morph
+    # Pure rigid body case (no joints)
+    return None
 
 
 def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
@@ -555,8 +536,6 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     eqs_info : list
         List of equality constraint info dictionaries.
     """
-    morph = sanitize_usd_morph(morph)
-
     context: UsdContext = morph.usd_ctx
     context.find_all_materials()
     stage: Usd.Stage = context.stage
@@ -575,8 +554,9 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
             err_msg = f"Invalid user-specified prim path {entity_prim} in USD file {morph.file}."
         gs.raise_exception(err_msg)
 
-    # find joints
-    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim, morph.joint_prims)
+    # Deduce joint prim paths for this entity and parse articulation structure (links + joints)
+    joint_prims = _compute_joint_prim_paths(stage, entity_prim)
+    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim, joint_prims)
     links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
