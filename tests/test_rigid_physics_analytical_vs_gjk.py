@@ -363,7 +363,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0), True, "parallel_deep", 0.05, (-1, 0, 0)),
         # Segments cross at origin (distance=0), pen = sum of radii, normal is degenerate
         ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0), True, "perpendicular_center", 0.2, None),
-        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 45, 0), True, "diagonal_rotated", None, None),
+        # 45° capsule segment crosses the vertical segment at (0, 0, -0.15), so dist=0, pen = sum of radii
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 45, 0), True, "diagonal_rotated", 0.2, None),
     ]
 
     radius = 0.1
@@ -393,8 +394,13 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
             )
             _check_expected_values(
-                contacts, description, exp_pen, exp_normal,
-                "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL,
+                contacts,
+                description,
+                exp_pen,
+                exp_normal,
+                "analytical",
+                ANALYTICAL_PEN_TOL,
+                ANALYTICAL_NORMAL_TOL,
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -430,8 +436,13 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             assert has_collision_gjk == should_collide
 
             _check_expected_values(
-                contacts_gjk, description, exp_pen, exp_normal,
-                "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL,
+                contacts_gjk,
+                description,
+                exp_pen,
+                exp_normal,
+                "GJK",
+                GJK_PEN_TOL,
+                GJK_NORMAL_TOL,
             )
 
             # If both detected a collision, compare the contact details
@@ -568,6 +579,10 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     1. Run ALL analytical scenarios first (original kernel)
     2. Apply monkey-patch (replaces the @ti.kernel with a new object from a tmp file)
     3. Run ALL GJK scenarios (patched kernel with its own empty cache)
+
+    Note that these can be visualized, for verification purposes, using the script at:
+    https://github.com/Genesis-Embodied-AI/perso_hugh/blob/main/genesis/visualize_sphere_capsule.py
+    (note: only accessible internally)
     """
     test_cases = [
         # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu,
@@ -609,7 +624,16 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, exp_pen, exp_normal in test_cases:
+    for (
+        sphere_pos,
+        capsule_pos,
+        capsule_euler,
+        should_collide,
+        description,
+        skip_gpu,
+        exp_pen,
+        exp_normal,
+    ) in test_cases:
         if skip_gpu and backend == gs.gpu:
             pytest.xfail(
                 reason="gjk broken on gpu for this condition currently. "
@@ -627,8 +651,13 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
             )
             _check_expected_values(
-                contacts, description, exp_pen, exp_normal,
-                "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL,
+                contacts,
+                description,
+                exp_pen,
+                exp_normal,
+                "analytical",
+                ANALYTICAL_PEN_TOL,
+                ANALYTICAL_NORMAL_TOL,
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -647,7 +676,16 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu, exp_pen, exp_normal in test_cases:
+    for (
+        sphere_pos,
+        capsule_pos,
+        capsule_euler,
+        should_collide,
+        description,
+        skip_gpu,
+        exp_pen,
+        exp_normal,
+    ) in test_cases:
         if skip_gpu and backend == gs.gpu:
             continue
 
@@ -668,8 +706,13 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             assert has_collision_gjk == should_collide
 
             _check_expected_values(
-                contacts_gjk, description, exp_pen, exp_normal,
-                "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL,
+                contacts_gjk,
+                description,
+                exp_pen,
+                exp_normal,
+                "GJK",
+                GJK_PEN_TOL,
+                GJK_NORMAL_TOL,
             )
 
             # If both detected a collision, compare the contact details
