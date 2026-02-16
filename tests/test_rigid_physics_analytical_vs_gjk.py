@@ -543,7 +543,6 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
     penetration = contacts["penetration"][0]
     expected_pen = 0.05
 
-    print("expected_pen", expected_pen, "penetration", penetration)
     assert abs(penetration - expected_pen) < tol, (
         f"Analytical solution not exact! Expected: {expected_pen}, Got: {penetration:.6f}"
     )
