@@ -19,7 +19,7 @@ from genesis.utils.misc import get_assets_dir, tensor_to_array, qd_to_torch
 
 from .utils import (
     assert_allclose,
-    assert_array_equal,
+    assert_equal,
     build_genesis_sim,
     build_mujoco_sim,
     check_mujoco_data_consistency,
@@ -2805,29 +2805,29 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
-        assert_array_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
+        assert_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
     for vgeom in robot.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
-        assert_array_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
+        assert_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         if overwrite:
-            assert_array_equal(color, (255, 0, 0, 255))
+            assert_equal(color, (255, 0, 0, 255))
         else:
-            assert_array_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
+            assert_equal(color, [[0, 0, 178, 255], [0, 178, 0, 255], [178, 0, 0, 255], [255, 255, 255, 255]])
     for vgeom in table.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         if overwrite:
             color = np.unique(visual.vertex_colors, axis=0)
-            assert_array_equal(color, (255, 0, 0, 255))
+            assert_equal(color, (255, 0, 0, 255))
     for entity in scene.entities:
         for geom in entity.geoms:
             assert geom.mesh.metadata["is_visual_overwritten"]
@@ -2836,7 +2836,7 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
             color = np.unique(visual.vertex_colors, axis=0)
             # Collision geometry meshes have randomized colors with partial transparency to ease debugging
             with pytest.raises(AssertionError):
-                assert_array_equal(color, (255, 0, 0, 255))
+                assert_equal(color, (255, 0, 0, 255))
 
 
 @pytest.mark.required

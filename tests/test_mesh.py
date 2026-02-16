@@ -12,7 +12,7 @@ import genesis.utils.geom as gu
 import genesis.utils.gltf as gltf_utils
 import genesis.utils.mesh as mu
 
-from .utils import assert_allclose, assert_array_equal, get_hf_dataset
+from .utils import assert_allclose, assert_equal, get_hf_dataset
 
 
 def extract_mesh(gs_mesh):
@@ -49,7 +49,7 @@ def check_gs_meshes(gs_mesh1, gs_mesh2, mesh_name, vertices_tol, normals_tol):
     vertices2, faces2, normals2, uvs2 = extract_mesh(gs_mesh2)
 
     assert_allclose(vertices1, vertices2, atol=vertices_tol, err_msg=f"Vertices match failed in mesh {mesh_name}.")
-    assert_array_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
+    assert_equal(faces1, faces2, err_msg=f"Faces match failed in mesh {mesh_name}.")
     assert_allclose(normals1, normals2, atol=normals_tol, err_msg=f"Normals match failed in mesh {mesh_name}.")
     assert_allclose(uvs1, uvs2, rtol=gs.EPS, err_msg=f"UVs match failed in mesh {mesh_name}.")
 
@@ -62,7 +62,7 @@ def check_gs_tm_meshes(gs_mesh, tm_mesh, mesh_name, vertices_tol, normals_tol):
         tol=vertices_tol,
         err_msg=f"Vertices match failed in mesh {mesh_name}.",
     )
-    assert_array_equal(
+    assert_equal(
         tm_mesh.faces,
         gs_mesh.trimesh.faces,
         err_msg=f"Faces match failed in mesh {mesh_name}.",
@@ -100,7 +100,7 @@ def check_gs_tm_textures(gs_texture, tm_color, tm_image, default_value, dim, mat
             rtol=gs.EPS,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
-        assert_array_equal(
+        assert_equal(
             tm_image,
             gs_texture.image_array,
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
@@ -132,7 +132,7 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
             rtol=gs.EPS,
             err_msg=f"Color mismatch for material {material_name} in {texture_name}.",
         )
-        assert_array_equal(
+        assert_equal(
             gs_texture1.image_array,
             gs_texture2.image_array,
             err_msg=f"Texture mismatch for material {material_name} in {texture_name}.",
@@ -829,4 +829,4 @@ def test_convex_decompose_cache(monkeypatch):
     assert len(scaled_parts) == len(cached_parts)
     for scaled_part, cached_part in zip(scaled_parts, cached_parts):
         assert_allclose(scaled_part.vertices, cached_part.vertices * (second_scale / first_scale), rtol=1e-6)
-        assert_array_equal(scaled_part.faces, cached_part.faces)
+        assert_equal(scaled_part.faces, cached_part.faces)

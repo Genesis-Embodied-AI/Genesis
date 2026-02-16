@@ -5,9 +5,39 @@ import pytest
 import genesis as gs
 
 
+@pytest.mark.required
+def test_scene_destroy_cleans_up_simulator():
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.build()
+    scene.step()
+
+    assert scene._sim is not None
+
+    scene.destroy()
+
+    assert scene._sim is None
+    assert scene._visualizer is None
+
+
+@pytest.mark.required
+def test_scene_destroy_idempotent():
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.build()
+    scene.step()
+
+    scene.destroy()
+    assert scene._sim is None
+
+    scene.destroy()
+    assert scene._sim is None
+
+
+@pytest.mark.required
 def test_auto_and_user_names():
     """Test auto-generated and user-specified entity names."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene()
 
     # Auto-generated name
     box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
@@ -27,9 +57,10 @@ def test_auto_and_user_names():
         scene.add_entity(gs.morphs.Cylinder(radius=0.1, height=0.2), name="my_sphere")
 
 
+@pytest.mark.required
 def test_get_entity_by_name():
     """Test retrieving entity by name."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene()
 
     box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)), name="test_box")
     assert scene.get_entity(name="test_box") is box
@@ -39,9 +70,10 @@ def test_get_entity_by_name():
         scene.get_entity(name="nonexistent")
 
 
+@pytest.mark.required
 def test_get_entity_by_uid():
     """Test retrieving entity by short UID."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene()
 
     box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)))
 
@@ -53,9 +85,10 @@ def test_get_entity_by_uid():
         scene.get_entity(uid=gs.UID().short())
 
 
+@pytest.mark.required
 def test_entity_names_property():
     """Test scene.entity_names returns names in creation order."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene()
 
     # Use "B" then "A" to confirm insertion order (not sorted)
     scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1)), name="B")
@@ -63,9 +96,10 @@ def test_entity_names_property():
     assert tuple(scene.entity_names) == ("B", "A")
 
 
+@pytest.mark.required
 def test_urdf_mjcf_names_from_file():
     """Test that URDF/MJCF entities use robot/model names from files."""
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene()
 
     # URDF: plane.urdf has <robot name="plane">
     urdf_entity = scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf"))

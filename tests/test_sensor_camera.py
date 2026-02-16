@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.geom import trans_to_T
 
-from .utils import assert_allclose, assert_array_equal, rgb_array_to_png_bytes
+from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
 
 
 try:
@@ -473,7 +473,7 @@ def test_raytracer_attached_without_offset_T():
     sensor_rgb = tensor_to_array(sensor_data.rgb, dtype=np.int32)
 
     # Both cameras should produce the same image
-    assert_array_equal(sensor_rgb, scene_rgb)
+    assert_equal(sensor_rgb, scene_rgb)
 
 
 @pytest.mark.required

@@ -424,6 +424,60 @@ def anymal(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
+@pytest.fixture
+def anymal_random(solver, n_envs, gjk):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            **get_rigid_solver_options(
+                dt=STEP_DT,
+                **(dict(constraint_solver=solver) if solver is not None else {}),
+                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+            )
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+    robot = scene.add_entity(
+        gs.morphs.URDF(
+            **get_file_morph_options(
+                file="urdf/anymal_c/urdf/anymal_c.urdf",
+                pos=(0, 0, 0.8),
+            )
+        ),
+    )
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    motors_dof_idx = slice(6, None)
+    robot.set_dofs_kp(1000.0, motors_dof_idx)
+    robot.control_dofs_position(0.0, motors_dof_idx)
+
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
+        robot.control_dofs_position(
+            torch.rand((n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
+        )
+        scene.step()
+
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > DURATION_RECORD:
+                break
+        elif time_elapsed > DURATION_WARMUP:
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * STEP_DT
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
 def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -599,60 +653,6 @@ def duck_in_box_easy(solver, n_envs, gjk):
 @pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk):
     return _duck_in_box(solver, n_envs, gjk, hard=True)
-
-
-@pytest.fixture
-def anymal_random(solver, n_envs, gjk):
-    scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            **get_rigid_solver_options(
-                dt=STEP_DT,
-                **(dict(constraint_solver=solver) if solver is not None else {}),
-                **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            )
-        ),
-        show_viewer=False,
-        show_FPS=False,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-    robot = scene.add_entity(
-        gs.morphs.URDF(
-            **get_file_morph_options(
-                file="urdf/anymal_c/urdf/anymal_c.urdf",
-                pos=(0, 0, 0.8),
-            )
-        ),
-    )
-    time_start = time.time()
-    scene.build(n_envs=n_envs)
-    compile_time = time.time() - time_start
-
-    motors_dof_idx = slice(6, None)
-    robot.set_dofs_kp(1000.0, motors_dof_idx)
-    robot.control_dofs_position(0.0, motors_dof_idx)
-
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
-        robot.control_dofs_position(
-            torch.rand((n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
-        )
-        scene.step()
-
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
-
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
 def _box_pyramid(solver, n_envs, gjk, n_cubes):

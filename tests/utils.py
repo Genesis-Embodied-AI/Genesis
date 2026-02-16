@@ -286,7 +286,7 @@ def assert_allclose(actual, desired, *, atol=None, rtol=None, tol=None, err_msg=
     np.testing.assert_allclose(*args, atol=atol, rtol=rtol, err_msg=err_msg)
 
 
-def assert_array_equal(actual, desired, *, err_msg=None):
+def assert_equal(actual, desired, *, err_msg=None):
     assert_allclose(actual, desired, atol=0.0, rtol=0.0, err_msg=err_msg)
 
 
