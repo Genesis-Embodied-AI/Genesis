@@ -1177,6 +1177,8 @@ class Viewer(pyglet.window.Window):
                 AttributeError,
                 ArgumentError,
                 RuntimeError,
+                TypeError,  # Race conditions wheno accessing OpenGL resources not binded to context yet
+                Exception,  # Just in case, to avoid deadlock when running in thread
             ) as e:
                 if not confs:
                     # It is essential to set the exception before closing the viewer, otherwise the main thread preempt
