@@ -313,7 +313,8 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
-def go2(solver, n_envs, gjk):
+def go2(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -360,6 +361,7 @@ def go2(solver, n_envs, gjk):
     time_start = time.time()
     while True:
         scene.step()
+        profiler_step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -375,7 +377,8 @@ def go2(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal(solver, n_envs, gjk):
+def anymal(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -410,6 +413,7 @@ def anymal(solver, n_envs, gjk):
     time_start = time.time()
     while True:
         scene.step()
+        profiler_step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -425,7 +429,8 @@ def anymal(solver, n_envs, gjk):
 
 
 @pytest.fixture
-def anymal_random(solver, n_envs, gjk):
+def anymal_random(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -463,6 +468,7 @@ def anymal_random(solver, n_envs, gjk):
             torch.rand((n_envs, 12), dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
         )
         scene.step()
+        profiler_step()
 
         time_elapsed = time.time() - time_start
         if is_recording:
@@ -478,7 +484,7 @@ def anymal_random(solver, n_envs, gjk):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
+def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -533,6 +539,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
     time_start = time.time()
     while True:
         scene.step()
+        profiler_step()
         if accessors:
             franka.get_ang()
             franka.get_vel()
@@ -563,26 +570,38 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors):
 
 
 @pytest.fixture
-def franka(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=False, is_randomized=False, accessors=False)
+def franka(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _franka(
+        solver, n_envs, gjk, is_collision_free=False, is_randomized=False, accessors=False, profiler_step=profiler_step
+    )
 
 
 @pytest.fixture
-def franka_random(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=False, is_randomized=True, accessors=False)
+def franka_random(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _franka(
+        solver, n_envs, gjk, is_collision_free=False, is_randomized=True, accessors=False, profiler_step=profiler_step
+    )
 
 
 @pytest.fixture
-def franka_free(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=False)
+def franka_free(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _franka(
+        solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=False, profiler_step=profiler_step
+    )
 
 
 @pytest.fixture
-def franka_accessors(solver, n_envs, gjk):
-    return _franka(solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=True)
+def franka_accessors(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _franka(
+        solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=True, profiler_step=profiler_step
+    )
 
 
-def _duck_in_box(solver, n_envs, gjk, hard):
+def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **(dict(constraint_solver=solver) if solver is not None else {}),
@@ -631,6 +650,7 @@ def _duck_in_box(solver, n_envs, gjk, hard):
     time_start = time.time()
     while True:
         scene.step()
+        profiler_step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -646,16 +666,18 @@ def _duck_in_box(solver, n_envs, gjk, hard):
 
 
 @pytest.fixture
-def duck_in_box_easy(solver, n_envs, gjk):
-    return _duck_in_box(solver, n_envs, gjk, hard=False)
+def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=profiler_step)
 
 
 @pytest.fixture
-def duck_in_box_hard(solver, n_envs, gjk):
-    return _duck_in_box(solver, n_envs, gjk, hard=True)
+def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=profiler_step)
 
 
-def _box_pyramid(solver, n_envs, gjk, n_cubes):
+def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -700,6 +722,7 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes):
     time_start = time.time()
     while True:
         scene.step()
+        profiler_step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
@@ -715,29 +738,35 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes):
 
 
 @pytest.fixture
-def box_pyramid_3(solver, n_envs, gjk):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=3)
+def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=profiler_step)
 
 
 @pytest.fixture
-def box_pyramid_4(solver, n_envs, gjk):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=4)
+def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=profiler_step)
 
 
 @pytest.fixture
-def box_pyramid_5(solver, n_envs, gjk):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=5)
+def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=profiler_step)
 
 
 @pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=6)
+def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler):
+    _, profiler_step = pytorch_profiler
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=profiler_step)
 
 
 @pytest.fixture
-def g1_fall(solver, n_envs, gjk):
+def g1_fall(solver, n_envs, gjk, pytorch_profiler):
     """G1 humanoid robot falling from above a plane."""
     import quadrants as qd
+
+    _, profiler_step = pytorch_profiler
 
     # This is sufficient, as long as we use sync
     duration_warmup = 20.0
@@ -794,6 +823,7 @@ def g1_fall(solver, n_envs, gjk):
         random_forces.uniform_(-max_force, max_force)
         robot.control_dofs_force(random_forces)
         scene.step()
+        profiler_step()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
