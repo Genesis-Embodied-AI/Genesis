@@ -41,6 +41,7 @@ import pytest
 
 import genesis as gs
 from .utils import assert_allclose
+from conftest import TOL_SINGLE
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidGeom
@@ -50,14 +51,14 @@ ERRNO_CALLED_GJK = 1 << 16
 POS_TOL = 1e-2  # otherwise tests fail
 
 # Tolerances for checking results against hand-computed expected values.
-# Analytical solutions should be near-exact; GJK is iterative so needs more slack.
+# Analytical solutions should be near-exact; GJK needs more slack; reason unclear.
 #
 # Penetration tolerance: absolute error in metres.
 # Normal tolerance: maximum allowed value of (1 - |dot(actual, expected)|).
 #   e.g. 1e-5 means the normal must agree to within ~0.26 degrees,
 #        1e-2 means within ~8 degrees.
-ANALYTICAL_PEN_TOL = 1e-5
-ANALYTICAL_NORMAL_TOL = 1e-5
+ANALYTICAL_PEN_TOL = TOL_SINGLE
+ANALYTICAL_NORMAL_TOL = TOL_SINGLE
 GJK_PEN_TOL = 1e-2
 GJK_NORMAL_TOL = 1e-2
 
@@ -85,7 +86,8 @@ def _check_expected_values(contacts, description, exp_pen, exp_normal, method_na
         normal = np.array(contacts["normal"][0])
         exp_n = np.array(exp_normal, dtype=float)
         exp_n_len = np.linalg.norm(exp_n)
-        if exp_n_len > 1e-12:
+        assert gs.EPS is not None
+        if exp_n_len > gs.EPS:
             dot_err = 1.0 - abs(np.dot(normal, exp_n / exp_n_len))
             assert dot_err < normal_tol, (
                 f"[{method_name}] {description}: normal {normal} vs expected {exp_n / exp_n_len}, "
@@ -650,13 +652,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Analytical collision mismatch! Got: {has_collision}, Expected: {should_collide}"
             )
             _check_expected_values(
-                contacts,
-                description,
-                exp_pen,
-                exp_normal,
-                "analytical",
-                ANALYTICAL_PEN_TOL,
-                ANALYTICAL_NORMAL_TOL,
+                contacts, description, exp_pen, exp_normal, "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -704,15 +700,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
             )
             assert has_collision_gjk == should_collide
 
-            _check_expected_values(
-                contacts_gjk,
-                description,
-                exp_pen,
-                exp_normal,
-                "GJK",
-                GJK_PEN_TOL,
-                GJK_NORMAL_TOL,
-            )
+            _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
