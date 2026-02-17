@@ -108,7 +108,16 @@ class UsdContext:
                 shutil.rmtree(self._bake_folder)
 
         self._stage_file = stage_file
-        self._stage = Usd.Stage.Open(self._stage_file)
+        if not os.path.isfile(self._stage_file):
+            gs.raise_exception(
+                f"USD file not found: {self._stage_file}. Check that the path is correct and the file exists."
+            )
+        try:
+            self._stage = Usd.Stage.Open(self._stage_file)
+        except Exception as e:
+            gs.raise_exception_from(
+                f"Failed to open USD stage: {self._stage_file}. Ensure the file exists and is a valid USD file.", e
+            )
         self._material_properties: dict[str, tuple[dict, str]] = {}  # material_id -> (material_dict, uv_name)
         self._material_parsed = False
         self._bake_material_paths: dict[str, str] = {}  # material_id -> bake_material_path
