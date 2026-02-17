@@ -41,6 +41,7 @@ import pytest
 
 import genesis as gs
 from .utils import assert_allclose
+from .conftest import TOL_SINGLE
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidGeom
@@ -56,8 +57,8 @@ POS_TOL = 1e-2  # otherwise tests fail
 # Normal tolerance: maximum allowed value of (1 - |dot(actual, expected)|).
 #   e.g. 1e-5 means the normal must agree to within ~0.26 degrees,
 #        1e-2 means within ~8 degrees.
-ANALYTICAL_PEN_TOL = 1e-5
-ANALYTICAL_NORMAL_TOL = 1e-5
+ANALYTICAL_PEN_TOL = TOL_SINGLE
+ANALYTICAL_NORMAL_TOL = TOL_SINGLE
 GJK_PEN_TOL = 1e-2
 GJK_NORMAL_TOL = 1e-2
 
@@ -393,13 +394,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             has_collision = len(contacts["geom_a"]) > 0
             assert has_collision == should_collide, "Analytical collision mismatch!"
             _check_expected_values(
-                contacts,
-                description,
-                exp_pen,
-                exp_normal,
-                "analytical",
-                ANALYTICAL_PEN_TOL,
-                ANALYTICAL_NORMAL_TOL,
+                contacts, description, exp_pen, exp_normal, "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL
             )
             # Deep-copy so subsequent steps can't corrupt stored data
             analytical_results[description] = copy.deepcopy(contacts)
@@ -432,15 +427,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
             assert has_collision_analytical == has_collision_gjk, "Collision detection mismatch!"
             assert has_collision_gjk == should_collide
 
-            _check_expected_values(
-                contacts_gjk,
-                description,
-                exp_pen,
-                exp_normal,
-                "GJK",
-                GJK_PEN_TOL,
-                GJK_NORMAL_TOL,
-            )
+            _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
             # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
