@@ -46,9 +46,9 @@ class Viewer(RBC):
         self._camera_up = np.asarray(options.camera_up, dtype=gs.np_float)
         self._camera_fov = options.camera_fov
 
-        self._disable_help_text = options.disable_help_text
+        self._enable_help_text = options.enable_help_text
         self._viewer_plugins: list["ViewerPlugin"] = []
-        if not options.disable_default_keybinds:
+        if options.enable_default_keybinds:
             self._viewer_plugins.append(DefaultControlsPlugin())
 
         # Validate viewer options
@@ -105,7 +105,7 @@ class Viewer(RBC):
                         shadow=self.context.shadow,
                         plane_reflection=self.context.plane_reflection,
                         env_separate_rigid=self.context.env_separate_rigid,
-                        disable_help_text=self._disable_help_text,
+                        enable_help_text=self._enable_help_text,
                         plugins=self._viewer_plugins,
                         viewer_flags={
                             "window_title": f"Genesis {gs.__version__}",

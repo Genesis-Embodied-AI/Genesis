@@ -574,24 +574,23 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     (note: only accessible internally)
     """
     test_cases = [
-        # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu,
-        #  exp_pen, exp_normal)
+        # (sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal)
         # Sphere above top cap: dist to segment endpoint (0,0,0.25) = 0.15, pen = 0.05
-        ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", False, 0.05, (0, 0, 1)),
+        ((0, 0, 0.4), (0, 0, 0), (0, 0, 0), True, "sphere_above_capsule_top", 0.05, (0, 0, 1)),
         # Sphere beside cylinder: dist to axis = 0.18, pen = 0.02
-        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", False, 0.02, (1, 0, 0)),
+        ((0.18, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_close_to_capsule", 0.02, (1, 0, 0)),
         # dist to axis = sqrt(0.17^2+0.17^2) ≈ 0.24 > 0.2, no collision
-        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", False, None, None),
-        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", False, None, None),
+        ((0.17, 0.17, 0), (0, 0, 0), (0, 0, 0), False, "sphere_near_cylinder", None, None),
+        ((0.35, 0, 0.35), (0, 0, 0), (0, 45, 0), False, "sphere_near_cap", None, None),
         # Sphere beside cylinder: dist to axis = 0.15, pen = 0.05
-        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", False, 0.05, (1, 0, 0)),
+        ((0.15, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_touching_cylinder", 0.05, (1, 0, 0)),
         # Sphere at capsule centre: dist = 0, pen = sum of radii = 0.2, normal is degenerate
-        ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", False, 0.2, None),
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), True, "sphere_at_capsule_center", 0.2, None),
         # Sphere near top cap: nearest segment pt = (0,0,0.25), dist = sqrt(0.15²+0.05²) ≈ 0.1581
         # pen = 0.2 - sqrt(0.025) ≈ 0.041886, normal along (3, 0, 1)
-        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", True, 0.041886, (3, 0, 1)),
+        ((0.15, 0, 0.3), (0, 0, 0), (0, 0, 0), True, "sphere_near_capsule_cap", 0.041886, (3, 0, 1)),
         # Horizontal capsule (axis along X after 90° Y rotation), sphere offset in Y: pen = 0.05
-        ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", False, 0.05, (0, 1, 0)),
+        ((0, 0.15, 0), (0, 0, 0), (0, 90, 0), True, "sphere_horizontal_capsule", 0.05, (0, 1, 0)),
     ]
 
     sphere_radius = 0.1
@@ -613,22 +612,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
-    for (
-        sphere_pos,
-        capsule_pos,
-        capsule_euler,
-        should_collide,
-        description,
-        skip_gpu,
-        exp_pen,
-        exp_normal,
-    ) in test_cases:
-        if skip_gpu and backend == gs.gpu:
-            pytest.xfail(
-                reason="gjk broken on gpu for this condition currently. "
-                "(fails to provide contact, when we can see on paper that there should be one)."
-            )
-
+    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal in test_cases:
         try:
             scene_creator.update_pos_quat_analytical(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_analytical(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
@@ -657,7 +641,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
-    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, skip_gpu in test_cases:
+    for sphere_pos, capsule_pos, capsule_euler, should_collide, description, exp_pen, exp_normal in test_cases:
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)

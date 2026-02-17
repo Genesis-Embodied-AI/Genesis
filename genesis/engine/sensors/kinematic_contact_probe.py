@@ -34,19 +34,20 @@ if TYPE_CHECKING:
 
 @qd.func
 def _probe_geom_penetration(
-    probe_pos: qd.types.vector(3, qd.f32),
-    probe_normal: qd.types.vector(3, qd.f32),
-    radius: qd.f32,
-    max_range: qd.f32,
-    i_g: qd.i32,
-    i_b: qd.i32,
+    probe_pos: gs.qd_vec3,
+    probe_normal: gs.qd_vec3,
+    radius: gs.qd_float,
+    max_range: gs.qd_float,
+    i_g: gs.qd_int,
+    i_b: gs.qd_int,
     geoms_info: array_class.GeomsInfo,
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    eps: gs.qd_float,
 ):
-    best = qd.f32(0.0)
+    best = gs.qd_float(0.0)
     neg_normal = -probe_normal
     face_start = geoms_info.face_start[i_g]
     face_end = geoms_info.face_end[i_g]
@@ -69,7 +70,7 @@ def _probe_geom_penetration(
                     best = penetration
 
         # Raycast test (ray along -normal)
-        result = ray_triangle_intersection(probe_pos, neg_normal, v0, v1, v2)
+        result = ray_triangle_intersection(probe_pos, neg_normal, v0, v1, v2, eps)
         if result[3] > 0.5 and result[0] <= max_range:
             t = result[0]
             if best == 0.0 or t < best:
@@ -80,11 +81,11 @@ def _probe_geom_penetration(
 
 @qd.func
 def _closest_point_on_triangle(
-    point: qd.types.vector(3, qd.f32),
-    v0: qd.types.vector(3, qd.f32),
-    v1: qd.types.vector(3, qd.f32),
-    v2: qd.types.vector(3, qd.f32),
-) -> qd.types.vector(3, qd.f32):
+    point: gs.qd_vec3,
+    v0: gs.qd_vec3,
+    v1: gs.qd_vec3,
+    v2: gs.qd_vec3,
+) -> gs.qd_vec3:
     """
     Find the point on the surface of a triangle closest to a given point.
 
@@ -135,7 +136,7 @@ def _closest_point_on_triangle(
                             closest = v1 + w * (v2 - v1)
                         else:
                             # Inside the triangle face
-                            denom = qd.f32(1.0) / (va + vb + vc)
+                            denom = 1.0 / (va + vb + vc)
                             v = vb * denom
                             w = vc * denom
                             closest = v0 + v * ab + w * ac
@@ -148,7 +149,7 @@ def _kernel_kinematic_contact_probe(
     probe_positions_local: qd.types.ndarray(),
     probe_normals_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_max_raycast_range: qd.f32,
+    probe_max_raycast_range: gs.qd_float,
     links_state: array_class.LinksState,
     radii: qd.types.ndarray(),
     stiffness: qd.types.ndarray(),
@@ -165,6 +166,7 @@ def _kernel_kinematic_contact_probe(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     output: qd.types.ndarray(),
+    eps: gs.qd_float,
 ):
     total_n_probes = probe_positions_local.shape[0]
     n_batches = output.shape[0]
@@ -193,7 +195,7 @@ def _kernel_kinematic_contact_probe(
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
         probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
 
-        max_penetration = qd.f32(0.0)
+        max_penetration = gs.qd_float(0.0)
 
         # Iterate over contacts directly from collider state
         n_contacts = collider_state.n_contacts[i_b]
@@ -225,11 +227,12 @@ def _kernel_kinematic_contact_probe(
                         verts_info,
                         fixed_verts_state,
                         free_verts_state,
+                        eps,
                     )
                     if penetration > max_penetration:
                         max_penetration = penetration
 
-        force_local = qd.Vector.zero(qd.f32, 3)
+        force_local = qd.Vector.zero(gs.qd_float, 3)
         if max_penetration > 0:
             force_local = stiff * max_penetration * -probe_normal_local
 
@@ -375,26 +378,27 @@ class KinematicContactProbe(
         shared_ground_truth_cache.zero_()
 
         _kernel_kinematic_contact_probe(
-            probe_positions_local=shared_metadata.probe_positions,
-            probe_normals_local=shared_metadata.probe_normals,
-            probe_sensor_idx=shared_metadata.probe_sensor_idx,
-            probe_max_raycast_range=shared_metadata.probe_max_raycast_range,
-            links_state=solver.links_state,
-            radii=shared_metadata.radii,
-            stiffness=shared_metadata.stiffness,
-            links_idx=shared_metadata.links_idx,
-            n_probes_per_sensor=shared_metadata.n_probes_per_sensor,
-            sensor_cache_start=shared_metadata.sensor_cache_start,
-            sensor_probe_start=shared_metadata.sensor_probe_start,
-            collider_state=collider_state,
-            geoms_state=solver.geoms_state,
-            geoms_info=solver.geoms_info,
-            fixed_verts_state=solver.fixed_verts_state,
-            free_verts_state=solver.free_verts_state,
-            static_rigid_sim_config=solver._static_rigid_sim_config,
-            verts_info=solver.verts_info,
-            faces_info=solver.faces_info,
-            output=shared_ground_truth_cache,
+            shared_metadata.probe_positions,
+            shared_metadata.probe_normals,
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.probe_max_raycast_range,
+            solver.links_state,
+            shared_metadata.radii,
+            shared_metadata.stiffness,
+            shared_metadata.links_idx,
+            shared_metadata.n_probes_per_sensor,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            collider_state,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver.fixed_verts_state,
+            solver.free_verts_state,
+            solver._static_rigid_sim_config,
+            solver.verts_info,
+            solver.faces_info,
+            shared_ground_truth_cache,
+            gs.EPS,
         )
 
     @classmethod

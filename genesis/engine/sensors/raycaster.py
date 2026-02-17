@@ -59,6 +59,7 @@ def kernel_cast_rays(
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
     output_hits: qd.types.ndarray(ndim=2),  # [n_env, total_cache_size]
+    eps: gs.qd_float,
 ):
     """
     Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
@@ -86,7 +87,7 @@ def kernel_cast_rays(
 
         # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
-        hit_face, hit_distance, hit_normal = bvh_ray_cast(
+        hit_face, hit_distance, _hit_normal = bvh_ray_cast(
             ray_start=ray_start_world,
             ray_dir=ray_direction_world,
             max_range=max_range,
@@ -97,6 +98,7 @@ def kernel_cast_rays(
             verts_info=verts_info,
             fixed_verts_state=fixed_verts_state,
             free_verts_state=free_verts_state,
+            eps=eps,
         )
 
         # --- 3. Process Hit Result ---
@@ -278,24 +280,25 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
 
         output_hits = shared_ground_truth_cache.contiguous()
         kernel_cast_rays(
-            fixed_verts_state=shared_metadata.solver.fixed_verts_state,
-            free_verts_state=shared_metadata.solver.free_verts_state,
-            verts_info=shared_metadata.solver.verts_info,
-            faces_info=shared_metadata.solver.faces_info,
-            bvh_nodes=shared_metadata.bvh.nodes,
-            bvh_morton_codes=shared_metadata.bvh.morton_codes,
-            links_pos=links_pos,
-            links_quat=links_quat,
-            ray_starts=shared_metadata.ray_starts,
-            ray_directions=shared_metadata.ray_dirs,
-            max_ranges=shared_metadata.max_ranges,
-            no_hit_values=shared_metadata.no_hit_values,
-            is_world_frame=shared_metadata.return_world_frame,
-            points_to_sensor_idx=shared_metadata.points_to_sensor_idx,
-            sensor_cache_offsets=shared_metadata.sensor_cache_offsets,
-            sensor_point_offsets=shared_metadata.sensor_point_offsets,
-            sensor_point_counts=shared_metadata.sensor_point_counts,
-            output_hits=output_hits,
+            shared_metadata.solver.fixed_verts_state,
+            shared_metadata.solver.free_verts_state,
+            shared_metadata.solver.verts_info,
+            shared_metadata.solver.faces_info,
+            shared_metadata.bvh.nodes,
+            shared_metadata.bvh.morton_codes,
+            links_pos,
+            links_quat,
+            shared_metadata.ray_starts,
+            shared_metadata.ray_dirs,
+            shared_metadata.max_ranges,
+            shared_metadata.no_hit_values,
+            shared_metadata.return_world_frame,
+            shared_metadata.points_to_sensor_idx,
+            shared_metadata.sensor_cache_offsets,
+            shared_metadata.sensor_point_offsets,
+            shared_metadata.sensor_point_counts,
+            output_hits,
+            gs.EPS,
         )
         if not shared_ground_truth_cache.is_contiguous():
             shared_ground_truth_cache.copy_(output_hits)
