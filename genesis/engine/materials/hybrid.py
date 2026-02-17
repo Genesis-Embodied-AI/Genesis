@@ -1,9 +1,9 @@
-import quadrants as ti
+import quadrants as qd
 
 from .base import Material
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Hybrid(Material):
     """
     The class for hybrid body material (soft skin actuated by inner rigid skeleton).

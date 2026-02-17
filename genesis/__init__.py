@@ -9,12 +9,12 @@ from warnings import warn
 from contextlib import redirect_stdout
 
 # Import quadrants while collecting its output without printing directly
-_ti_outputs = io.StringIO()
+_qd_outputs = io.StringIO()
 
-os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
+os.environ.setdefault("QD_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
-with redirect_stdout(_ti_outputs):
-    import quadrants as ti
+with redirect_stdout(_qd_outputs):
+    import quadrants as qd
 
 try:
     import torch
@@ -31,7 +31,7 @@ from .utils import redirect_libc_stderr, set_random_seed, get_device
 
 
 _IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
-# FIXME: ti.Field does not support zero-copy on Metal for 'torch<=2.9.1'.
+# FIXME: qd.Field does not support zero-copy on Metal for 'torch<=2.9.1'.
 # See: https://github.com/pytorch/pytorch/pull/168193
 _TORCH_MPS_SUPPORT_DLPACK_FIELD = tuple(map(int, torch.__version__.replace("+", ".").split(".")[:3])) > (2, 9, 1)
 if _IS_OLD_TORCH:
@@ -91,7 +91,7 @@ def init(
         backend_candidates = [backend]
     while backend_candidates:
         _backend = backend_candidates.pop(0)
-        if os.environ.get(f"TI_ENABLE_{_backend.name.upper()}", "1") == "0":
+        if os.environ.get(f"QD_ENABLE_{_backend.name.upper()}", "1") == "0":
             continue
         try:
             device, device_name, total_mem, _backend = get_device(_backend)
@@ -176,49 +176,49 @@ def init(
     use_zerocopy = bool(_use_zerocopy)
 
     # Define the right dtypes in accordance with selected backend and precision
-    global ti_float, np_float, tc_float
+    global qd_float, np_float, tc_float
     if precision == "32":
-        ti_float = ti.f32
+        qd_float = qd.f32
         np_float = np.float32
         tc_float = torch.float32
     else:  # precision == "64":
         if backend == _gs_backend.metal:
             raise_exception("64bits precision is not supported on Apple Metal GPU.")
-        ti_float = ti.f64
+        qd_float = qd.f64
         np_float = np.float64
         tc_float = torch.float64
 
     # All int uses 32-bit precision, unless under special circumstances
-    global ti_int, np_int, tc_int
-    ti_int = ti.i32
+    global qd_int, np_int, tc_int
+    qd_int = qd.i32
     np_int = np.int32
     tc_int = torch.int32
 
     # Bool
-    # Note that `ti.u1` is broken on Apple Metal.
-    global ti_bool, np_bool, tc_bool
+    # Note that `qd.u1` is broken on Apple Metal.
+    global qd_bool, np_bool, tc_bool
     if backend == _gs_backend.metal:
-        ti_bool = ti.i32
+        qd_bool = qd.i32
         np_bool = np.int32
         tc_bool = torch.int32
     else:
-        ti_bool = ti.u1
+        qd_bool = qd.u1
         np_bool = np.bool_
         tc_bool = torch.bool
 
     # Let's use GLSL convention: https://learnwebgl.brown37.net/12_shader_language/glsl_data_types.html
-    global ti_vec2, ti_vec3, ti_vec4, ti_vec6, ti_vec7, ti_vec11, ti_mat3, ti_mat4, ti_ivec2, ti_ivec3, ti_ivec4
-    ti_vec2 = ti.types.vector(2, ti_float)
-    ti_vec3 = ti.types.vector(3, ti_float)
-    ti_vec4 = ti.types.vector(4, ti_float)
-    ti_vec6 = ti.types.vector(6, ti_float)
-    ti_vec7 = ti.types.vector(7, ti_float)
-    ti_vec11 = ti.types.vector(11, ti_float)
-    ti_mat3 = ti.types.matrix(3, 3, ti_float)
-    ti_mat4 = ti.types.matrix(4, 4, ti_float)
-    ti_ivec2 = ti.types.vector(2, ti_int)
-    ti_ivec3 = ti.types.vector(3, ti_int)
-    ti_ivec4 = ti.types.vector(4, ti_int)
+    global qd_vec2, qd_vec3, qd_vec4, qd_vec6, qd_vec7, qd_vec11, qd_mat3, qd_mat4, qd_ivec2, qd_ivec3, qd_ivec4
+    qd_vec2 = qd.types.vector(2, qd_float)
+    qd_vec3 = qd.types.vector(3, qd_float)
+    qd_vec4 = qd.types.vector(4, qd_float)
+    qd_vec6 = qd.types.vector(6, qd_float)
+    qd_vec7 = qd.types.vector(7, qd_float)
+    qd_vec11 = qd.types.vector(11, qd_float)
+    qd_mat3 = qd.types.matrix(3, 3, qd_float)
+    qd_mat4 = qd.types.matrix(4, 4, qd_float)
+    qd_ivec2 = qd.types.vector(2, qd_int)
+    qd_ivec3 = qd.types.vector(3, qd_int)
+    qd_ivec4 = qd.types.vector(4, qd_int)
 
     # Update torch default dtype and device, just in case
     torch.set_default_device(device)
@@ -228,18 +228,18 @@ def init(
     global EPS
     EPS = float(max(eps, np.finfo(np_float).eps))
 
-    # Configure and initialize taichi
-    taichi_kwargs = {}
+    # Configure and initialize quadrants
+    qd_init_kwargs = {}
     if logger.level == _logging.CRITICAL:
-        taichi_kwargs.update(log_level=ti.ERROR)
+        qd_init_kwargs.update(log_level=qd.ERROR)
     elif logger.level == _logging.ERROR:
-        taichi_kwargs.update(log_level=ti.ERROR)
+        qd_init_kwargs.update(log_level=qd.ERROR)
     elif logger.level == _logging.WARNING:
-        taichi_kwargs.update(log_level=ti.WARN)
+        qd_init_kwargs.update(log_level=qd.WARN)
     elif logger.level == _logging.INFO:
-        taichi_kwargs.update(log_level=ti.WARN)
+        qd_init_kwargs.update(log_level=qd.WARN)
     elif logger.level == _logging.DEBUG:
-        taichi_kwargs.update(log_level=ti.INFO)
+        qd_init_kwargs.update(log_level=qd.INFO)
     if debug:
         if backend != _gs_backend.cpu:
             logger.warning("Debug mode is partially supported for GPU backend.")
@@ -249,16 +249,16 @@ def init(
         torch.backends.cudnn.benchmark = False
         logger.info("Beware running Genesis in debug mode dramatically reduces runtime speed.")
 
-    # FIXME: Enforcing Taichi num threads to 1 by default when running on CPU
+    # FIXME: Enforcing Quadrants num threads to 1 by default when running on CPU
     # because it significantly improve performance.
-    ti_num_cpu_threads = os.environ.get("TI_NUM_THREADS")
-    if ti_num_cpu_threads is not None:
-        taichi_kwargs.update(
-            cpu_max_num_threads=int(ti_num_cpu_threads),
-            num_compile_threads=int(ti_num_cpu_threads),
+    qd_num_cpu_threads = os.environ.get("QD_NUM_THREADS")
+    if qd_num_cpu_threads is not None:
+        qd_init_kwargs.update(
+            cpu_max_num_threads=int(qd_num_cpu_threads),
+            num_compile_threads=int(qd_num_cpu_threads),
         )
     else:
-        taichi_kwargs.update(
+        qd_init_kwargs.update(
             cpu_max_num_threads=1,
         )
 
@@ -266,18 +266,18 @@ def init(
         global SEED
         SEED = seed
         set_random_seed(SEED)
-        taichi_kwargs.update(
+        qd_init_kwargs.update(
             random_seed=seed,
         )
 
     # init quadrants
-    ti_debug = debug and (os.environ.get("TI_DEBUG") != "0")
-    with redirect_stdout(_ti_outputs):
-        ti.init(
-            arch=getattr(ti, backend.name),
+    qd_debug = debug and (os.environ.get("QD_DEBUG") != "0")
+    with redirect_stdout(_qd_outputs):
+        qd.init(
+            arch=getattr(qd, backend.name),
             enable_fallback=False,
-            # Add a (hidden) mechanism to forcible disable taichi debug mode as it is still a bit experimental
-            debug=ti_debug and backend == _gs_backend.cpu,
+            # Add a (hidden) mechanism to forcible disable Quadrants debug mode as it is still a bit experimental
+            debug=qd_debug and backend == _gs_backend.cpu,
             check_out_of_bound=debug and backend != _gs_backend.metal,
             # force_scalarize_matrix=True for speeding up kernel compilation
             # FIXME: Turning off 'force_scalarize_matrix' is causing numerical instabilities ('nan') on MacOS
@@ -287,26 +287,26 @@ def init(
             # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
             cfg_optimization=False,
             fast_math=not debug,
-            default_ip=ti_int,
-            default_fp=ti_float,
+            default_ip=qd_int,
+            default_fp=qd_float,
             unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation
-            **taichi_kwargs,
+            **qd_init_kwargs,
         )
 
-    # Disable debug checks for taichi
-    ti.lang._template_mapper.__builtins__["__debug__"] = ti_debug
+    # Disable debug checks for quadrants
+    qd.lang._template_mapper.__builtins__["__debug__"] = qd_debug
 
     logger.info(
         f"Running on ~~<[{device_name}]>~~ with backend ~~<{backend}>~~. Device memory: ~~<{total_mem:.2f}>~~ GB."
     )
 
-    for ti_output in _ti_outputs.getvalue().splitlines():
-        logger.debug(ti_output)
-    _ti_outputs.truncate(0)
-    _ti_outputs.seek(0)
+    for qd_output in _qd_outputs.getvalue().splitlines():
+        logger.debug(qd_output)
+    _qd_outputs.truncate(0)
+    _qd_outputs.seek(0)
 
-    # Redirect Taichi logging messages to unify logging management
-    for ti_name, gs_name in (
+    # Redirect Quadrants logging messages to unify logging management
+    for qd_name, gs_name in (
         ("debug", "debug"),
         ("trace", "debug"),
         ("info", "debug"),
@@ -314,7 +314,7 @@ def init(
         ("error", "warning"),
         ("critical", "error"),
     ):
-        setattr(ti._logging, ti_name, getattr(logger, gs_name))
+        setattr(qd._logging, qd_name, getattr(logger, gs_name))
 
     # Dealing with default backend
     if use_fastcache:
@@ -392,19 +392,19 @@ def destroy():
             scene = scene_ref()
             scene.destroy()
 
-    # Reset quadrants
-    ti.reset()
+    # Reset Quadrants
+    qd.reset()
 
-    # Restore original taichi logging facilities
-    for ti_name, ti_level in (
-        ("debug", ti._logging.DEBUG),
-        ("trace", ti._logging.TRACE),
-        ("info", ti._logging.INFO),
-        ("warn", ti._logging.WARN),
-        ("error", ti._logging.ERROR),
-        ("critical", ti._logging.CRITICAL),
+    # Restore original Quadrants logging facilities
+    for qd_name, qd_level in (
+        ("debug", qd._logging.DEBUG),
+        ("trace", qd._logging.TRACE),
+        ("info", qd._logging.INFO),
+        ("warn", qd._logging.WARN),
+        ("error", qd._logging.ERROR),
+        ("critical", qd._logging.CRITICAL),
     ):
-        setattr(ti._logging, ti_name, ti._logging._get_logging(ti_level))
+        setattr(qd._logging, qd_name, qd._logging._get_logging(qd_level))
 
     # Delete logger
     logger.removeHandler(logger.handler)

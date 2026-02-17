@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
 
-import quadrants as ti
+import quadrants as qd
 import numpy as np
 import torch
 
@@ -68,7 +68,6 @@ class SharedSensorMetadata:
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
 
 
-@ti.data_oriented
 class Sensor(RBC, Generic[SharedSensorMetadataT]):
     """
     Base class for all types of sensors.

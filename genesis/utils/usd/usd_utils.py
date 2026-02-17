@@ -230,3 +230,64 @@ def get_attr_value_by_candidates(prim: Usd.Prim, candidates: List[str], attr_nam
         f"given candidates: {candidates}. Using default value: {default_value}."
     )
     return default_value
+
+
+class UnionFind:
+    """
+    Union-Find (Disjoint Set) data structure with path compression and union by rank.
+
+    This data structure efficiently tracks disjoint sets and supports:
+    - Finding the root of an element (with path compression)
+    - Unioning two sets (with union by rank for optimal performance)
+    """
+
+    def __init__(self):
+        """Initialize an empty Union-Find structure."""
+        self.parent: dict[str, str] = {}
+        self.rank: dict[str, int] = {}
+
+    def find(self, x: str) -> str:
+        """
+        Find the root of element x with path compression.
+
+        Parameters
+        ----------
+        x : str
+            Element to find root for.
+
+        Returns
+        -------
+        str
+            Root element of x.
+        """
+        if x not in self.parent:
+            self.parent[x] = x
+            self.rank[x] = 0
+            return x
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])  # Path compression
+        return self.parent[x]
+
+    def union(self, x: str, y: str):
+        """
+        Union two sets containing x and y using union by rank.
+
+        Parameters
+        ----------
+        x : str
+            Element in first set.
+        y : str
+            Element in second set.
+        """
+        root_x = self.find(x)
+        root_y = self.find(y)
+        if root_x == root_y:
+            return
+        # Union by rank
+        if self.rank[root_x] < self.rank[root_y]:
+            self.parent[root_x] = root_y
+        elif self.rank[root_x] > self.rank[root_y]:
+            self.parent[root_y] = root_x
+        else:
+            self.parent[root_y] = root_x
+            self.rank[root_x] += 1

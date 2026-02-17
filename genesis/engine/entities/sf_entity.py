@@ -1,9 +1,6 @@
-import quadrants as ti
-
 from genesis.engine.entities.particle_entity import ParticleEntity
 
 
-@ti.data_oriented
 class SFParticleEntity(ParticleEntity):
     """
     PBD-based entity represented solely by particles.

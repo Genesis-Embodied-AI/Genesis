@@ -28,8 +28,8 @@ def func_capsule_capsule_contact(
 
     Parameters
     ----------
-    ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multicontact).
-    gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multicontact).
+    ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multi-contact).
+    gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multi-contact).
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -37,20 +37,20 @@ def func_capsule_capsule_contact(
     pos_a = ga_pos
     quat_a = ga_quat
     radius_a = geoms_info.data[i_ga][0]
-    halflength_a = gs.ti_float(0.5) * geoms_info.data[i_ga][1]
+    halflength_a = 0.5 * geoms_info.data[i_ga][1]
 
     # Get capsule B parameters
     pos_b = gb_pos
     quat_b = gb_quat
     radius_b = geoms_info.data[i_gb][0]
-    halflength_b = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
+    halflength_b = 0.5 * geoms_info.data[i_gb][1]
 
     # Capsules are aligned along local Z-axis by convention
-    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
+    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
 
     # Get segment axes in world space
-    axis_a_unit = gu.transform_vec_by_normalized_quat_fast(local_z_unit, quat_a)
-    axis_b_unit = gu.transform_vec_by_normalized_quat_fast(local_z_unit, quat_b)
+    axis_a_unit = gu.qd_transform_by_quat_fast(local_z_unit, quat_a)
+    axis_b_unit = gu.qd_transform_by_quat_fast(local_z_unit, quat_b)
 
     # Compute segment endpoints in world space
     P1 = pos_a - halflength_a * axis_a_unit
@@ -67,9 +67,9 @@ def func_capsule_capsule_contact(
     combined_radius_sq = combined_radius * combined_radius
 
     is_col = False
-    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
-    contact_pos = qd.Vector.zero(gs.ti_float, 3)
-    penetration = gs.ti_float(0.0)
+    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+    penetration = gs.qd_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
         dist = qd.sqrt(dist_sq)
@@ -87,13 +87,13 @@ def func_capsule_capsule_contact(
             else:
                 # Axes are parallel, use any perpendicular
                 if qd.abs(axis_a_unit[0]) < 0.9:
-                    normal_unit = gu.i_cross_vec(axis_a_unit)
+                    normal_unit = gu.qd_i_cross_vec(axis_a_unit)
                 else:
-                    normal_unit = gu.j_cross_vec(axis_a_unit)
+                    normal_unit = gu.qd_j_cross_vec(axis_a_unit)
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces
-        contact_pos = Pa - radius_a * normal_unit + gs.ti_float(0.5) * penetration * normal_unit
+        contact_pos = Pa - radius_a * normal_unit + gs.qd_float(0.5) * penetration * normal_unit
 
     return is_col, normal_unit, contact_pos, penetration
 
@@ -119,8 +119,8 @@ def func_sphere_capsule_contact(
 
     Parameters
     ----------
-    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multicontact).
-    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multicontact).
+    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multi-contact).
+    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multi-contact).
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -140,11 +140,11 @@ def func_sphere_capsule_contact(
 
     capsule_quat = capsule_q
     capsule_radius = geoms_info.data[i_gb][0]
-    capsule_halflength = gs.ti_float(0.5) * geoms_info.data[i_gb][1]
+    capsule_halflength = 0.5 * geoms_info.data[i_gb][1]
 
     # Capsule is aligned along local Z-axis
-    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.ti_float)
-    capsule_axis = gu.transform_vec_by_normalized_quat_fast(local_z_unit, capsule_quat)
+    local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
+    capsule_axis = gu.qd_transform_by_quat_fast(local_z_unit, capsule_quat)
 
     # Compute capsule segment endpoints
     P1 = capsule_center - capsule_halflength * capsule_axis
@@ -157,7 +157,7 @@ def func_sphere_capsule_contact(
 
     # Project sphere center onto segment
     # Default for degenerate case
-    t = gs.ti_float(0.5)
+    t = gs.qd_float(0.5)
     if segment_length_sq > EPS:
         t = (sphere_center - P1).dot(segment_vec) / segment_length_sq
         t = qd.math.clamp(t, 0.0, 1.0)
@@ -171,9 +171,9 @@ def func_sphere_capsule_contact(
     combined_radius_sq = combined_radius * combined_radius
 
     is_col = False
-    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.ti_float)
-    contact_pos = qd.Vector.zero(gs.ti_float, 3)
-    penetration = gs.ti_float(0.0)
+    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+    penetration = gs.qd_float(0.0)
     if dist_sq < combined_radius_sq:
         is_col = True
         dist = qd.sqrt(dist_sq)
@@ -185,9 +185,9 @@ def func_sphere_capsule_contact(
             # Sphere center is exactly on capsule axis
             # Use any perpendicular direction to the capsule axis
             if qd.abs(capsule_axis[0]) < 0.9:
-                normal_unit = gu.i_cross_vec(capsule_axis)
+                normal_unit = gu.qd_i_cross_vec(capsule_axis)
             else:
-                normal_unit = gu.j_cross_vec(capsule_axis)
+                normal_unit = gu.qd_j_cross_vec(capsule_axis)
 
         penetration = combined_radius - dist
         # Contact position at midpoint between surfaces

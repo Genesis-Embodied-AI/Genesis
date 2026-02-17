@@ -8,7 +8,7 @@ import plotext as plt
 import torch
 
 import genesis as gs
-from genesis.utils.misc import ti_to_torch
+from genesis.utils.misc import qd_to_torch
 
 torch.use_deterministic_algorithms(True)
 torch.backends.cudnn.deterministic = True
@@ -58,7 +58,7 @@ init_qpos = torch.tensor(
 robot.set_qpos(init_qpos)
 robot.control_dofs_position(ctrl_pos_0, dofs_idx_local=slice(6, 18))
 
-timers = ti_to_torch(scene.rigid_solver.constraint_solver.constraint_state.timers)
+timers = qd_to_torch(scene.rigid_solver.constraint_solver.constraint_state.timers)
 stats = torch.zeros((3, *timers.shape), dtype=gs.tc_float, device=gs.device)
 
 TIMER_LABELS = ("func_solve",)
@@ -84,7 +84,7 @@ with (
         robot.control_dofs_position(ctrl_pos_0 + 0.3 * noise, slice(6, 18))
         if not args.profiling:
             if not gs.use_zerocopy:
-                timers = ti_to_torch(scene.rigid_solver.constraint_solver.constraint_state.timers)
+                timers = qd_to_torch(scene.rigid_solver.constraint_solver.constraint_state.timers)
             stats[0] = timers
             stats[1] = stats[1] * (step / (step + 1)) + timers / (step + 1)
             stats[2] = stats[2] * (step / (step + 1)) + timers.sort(descending=False).values / (step + 1)

@@ -1,11 +1,11 @@
 import numpy as np
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 from genesis.repr_base import RBC
 
 
-@ti.data_oriented
+@qd.data_oriented
 class ForceField(RBC):
     """
     Base class for all force fields. This class should not be used directly.
@@ -16,7 +16,7 @@ class ForceField(RBC):
     """
 
     def __init__(self):
-        self._active = ti.field(gs.ti_bool, shape=())
+        self._active = qd.field(gs.qd_bool, shape=())
         self._active[None] = False
 
     def activate(self):
@@ -31,9 +31,9 @@ class ForceField(RBC):
         """
         self._active[None] = False
 
-    @ti.func
+    @qd.func
     def get_acc(self, pos, vel, t, i):
-        acc = ti.Vector.zero(gs.ti_float, 3)
+        acc = qd.Vector.zero(gs.qd_float, 3)
         if self._active[None]:
             acc = self._get_acc(pos, vel, t, i)
         return acc
@@ -67,11 +67,11 @@ class Constant(ForceField):
 
         self._direction = direction / np.linalg.norm(direction)
         self._strength = strength
-        self._acc_ti = ti.Vector(self._direction * self._strength, dt=gs.ti_float)
+        self._acc_qd = qd.Vector(self._direction * self._strength, dt=gs.qd_float)
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
-        return self._acc_ti
+        return self._acc_qd
 
     @property
     def direction(self):
@@ -114,17 +114,17 @@ class Wind(ForceField):
         self._strength = strength
         self._radius = radius
 
-        self._direction_ti = ti.Vector(self._direction, dt=gs.ti_float)
-        self._center_ti = ti.Vector(self._center, dt=gs.ti_float)
-        self._acc_ti = ti.Vector(self._direction * self._strength, dt=gs.ti_float)
+        self._direction_qd = qd.Vector(self._direction, dt=gs.qd_float)
+        self._center_qd = qd.Vector(self._center, dt=gs.qd_float)
+        self._acc_qd = qd.Vector(self._direction * self._strength, dt=gs.qd_float)
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
         # distance to the center of the cylinder pointing in the direction of the wind
-        dist = (pos - self._center_ti).cross(self._direction_ti).norm()
-        acc = self._acc_ti
+        dist = (pos - self._center_qd).cross(self._direction_qd).norm()
+        acc = self._acc_qd
         if dist > self._radius:
-            acc = ti.Vector.zero(gs.ti_float, 3)
+            acc = qd.Vector.zero(gs.qd_float, 3)
         return acc
 
     @property
@@ -172,11 +172,11 @@ class Point(ForceField):
         self._falloff_pow = falloff_pow
         self._flow = flow
 
-        self._position_ti = ti.Vector(self._position, dt=gs.ti_float)
+        self._position_qd = qd.Vector(self._position, dt=gs.qd_float)
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
-        relative_pos = pos - self._position_ti
+        relative_pos = pos - self._position_qd
         radius = relative_pos.norm(gs.EPS)
         direction = relative_pos / radius
         falloff = 1 / (radius + 1.0) ** self._falloff_pow
@@ -216,7 +216,7 @@ class Drag(ForceField):
         self._linear = linear
         self._quadratic = quadratic
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
         return -self._linear * vel - self._quadratic * vel.norm() * vel
 
@@ -239,16 +239,16 @@ class Noise(ForceField):
 
         self._strength = strength
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
         noise = (
-            ti.Vector(
+            qd.Vector(
                 [
-                    ti.random(gs.ti_float),
-                    ti.random(gs.ti_float),
-                    ti.random(gs.ti_float),
+                    qd.random(gs.qd_float),
+                    qd.random(gs.qd_float),
+                    qd.random(gs.qd_float),
                 ],
-                dt=gs.ti_float,
+                dt=gs.qd_float,
             )
             * 2
             - 1
@@ -312,17 +312,17 @@ class Vortex(ForceField):
         self._falloff_min = falloff_min
         self._falloff_max = falloff_max
 
-        self._direction_ti = ti.Vector(self._direction, dt=gs.ti_float)
-        self._center_ti = ti.Vector(self._center, dt=gs.ti_float)
+        self._direction_qd = qd.Vector(self._direction, dt=gs.qd_float)
+        self._center_qd = qd.Vector(self._center, dt=gs.qd_float)
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
-        relative_pos = ti.Vector([pos[0] - self._center_ti[0], pos[1] - self._center_ti[1]])
+        relative_pos = qd.Vector([pos[0] - self._center_qd[0], pos[1] - self._center_qd[1]])
         radius = relative_pos.norm()
-        perpendicular = ti.Vector([-relative_pos[1], relative_pos[0], 0.0], dt=gs.ti_float)
-        radial = -ti.Vector([relative_pos[0], relative_pos[1], 0.0], dt=gs.ti_float)
+        perpendicular = qd.Vector([-relative_pos[1], relative_pos[0], 0.0], dt=gs.qd_float)
+        radial = -qd.Vector([relative_pos[0], relative_pos[1], 0.0], dt=gs.qd_float)
 
-        falloff = gs.ti_float(0.0)
+        falloff = gs.qd_float(0.0)
         if radius < self._falloff_min:
             falloff = 1.0
         elif radius < self._falloff_max:
@@ -396,15 +396,15 @@ class Turbulence(ForceField):
         self._perlin_y = PerlinNoiseField(frequency=self._frequency, seed=seed, seed_offset=1)
         self._perlin_z = PerlinNoiseField(frequency=self._frequency, seed=seed, seed_offset=2)
 
-    @ti.func
+    @qd.func
     def _get_acc(self, pos, vel, t, i):
-        acc = ti.Vector(
+        acc = qd.Vector(
             [
                 self._perlin_x._noise(pos[0], pos[1], pos[2]),
                 self._perlin_y._noise(pos[0], pos[1], pos[2]),
                 self._perlin_z._noise(pos[0], pos[1], pos[2]),
             ],
-            dt=gs.ti_float,
+            dt=gs.qd_float,
         )
         acc *= self._strength
 
@@ -427,8 +427,8 @@ class Custom(ForceField):
 
     Parameters:
     -----------
-    func: A callable taichi func (a python function wrapped by `@ti.func`)
-        The acceleration function. Must have the signature `f(pos: ti.types.vector(3), vel: ti.types.vector(3), t: ti.f32) -> ti.types.vector(3)`.
+    func: A callable Quadrants func (a python function wrapped by `@qd.func`)
+        The acceleration function. Must have the signature `f(pos: qd.types.vector(3), vel: qd.types.vector(3), t: qd.f32) -> qd.types.vector(3)`.
     """
 
     def __init__(self, func):
@@ -437,7 +437,7 @@ class Custom(ForceField):
         self.get_acc = func
 
 
-@ti.data_oriented
+@qd.data_oriented
 class PerlinNoiseField:
     """
     Perlin noise field for generating 3D noise.
@@ -454,20 +454,20 @@ class PerlinNoiseField:
             np.random.shuffle(self._permutation)
             np.random.set_state(state)
 
-        self._permutation_ti = ti.field(ti.i32, shape=(self._wrap_size * 2,))
-        self._permutation_ti.from_numpy(np.concatenate([self._permutation, self._permutation]))
+        self._permutation_qd = qd.field(qd.i32, shape=(self._wrap_size * 2,))
+        self._permutation_qd.from_numpy(np.concatenate([self._permutation, self._permutation]))
 
-    @ti.func
+    @qd.func
     def _fade(self, t):
         """Fade function for smoothing the interpolation."""
         return t * t * t * (t * (t * 6 - 15) + 10)
 
-    @ti.func
+    @qd.func
     def _lerp(self, t, a, b):
         """Linear interpolation between a and b."""
         return a + t * (b - a)
 
-    @ti.func
+    @qd.func
     def _grad(self, hash, x, y, z):
         """Calculate dot product between gradient vector and distance vector."""
         h = hash & 15  # Convert low 4 bits of hash code
@@ -483,21 +483,21 @@ class PerlinNoiseField:
 
         return (u if (h & 1) == 0 else -u) + (v if (h & 2) == 0 else -v)
 
-    @ti.func
+    @qd.func
     def _noise(self, x, y, z):
         x *= self._frequency
         y *= self._frequency
         z *= self._frequency
 
         # Find unit cube that contains the point
-        X = gs.ti_int(ti.floor(x)) & (self._wrap_size - 1)
-        Y = gs.ti_int(ti.floor(y)) & (self._wrap_size - 1)
-        Z = gs.ti_int(ti.floor(z)) & (self._wrap_size - 1)
+        X = gs.qd_int(qd.floor(x)) & (self._wrap_size - 1)
+        Y = gs.qd_int(qd.floor(y)) & (self._wrap_size - 1)
+        Z = gs.qd_int(qd.floor(z)) & (self._wrap_size - 1)
 
         # Find relative x, y, z of point in the cube
-        x -= ti.floor(x)
-        y -= ti.floor(y)
-        z -= ti.floor(z)
+        x -= qd.floor(x)
+        y -= qd.floor(y)
+        z -= qd.floor(z)
 
         # Compute fade curves for each coordinate
         u = self._fade(x)
@@ -505,12 +505,12 @@ class PerlinNoiseField:
         w = self._fade(z)
 
         # Hash coordinates of the 8 cube corners
-        A = self._permutation_ti[X] + Y
-        AA = self._permutation_ti[A] + Z
-        AB = self._permutation_ti[A + 1] + Z
-        B = self._permutation_ti[X + 1] + Y
-        BA = self._permutation_ti[B] + Z
-        BB = self._permutation_ti[B + 1] + Z
+        A = self._permutation_qd[X] + Y
+        AA = self._permutation_qd[A] + Z
+        AB = self._permutation_qd[A + 1] + Z
+        B = self._permutation_qd[X + 1] + Y
+        BA = self._permutation_qd[B] + Z
+        BB = self._permutation_qd[B + 1] + Z
 
         # Add blended results from the 8 corners of the cube
         return self._lerp(
@@ -519,26 +519,26 @@ class PerlinNoiseField:
                 v,
                 self._lerp(
                     u,
-                    self._grad(self._permutation_ti[AA], x, y, z),
-                    self._grad(self._permutation_ti[BA], x - 1, y, z),
+                    self._grad(self._permutation_qd[AA], x, y, z),
+                    self._grad(self._permutation_qd[BA], x - 1, y, z),
                 ),
                 self._lerp(
                     u,
-                    self._grad(self._permutation_ti[AB], x, y - 1, z),
-                    self._grad(self._permutation_ti[BB], x - 1, y - 1, z),
+                    self._grad(self._permutation_qd[AB], x, y - 1, z),
+                    self._grad(self._permutation_qd[BB], x - 1, y - 1, z),
                 ),
             ),
             self._lerp(
                 v,
                 self._lerp(
                     u,
-                    self._grad(self._permutation_ti[AA + 1], x, y, z - 1),
-                    self._grad(self._permutation_ti[BA + 1], x - 1, y, z - 1),
+                    self._grad(self._permutation_qd[AA + 1], x, y, z - 1),
+                    self._grad(self._permutation_qd[BA + 1], x - 1, y, z - 1),
                 ),
                 self._lerp(
                     u,
-                    self._grad(self._permutation_ti[AB + 1], x, y - 1, z - 1),
-                    self._grad(self._permutation_ti[BB + 1], x - 1, y - 1, z - 1),
+                    self._grad(self._permutation_qd[AB + 1], x, y - 1, z - 1),
+                    self._grad(self._permutation_qd[BB + 1], x - 1, y - 1, z - 1),
                 ),
             ),
         )

@@ -1,4 +1,4 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -6,24 +6,24 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_build_efc_AR_b(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    ti.loop_config(serialize=ti.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_b in range(_B):
         nefc = constraint_state.n_constraints[i_b]
         # zero AR
         for i_row in range(nefc):
             for i_col in range(nefc):
-                constraint_state.efc_AR[i_row, i_col, i_b] = gs.ti_float(0.0)
+                constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
 
         # build AR = J * inv(M) * J^T
         # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp
@@ -45,7 +45,7 @@ def kernel_build_efc_AR_b(
 
             # AR[r, c] = J[c, :] * tmp
             for i_col in range(nefc):
-                s = gs.ti_float(0.0)
+                s = gs.qd_float(0.0)
                 for i_d in range(n_dofs):
                     s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[i_row, i_col, i_b] = s
@@ -57,34 +57,34 @@ def kernel_build_efc_AR_b(
             constraint_state.efc_b[i_c, i_b] = v
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_noslip(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     EPS = rigid_global_info.EPS[None]
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # temp variables
-        res = ti.Vector.zero(gs.ti_float, 5)
-        old_force = ti.Vector.zero(gs.ti_float, 5)
-        bc = ti.Vector.zero(gs.ti_float, 5)
-        Ac = ti.Vector.zero(gs.ti_float, 9)
+        res = qd.Vector.zero(gs.qd_float, 5)
+        old_force = qd.Vector.zero(gs.qd_float, 5)
+        bc = qd.Vector.zero(gs.qd_float, 5)
+        Ac = qd.Vector.zero(gs.qd_float, 9)
 
         n_con = collider_state.n_contacts[i_b]
         ne = constraint_state.n_constraints_equality[i_b]
         nf = constraint_state.n_constraints_frictionloss[i_b]
         const_start = ne + nf
 
-        scale = 1.0 / (rigid_global_info.meaninertia[i_b] * ti.max(1.0, n_dofs))
+        scale = 1.0 / (rigid_global_info.meaninertia[i_b] * qd.max(1.0, n_dofs))
 
         for i_iter in range(rigid_global_info.noslip_iterations[None]):
-            improvement = gs.ti_float(0.0)
+            improvement = gs.qd_float(0.0)
             if i_iter == 0:
                 for i_c in range(constraint_state.n_constraints[i_b]):
                     improvement += 0.5 * constraint_state.efc_force[i_c, i_b] ** 2 * constraint_state.diag[i_c, i_b]
@@ -109,7 +109,7 @@ def kernel_noslip(
             # Project contact friction (pyramidal 4-edge) with normal fixed
             for i_col in range(n_con):
                 base = const_start + i_col * 4
-                for j2 in ti.static(range(2)):
+                for j2 in qd.static(range(2)):
                     j_efc = base + j2 * 2
                     res = func_residual_constraint_force(
                         res=res,
@@ -118,7 +118,7 @@ def kernel_noslip(
                         dim=2,
                         constraint_state=constraint_state,
                     )
-                    for i2 in ti.static(range(2)):
+                    for i2 in qd.static(range(2)):
                         old_force[i2] = constraint_state.efc_force[j_efc + i2, i_b]
                     Ac = func_extract_block_matrix_from_AR(
                         Ac=Ac,
@@ -127,9 +127,9 @@ def kernel_noslip(
                         n=2,
                         constraint_state=constraint_state,
                     )
-                    for j in ti.static(range(2)):
+                    for j in qd.static(range(2)):
                         bc[j] = res[j]
-                        for k in ti.static(range(2)):
+                        for k in qd.static(range(2)):
                             bc[j] -= Ac[j * 2 + k] * old_force[k]
                     mid = 0.5 * (constraint_state.efc_force[j_efc, i_b] + constraint_state.efc_force[j_efc + 1, i_b])
                     y = 0.5 * (constraint_state.efc_force[j_efc, i_b] - constraint_state.efc_force[j_efc + 1, i_b])
@@ -166,22 +166,22 @@ def kernel_noslip(
                 break
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_dual_finish(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.qfrc_constraint.shape[1]
 
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # zero
         for i_d in range(n_dofs):
-            constraint_state.qfrc_constraint[i_d, i_b] = gs.ti_float(0.0)
+            constraint_state.qfrc_constraint[i_d, i_b] = gs.qd_float(0.0)
 
             for i_c in range(constraint_state.n_constraints[i_b]):
                 constraint_state.qfrc_constraint[i_d, i_b] = (
@@ -208,7 +208,7 @@ def kernel_dual_finish(
             dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
 
 
-@ti.func
+@qd.func
 def func_extract_block_matrix_from_AR(
     Ac,
     i_b: int,
@@ -222,7 +222,7 @@ def func_extract_block_matrix_from_AR(
     return Ac
 
 
-@ti.func
+@qd.func
 def func_residual_constraint_force(
     res,
     i_b: int,
@@ -237,7 +237,7 @@ def func_residual_constraint_force(
     return res
 
 
-@ti.func
+@qd.func
 def func_cost_change(
     i_b: int,
     Ac,
@@ -248,12 +248,12 @@ def func_cost_change(
     dim: int,
     eps,
 ):
-    change = gs.ti_float(0.0)
+    change = gs.qd_float(0.0)
     if dim == 1:
         delta = force[force_start, i_b] - old_force[0]
         change = 0.5 * Ac[0] * delta * delta + delta * res[0]
     else:
-        delta = ti.Vector.zero(gs.ti_float, 2)
+        delta = qd.Vector.zero(gs.qd_float, 2)
         for i in range(dim):
             delta[i] = force[force_start + i, i_b] - old_force[i]
         for i in range(dim):
@@ -267,16 +267,16 @@ def func_cost_change(
     return change
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def compute_A_diag(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         # For each constraint row i: Ai = Ji * M^{-1} * Ji^T
         for i_c in range(constraint_state.n_constraints[i_b]):
@@ -296,8 +296,8 @@ def compute_A_diag(
             )
 
             # Ai = Ji * tmp
-            aii = gs.ti_float(0.0)
-            if ti.static(static_rigid_sim_config.sparse_solve):
+            aii = gs.qd_float(0.0)
+            if qd.static(static_rigid_sim_config.sparse_solve):
                 for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                     i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
                     aii += constraint_state.jac[i_c, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]

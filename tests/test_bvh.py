@@ -42,26 +42,26 @@ def test_expand_bits():
     Test the expand_bits function for LBVH.
     A 10-bit integer is expanded to a 30-bit integer by inserting two zeros before each bit.
     """
-    import quadrants as ti
+    import quadrants as qd
 
-    @ti.kernel
-    def expand_bits(lbvh: ti.template(), x: ti.template(), expanded_x: ti.template()):
+    @qd.kernel
+    def expand_bits(lbvh: qd.template(), x: qd.template(), expanded_x: qd.template()):
         n_x = x.shape[0]
         for i in range(n_x):
             expanded_x[i] = lbvh.expand_bits(x[i])
 
     # random integer
     x_np = np.random.randint(0, 1024, (10,), dtype=np.uint32)
-    x_ti = ti.field(ti.uint32, shape=x_np.shape)
-    x_ti.from_numpy(x_np)
-    expanded_x_ti = ti.field(ti.uint32, shape=x_np.shape)
+    x_qd = qd.field(qd.uint32, shape=x_np.shape)
+    x_qd.from_numpy(x_np)
+    expanded_x_qd = qd.field(qd.uint32, shape=x_np.shape)
     # expand bits
     n_aabbs = 10
     n_batches = 1
     aabb = AABB(n_aabbs=n_aabbs, n_batches=n_batches)
     lbvh = LBVH(aabb)
-    expand_bits(lbvh, x_ti, expanded_x_ti)
-    expanded_x_np = expanded_x_ti.to_numpy()
+    expand_bits(lbvh, x_qd, expanded_x_qd)
+    expanded_x_np = expanded_x_qd.to_numpy()
     for i in range(x_np.shape[0]):
         str_x = f"{x_np[i]:010b}"
         str_expanded_x = f"{expanded_x_np[i]:030b}"
@@ -124,10 +124,10 @@ def test_build_tree(lbvh):
 @pytest.mark.parametrize("n_aabbs, n_batches", [(500, 10), (5, 1)])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_query(lbvh):
-    import quadrants as ti
+    import quadrants as qd
 
-    @ti.kernel
-    def query_kernel(lbvh: ti.template(), aabbs: ti.template()):
+    @qd.kernel
+    def query_kernel(lbvh: qd.template(), aabbs: qd.template()):
         lbvh.query(aabbs)
 
     aabbs = lbvh.aabbs

@@ -2,7 +2,7 @@ import functools
 from pathlib import Path
 
 import numpy as np
-import quadrants as ti
+import quadrants as qd
 import torch
 import trimesh
 
@@ -26,7 +26,7 @@ def assert_active(method):
     return wrapper
 
 
-@ti.data_oriented
+@qd.data_oriented
 class ParticleEntity(Entity):
     """
     Base class for particle-based entity.
@@ -212,13 +212,13 @@ class ParticleEntity(Entity):
             support_idxs_local=support_idxs,
         )
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_add_vverts_to_solver(
         self,
-        vverts: ti.types.ndarray(element_dim=1),
-        particles: ti.types.ndarray(element_dim=1),
-        P_invs: ti.types.ndarray(element_dim=2),
-        support_idxs_local: ti.types.ndarray(),
+        vverts: qd.types.ndarray(element_dim=1),
+        particles: qd.types.ndarray(element_dim=1),
+        P_invs: qd.types.ndarray(element_dim=2),
+        support_idxs_local: qd.types.ndarray(),
     ):
         for i_vv_ in range(self.n_vverts):
             i_vv = i_vv_ + self._vvert_start
@@ -474,11 +474,11 @@ class ParticleEntity(Entity):
         """
         _tgt_pos = self._tgt_buffer["pos"].pop()
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_ti(self._set_particles_pos_grad)
+            _tgt_pos._backward_from_qd(self._set_particles_pos_grad)
 
         _tgt_vel = self._tgt_buffer["vel"].pop()
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_ti(self._set_particles_vel_grad)
+            _tgt_vel._backward_from_qd(self._set_particles_vel_grad)
 
         # Manually zero the grad since manually setting state breaks gradient flow
         if _tgt_vel is not None or _tgt_pos is not None:

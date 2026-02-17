@@ -760,10 +760,10 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all, uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
             triangles_all = triangles_all.to_numpy().reshape((-1, 3))
-            uvs_all = uvs_ti.to_numpy()
+            uvs_all = uvs_qd.to_numpy()
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":

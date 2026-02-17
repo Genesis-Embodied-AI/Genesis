@@ -3,7 +3,7 @@ from pathlib import Path
 
 import igl
 import numpy as np
-import quadrants as ti
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -29,7 +29,7 @@ def assert_muscle(method):
     return wrapper
 
 
-@ti.data_oriented
+@qd.data_oriented
 class FEMEntity(Entity):
     """
     A finite element method (FEM)-based entity for deformable simulation.
@@ -668,13 +668,13 @@ class FEMEntity(Entity):
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
         if _tgt_actu is not None and _tgt_actu.requires_grad:
-            _tgt_actu._backward_from_ti(self.set_actu_grad, self._sim.cur_substep_local)
+            _tgt_actu._backward_from_qd(self.set_actu_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_ti(self.set_vel_grad, self._sim.cur_substep_local)
+            _tgt_vel._backward_from_qd(self.set_vel_grad, self._sim.cur_substep_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_ti(self.set_pos_grad, self._sim.cur_substep_local)
+            _tgt_pos._backward_from_qd(self.set_pos_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None or _tgt_pos is not None or _tgt_actu is not None:
             # manually zero the grad since manually setting state breaks gradient flow
@@ -958,12 +958,12 @@ class FEMEntity(Entity):
 
         self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
-    @ti.kernel
-    def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_get_verts_pos(self, f: qd.i32, pos: qd.types.ndarray(), verts_idx: qd.types.ndarray()):
         # get current position of vertices
-        for i_v, i_b in ti.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
+        for i_v, i_b in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
             i_global = verts_idx[i_v, i_b] + self.v_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
 
     def get_el2v(self):
@@ -979,8 +979,8 @@ class FEMEntity(Entity):
         self._solver._kernel_get_el2v(element_el_start=self._el_start, n_elements=self.n_elements, el2v=el2v)
         return el2v
 
-    @ti.kernel
-    def get_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), active: ti.types.ndarray()):
+    @qd.kernel
+    def get_frame(self, f: qd.i32, pos: qd.types.ndarray(), vel: qd.types.ndarray(), active: qd.types.ndarray()):
         """
         Fetch the position, velocity, and activation state of the FEM entity at a specific substep.
 
@@ -999,18 +999,18 @@ class FEMEntity(Entity):
             Output array of shape (n_envs, n_elements) to store active flags.
         """
 
-        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
                 vel[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].vel[j]
 
-        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
             active[i_b, i_v] = self._solver.elements_el_ng[f, i_global, i_b].active
 
-    @ti.kernel
-    def clear_grad(self, f: ti.i32):
+    @qd.kernel
+    def clear_grad(self, f: qd.i32):
         """
         Zero out the gradients of position, velocity, and actuation for the current substep.
 
@@ -1025,12 +1025,12 @@ class FEMEntity(Entity):
         that may be corrupted by explicit state setting.
         """
         # TODO: not well-tested
-        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
             self._solver.elements_v.grad[f, i_global, i_b].pos = 0
             self._solver.elements_v.grad[f, i_global, i_b].vel = 0
 
-        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
 

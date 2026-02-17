@@ -5,9 +5,11 @@ Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 from typing import Any, Optional
 
 import numpy as np
-import genesis as gs
 from pydantic import ConfigDict
-from .options import SensorOptions, Tuple3FType, RigidSensorOptionsMixin
+
+import genesis as gs
+
+from .options import RigidSensorOptionsMixin, SensorOptions, Vec3FType
 
 
 class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
@@ -18,12 +20,12 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     ----------
     res : tuple[int, int]
         Resolution as (width, height). Default is (512, 512).
-    pos : tuple[float, float, float]
+    pos : array-like[float, float, float]
         Camera position offset. If attached to a link, this is relative to the link frame.
         If not attached, this is relative to the world origin. Default is (3.5, 0.0, 1.5).
-    lookat : tuple[float, float, float]
+    lookat : array-like[float, float, float]
         Point the camera looks at in world frame.
-    up : tuple[float, float, float]
+    up : array-like[float, float, float]
         Up vector for camera orientation. Default is (0, 0, 1).
     fov : float
         Vertical field of view in degrees. Default is 60.0.
@@ -42,9 +44,9 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     res: tuple[int, int] = (512, 512)
-    pos: Tuple3FType = (3.5, 0.0, 1.5)
-    lookat: Tuple3FType = (0.0, 0.0, 0.0)
-    up: Tuple3FType = (0.0, 0.0, 1.0)
+    pos: Vec3FType = (3.5, 0.0, 1.5)
+    lookat: Vec3FType = (0.0, 0.0, 0.0)
+    up: Vec3FType = (0.0, 0.0, 1.0)
     fov: float = 60.0
     lights: list[dict] = []
     offset_T: Optional[np.ndarray] = None
@@ -127,7 +129,7 @@ class RaytracerCameraOptions(BaseCameraOptions):
     focus_dist: float = 3.0
     env_surface: Any = None  # gs.surfaces.Surface
     env_radius: float = 15.0
-    env_pos: Tuple3FType = (0.0, 0.0, 0.0)
+    env_pos: Vec3FType = (0.0, 0.0, 0.0)
     env_quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
     update_ground_truth_only: bool = True
 

@@ -7,13 +7,17 @@ import genesis as gs
 from genesis.utils import geom as gu
 from genesis.utils import urdf as urdf_utils
 
-from .usd_context import UsdContext
+from .usd_context import (
+    UsdContext,
+    extract_links_referenced_by_joints,
+    find_joints_in_range,
+    find_rigid_bodies_in_range,
+)
 from .usd_geometry import parse_prim_geoms
 from .usd_utils import (
     AXES_VECTOR,
     get_attr_value_by_candidates,
     usd_center_of_mass_to_numpy,
-    usd_diagonal_inertia_to_numpy,
     usd_inertia_to_numpy,
     usd_mass_to_float,
     usd_pos_to_numpy,
@@ -105,6 +109,13 @@ def _parse_link(
         l_info["inertial_i"] = usd_inertia_to_numpy(inertia_attr.Get())
         mass_attr = mass_api.GetMassAttr()
         l_info["inertial_mass"] = usd_mass_to_float(mass_attr.Get())
+
+    # set link transform for pure rigid bodies (no joints)
+    if not joints:
+        Q, S = context.compute_gs_transform(link, None)
+        l_info["parent_idx"] = -1
+        l_info["pos"] = Q[:3, 3]
+        l_info["quat"] = gu.R_to_quat(Q[:3, :3])
 
     j_infos = []
     for joint_prim, parent_idx, is_body1 in joints:
@@ -337,24 +348,55 @@ def _parse_link(
 
 # Rigidbody requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_rigid_bodies/capability-physics_rigid_bodies.html
 # Joint requirements: https://docs.omniverse.nvidia.com/kit/docs/asset-requirements/latest/capabilities/physics_bodies/physics_joints/capability-physics_joints.html
-def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
-    # TODO: we only assume that all links are under the subtree of the articulation root now.
-    # To parse the accurate articulation structure, we need to search through the BodyRel.
+def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim, joint_prims: List[str] | None = None):
     link_path_joints = {}
-    if entity_prim.HasAPI(UsdPhysics.ArticulationRootAPI):
-        for prim in Usd.PrimRange(entity_prim):  # will not iterate inactive prims
-            if prim.IsA(UsdPhysics.Joint):
-                joint = UsdPhysics.Joint(prim)
-                body0_targets = joint.GetBody0Rel().GetTargets()  # parent
-                body1_targets = joint.GetBody1Rel().GetTargets()  # child
-                body0_target_path = str(body0_targets[0]) if body0_targets else None
-                body1_target_path = str(body1_targets[0]) if body1_targets else None
-                if body1_target_path:
-                    if body0_target_path:
-                        link_path_joints.setdefault(body0_target_path, [])
-                    link_path_joints.setdefault(body1_target_path, []).append((prim, body0_target_path, True))
-                elif body0_target_path:
-                    link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
+
+    # Get joints to process - joint_prims is computed by parse_usd_rigid_entity (from the stage,
+    # as joints that reference links in the entity subtree) and passed here.
+    # If None, it means no joints (pure rigid body case).
+    if joint_prims is not None:
+        # Use provided joint prims
+        joint_prim_objs = [stage.GetPrimAtPath(joint_path) for joint_path in joint_prims]
+        for prim in joint_prim_objs:
+            if not prim.IsValid():
+                gs.raise_exception(f"Invalid joint prim path: {prim}")
+            if not prim.IsA(UsdPhysics.Joint):
+                gs.raise_exception(f"Prim {prim.GetPath()} is not a joint.")
+    else:
+        # No joints provided - this is a pure rigid body case
+        joint_prim_objs = []
+
+    # Process joints to build link/joint structure
+    # Only include paths that are actually rigid bodies (have RigidBodyAPI or CollisionAPI)
+    def is_rigid_body(path: str) -> bool:
+        """Check if a prim path is a rigid body."""
+        prim = stage.GetPrimAtPath(path)
+        if not prim.IsValid():
+            return False
+        return prim.HasAPI(UsdPhysics.RigidBodyAPI) or prim.HasAPI(UsdPhysics.CollisionAPI)
+
+    for prim in joint_prim_objs:
+        joint = UsdPhysics.Joint(prim)
+        body0_targets = joint.GetBody0Rel().GetTargets()  # parent
+        body1_targets = joint.GetBody1Rel().GetTargets()  # child
+        body0_target_path = str(body0_targets[0]) if body0_targets else None
+        body1_target_path = str(body1_targets[0]) if body1_targets else None
+
+        # Only process if at least one body is a rigid body
+        body0_is_rigid = body0_target_path and is_rigid_body(body0_target_path)
+        body1_is_rigid = body1_target_path and is_rigid_body(body1_target_path)
+
+        if body1_is_rigid:
+            # body1 is a rigid body - add it as a link
+            parent_path = body0_target_path if body0_is_rigid else None
+            link_path_joints.setdefault(body1_target_path, []).append((prim, parent_path, True))
+            # If body0 is also a rigid body, add it as a link (may be parent)
+            if body0_is_rigid:
+                link_path_joints.setdefault(body0_target_path, [])
+        elif body0_is_rigid:
+            # body0 is a rigid body - add it as a link
+            link_path_joints.setdefault(body0_target_path, []).append((prim, None, False))
+        # If neither is a rigid body, skip this joint (it doesn't connect rigid bodies)
 
     links, link_joints = [], []
     if link_path_joints:
@@ -368,12 +410,16 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim):
                 [(joint, link_path_to_idx[parent_path], is_body1) for joint, parent_path, is_body1 in joints]
             )
     else:
+        # Pure rigid body case - no joints, no placeholder needed
         links = [entity_prim]
         link_joints = [[]]
         link_path_to_idx = {None: -1, str(entity_prim.GetPath()): 0}
-    for joints in link_joints:
-        if not joints:
-            joints.append((None, -1, False))
+    # Only add placeholder joints for articulation links that have no joints
+    # (pure rigid bodies should not have any joints)
+    if link_path_joints:
+        for joints in link_joints:
+            if not joints:
+                joints.append((None, -1, False))
 
     return links, link_joints, link_path_to_idx
 
@@ -403,6 +449,65 @@ def _parse_links(
         l_infos.append(l_info)
         links_j_infos.append(link_j_info)
     return l_infos, links_j_infos
+
+
+def _compute_joint_prim_paths(stage: Usd.Stage, entity_prim: Usd.Prim) -> List[str] | None:
+    """
+    Compute joint prim paths for an entity. Joints are those that reference (body0 or body1)
+    any rigid body in the entity subtree, so that entities whose prim_path is a link (e.g.
+    common ancestor of a single link) still get joints that are siblings of that link.
+
+    This determines whether the entity is:
+    - A pure rigid body (no joints referencing links in subtree)
+    - A pure articulation (has joints, all rigid bodies in subtree are referenced by them)
+    - Mixed case (error: has both joints and unreferenced rigid bodies in subtree)
+
+    Raises
+    ------
+    gs.GenesisException
+        If mixed entity is detected (both joints and unreferenced rigid bodies in subtree).
+    """
+    # Find all rigid bodies in the entity_prim subtree
+    rigid_bodies_in_subtree = find_rigid_bodies_in_range(Usd.PrimRange(entity_prim))
+
+    # Find all joints in the stage (filter to those referencing links in subtree below)
+    all_joints = find_joints_in_range(Usd.PrimRange(stage.GetPseudoRoot()))
+
+    # Joints belonging to this entity: those that reference any link in the entity subtree
+    joints_for_entity = []
+    for joint_prim in all_joints:
+        joint = UsdPhysics.Joint(joint_prim)
+        body0_targets = joint.GetBody0Rel().GetTargets()
+        body1_targets = joint.GetBody1Rel().GetTargets()
+        body0_path = str(body0_targets[0]) if body0_targets else None
+        body1_path = str(body1_targets[0]) if body1_targets else None
+        if (body0_path and body0_path in rigid_bodies_in_subtree) or (
+            body1_path and body1_path in rigid_bodies_in_subtree
+        ):
+            joints_for_entity.append(joint_prim)
+
+    links_referenced_by_joints = extract_links_referenced_by_joints(stage, joints_for_entity, check_rigid_body=False)
+
+    # Determine entity type (has joints vs pure rigid body, and mixed-case check)
+    has_joints = len(joints_for_entity) > 0
+    has_unreferenced_rigid_bodies = len(rigid_bodies_in_subtree - links_referenced_by_joints) > 0
+
+    # Check for mixed case error, because scene.add_entity(...) only return 1 entity.
+    if has_joints and has_unreferenced_rigid_bodies:
+        unreferenced = rigid_bodies_in_subtree - links_referenced_by_joints
+        gs.raise_exception(
+            f"Mixed entity detected at {entity_prim.GetPath()}: "
+            f"has {len(joints_for_entity)} joints but also has {len(unreferenced)} rigid bodies "
+            f"not referenced by joints: {list(unreferenced)[:5]}. "
+            "Use scene.add_stage() to handle mixed entities, or ensure all rigid bodies are connected by joints."
+        )
+
+    # Pure articulation case (has joints, all rigid bodies are referenced)
+    if has_joints:
+        return [str(joint.GetPath()) for joint in joints_for_entity]
+
+    # Pure rigid body case (no joints)
+    return None
 
 
 def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
@@ -449,8 +554,9 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
             err_msg = f"Invalid user-specified prim path {entity_prim} in USD file {morph.file}."
         gs.raise_exception(err_msg)
 
-    # find joints
-    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim)
+    # Deduce joint prim paths for this entity and parse articulation structure (links + joints)
+    joint_prims = _compute_joint_prim_paths(stage, entity_prim)
+    links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim, joint_prims)
     links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)

@@ -155,11 +155,11 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if config.option.numprocesses > max_workers:
             raise ValueError(f"The number of workers cannot exceed '{max_workers}' on this machine.")
 
-    # Properly configure Taichi std out stream right away to avoid significant performance penalty (~10%)
+    # Properly configure Quadrants std out stream right away to avoid significant performance penalty (~10%)
     # Note that this variable must be set in the main thread BEFORE spawning the distributed workers, otherwise
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
     # relying on this mechanism is fragile.
-    os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
+    os.environ.setdefault("QD_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
     # Disable Quadrants dynamic array mode by default on MacOS because it is not supported by Metal
     if sys.platform == "darwin":
@@ -175,7 +175,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             gpu_index = gpu_indices[worker_num % len(gpu_indices)]
             os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-            os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+            os.environ["QD_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
         if is_benchmarks:
@@ -185,7 +185,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             physical_core_count = psutil.cpu_count(logical=config.option.logical)
             num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
             num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
-        os.environ["TI_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["QD_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OMP_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OPENBLAS_NUM_THREADS"] = num_cpu_per_worker
         os.environ["MKL_NUM_THREADS"] = num_cpu_per_worker
@@ -326,7 +326,7 @@ def pytest_xdist_auto_num_workers(config):
                 vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
-    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
+    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Quadrants
     # does not completely release memory between each test.
     if sys.platform == "darwin":
         ram_memory_per_worker = vram_memory_per_worker = 3.0
@@ -535,16 +535,16 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def taichi_offline_cache(request):
-    taichi_offline_cache = None
-    for mark in request.node.iter_markers("taichi_offline_cache"):
+def disable_cache(request):
+    disable_cache = None
+    for mark in request.node.iter_markers("disable_cache"):
         if mark.args:
-            if taichi_offline_cache is not None:
-                pytest.fail("'taichi_offline_cache' can only be specified once.")
-            (taichi_offline_cache,) = mark.args
-    if taichi_offline_cache is None:
-        taichi_offline_cache = True
-    return taichi_offline_cache
+            if disable_cache is not None:
+                pytest.fail("'disable_cache' can only be specified once.")
+            (disable_cache,) = mark.args
+    if disable_cache is None:
+        disable_cache = True
+    return disable_cache
 
 
 @pytest.fixture
@@ -572,9 +572,7 @@ def debug(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(
-    request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, taichi_offline_cache
-):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, disable_cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -590,10 +588,10 @@ def initialize_genesis(
     if debug is None:
         debug = request.config.getoption("--dev")
 
-    if not taichi_offline_cache:
-        monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+    if not disable_cache:
+        monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
-        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "taichi"))
+        monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
@@ -609,7 +607,7 @@ def initialize_genesis(
 
         # Skip test if not supported by this machine
         if sys.platform == "darwin" and backend != gs.cpu:
-            if os.environ.get("TI_ENABLE_METAL", "1") != "0" and precision == "64":
+            if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip("Apple Metal GPU does not support 64bits precision.")
             if os.environ.get("GS_ENABLE_NDARRAY") == "1":
                 pytest.skip(
@@ -637,7 +635,7 @@ def initialize_genesis(
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
+        # Double garbage collection is over-zealous since Quadrants 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 

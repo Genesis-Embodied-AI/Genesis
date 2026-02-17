@@ -1,4 +1,4 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 from genesis.engine.states.entities import SPHEntityState
@@ -6,7 +6,7 @@ from genesis.engine.states.entities import SPHEntityState
 from .particle_entity import ParticleEntity
 
 
-@ti.data_oriented
+@qd.data_oriented
 class SPHEntity(ParticleEntity):
     """
     SPH-based particle entity.
@@ -93,12 +93,12 @@ class SPHEntity(ParticleEntity):
         """
         pass
 
-    @ti.kernel
+    @qd.kernel
     def get_frame(
         self,
-        f: ti.i32,
-        pos: ti.types.ndarray(),
-        vel: ti.types.ndarray(),
+        f: qd.i32,
+        pos: qd.types.ndarray(),
+        vel: qd.types.ndarray(),
     ):
         """
         Retrieve particle positions and velocities for the given frame.
@@ -112,9 +112,9 @@ class SPHEntity(ParticleEntity):
         vel : ndarray
             Output array for velocities (n_envs, n_particles, 3).
         """
-        for i_p_, i_b in ti.ndrange(self.n_particles, self._sim._B):
+        for i_p_, i_b in qd.ndrange(self.n_particles, self._sim._B):
             i_p = i_p_ + self._particle_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_p_, j] = self.solver.particles[i_p, i_b].pos[j]
                 vel[i_b, i_p_, j] = self.solver.particles[i_p, i_b].vel[j]
 

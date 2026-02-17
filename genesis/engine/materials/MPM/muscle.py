@@ -1,9 +1,9 @@
-import quadrants as ti
+import quadrants as qd
 
 from .elastic import Elastic
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Muscle(Elastic):
     """
     The muscle material class for MPM.
@@ -49,7 +49,7 @@ class Muscle(Elastic):
         self._stiffness = E  # NOTE: use Young's modulus as muscle stiffness
         self._n_groups = n_groups
 
-    @ti.func
+    @qd.func
     def _update_stress_with_actuation(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
         stress = self._update_stress_without_actuation(U, S, V, F_tmp, F_new, J, Jp, actu, m_dir)
 

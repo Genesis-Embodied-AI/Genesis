@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
-@ti.data_oriented
+@qd.data_oriented
 class ContactIsland:
     def __init__(self, collider: "Collider"):
         self.solver: "RigidSolver" = collider._solver
@@ -66,24 +66,24 @@ class ContactIsland:
         # Reference to errno for reporting buffer overflow errors
         self.errno = self.solver._errno
 
-    @ti.kernel
+    @qd.kernel
     def clear(self):
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
-        for i_e, i_b in ti.ndrange(self.solver.n_entities, self.solver._B):
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        for i_e, i_b in qd.ndrange(self.solver.n_entities, self.solver._B):
             self.entity_edge.n[i_e, i_b] = 0
             self.island_col.n[i_e, i_b] = 0
             self.island_entity.n[i_e, i_b] = 0
             self.entity_island[i_e, i_b] = -1
 
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             self.n_edges[i_b] = 0
             self.n_islands[i_b] = 0
 
-    @ti.func
+    @qd.func
     def add_edge(self, link_a, link_b, i_b):
-        link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
-        link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
+        link_a_maybe_batch = [link_a, i_b] if qd.static(self.solver._options.batch_links_info) else link_a
+        link_b_maybe_batch = [link_b, i_b] if qd.static(self.solver._options.batch_links_info) else link_b
 
         ea = self.solver.links_info.entity_idx[link_a_maybe_batch]
         eb = self.solver.links_info.entity_idx[link_b_maybe_batch]
@@ -102,9 +102,9 @@ class ContactIsland:
             # Signal buffer overflow via errno bit 4 (0b00010000)
             self.errno[i_b] = self.errno[i_b] | array_class.ErrorCode.OVERFLOW_HIBERNATION_ISLANDS
 
-    @ti.kernel
+    @qd.kernel
     def add_contact_edges_to_islands(self):
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 # get links indices of the impact
@@ -112,11 +112,11 @@ class ContactIsland:
                 link_b = self.collider._collider_state.contact_data.link_b[i_col, i_b]
                 self.add_edge(link_a, link_b, i_b)
 
-    @ti.kernel
+    @qd.kernel
     def add_hibernated_edges_to_islands(self):
         _B = self.solver._B
         n_entities = self.solver.n_entities
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(_B):
             for i_e in range(n_entities):
                 next_entity_idx = self.entity_idx_to_next_entity_idx_in_hibernated_island[i_e, i_b]
@@ -134,16 +134,16 @@ class ContactIsland:
         self.construct_islands()
         self.postprocess_island_and_assign_contact_data()
 
-    @ti.kernel
+    @qd.kernel
     def postprocess_island_and_assign_contact_data(self):
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_col in range(self.collider._collider_state.n_contacts[i_b]):
                 # get links indices of the impact
                 link_a = self.collider._collider_state.contact_data.link_a[i_col, i_b]
                 link_b = self.collider._collider_state.contact_data.link_b[i_col, i_b]
-                link_a_maybe_batch = [link_a, i_b] if ti.static(self.solver._options.batch_links_info) else link_a
-                link_b_maybe_batch = [link_b, i_b] if ti.static(self.solver._options.batch_links_info) else link_b
+                link_a_maybe_batch = [link_a, i_b] if qd.static(self.solver._options.batch_links_info) else link_a
+                link_b_maybe_batch = [link_b, i_b] if qd.static(self.solver._options.batch_links_info) else link_b
 
                 ea = self.solver.links_info.entity_idx[link_a_maybe_batch]
                 eb = self.solver.links_info.entity_idx[link_b_maybe_batch]
@@ -193,9 +193,9 @@ class ContactIsland:
                     self.entity_id[self.island_entity.curr[island, i_b], i_b] = i
                     self.island_entity.curr[island, i_b] = self.island_entity.curr[island, i_b] + 1
 
-    @ti.kernel
+    @qd.kernel
     def preprocess_island_and_map_entities_to_edges(self):
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             entity_list_start = 0
             for i in range(self.solver.n_entities):
@@ -219,12 +219,12 @@ class ContactIsland:
                 self.entity_edge.curr[ea, i_b] = self.entity_edge.curr[ea, i_b] + 1
                 self.entity_edge.curr[eb, i_b] = self.entity_edge.curr[eb, i_b] + 1
 
-    @ti.kernel
+    @qd.kernel
     def construct_islands(self):
         """
         This assigns entities to islands, by setting their entity_island[entity_idx, batch_idx] = island_idx.
         """
-        ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(self.solver._B):
             for i_v in range(self.solver.n_entities):
                 # only create islands for entities with collisions and with dofs
@@ -235,7 +235,7 @@ class ContactIsland:
                     self.stack[self.n_stack[i_b], i_b] = i_v
                     self.n_stack[i_b] = self.n_stack[i_b] + 1
                     self.entity_island[i_v, i_b] = self.n_islands[i_b]
-                    # FIXME: Add proper mechanism to detection overflow in Taichi-scope
+                    # FIXME: Add proper mechanism to detection overflow in Quadrants-scope
                     # but raise exception in Python-scope
 
                     while self.n_stack[i_b] > 0:
@@ -257,14 +257,14 @@ class ContactIsland:
                                 self.stack[self.n_stack[i_b], i_b] = next_v
                                 self.n_stack[i_b] = self.n_stack[i_b] + 1
                                 self.entity_island[next_v, i_b] = self.n_islands[i_b]
-                                # FIXME: Add proper mechanism to detection overflow in Taichi-scope
+                                # FIXME: Add proper mechanism to detection overflow in Quadrants-scope
                                 # but raise exception in Python-scope
 
                     self.n_islands[i_b] = self.n_islands[i_b] + 1
 
         # create single-entity islands for entities without collisions
         if self.solver._enable_joint_limit:
-            ti.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
+            qd.loop_config(serialize=self.solver._para_level < gs.PARA_LEVEL.ALL)
             for i_b in range(self.solver._B):
                 for i_v in range(self.solver.n_entities):
                     if self.solver.entities_info.n_dofs[i_v] > 0 and self.entity_island[i_v, i_b] == -1:

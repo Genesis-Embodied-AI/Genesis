@@ -6,7 +6,7 @@ This module contains specialized contact detection algorithms for box geometries
 - Box-box contact detection (MuJoCo algorithm)
 """
 
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -21,7 +21,7 @@ from .contact import (
 )
 
 
-@ti.func
+@qd.func
 def func_plane_box_contact(
     i_ga,
     i_gb,
@@ -30,19 +30,19 @@ def func_plane_box_contact(
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     errno: array_class.V_ANNOTATION,
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
-    plane_dir = ti.Vector(
-        [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float
+    plane_dir = qd.Vector(
+        [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
     )
-    plane_dir = gu.ti_transform_by_quat(plane_dir, ga_quat)
+    plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
     v1, _, _ = support_field._func_support_box(geoms_info, normal, i_gb, gb_pos, gb_quat)
@@ -64,15 +64,15 @@ def func_plane_box_contact(
             errno,
         )
 
-        if ti.static(static_rigid_sim_config.enable_multi_contact):
+        if qd.static(static_rigid_sim_config.enable_multi_contact):
             n_con = 1
             contact_pos_0 = contact_pos
             tolerance = func_compute_tolerance(
                 i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
             )
             for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
-                if n_con < ti.static(collider_static_config.n_contacts_per_pair):
-                    pos_corner = gu.ti_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
+                if n_con < qd.static(collider_static_config.n_contacts_per_pair):
+                    pos_corner = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
                     penetration = normal.dot(pos_corner - ga_pos)
                     if penetration > 0.0:
                         contact_pos = pos_corner - 0.5 * penetration * normal
@@ -93,7 +93,7 @@ def func_plane_box_contact(
                             n_con = n_con + 1
 
 
-@ti.func
+@qd.func
 def func_box_box_contact(
     i_ga,
     i_gb,
@@ -103,7 +103,7 @@ def func_box_box_contact(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     errno: array_class.V_ANNOTATION,
 ):
     """
@@ -119,13 +119,13 @@ def func_box_box_contact(
 
     n = 0
     code = -1
-    margin = gs.ti_float(0.0)
+    margin = gs.qd_float(0.0)
     is_return = False
     cle1, cle2 = 0, 0
     in_ = 0
-    tmp2 = ti.Vector.zero(gs.ti_float, 3)
+    tmp2 = qd.Vector.zero(gs.qd_float, 3)
     margin2 = margin * margin
-    rotmore = ti.Matrix.zero(gs.ti_float, 3, 3)
+    rotmore = qd.Matrix.zero(gs.qd_float, 3, 3)
 
     ga_pos = geoms_state.pos[i_ga, i_b]
     gb_pos = geoms_state.pos[i_gb, i_b]
@@ -133,14 +133,14 @@ def func_box_box_contact(
     gb_quat = geoms_state.quat[i_gb, i_b]
 
     size1 = (
-        ti.Vector([geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.ti_float) / 2
+        qd.Vector([geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float) / 2
     )
     size2 = (
-        ti.Vector([geoms_info.data[i_gb][0], geoms_info.data[i_gb][1], geoms_info.data[i_gb][2]], dt=gs.ti_float) / 2
+        qd.Vector([geoms_info.data[i_gb][0], geoms_info.data[i_gb][1], geoms_info.data[i_gb][2]], dt=gs.qd_float) / 2
     )
 
     pos1, pos2 = ga_pos, gb_pos
-    mat1, mat2 = gu.ti_quat_to_R(ga_quat, EPS), gu.ti_quat_to_R(gb_quat, EPS)
+    mat1, mat2 = gu.qd_quat_to_R(ga_quat, EPS), gu.qd_quat_to_R(gb_quat, EPS)
 
     tmp1 = pos2 - pos1
     pos21 = mat1.transpose() @ tmp1
@@ -151,17 +151,17 @@ def func_box_box_contact(
     rot = mat1.transpose() @ mat2
     rott = rot.transpose()
 
-    rotabs = ti.abs(rot)
-    rottabs = ti.abs(rott)
+    rotabs = qd.abs(rot)
+    rottabs = qd.abs(rott)
 
     plen2 = rotabs @ size2
     plen1 = rotabs.transpose() @ size1
     penetration = margin
-    for i in ti.static(range(3)):
+    for i in qd.static(range(3)):
         penetration = penetration + size1[i] * 3 + size2[i] * 3
-    for i in ti.static(range(3)):
-        c1 = -ti.abs(pos21[i]) + size1[i] + plen2[i]
-        c2 = -ti.abs(pos12[i]) + size2[i] + plen1[i]
+    for i in qd.static(range(3)):
+        c1 = -qd.abs(pos21[i]) + size1[i] + plen2[i]
+        c2 = -qd.abs(pos12[i]) + size2[i] + plen1[i]
 
         if (c1 < -margin) or (c2 < -margin):
             is_return = True
@@ -173,30 +173,30 @@ def func_box_box_contact(
         if c2 < penetration:
             penetration = c2
             code = i + 3 * (pos12[i] < 0) + 6
-    clnorm = ti.Vector([0.0, 0.0, 0.0], dt=gs.ti_float)
-    for i, j in ti.static(ti.ndrange(3, 3)):
+    clnorm = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
+    for i, j in qd.static(qd.ndrange(3, 3)):
         rj0 = rott[j, 0]
         rj1 = rott[j, 1]
         rj2 = rott[j, 2]
         if i == 0:
-            tmp2 = ti.Vector([0.0, -rj2, +rj1], dt=gs.ti_float)
+            tmp2 = qd.Vector([0.0, -rj2, +rj1], dt=gs.qd_float)
         elif i == 1:
-            tmp2 = ti.Vector([+rj2, 0.0, -rj0], dt=gs.ti_float)
+            tmp2 = qd.Vector([+rj2, 0.0, -rj0], dt=gs.qd_float)
         else:
-            tmp2 = ti.Vector([-rj1, +rj0, 0.0], dt=gs.ti_float)
+            tmp2 = qd.Vector([-rj1, +rj0, 0.0], dt=gs.qd_float)
 
         c1 = tmp2.norm()
         tmp2 = tmp2 / c1
         if c1 >= EPS:
             c2 = pos21.dot(tmp2)
 
-            c3 = gs.ti_float(0.0)
+            c3 = gs.qd_float(0.0)
 
-            for k in ti.static(range(3)):
+            for k in qd.static(range(3)):
                 if k != i:
-                    c3 = c3 + size1[k] * ti.abs(tmp2[k])
+                    c3 = c3 + size1[k] * qd.abs(tmp2[k])
 
-            for k in ti.static(range(3)):
+            for k in qd.static(range(3)):
                 if k != j:
                     m = i
                     n = 3 - k - j
@@ -205,7 +205,7 @@ def func_box_box_contact(
                         n = n + 3
                     c3 = c3 + size2[k] * rotabs[m, n] / c1
 
-            c3 = c3 - ti.abs(c2)
+            c3 = c3 - qd.abs(c2)
 
             if c3 < -margin:
                 is_return = True
@@ -213,19 +213,19 @@ def func_box_box_contact(
             if c3 < penetration * (1.0 - 1e-12):
                 penetration = c3
                 cle1 = 0
-                for k in ti.static(range(3)):
+                for k in qd.static(range(3)):
                     if (k != i) and ((tmp2[k] > 0) ^ (c2 < 0)):
                         cle1 = cle1 + (1 << k)
 
                 cle2 = 0
-                for k in ti.static(range(3)):
+                for k in qd.static(range(3)):
                     if k != j:
                         m = i
                         n = 3 - k - j
                         if k - j > 3:
                             m = m - 1
                             n = n + 3
-                        if (rot[m, n] > 0) ^ (c2 < 0) ^ (ti.raw_mod(k - j + 3, 3) == 1):
+                        if (rot[m, n] > 0) ^ (c2 < 0) ^ (qd.raw_mod(k - j + 3, 3) == 1):
                             cle2 = cle2 + (1 << k)
 
                 code = 12 + i * 3 + j
@@ -288,9 +288,9 @@ def func_box_box_contact(
                 f0 = -1
                 f2 = -1
 
-            r = ti.Matrix.zero(gs.ti_float, 3, 3)
-            p = ti.Vector.zero(gs.ti_float, 3)
-            s = ti.Vector.zero(gs.ti_float, 3)
+            r = qd.Matrix.zero(gs.qd_float, 3, 3)
+            p = qd.Vector.zero(gs.qd_float, 3)
+            s = qd.Vector.zero(gs.qd_float, 3)
             if q2:
                 r = rotmore @ rot.transpose()
                 p = rotaxis(pos12, i0, i1, i2, f0, f1, f2)
@@ -303,7 +303,7 @@ def func_box_box_contact(
                 s = size2
 
             rt = r.transpose()
-            ss = ti.abs(tmp1)
+            ss = qd.abs(tmp1)
             lx = ss[0]
             ly = ss[1]
             hz = ss[2]
@@ -312,19 +312,19 @@ def func_box_box_contact(
 
             clcorner = 0
 
-            for i in ti.static(range(3)):
+            for i in qd.static(range(3)):
                 if r[2, i] < 0:
                     clcorner = clcorner + (1 << i)
 
-            for i in ti.static(range(3)):
+            for i in qd.static(range(3)):
                 lp = lp + rt[i, :] * s[i] * (1 if (clcorner & (1 << i)) else -1)
 
             m, k = 0, 0
             collider_state.box_pts[m, i_b] = lp
             m = m + 1
 
-            for i in ti.static(range(3)):
-                if ti.abs(r[2, i]) < 0.5:
+            for i in qd.static(range(3)):
+                if qd.abs(r[2, i]) < 0.5:
                     collider_state.box_pts[m, i_b] = rt[i, :] * s[i] * (-2 if (clcorner & (1 << i)) else 2)
                     m = m + 1
 
@@ -351,19 +351,19 @@ def func_box_box_contact(
                 k = k + 1
 
             for i in range(k):
-                for q in ti.static(range(2)):
+                for q in qd.static(range(2)):
                     a = collider_state.box_lines[i, i_b][0 + q]
                     b = collider_state.box_lines[i, i_b][3 + q]
                     c = collider_state.box_lines[i, i_b][1 - q]
                     d = collider_state.box_lines[i, i_b][4 - q]
-                    if ti.abs(b) > EPS:
-                        for _j in ti.static(range(2)):
+                    if qd.abs(b) > EPS:
+                        for _j in qd.static(range(2)):
                             j = 2 * _j - 1
                             l = ss[q] * j
                             c1 = (l - a) / b
                             if 0 <= c1 and c1 <= 1:
                                 c2 = c + d * c1
-                                if ti.abs(c2) <= ss[1 - q]:
+                                if qd.abs(c2) <= ss[1 - q]:
                                     collider_state.box_points[n, i_b] = (
                                         collider_state.box_lines[i, i_b][0:3]
                                         + collider_state.box_lines[i, i_b][3:6] * c1
@@ -376,7 +376,7 @@ def func_box_box_contact(
             c1 = a * d - b * c
 
             if m > 2:
-                for i in ti.static(range(4)):
+                for i in qd.static(range(4)):
                     llx = lx if (i // 2) else -lx
                     lly = ly if (i % 2) else -ly
 
@@ -387,7 +387,7 @@ def func_box_box_contact(
                     v = (y * a - x * c) / c1
 
                     if 0 < u and u < 1 and 0 < v and v < 1:
-                        collider_state.box_points[n, i_b] = ti.Vector(
+                        collider_state.box_points[n, i_b] = qd.Vector(
                             [
                                 llx,
                                 lly,
@@ -414,16 +414,16 @@ def func_box_box_contact(
                     n = n + 1
             r = (mat2 if q2 else mat1) @ rotmore.transpose()
             p = pos2 if q2 else pos1
-            tmp2 = ti.Vector(
+            tmp2 = qd.Vector(
                 [(-1 if q2 else 1) * r[0, 2], (-1 if q2 else 1) * r[1, 2], (-1 if q2 else 1) * r[2, 2]],
-                dt=gs.ti_float,
+                dt=gs.qd_float,
             )
             normal_0 = tmp2
 
             n_added = 0
             n_start = collider_state.n_contacts[i_b]
             for i in range(n):
-                if n_added < ti.static(collider_static_config.n_contacts_per_pair):
+                if n_added < qd.static(collider_static_config.n_contacts_per_pair):
                     dist = collider_state.box_points[i, i_b][2]
                     collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
                     contact_pos = p + r @ collider_state.box_points[i, i_b]
@@ -432,7 +432,7 @@ def func_box_box_contact(
                     is_valid = True
                     for j_ in range(n_added):
                         j = n_start + j_
-                        if (ti.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                        if (qd.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
                             is_valid = False
 
                     if is_valid:
@@ -521,7 +521,7 @@ def func_box_box_contact(
             # TODO
             tmp1 = rotmore.transpose() @ size1
 
-            s = ti.abs(tmp1)
+            s = qd.abs(tmp1)
             rt = r.transpose()
 
             lx, ly, hz = s[0], s[1], s[2]
@@ -563,12 +563,12 @@ def func_box_box_contact(
             collider_state.box_axi[1, i_b] = collider_state.box_points[1, i_b] - collider_state.box_points[0, i_b]
             collider_state.box_axi[2, i_b] = collider_state.box_points[2, i_b] - collider_state.box_points[0, i_b]
 
-            if ti.abs(rnorm[2]) < EPS:
+            if qd.abs(rnorm[2]) < EPS:
                 is_return = True
             if not is_return:
                 innorm = (1 / rnorm[2]) * (-1 if in_ else 1)
 
-                for i in ti.static(range(4)):
+                for i in qd.static(range(4)):
                     c1 = -collider_state.box_points[i, i_b][2] / rnorm[2]
                     collider_state.box_pu[i, i_b] = collider_state.box_points[i, i_b]
                     collider_state.box_points[i, i_b] = collider_state.box_points[i, i_b] + c1 * rnorm
@@ -618,20 +618,20 @@ def func_box_box_contact(
                     k = k + 1
 
                 for i in range(k):
-                    for q in ti.static(range(2)):
+                    for q in qd.static(range(2)):
                         a = collider_state.box_lines[i, i_b][q]
                         b = collider_state.box_lines[i, i_b][q + 3]
                         c = collider_state.box_lines[i, i_b][1 - q]
                         d = collider_state.box_lines[i, i_b][4 - q]
 
-                        if ti.abs(b) > EPS:
-                            for _j in ti.static(range(2)):
+                        if qd.abs(b) > EPS:
+                            for _j in qd.static(range(2)):
                                 j = 2 * _j - 1
                                 l = s[q] * j
                                 c1 = (l - a) / b
                                 if 0 <= c1 and c1 <= 1:
                                     c2 = c + d * c1
-                                    if (ti.abs(c2) <= s[1 - q]) and (
+                                    if (qd.abs(c2) <= s[1 - q]) and (
                                         (
                                             collider_state.box_linesu[i, i_b][2]
                                             + collider_state.box_linesu[i, i_b][5] * c1
@@ -677,8 +677,8 @@ def func_box_box_contact(
                     elif u < 0 or u > 1 or v < 0 or v > 1:
                         continue
 
-                    u = ti.math.clamp(u, 0, 1)
-                    v = ti.math.clamp(v, 0, 1)
+                    u = qd.math.clamp(u, 0, 1)
+                    v = qd.math.clamp(v, 0, 1)
                     tmp1 = (
                         collider_state.box_pu[0, i_b] * (1 - u - v)
                         + collider_state.box_pu[1, i_b] * u
@@ -696,7 +696,7 @@ def func_box_box_contact(
                         collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
                         collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
 
-                        collider_state.box_depth[n, i_b] = ti.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
+                        collider_state.box_depth[n, i_b] = qd.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
                         n = n + 1
 
                 nf = n
@@ -711,7 +711,7 @@ def func_box_box_contact(
                         continue
 
                     c1 = 0
-                    for j in ti.static(range(2)):
+                    for j in qd.static(range(2)):
                         if collider_state.box_ppts2[i, j, i_b] < -s[j]:
                             c1 = c1 + (collider_state.box_ppts2[i, j, i_b] + s[j]) ** 2
                         elif collider_state.box_ppts2[i, j, i_b] > s[j]:
@@ -722,16 +722,16 @@ def func_box_box_contact(
                     if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
                         continue
 
-                    tmp1 = ti.Vector(
+                    tmp1 = qd.Vector(
                         [
                             collider_state.box_ppts2[i, 0, i_b] * 0.5,
                             collider_state.box_ppts2[i, 1, i_b] * 0.5,
                             0,
                         ],
-                        dt=gs.ti_float,
+                        dt=gs.qd_float,
                     )
 
-                    for j in ti.static(range(2)):
+                    for j in qd.static(range(2)):
                         if collider_state.box_ppts2[i, j, i_b] < -s[j]:
                             tmp1[j] = -s[j] * 0.5
                         elif collider_state.box_ppts2[i, j, i_b] > s[j]:
@@ -740,7 +740,7 @@ def func_box_box_contact(
                     tmp1 = tmp1 + collider_state.box_pu[i, i_b] * 0.5
                     collider_state.box_points[n, i_b] = tmp1
 
-                    collider_state.box_depth[n, i_b] = ti.sqrt(c1) * (-1 if collider_state.box_pu[i, i_b][2] < 0 else 1)
+                    collider_state.box_depth[n, i_b] = qd.sqrt(c1) * (-1 if collider_state.box_pu[i, i_b][2] < 0 else 1)
                     n = n + 1
 
                 r = mat1 @ rotmore.transpose()
@@ -750,7 +750,7 @@ def func_box_box_contact(
                 n_added = 0
                 n_start = collider_state.n_contacts[i_b]
                 for i in range(n):
-                    if n_added < ti.static(collider_static_config.n_contacts_per_pair):
+                    if n_added < qd.static(collider_static_config.n_contacts_per_pair):
                         dist = collider_state.box_depth[i, i_b]
                         collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
                         contact_pos = pos1 + (r @ collider_state.box_points[i, i_b])
@@ -759,7 +759,7 @@ def func_box_box_contact(
                         is_valid = True
                         for j_ in range(n_added):
                             j = n_start + j_
-                            if (ti.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                            if (qd.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
                                 is_valid = False
 
                         if is_valid:

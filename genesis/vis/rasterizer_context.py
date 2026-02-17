@@ -8,7 +8,7 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
-from genesis.utils.misc import tensor_to_array, ti_to_numpy
+from genesis.utils.misc import tensor_to_array, qd_to_numpy
 
 
 class SegmentationColorMap:
@@ -307,8 +307,8 @@ class RasterizerContext:
         if not self.link_frame_shown:
             if self.sim.rigid_solver.is_active:
                 links = self.sim.rigid_solver.links
-                links_pos = ti_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
-                links_quat = ti_to_numpy(self.sim.rigid_solver.links_state.quat)
+                links_pos = qd_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
+                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat)
 
                 for link in links:
                     mesh = pyrender.Mesh.from_trimesh(
@@ -332,8 +332,8 @@ class RasterizerContext:
             if self.sim.rigid_solver.is_active:
                 links = self.sim.rigid_solver.links
 
-                links_pos = ti_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
-                links_quat = ti_to_numpy(self.sim.rigid_solver.links_state.quat)
+                links_pos = qd_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
+                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat)
 
                 for link in links:
                     link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
@@ -362,8 +362,8 @@ class RasterizerContext:
     def update_tool(self, buffer_updates):
         if self.sim.tool_solver.is_active:
             for tool_entity in self.sim.tool_solver.entities:
-                poss = ti_to_numpy(tool_entity.pos)[self.sim.cur_substep_local] + self.scene.envs_offset
-                quats = ti_to_numpy(tool_entity.quat)[self.sim.cur_substep_local]
+                poss = qd_to_numpy(tool_entity.pos)[self.sim.cur_substep_local] + self.scene.envs_offset
+                quats = qd_to_numpy(tool_entity.quat)[self.sim.cur_substep_local]
                 for idx in self.rendered_envs_idx:
                     pose = gu.trans_quat_to_T(poss[idx], quats[idx])
                     self.set_node_pose(self.static_nodes[(idx, tool_entity.uid)], pose=pose)
@@ -462,7 +462,7 @@ class RasterizerContext:
             if n_contacts == 0:
                 return
 
-            geoms_aabb = ti_to_numpy(self.sim.rigid_solver.geoms_init_AABB)
+            geoms_aabb = qd_to_numpy(self.sim.rigid_solver.geoms_init_AABB)
             ga_aabb = geoms_aabb[contacts_info["geom_a"]]
             gb_aabb = geoms_aabb[contacts_info["geom_b"]]
             ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
@@ -527,9 +527,9 @@ class RasterizerContext:
 
     def update_mpm(self, buffer_updates):
         if self.sim.mpm_solver.is_active:
-            particles_all = ti_to_numpy(self.sim.mpm_solver.particles_render.pos) + self.scene.envs_offset
-            active_all = ti_to_numpy(self.sim.mpm_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
-            vverts_all = ti_to_numpy(self.sim.mpm_solver.vverts_render.pos) + self.scene.envs_offset
+            particles_all = qd_to_numpy(self.sim.mpm_solver.particles_render.pos) + self.scene.envs_offset
+            active_all = qd_to_numpy(self.sim.mpm_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
+            vverts_all = qd_to_numpy(self.sim.mpm_solver.vverts_render.pos) + self.scene.envs_offset
             for mpm_entity in self.sim.mpm_solver.entities:
                 for idx in self.rendered_envs_idx:
                     if mpm_entity.surface.vis_mode == "recon":
@@ -595,8 +595,8 @@ class RasterizerContext:
 
     def update_sph(self, buffer_updates):
         if self.sim.sph_solver.is_active:
-            particles_all = ti_to_numpy(self.sim.sph_solver.particles_render.pos) + self.scene.envs_offset
-            active_all = ti_to_numpy(self.sim.sph_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
+            particles_all = qd_to_numpy(self.sim.sph_solver.particles_render.pos) + self.scene.envs_offset
+            active_all = qd_to_numpy(self.sim.sph_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
 
             for sph_entity in self.sim.sph_solver.entities:
                 for idx in self.rendered_envs_idx:
@@ -679,10 +679,10 @@ class RasterizerContext:
 
     def update_pbd(self, buffer_updates):
         if self.sim.pbd_solver.is_active:
-            particles_all = ti_to_numpy(self.sim.pbd_solver.particles_render.pos) + self.scene.envs_offset
-            particles_vel_all = ti_to_numpy(self.sim.pbd_solver.particles_render.vel)
-            active_all = ti_to_numpy(self.sim.pbd_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
-            vverts_all = ti_to_numpy(self.sim.pbd_solver.vverts_render.pos) + self.scene.envs_offset
+            particles_all = qd_to_numpy(self.sim.pbd_solver.particles_render.pos) + self.scene.envs_offset
+            particles_vel_all = qd_to_numpy(self.sim.pbd_solver.particles_render.vel)
+            active_all = qd_to_numpy(self.sim.pbd_solver.particles_render.active).astype(dtype=np.bool_, copy=False)
+            vverts_all = qd_to_numpy(self.sim.pbd_solver.vverts_render.pos) + self.scene.envs_offset
             for pbd_entity in self.sim.pbd_solver.entities:
                 for idx in self.rendered_envs_idx:
                     particles_env = particles_all[:, idx]
@@ -734,10 +734,10 @@ class RasterizerContext:
 
     def on_fem(self):
         if self.sim.fem_solver.is_active:
-            vertices_ti, triangles_ti, uvs_ti = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
-            vertices_all = ti_to_numpy(vertices_ti)
-            triangles_all = ti_to_numpy(triangles_ti).reshape((-1, 3))
-            uvs_all = ti_to_numpy(uvs_ti)
+            vertices_qd, triangles_qd, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all = qd_to_numpy(vertices_qd)
+            triangles_all = qd_to_numpy(triangles_qd).reshape((-1, 3))
+            uvs_all = qd_to_numpy(uvs_qd)
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":

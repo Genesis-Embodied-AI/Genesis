@@ -1,9 +1,9 @@
-import quadrants as ti
+import quadrants as qd
 
 from .base import Material
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Tool(Material):
     def __init__(
         self,
