@@ -1,20 +1,13 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import Field, conlist
+from pydantic import Field
 
 import genesis as gs
+from genesis.constants import FArrayType, MaybeMatrix3x3Type, MaybeVec3FType, Vec3FArrayType, Vec3FType, Vec4FType
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
-
-Vec3FType = conlist(float, min_length=3, max_length=3)
-Vec4FType = conlist(float, min_length=4, max_length=4)
-Vec3FArrayType = conlist(Vec3FType, min_length=1)
-FArrayType = conlist(float, min_length=1)
-MaybeVec3FType = float | Vec3FType
-Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -256,11 +249,17 @@ class ElastomerTactileSensor(KinematicContactProbe):
         The coefficient for the effect of displacement caused by shear motion.
     twist_coefficient: float
         The coefficient for the effect of displacement caused by twist motion.
+    shear_max_delta: float
+        Maximum shear magnitude in meters for the FOTS formula.
+    twist_max_delta: float
+        Maximum twist angle in degrees for the FOTS formula.
     """
 
     dilate_coefficient: float = 1.25e-3
     shear_coefficient: float = 2.10e-4
     twist_coefficient: float = 3.80e-4
+    shear_max_delta: float = 0.1
+    twist_max_delta: float = 50.0
 
 
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
