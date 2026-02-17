@@ -5,8 +5,8 @@ import pytest
 def parser_add_options(parser: pytest.Parser) -> None:
     parser.addoption("--profile", action="store_true", default=False, help="Enable PyTorch profiling for benchmarks.")
     parser.addoption("--profile-wait", type=int, default=5, help="Number of steps to skip before profiling.")
-    parser.addoption("--profile-warmup", type=int, default=1, help="Number of warmup steps for profiling.")
-    parser.addoption("--profile-active", type=int, default=3, help="Number of active profiling steps.")
+    parser.addoption("--profile-warmup", type=int, default=0, help="Number of warmup steps for profiling.")
+    parser.addoption("--profile-active", type=int, default=1, help="Number of active profiling steps.")
     parser.addoption("--profile-repeat", type=int, default=1, help="Number of times to repeat profiling.")
 
 
