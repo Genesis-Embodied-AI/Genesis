@@ -243,6 +243,26 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         return array
 
 
+class ElastomerTactileSensor(KinematicContactProbe):
+    """
+    A tactile sensor which estimates the displacement of the elastomer based on the contact force and depth of
+    penetration along the probe normal on collisions.
+
+    Parameters
+    ----------
+    dilate_coefficient: float
+        The coefficient for the effect of displacement caused by dilate motion.
+    shear_coefficient: float
+        The coefficient for the effect of displacement caused by shear motion.
+    twist_coefficient: float
+        The coefficient for the effect of displacement caused by twist motion.
+    """
+
+    dilate_coefficient: float = 1.25e-3
+    shear_coefficient: float = 2.10e-4
+    twist_coefficient: float = 3.80e-4
+
+
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)

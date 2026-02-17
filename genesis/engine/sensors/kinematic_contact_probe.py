@@ -10,6 +10,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_verts
 from genesis.engine.solvers.rigid.collider.utils import func_point_in_geom_aabb
+from genesis.options.sensors import ElastomerTactileSensor as ElastomerTactileSensorOptions
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
@@ -33,10 +34,10 @@ if TYPE_CHECKING:
 
 
 @qd.func
-def _probe_geom_penetration(
+def _func_probe_geom_penetration(
     probe_pos: gs.qd_vec3,
     probe_normal: gs.qd_vec3,
-    radius: gs.qd_float,
+    probe_radius: gs.qd_float,
     max_range: gs.qd_float,
     i_g: gs.qd_int,
     i_b: gs.qd_int,
@@ -51,7 +52,7 @@ def _probe_geom_penetration(
     neg_normal = -probe_normal
     face_start = geoms_info.face_start[i_g]
     face_end = geoms_info.face_end[i_g]
-    radius_sq = radius * radius
+    radius_sq = probe_radius * probe_radius
 
     for i_f in range(face_start, face_end):
         tri_verts = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
@@ -59,9 +60,9 @@ def _probe_geom_penetration(
         v1 = tri_verts[:, 1]
         v2 = tri_verts[:, 2]
 
-        if radius > gs.EPS:
+        if probe_radius > gs.EPS:
             # Sphere-triangle test (closest point)
-            closest_point = _closest_point_on_triangle(probe_pos, v0, v1, v2)
+            closest_point = _func_closest_point_on_triangle(probe_pos, v0, v1, v2)
             diff = closest_point - probe_pos
             dist_sq = diff.dot(diff)
             if dist_sq <= radius_sq:
@@ -80,7 +81,7 @@ def _probe_geom_penetration(
 
 
 @qd.func
-def _closest_point_on_triangle(
+def _func_closest_point_on_triangle(
     point: gs.qd_vec3,
     v0: gs.qd_vec3,
     v1: gs.qd_vec3,
@@ -144,6 +145,63 @@ def _closest_point_on_triangle(
     return closest
 
 
+@qd.func
+def _func_query_contact_depth(
+    i_b: gs.qd_int,
+    probe_pos: gs.qd_vec3,
+    probe_normal: gs.qd_vec3,
+    probe_radius: gs.qd_float,
+    probe_max_raycast_range: gs.qd_float,
+    sensor_link_idx: gs.qd_int,
+    geoms_info: array_class.GeomsInfo,
+    geoms_state: array_class.GeomsState,
+    faces_info: array_class.FacesInfo,
+    verts_info: array_class.VertsInfo,
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
+    collider_state: array_class.ColliderState,
+    eps: gs.qd_float,
+):
+    max_penetration = gs.qd_float(0.0)
+
+    # Iterate over contacts directly from collider state
+    n_contacts = collider_state.n_contacts[i_b]
+    for i_c in range(n_contacts):
+        c_link_a = collider_state.contact_data.link_a[i_c, i_b]
+        c_link_b = collider_state.contact_data.link_b[i_c, i_b]
+        c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
+        c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
+
+        # Check if either side of this contact involves one of our sensor links;
+        for side in qd.static(range(2)):
+            contact_link = c_link_a if side == 0 else c_link_b
+            i_g = c_geom_b if side == 0 else c_geom_a
+
+            # Is this contact relevant to this sensor?
+            if contact_link == sensor_link_idx and func_point_in_geom_aabb(
+                geoms_state, i_g, i_b, probe_pos, probe_radius
+            ):
+                # Raycast + sphere penetration test per geom
+                penetration = _func_probe_geom_penetration(
+                    probe_pos,
+                    probe_normal,
+                    probe_radius,
+                    probe_max_raycast_range,
+                    i_g,
+                    i_b,
+                    geoms_info,
+                    faces_info,
+                    verts_info,
+                    fixed_verts_state,
+                    free_verts_state,
+                    eps,
+                )
+                if penetration > max_penetration:
+                    max_penetration = penetration
+
+    return max_penetration
+
+
 @qd.kernel
 def _kernel_kinematic_contact_probe(
     probe_positions_local: qd.types.ndarray(),
@@ -195,42 +253,22 @@ def _kernel_kinematic_contact_probe(
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
         probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
 
-        max_penetration = gs.qd_float(0.0)
-
-        # Iterate over contacts directly from collider state
-        n_contacts = collider_state.n_contacts[i_b]
-        for i_c in range(n_contacts):
-            c_link_a = collider_state.contact_data.link_a[i_c, i_b]
-            c_link_b = collider_state.contact_data.link_b[i_c, i_b]
-            c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
-            c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
-
-            # Check if either side of this contact involves one of our sensor links;
-            for side in qd.static(range(2)):
-                contact_link = c_link_a if side == 0 else c_link_b
-                i_g = c_geom_b if side == 0 else c_geom_a
-
-                # Is this contact relevant to this sensor?
-                if contact_link == sensor_link_idx and func_point_in_geom_aabb(
-                    geoms_state, i_g, i_b, probe_pos, radius
-                ):
-                    # Raycast + sphere penetration test per geom
-                    penetration = _probe_geom_penetration(
-                        probe_pos,
-                        probe_normal,
-                        radius,
-                        probe_max_raycast_range,
-                        i_g,
-                        i_b,
-                        geoms_info,
-                        faces_info,
-                        verts_info,
-                        fixed_verts_state,
-                        free_verts_state,
-                        eps,
-                    )
-                    if penetration > max_penetration:
-                        max_penetration = penetration
+        max_penetration = _func_query_contact_depth(
+            i_b,
+            probe_pos,
+            probe_normal,
+            radius,
+            probe_max_raycast_range,
+            sensor_link_idx,
+            geoms_info,
+            geoms_state,
+            faces_info,
+            verts_info,
+            fixed_verts_state,
+            free_verts_state,
+            collider_state,
+            eps,
+        )
 
         force_local = qd.Vector.zero(gs.qd_float, 3)
         if max_penetration > 0:
@@ -244,6 +282,91 @@ def _kernel_kinematic_contact_probe(
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = force_local[0]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = force_local[1]
         output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = force_local[2]
+
+
+@qd.kernel
+def _kernel_elastomer_tactile(
+    probe_positions_local: qd.types.ndarray(),
+    probe_normals_local: qd.types.ndarray(),
+    probe_sensor_idx: qd.types.ndarray(),
+    probe_max_raycast_range: gs.qd_float,
+    links_state: array_class.LinksState,
+    radii: qd.types.ndarray(),
+    dilate_coefficients: qd.types.ndarray(),
+    shear_coefficients: qd.types.ndarray(),
+    twist_coefficients: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    n_probes_per_sensor: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    collider_state: array_class.ColliderState,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
+    static_rigid_sim_config: qd.template(),
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    output: qd.types.ndarray(),
+    eps: gs.qd_float,
+):
+    total_n_probes = probe_positions_local.shape[0]
+    n_batches = output.shape[0]
+
+    func_update_all_verts(
+        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+    )
+
+    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
+        i_s = probe_sensor_idx[i_p]
+
+        probe_pos_local = qd.Vector(
+            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
+        )
+        probe_normal_local = qd.Vector(
+            [probe_normals_local[i_p, 0], probe_normals_local[i_p, 1], probe_normals_local[i_p, 2]]
+        )
+
+        radius = radii[i_p]
+        dilate_coeff = dilate_coefficients[i_s]
+        shear_coeff = shear_coefficients[i_s]
+        twist_coeff = twist_coefficients[i_s]
+        sensor_link_idx = links_idx[i_s]
+
+        link_pos = links_state.pos[sensor_link_idx, i_b]
+        link_quat = links_state.quat[sensor_link_idx, i_b]
+
+        probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
+        probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
+
+        max_penetration = _func_query_contact_depth(
+            i_b,
+            probe_pos,
+            probe_normal,
+            radius,
+            probe_max_raycast_range,
+            sensor_link_idx,
+            geoms_info,
+            geoms_state,
+            faces_info,
+            verts_info,
+            fixed_verts_state,
+            free_verts_state,
+            collider_state,
+            eps,
+        )
+
+        displacement_local = qd.Vector.zero(gs.qd_float, 3)
+        if max_penetration > 0:
+            # TODO: Implement displacement calculation based on FOTS paper
+            displacement_local = ...
+
+        probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
+        cache_start = sensor_cache_start[i_s]
+
+        output[i_b, cache_start + probe_idx_in_sensor * 3 + 0] += displacement_local[0]
+        output[i_b, cache_start + probe_idx_in_sensor * 3 + 1] += displacement_local[1]
+        output[i_b, cache_start + probe_idx_in_sensor * 3 + 2] += displacement_local[2]
 
 
 class KinematicContactProbeData(NamedTuple):
@@ -450,3 +573,99 @@ class KinematicContactProbe(
                 color=self._options.debug_sphere_color if penetration <= gs.EPS else self._options.debug_contact_color,
             )
             self._debug_objects.append(sphere_obj)
+
+
+@dataclass
+class ElastomerTactileSensorMetadata(KinematicContactProbeMetadata):
+    """Shared metadata for all kinematic contact probes."""
+
+    dilate_coefficient: torch.Tensor = make_tensor_field((0,))
+    shear_coefficient: torch.Tensor = make_tensor_field((0,))
+    twist_coefficient: torch.Tensor = make_tensor_field((0,))
+    sensor_normal: torch.Tensor = make_tensor_field((0, 3))
+    sensor_origin: torch.Tensor = make_tensor_field((0, 3))
+
+
+@register_sensor(ElastomerTactileSensorOptions, ElastomerTactileSensorMetadata, tuple)
+@qd.data_oriented
+class ElastomerTactileSensor(KinematicContactProbe):
+    def __init__(
+        self,
+        sensor_options: KinematicContactProbeOptions,
+        sensor_idx: int,
+        data_cls: Type[KinematicContactProbeData],
+        sensor_manager: "SensorManager",
+    ):
+        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+
+    def build(self):
+        super().build()
+
+        self._shared_metadata.dilate_coefficient = concat_with_tensor(
+            self._shared_metadata.dilate_coefficient, self._options.dilate_coefficient, expand=(1,), dim=0
+        )
+        self._shared_metadata.shear_coefficient = concat_with_tensor(
+            self._shared_metadata.shear_coefficient, self._options.shear_coefficient, expand=(1,), dim=0
+        )
+        self._shared_metadata.twist_coefficient = concat_with_tensor(
+            self._shared_metadata.twist_coefficient, self._options.twist_coefficient, expand=(1,), dim=0
+        )
+        # sensor normal should be the average of the probe normals
+        self._shared_metadata.sensor_normal = concat_with_tensor(
+            self._shared_metadata.sensor_normal, self._probe_local_normal.mean(dim=0), expand=(1, 3), dim=0
+        )
+        # sensor origin should be the average of the probe positions
+        self._shared_metadata.sensor_origin = concat_with_tensor(
+            self._shared_metadata.sensor_origin, self._probe_local_pos.mean(dim=0), expand=(1, 3), dim=0
+        )
+
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        n = self._n_probes
+        return (n, 3)
+
+    def _update_shared_ground_truth_cache(
+        self, shared_metadata: ElastomerTactileSensorMetadata, shared_ground_truth_cache: torch.Tensor
+    ):
+        solver = shared_metadata.solver
+        collider_state = solver.collider._collider_state
+
+        shared_ground_truth_cache.zero_()
+
+        _kernel_elastomer_tactile(
+            shared_metadata.probe_positions,
+            shared_metadata.probe_normals,
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.probe_max_raycast_range,
+            solver.links_state,
+            shared_metadata.radii,
+            shared_metadata.dilate_coefficient,
+            shared_metadata.shear_coefficient,
+            shared_metadata.twist_coefficient,
+            shared_metadata.links_idx,
+            shared_metadata.n_probes_per_sensor,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            collider_state,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver.fixed_verts_state,
+            solver.free_verts_state,
+            solver._static_rigid_sim_config,
+            solver.verts_info,
+            solver.faces_info,
+            shared_ground_truth_cache,
+            gs.EPS,
+        )
+
+    @classmethod
+    def _update_shared_cache(
+        cls,
+        shared_metadata: ElastomerTactileSensorMetadata,
+        shared_ground_truth_cache: torch.Tensor,
+        shared_cache: torch.Tensor,
+        buffered_data: "TensorRingBuffer",
+    ):
+        super()._update_shared_cache(shared_metadata, shared_ground_truth_cache, shared_cache, buffered_data)
+
+    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+        super()._draw_debug(context, buffer_updates)
