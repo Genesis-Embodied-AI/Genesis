@@ -13,7 +13,7 @@ def parser_add_options(parser: pytest.Parser) -> None:
 def pytorch_profiler(pytestconfig):
     """Session-scoped fixture providing a PyTorch profiler context manager.
 
-    Activated by --profile. Yields a (profiler, step_fn) tuple where step_fn
+    Activated by --profile with env var GS_PROFILING=1. Yields a (profiler, step_fn) tuple where step_fn
     must be called after each simulation step. When --profile is not set, yields
     (None, noop).
 
