@@ -926,13 +926,14 @@ class Viewer(pyglet.window.Window):
 
         try:
             # Importing tkinter is very slow and not used very often. Let's delay import.
-            from tkinter import Tk, filedialog
+            from tkinter import filedialog
 
-            if root is None:
-                root = Tk()
-                root.withdraw()
             dialog = filedialog.SaveAs(
-                root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
+                parent=None,
+                initialdir=save_dir,
+                title="Select file save location",
+                filetypes=filetypes,
+                defaultextension=".png",
             )
             filename = dialog.show()
         except Exception as e:
@@ -941,7 +942,7 @@ class Viewer(pyglet.window.Window):
 
         if not filename:
             return None
-        return filename
+        return os.path.normpath(filename)
 
     def _save_image(self):
         # Postpone import of OpenCV at runtime to reduce hard system dependencies
