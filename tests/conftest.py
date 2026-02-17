@@ -418,7 +418,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
-    profiling.parser_add_options(parser)
+    if os.environ.get("GS_PROFILING", "0") == "1":
+        profiling.parser_add_options(parser)
 
 
 @pytest.fixture(scope="session")
@@ -428,8 +429,12 @@ def show_viewer(pytestconfig):
 
 @pytest.fixture(scope="session")
 def pytorch_profiler(pytestconfig):
-    for res in profiling.pytorch_profiler(pytestconfig):
-        yield res
+    if os.environ.get("GS_PROFILING", "0") == "1":
+        for res in profiling.pytorch_profiler(pytestconfig):
+            yield res
+    else:
+        noop = lambda: None  # noqa: E731
+        yield None, noop
 
 
 @pytest.fixture(scope="session")
