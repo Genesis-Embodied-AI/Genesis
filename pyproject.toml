@@ -92,6 +92,8 @@ dev = [
     "av",
     # Used for validating polar decomposition in unit tests
     "scipy",
+    # Used for code formatting during commits
+    "pre_commit",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
