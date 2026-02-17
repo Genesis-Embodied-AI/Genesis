@@ -41,7 +41,6 @@ import pytest
 
 import genesis as gs
 from .utils import assert_allclose
-from conftest import TOL_SINGLE
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidGeom
@@ -57,8 +56,8 @@ POS_TOL = 1e-2  # otherwise tests fail
 # Normal tolerance: maximum allowed value of (1 - |dot(actual, expected)|).
 #   e.g. 1e-5 means the normal must agree to within ~0.26 degrees,
 #        1e-2 means within ~8 degrees.
-ANALYTICAL_PEN_TOL = TOL_SINGLE
-ANALYTICAL_NORMAL_TOL = TOL_SINGLE
+ANALYTICAL_PEN_TOL = 1e-5
+ANALYTICAL_NORMAL_TOL = 1e-5
 GJK_PEN_TOL = 1e-2
 GJK_NORMAL_TOL = 1e-2
 
