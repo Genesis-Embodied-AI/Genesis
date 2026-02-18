@@ -33,10 +33,10 @@ class ViewerOptions(Options):
         The up vector of the camera's extrinsic pose.
     camera_fov : float
         The field of view (in degrees) of the camera.
-    disable_help_text : bool
-        Whether to disable the rendering of instructions text in the viewer.
-    disable_default_keybinds : bool
-        Whether to disable the default keyboard controls in the viewer.
+    enable_help_text : bool
+        Whether to enable the rendering of instructions text in the viewer.
+    enable_default_keybinds : bool
+        Whether to enable the default keyboard controls in the viewer.
     """
 
     res: tuple | None = None
@@ -47,8 +47,8 @@ class ViewerOptions(Options):
     camera_lookat: tuple = (0.0, 0.0, 0.5)
     camera_up: tuple = (0.0, 0.0, 1.0)
     camera_fov: float = 40
-    disable_help_text: bool = False
-    disable_default_keybinds: bool = False
+    enable_help_text: bool = True
+    enable_default_keybinds: bool = True
 
 
 class VisOptions(Options):
