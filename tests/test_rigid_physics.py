@@ -2677,7 +2677,10 @@ def test_urdf_parsing(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_urdf_parsing_merge_fixed_links(show_viewer):
+def test_urdf_parsing_merge_fixed_links(show_viewer, tol):
+    POS = (0.0, -0.2, 0.5)
+    EULER = (0.0, 90.0, 45.0)
+
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -2685,8 +2688,10 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     robot_1 = scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/chain.urdf",
-            merge_fixed_links=False,
+            pos=POS,
+            euler=EULER,
             recompute_inertia=True,
+            merge_fixed_links=False,
         ),
         surface=gs.surfaces.Default(
             color=(1, 0, 0, 0.5),
@@ -2695,8 +2700,10 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     robot_2 = scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/chain.urdf",
-            merge_fixed_links=True,
+            pos=POS,
+            euler=EULER,
             recompute_inertia=True,
+            merge_fixed_links=True,
         ),
         surface=gs.surfaces.Default(
             color=(0, 1, 0, 0.5),
@@ -2704,10 +2711,27 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     )
     scene.build()
 
+    assert_allclose(robot_1.get_pos(), POS, tol=tol)
+    assert_allclose(robot_1.get_quat(), gu.euler_to_quat(EULER), tol=tol)
+
+    for _ in range(2):
+        assert_allclose(robot_1.get_pos(), robot_2.get_pos(), tol=tol)
+        assert_allclose(robot_1.get_quat(), robot_2.get_quat(), tol=tol)
+        for link_2 in robot_2.links:
+            link_1 = robot_1.get_link(link_2.name)
+            assert_allclose(link_1.get_pos(), link_2.get_pos(), tol=tol)
+            assert_allclose(link_1.get_quat(), link_2.get_quat(), tol=tol)
+
+        pos0 = np.random.rand(3)
+        quat0 = np.random.rand(4)
+        for robot in (robot_1, robot_2):
+            robot.set_pos(pos0)
+            robot.set_quat(quat0)
+
     com_robot_1, com_robot_2 = scene.rigid_solver.get_links_root_COM(
         links_idx=(robot_1.base_link_idx, robot_2.base_link_idx)
     )
-    assert_allclose(com_robot_1, com_robot_2, tol=gs.EPS)
+    assert_allclose(com_robot_1, com_robot_2, tol=tol)
 
 
 @pytest.mark.required
