@@ -66,7 +66,7 @@ def _kernel_update_constraint(
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
-def _kernel_newton_only_nt_hessian_incremental(
+def _kernel_newton_only_nt_hessian(
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -171,7 +171,7 @@ def register_decomposed_solver_body() -> None:
                 static_rigid_sim_config,
             )
             if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-                _kernel_newton_only_nt_hessian_incremental(
+                _kernel_newton_only_nt_hessian(
                     entities_info,
                     constraint_state,
                     rigid_global_info,
