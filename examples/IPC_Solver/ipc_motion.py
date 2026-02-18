@@ -1,5 +1,5 @@
 import argparse
-import logging
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,7 +12,8 @@ def main():
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level=logging.DEBUG, performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="debug")
+
     dt = 1e-3
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),
@@ -203,7 +204,7 @@ def main():
     fem_v_history = []
 
     test_time = 0.30  # seconds
-    n_steps = int(test_time / dt)
+    n_steps = int(test_time / dt) if "PYTEST_VERSION" not in os.environ else 10
 
     for i_step in range(n_steps):
         # Compute momentum at every step

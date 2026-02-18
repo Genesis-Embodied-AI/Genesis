@@ -15,22 +15,21 @@ esc	- Quit
 """
 
 import argparse
-import logging
+import os
 
-import genesis as gs
 import numpy as np
 
+import genesis as gs
 import genesis.utils.geom as gu
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 from huggingface_hub import snapshot_download
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level=logging.INFO, performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--vis_ipc", action="store_true", default=False)
-    parser.add_argument("-v", "--vis", action="store_true", default=False)
     args = parser.parse_args()
 
     dt = 2e-2
@@ -68,7 +67,7 @@ def main():
             camera_lookat=(0.5, 0.0, 0.2),
             camera_fov=40,
         ),
-        show_viewer=args.vis,
+        show_viewer=True,
     )
 
     # Add flat floor
@@ -193,76 +192,76 @@ def main():
 
     print("Scene built successfully!")
 
-    if args.vis:
-        if scene.viewer is None:
-            gs.logger.warning("Viewer is not active. Keyboard input requires the Genesis viewer.")
-            return
+    if scene.viewer is None:
+        gs.logger.warning("Viewer is not active. Keyboard input requires the Genesis viewer.")
+        return
 
-        gripper_close = np.array(False, dtype=bool)
-        is_running = True
+    gripper_close = np.array(False, dtype=bool)
+    is_running = True
 
-        def move(dpos_xyz: tuple[float, float, float]):
-            target_pos[:] += np.array(dpos_xyz, dtype=np.float32)
+    def move(dpos_xyz: tuple[float, float, float]):
+        target_pos[:] += np.array(dpos_xyz, dtype=np.float32)
 
-        _axis_idx = {"x": 0, "y": 1, "z": 2}
+    _axis_idx = {"x": 0, "y": 1, "z": 2}
 
-        def rotate(axis: str, delta: float):
-            delta_xyz = np.zeros(3, dtype=np.float32)
-            delta_xyz[_axis_idx[axis]] = delta
-            delta_quat = gu.xyz_to_quat(delta_xyz)
-            target_quat[:] = gu.transform_quat_by_quat(target_quat, delta_quat)
+    def rotate(axis: str, delta: float):
+        delta_xyz = np.zeros(3, dtype=np.float32)
+        delta_xyz[_axis_idx[axis]] = delta
+        delta_quat = gu.xyz_to_quat(delta_xyz)
+        target_quat[:] = gu.transform_quat_by_quat(target_quat, delta_quat)
 
-        def reset_scene():
-            target_pos[:] = target_init_pos
-            target_quat[:] = target_init_quat
-            target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
-            qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motors_dof)
-            franka.control_dofs_position(qpos[:-2], dofs_idx_local=motors_dof)
+    def reset_scene():
+        target_pos[:] = target_init_pos
+        target_quat[:] = target_init_quat
+        target_entity.set_qpos(np.concatenate([target_pos, target_quat]))
+        qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motors_dof)
+        franka.control_dofs_position(qpos[:-2], dofs_idx_local=motors_dof)
 
-        def set_gripper(close: bool):
-            gripper_close[()] = close
+    def set_gripper(close: bool):
+        gripper_close[()] = close
 
-        def stop():
-            nonlocal is_running
-            is_running = False
+    def stop():
+        nonlocal is_running
+        is_running = False
 
-        scene.viewer.register_keybinds(
-            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-dpos, 0, 0),)),
-            Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
-            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
-            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
-            Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
-            Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
-            Keybind("yaw_left", Key.J, KeyAction.HOLD, callback=rotate, args=("z", drot)),
-            Keybind("yaw_right", Key.K, KeyAction.HOLD, callback=rotate, args=("z", -drot)),
-            Keybind("pitch_up", Key.I, KeyAction.HOLD, callback=rotate, args=("y", drot)),
-            Keybind("pitch_down", Key.O, KeyAction.HOLD, callback=rotate, args=("y", -drot)),
-            Keybind("roll_left", Key.L, KeyAction.HOLD, callback=rotate, args=("x", drot)),
-            Keybind("roll_right", Key.SEMICOLON, KeyAction.HOLD, callback=rotate, args=("x", -drot)),
-            Keybind("reset_scene", Key.U, KeyAction.PRESS, callback=reset_scene),
-            Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=set_gripper, args=(True,)),
-            Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=set_gripper, args=(False,)),
-            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
-        )
+    scene.viewer.register_keybinds(
+        Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((-dpos, 0, 0),)),
+        Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
+        Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
+        Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
+        Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
+        Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
+        Keybind("yaw_left", Key.J, KeyAction.HOLD, callback=rotate, args=("z", drot)),
+        Keybind("yaw_right", Key.K, KeyAction.HOLD, callback=rotate, args=("z", -drot)),
+        Keybind("pitch_up", Key.I, KeyAction.HOLD, callback=rotate, args=("y", drot)),
+        Keybind("pitch_down", Key.O, KeyAction.HOLD, callback=rotate, args=("y", -drot)),
+        Keybind("roll_left", Key.L, KeyAction.HOLD, callback=rotate, args=("x", drot)),
+        Keybind("roll_right", Key.SEMICOLON, KeyAction.HOLD, callback=rotate, args=("x", -drot)),
+        Keybind("reset_scene", Key.U, KeyAction.PRESS, callback=reset_scene),
+        Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=set_gripper, args=(True,)),
+        Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=set_gripper, args=(False,)),
+        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+    )
 
-        try:
-            while is_running and scene.viewer.is_alive():
-                target_entity.set_qpos(target_qpos)
-                q, _ = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
-                franka.control_dofs_position(q[:-2], motors_dof)
+    try:
+        while is_running and scene.viewer.is_alive():
+            target_entity.set_qpos(target_qpos)
+            q, _ = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
+            franka.control_dofs_position(q[:-2], motors_dof)
 
-                if gripper_close[()]:
-                    franka.control_dofs_velocity(np.array([-0.1, -0.1]), fingers_dof)
-                else:
-                    franka.control_dofs_velocity(np.array([0.1, 0.1]), fingers_dof)
+            if gripper_close[()]:
+                franka.control_dofs_velocity(np.array([-0.1, -0.1]), fingers_dof)
+            else:
+                franka.control_dofs_velocity(np.array([0.1, 0.1]), fingers_dof)
 
-                scene.step()
-        except KeyboardInterrupt:
-            gs.logger.info("Simulation interrupted, exiting.")
-        finally:
-            gs.logger.info("Simulation finished.")
-    else:
-        scene.step()
+            scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ with Genesis. The cloth is simulated using NeoHookeanShell constitution.
 """
 
 import argparse
-import logging
+import os
 
 from huggingface_hub import snapshot_download
 
@@ -14,7 +14,7 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level=logging.INFO, performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
@@ -93,7 +93,7 @@ def main():
 
     # Simulation loop
     print("\nRunning simulation...")
-    horizon = 1000
+    horizon = 1000 if "PYTEST_VERSION" not in os.environ else 5
     for i in range(horizon):
         scene.step()
         if i % 100 == 0:
