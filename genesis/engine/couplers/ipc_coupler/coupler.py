@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-import gstaichi as ti
+import quadrants as qd
 
 import genesis as gs
 from genesis.options.solvers import IPCCouplerOptions
@@ -31,7 +31,7 @@ except ImportError:
     uipc = None
 
 
-@ti.data_oriented
+@qd.data_oriented
 class IPCCoupler(RBC):
     """
     Coupler class for handling Incremental Potential Contact (IPC) simulation coupling.
@@ -67,19 +67,19 @@ class IPCCoupler(RBC):
 
     # ---------- 1.1 Force computation kernels ----------
 
-    @ti.kernel
+    @qd.kernel
     def _compute_coupling_forces_kernel_np(
         self,
-        n_links: ti.i32,
-        ipc_transforms: ti.types.ndarray(),  # numpy (n, 4, 4)
-        aim_transforms: ti.types.ndarray(),  # numpy (n, 4, 4)
-        link_masses: ti.types.ndarray(),  # numpy (n,)
-        inertia_tensors: ti.types.ndarray(),  # numpy (n, 3, 3)
-        translation_strength: ti.f32,
-        rotation_strength: ti.f32,
-        dt2: ti.f32,
-        out_forces: ti.types.ndarray(),  # numpy (n, 3)
-        out_torques: ti.types.ndarray(),  # numpy (n, 3)
+        n_links: qd.i32,
+        ipc_transforms: qd.types.ndarray(),  # numpy (n, 4, 4)
+        aim_transforms: qd.types.ndarray(),  # numpy (n, 4, 4)
+        link_masses: qd.types.ndarray(),  # numpy (n,)
+        inertia_tensors: qd.types.ndarray(),  # numpy (n, 3, 3)
+        translation_strength: qd.f32,
+        rotation_strength: qd.f32,
+        dt2: qd.f32,
+        out_forces: qd.types.ndarray(),  # numpy (n, 3)
+        out_torques: qd.types.ndarray(),  # numpy (n, 3)
     ):
         """
         Compute coupling forces and torques for all links in parallel.
@@ -87,13 +87,13 @@ class IPCCoupler(RBC):
         """
         for i in range(n_links):
             # Extract positions from transform matrices
-            pos_current = ti.Vector([ipc_transforms[i, 0, 3], ipc_transforms[i, 1, 3], ipc_transforms[i, 2, 3]])
-            pos_aim = ti.Vector([aim_transforms[i, 0, 3], aim_transforms[i, 1, 3], aim_transforms[i, 2, 3]])
+            pos_current = qd.Vector([ipc_transforms[i, 0, 3], ipc_transforms[i, 1, 3], ipc_transforms[i, 2, 3]])
+            pos_aim = qd.Vector([aim_transforms[i, 0, 3], aim_transforms[i, 1, 3], aim_transforms[i, 2, 3]])
             delta_pos = pos_current - pos_aim
 
             # Extract rotation matrices
-            R_current = ti.Matrix.zero(ti.f32, 3, 3)
-            R_aim = ti.Matrix.zero(ti.f32, 3, 3)
+            R_current = qd.Matrix.zero(qd.f32, 3, 3)
+            R_aim = qd.Matrix.zero(qd.f32, 3, 3)
             for row in range(3):
                 for col in range(3):
                     R_current[row, col] = ipc_transforms[i, row, col]
@@ -108,20 +108,20 @@ class IPCCoupler(RBC):
 
             # Extract rotation vector from R_rel using Rodrigues formula
             trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
-            theta = ti.acos(ti.min(ti.max((trace - 1.0) / 2.0, -1.0), 1.0))
+            theta = qd.acos(qd.min(qd.max((trace - 1.0) / 2.0, -1.0), 1.0))
 
             # Rotation axis (when theta != 0)
-            rotvec = ti.Vector.zero(ti.f32, 3)
+            rotvec = qd.Vector.zero(qd.f32, 3)
             if theta > 1e-6:
                 axis_x = R_rel[2, 1] - R_rel[1, 2]
                 axis_y = R_rel[0, 2] - R_rel[2, 0]
                 axis_z = R_rel[1, 0] - R_rel[0, 1]
-                norm = ti.sqrt(axis_x * axis_x + axis_y * axis_y + axis_z * axis_z)
+                norm = qd.sqrt(axis_x * axis_x + axis_y * axis_y + axis_z * axis_z)
                 if norm > 1e-8:
-                    rotvec = theta * ti.Vector([axis_x, axis_y, axis_z]) / norm
+                    rotvec = theta * qd.Vector([axis_x, axis_y, axis_z]) / norm
 
             # Load inertia tensor
-            I_local = ti.Matrix.zero(ti.f32, 3, 3)
+            I_local = qd.Matrix.zero(qd.f32, 3, 3)
             for row in range(3):
                 for col in range(3):
                     I_local[row, col] = inertia_tensors[i, row, col]
@@ -133,7 +133,7 @@ class IPCCoupler(RBC):
             angular_torque = rotation_strength / dt2 * (I_world @ rotvec)
 
             # Store results
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 out_forces[i, j] = linear_force[j]
                 out_torques[i, j] = angular_torque[j]
 
@@ -141,26 +141,26 @@ class IPCCoupler(RBC):
 
     # ---------- 1.3 Transform and initialization kernels ----------
 
-    @ti.kernel
+    @qd.kernel
     def _store_link_states_kernel(
         self,
-        transform_data: ti.template(),
-        links_pos: ti.types.ndarray(),  # (n_links, 3) from Genesis
-        links_quat: ti.types.ndarray(),  # (n_links, 4) from Genesis
-        env_idx: ti.i32,
-        n_links: ti.i32,
+        transform_data: qd.template(),
+        links_pos: qd.types.ndarray(),  # (n_links, 3) from Genesis
+        links_quat: qd.types.ndarray(),  # (n_links, 4) from Genesis
+        env_idx: qd.i32,
+        n_links: qd.i32,
     ):
         """
         Store link positions and quaternions to Taichi fields.
         """
         for link_idx in range(n_links):
             # Store position
-            transform_data.stored_link_pos[link_idx, env_idx] = ti.Vector(
+            transform_data.stored_link_pos[link_idx, env_idx] = qd.Vector(
                 [links_pos[link_idx, 0], links_pos[link_idx, 1], links_pos[link_idx, 2]]
             )
 
             # Store quaternion
-            transform_data.stored_link_quat[link_idx, env_idx] = ti.Vector(
+            transform_data.stored_link_quat[link_idx, env_idx] = qd.Vector(
                 [
                     links_quat[link_idx, 0],
                     links_quat[link_idx, 1],
@@ -172,15 +172,15 @@ class IPCCoupler(RBC):
             # Mark as valid
             transform_data.stored_link_valid[link_idx, env_idx] = 1
 
-    @ti.kernel
+    @qd.kernel
     def _store_qpos_kernel(
         self,
-        transform_data: ti.template(),
-        solver_qpos: ti.types.ndarray(),
-        entity_idx: ti.i32,
-        env_idx: ti.i32,
-        q_start: ti.i32,
-        n_qs: ti.i32,
+        transform_data: qd.template(),
+        solver_qpos: qd.types.ndarray(),
+        entity_idx: qd.i32,
+        env_idx: qd.i32,
+        q_start: qd.i32,
+        n_qs: qd.i32,
     ):
         """
         Store qpos for a single entity to Taichi fields.
@@ -189,19 +189,19 @@ class IPCCoupler(RBC):
         for i in range(n_qs):
             transform_data.stored_qpos[entity_idx, env_idx, i] = solver_qpos[q_start + i, env_idx]
 
-    @ti.kernel
+    @qd.kernel
     def _store_qpos_kernel_field(
         self,
-        transform_data: ti.template(),
-        solver_qpos: ti.template(),  # ti.field (performance_mode=True)
-        entity_idx: ti.i32,
-        env_idx: ti.i32,
-        q_start: ti.i32,
-        n_qs: ti.i32,
+        transform_data: qd.template(),
+        solver_qpos: qd.template(),  # qd.field (performance_mode=True)
+        entity_idx: qd.i32,
+        env_idx: qd.i32,
+        q_start: qd.i32,
+        n_qs: qd.i32,
     ):
         """
-        Store qpos from ti.field (for performance_mode=True).
-        Same logic as _store_qpos_kernel but accepts ti.field.
+        Store qpos from qd.field (for performance_mode=True).
+        Same logic as _store_qpos_kernel but accepts qd.field.
         """
         for i in range(n_qs):
             transform_data.stored_qpos[entity_idx, env_idx, i] = solver_qpos[q_start + i, env_idx]
@@ -278,32 +278,32 @@ class IPCCoupler(RBC):
 
         # Pre-allocated Taichi fields for contact force processing
         # Use class constants for buffer sizes (can be overridden by subclassing)
-        self.contact_forces_ti = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_CONTACTS)
-        self.contact_torques_ti = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_CONTACTS)
-        self.abd_transforms_ti = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=self.MAX_CONTACTS)
-        self.out_forces_ti = ti.Vector.field(12, dtype=gs.ti_float, shape=self.MAX_CONTACTS)
-        self.link_indices_ti = ti.field(dtype=ti.i32, shape=self.MAX_CONTACTS)
-        self.env_indices_ti = ti.field(dtype=ti.i32, shape=self.MAX_CONTACTS)
+        self.contact_forces_ti = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_CONTACTS)
+        self.contact_torques_ti = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_CONTACTS)
+        self.abd_transforms_ti = qd.Matrix.field(4, 4, dtype=gs.qd_float, shape=self.MAX_CONTACTS)
+        self.out_forces_ti = qd.Vector.field(12, dtype=gs.qd_float, shape=self.MAX_CONTACTS)
+        self.link_indices_ti = qd.field(dtype=qd.i32, shape=self.MAX_CONTACTS)
+        self.env_indices_ti = qd.field(dtype=qd.i32, shape=self.MAX_CONTACTS)
 
         # Pre-allocated fields for link contact force computation
-        self.link_contact_forces_out = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.MAX_LINKS, self.MAX_ENVS))
-        self.link_contact_torques_out = ti.Vector.field(3, dtype=gs.ti_float, shape=(self.MAX_LINKS, self.MAX_ENVS))
+        self.link_contact_forces_out = qd.Vector.field(3, dtype=gs.qd_float, shape=(self.MAX_LINKS, self.MAX_ENVS))
+        self.link_contact_torques_out = qd.Vector.field(3, dtype=gs.qd_float, shape=(self.MAX_LINKS, self.MAX_ENVS))
 
         # Fields for storing vertex-level contact data (for kernel processing)
-        self.vertex_force_gradients = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_VERTEX_CONTACTS)
-        self.vertex_link_indices = ti.field(dtype=ti.i32, shape=self.MAX_VERTEX_CONTACTS)
-        self.vertex_env_indices = ti.field(dtype=ti.i32, shape=self.MAX_VERTEX_CONTACTS)
-        self.vertex_positions_world = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_VERTEX_CONTACTS)
-        self.vertex_link_centers = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_VERTEX_CONTACTS)
+        self.vertex_force_gradients = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_VERTEX_CONTACTS)
+        self.vertex_link_indices = qd.field(dtype=qd.i32, shape=self.MAX_VERTEX_CONTACTS)
+        self.vertex_env_indices = qd.field(dtype=qd.i32, shape=self.MAX_VERTEX_CONTACTS)
+        self.vertex_positions_world = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_VERTEX_CONTACTS)
+        self.vertex_link_centers = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_VERTEX_CONTACTS)
 
         # Fields for batch qpos operations
-        self.qpos_buffer = ti.field(dtype=gs.ti_float, shape=self.MAX_QPOS_SIZE)
-        self.qpos_comparison_result = ti.field(dtype=ti.i32, shape=1)
+        self.qpos_buffer = qd.field(dtype=gs.qd_float, shape=self.MAX_QPOS_SIZE)
+        self.qpos_comparison_result = qd.field(dtype=qd.i32, shape=1)
 
         # Fields for batch transform operations
-        self.batch_positions = ti.Vector.field(3, dtype=gs.ti_float, shape=self.MAX_LINKS)
-        self.batch_quaternions = ti.Vector.field(4, dtype=gs.ti_float, shape=self.MAX_LINKS)
-        self.batch_transforms = ti.Matrix.field(4, 4, dtype=gs.ti_float, shape=self.MAX_LINKS)
+        self.batch_positions = qd.Vector.field(3, dtype=gs.qd_float, shape=self.MAX_LINKS)
+        self.batch_quaternions = qd.Vector.field(4, dtype=gs.qd_float, shape=self.MAX_LINKS)
+        self.batch_transforms = qd.Matrix.field(4, 4, dtype=gs.qd_float, shape=self.MAX_LINKS)
 
         # Initialize data-oriented transform data structure
         self.transform_data = IPCTransformData(self.MAX_LINKS, self.MAX_ENVS, self.MAX_ABD_LINKS, self.MAX_QPOS_SIZE)
