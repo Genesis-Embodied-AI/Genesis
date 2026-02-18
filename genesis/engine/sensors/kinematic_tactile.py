@@ -11,7 +11,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_verts
 from genesis.engine.solvers.rigid.collider.utils import func_point_in_geom_aabb
-from genesis.options.sensors import ElastomerTactileSensor as ElastomerTactileSensorOptions
+from genesis.options.sensors import ElastomerDisplacementSensor as ElastomerDisplacementSensorOptions
 from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
@@ -203,6 +203,85 @@ def _func_query_contact_depth(
     return max_penetration, contact_link
 
 
+@qd.func
+def _func_shear_twist_displacement(
+    probe_pos: gs.qd_vec3,
+    link_pos: gs.qd_vec3,
+    link_quat: gs.qd_vec4,
+    contact_link: gs.qd_int,
+    links_state: array_class.LinksState,
+    sensor_link_idx: gs.qd_int,
+    i_b: gs.qd_int,
+    sensor_normal_local: gs.qd_vec3,
+    shear_coeff: gs.qd_float,
+    twist_coeff: gs.qd_float,
+    shear_max_delta: gs.qd_float,
+    twist_max_delta: gs.qd_float,
+    dt: gs.qd_float,
+    eps: gs.qd_float,
+) -> gs.qd_vec3:
+    displacement_world = qd.Vector.zero(gs.qd_float, 3)
+
+    contact_pos = links_state.pos[contact_link, i_b]
+    contact_vel = links_state.cd_vel[contact_link, i_b] + links_state.cd_ang[contact_link, i_b].cross(
+        contact_pos - links_state.root_COM[contact_link, i_b]
+    )
+    sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
+        link_pos - links_state.root_COM[sensor_link_idx, i_b]
+    )
+    sensor_normal_world = gu.qd_transform_by_quat(sensor_normal_local, link_quat)
+    rel_vel = contact_vel - sensor_vel
+
+    rel_pos = gu.qd_inv_transform_by_trans_quat(contact_pos, link_pos, link_quat)
+    G_local = qd.Vector([rel_pos[0], rel_pos[1], 0.0], dt=gs.qd_float)
+    G = link_pos + gu.qd_transform_by_quat(G_local, link_quat)
+    M_minus_G = probe_pos - G
+    mg_dist_sq = M_minus_G[0] * M_minus_G[0] + M_minus_G[1] * M_minus_G[1] + M_minus_G[2] * M_minus_G[2]
+
+    # shear_displacement = min(shear_max_delta, shear_velocity * dt) * exp(-λs ||M - G||²)
+    if shear_coeff > 0.0:
+        delta_s_world = rel_vel * dt
+        delta_s_local = gu.qd_inv_transform_by_quat(delta_s_world, link_quat)
+
+        shear_decay = qd.exp(-shear_coeff * mg_dist_sq)
+        delta_s_mag = qd.sqrt(delta_s_local[0] * delta_s_local[0] + delta_s_local[1] * delta_s_local[1] + eps * eps)
+        shear_scale = qd.min(delta_s_mag, shear_max_delta) * shear_decay / (delta_s_mag + eps)
+        shear_local = qd.Vector(
+            [
+                shear_scale * delta_s_local[0],
+                shear_scale * delta_s_local[1],
+                0.0,
+            ],
+            dt=gs.qd_float,
+        )
+        displacement_world += gu.qd_transform_by_quat(shear_local, link_quat)
+
+    # twist_displacement = min(twist_max_delta, twist_angle) * (M - G) * exp(-λt ||M - G||²)
+    if twist_coeff > 0.0:
+        rel_ang = links_state.cd_ang[contact_link, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
+        delta_theta = (
+            rel_ang[0] * sensor_normal_world[0]
+            + rel_ang[1] * sensor_normal_world[1]
+            + rel_ang[2] * sensor_normal_world[2]
+        ) * dt
+        theta_cap = qd.min(qd.abs(delta_theta), twist_max_delta) * qd.select(delta_theta >= 0.0, 1.0, -1.0)
+        cos_theta = qd.cos(theta_cap)
+        sin_theta = qd.sin(theta_cap)
+        twist_decay = qd.exp(-twist_coeff * mg_dist_sq)
+        M_minus_G_local = gu.qd_inv_transform_by_quat(M_minus_G, link_quat)
+        twist_local = qd.Vector(
+            [
+                twist_decay * (cos_theta - 1.0) * M_minus_G_local[0] - sin_theta * M_minus_G_local[1],
+                twist_decay * (sin_theta * M_minus_G_local[0] + (cos_theta - 1.0) * M_minus_G_local[1]),
+                0.0,
+            ],
+            dt=gs.qd_float,
+        )
+        displacement_world += gu.qd_transform_by_quat(twist_local, link_quat)
+
+    return displacement_world
+
+
 @qd.kernel
 def _kernel_kinematic_contact_probe(
     probe_positions_local: qd.types.ndarray(),
@@ -325,7 +404,6 @@ def _kernel_elastomer_tactile(
     )
 
     # Phase 1: for each probe, query contact and store C_i (contact point), Δh_i (penetration), contact_link.
-    # Eq (11): Δdd = Σ_i Δh_i · (M - C_i) · exp(-λd ||M - C_i||²) — we need all C_i, Δh_i for the sensor.
     for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
         sensor_link_idx = links_idx[i_s]
@@ -343,7 +421,7 @@ def _kernel_elastomer_tactile(
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
         probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
 
-        max_penetration, contact_link = _func_query_contact_depth(
+        contact_depth, contact_link = _func_query_contact_depth(
             i_b,
             probe_pos,
             probe_normal,
@@ -360,12 +438,12 @@ def _kernel_elastomer_tactile(
             eps,
         )
 
-        if max_penetration > 0:
-            contact_point = probe_pos - probe_normal * max_penetration
+        if contact_depth > 0:
+            contact_point = probe_pos - probe_normal * contact_depth
             contact_buf[i_b, i_p, 0] = contact_point[0]
             contact_buf[i_b, i_p, 1] = contact_point[1]
             contact_buf[i_b, i_p, 2] = contact_point[2]
-            contact_buf[i_b, i_p, 3] = max_penetration
+            contact_buf[i_b, i_p, 3] = contact_depth
         else:
             contact_buf[i_b, i_p, 3] = gs.qd_float(0.0)
         contact_link_buf[i_b, i_p] = contact_link
@@ -381,18 +459,14 @@ def _kernel_elastomer_tactile(
             [probe_normals_local[i_p, 0], probe_normals_local[i_p, 1], probe_normals_local[i_p, 2]]
         )
 
-        dilate_coeff = dilate_coefficients[i_s]
-        shear_coeff = shear_coefficients[i_s]
-        twist_coeff = twist_coefficients[i_s]
         sensor_link_idx = links_idx[i_s]
-
         link_pos = links_state.pos[sensor_link_idx, i_b]
         link_quat = links_state.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
-        # FOTS Eq (11): Δdd = Σ_i Δh_i · (M - C_i) · exp(-λd ||M - C_i||²)
-        dilate_disp = qd.Vector.zero(gs.qd_float, 3)
+        # dilate_displacement = Σ_i Δh_i * (M - C_i) * exp(-λd ||M - C_i||²)
+        displacement = qd.Vector.zero(gs.qd_float, 3)
         probe_start = sensor_probe_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
         for j in range(n_probes):
@@ -404,62 +478,36 @@ def _kernel_elastomer_tactile(
                 )
                 M_minus_C = probe_pos - C_j
                 dist_sq = M_minus_C[0] * M_minus_C[0] + M_minus_C[1] * M_minus_C[1] + M_minus_C[2] * M_minus_C[2]
-                scale = delta_h * qd.exp(-dilate_coeff * dist_sq)
-                dilate_disp = dilate_disp + M_minus_C * scale
-
-        displacement_world = dilate_disp
+                scale = delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
+                displacement += M_minus_C * scale
 
         contact_link = contact_link_buf[i_b, i_p]
-        max_penetration = contact_buf[i_b, i_p, 3]
-        if max_penetration > gs.qd_float(0.0) and contact_link >= 0:
-            # FOTS: shear and twist from contact body velocity * dt (relative to sensor).
-            contact_pos = links_state.pos[contact_link, i_b]
-            contact_vel = links_state.cd_vel[contact_link, i_b] + links_state.cd_ang[contact_link, i_b].cross(
-                contact_pos - links_state.root_COM[contact_link, i_b]
-            )
-            sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
-                link_pos - links_state.root_COM[sensor_link_idx, i_b]
-            )
-            rel_vel = contact_vel - sensor_vel
-            delta_s_world = rel_vel * dt
-            delta_s_local = gu.qd_inv_transform_by_quat(delta_s_world, link_quat)
-            delta_s_x = delta_s_local[0]
-            delta_s_y = delta_s_local[1]
-            sensor_normal_world = gu.qd_transform_by_quat(
-                qd.Vector([sensor_normals[i_s, 0], sensor_normals[i_s, 1], sensor_normals[i_s, 2]], dt=gs.qd_float),
-                link_quat,
-            )
-            rel_ang = links_state.cd_ang[contact_link, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
-            delta_theta = (
-                rel_ang[0] * sensor_normal_world[0]
-                + rel_ang[1] * sensor_normal_world[1]
-                + rel_ang[2] * sensor_normal_world[2]
-            ) * dt
-            rel_pos = gu.qd_inv_transform_by_trans_quat(contact_pos, link_pos, link_quat)
-            G_local = qd.Vector([rel_pos[0], rel_pos[1], 0.0], dt=gs.qd_float)
-            G = link_pos + gu.qd_transform_by_quat(G_local, link_quat)
-            M_minus_G = probe_pos - G
-            mg_dist_sq = M_minus_G[0] * M_minus_G[0] + M_minus_G[1] * M_minus_G[1] + M_minus_G[2] * M_minus_G[2]
-            shear_decay = qd.exp(-shear_coeff * mg_dist_sq)
-            twist_decay = qd.exp(-twist_coeff * mg_dist_sq)
-            delta_s_mag_sq = delta_s_x * delta_s_x + delta_s_y * delta_s_y
-            delta_s_mag = qd.sqrt(delta_s_mag_sq + eps * eps)
-            shear_cap = qd.min(delta_s_mag, shear_max_delta[i_s])
-            shear_scale = shear_cap * shear_decay / (delta_s_mag + eps)
-            shear_local = qd.Vector([shear_scale * delta_s_x, shear_scale * delta_s_y, 0.0], dt=gs.qd_float)
-            displacement_world = displacement_world + gu.qd_transform_by_quat(shear_local, link_quat)
-            theta_cap = qd.min(qd.abs(delta_theta), twist_max_delta[i_s]) * qd.select(delta_theta >= 0.0, 1.0, -1.0)
-            c = qd.cos(theta_cap)
-            s = qd.sin(theta_cap)
-            M_minus_G_local = gu.qd_inv_transform_by_quat(M_minus_G, link_quat)
-            mg_lx = M_minus_G_local[0]
-            mg_ly = M_minus_G_local[1]
-            twist_lx = (c - 1.0) * mg_lx - s * mg_ly
-            twist_ly = s * mg_lx + (c - 1.0) * mg_ly
-            twist_local = qd.Vector([twist_lx * twist_decay, twist_ly * twist_decay, 0.0], dt=gs.qd_float)
-            displacement_world = displacement_world + gu.qd_transform_by_quat(twist_local, link_quat)
+        contact_depth = contact_buf[i_b, i_p, 3]
+        sensor_normal_local = qd.Vector(
+            [sensor_normals[i_s, 0], sensor_normals[i_s, 1], sensor_normals[i_s, 2]], dt=gs.qd_float
+        )
 
-        displacement_local = gu.qd_inv_transform_by_quat(displacement_world, link_quat)
+        shear_coeff = shear_coefficients[i_s]
+        twist_coeff = twist_coefficients[i_s]
+        if contact_depth > gs.qd_float(0.0) and contact_link >= 0 and shear_coeff > 0.0 and twist_coeff > 0.0:
+            displacement += _func_shear_twist_displacement(
+                probe_pos,
+                link_pos,
+                link_quat,
+                contact_link,
+                links_state,
+                sensor_link_idx,
+                i_b,
+                sensor_normal_local,
+                shear_coeff,
+                twist_coeff,
+                shear_max_delta[i_s],
+                twist_max_delta[i_s],
+                dt,
+                eps,
+            )
+
+        displacement_local = gu.qd_inv_transform_by_quat(displacement, link_quat)
 
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         cache_start = sensor_cache_start[i_s]
@@ -676,7 +724,7 @@ class KinematicContactProbe(
 
 
 @dataclass
-class ElastomerTactileSensorMetadata(KinematicContactProbeMetadata):
+class ElastomerDisplacementSensorMetadata(KinematicContactProbeMetadata):
     """Shared metadata for elastomer tactile (FOTS-style) sensors."""
 
     dilate_coefficient: torch.Tensor = make_tensor_field((0,))
@@ -687,9 +735,9 @@ class ElastomerTactileSensorMetadata(KinematicContactProbeMetadata):
     sensor_normal: torch.Tensor = make_tensor_field((0, 3))
 
 
-@register_sensor(ElastomerTactileSensorOptions, ElastomerTactileSensorMetadata, tuple)
+@register_sensor(ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata, tuple)
 @qd.data_oriented
-class ElastomerTactileSensor(KinematicContactProbe):
+class ElastomerDisplacementSensor(KinematicContactProbe):
     def __init__(
         self,
         sensor_options: KinematicContactProbeOptions,
@@ -734,7 +782,7 @@ class ElastomerTactileSensor(KinematicContactProbe):
 
     @classmethod
     def _update_shared_ground_truth_cache(
-        cls, shared_metadata: ElastomerTactileSensorMetadata, shared_ground_truth_cache: torch.Tensor
+        cls, shared_metadata: ElastomerDisplacementSensorMetadata, shared_ground_truth_cache: torch.Tensor
     ):
         solver = shared_metadata.solver
 
@@ -784,7 +832,7 @@ class ElastomerTactileSensor(KinematicContactProbe):
     @classmethod
     def _update_shared_cache(
         cls,
-        shared_metadata: ElastomerTactileSensorMetadata,
+        shared_metadata: ElastomerDisplacementSensorMetadata,
         shared_ground_truth_cache: torch.Tensor,
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",

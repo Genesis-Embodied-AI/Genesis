@@ -236,7 +236,7 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
         return array
 
 
-class ElastomerTactileSensor(KinematicContactProbe):
+class ElastomerDisplacementSensor(KinematicContactProbe):
     """
     A tactile sensor which estimates the displacement of the elastomer based on the contact force and depth of
     penetration along the probe normal on collisions.
@@ -250,9 +250,9 @@ class ElastomerTactileSensor(KinematicContactProbe):
     twist_coefficient: float
         The coefficient for the effect of displacement caused by twist motion.
     shear_max_delta: float
-        Maximum shear magnitude in meters for the FOTS formula.
+        Maximum shear magnitude in meters.
     twist_max_delta: float
-        Maximum twist angle in degrees for the FOTS formula.
+        Maximum twist angle in degrees.
     """
 
     dilate_coefficient: float = 1.25e-3

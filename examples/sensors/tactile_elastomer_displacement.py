@@ -1,5 +1,5 @@
 """
-Interactive ElastomerTactileSensor visualization with keyboard teleop.
+Interactive ElastomerDisplacementSensor visualization with keyboard teleop.
 """
 
 import argparse
@@ -45,7 +45,7 @@ def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive ElastomerTactileSensor Visualization")
+    parser = argparse.ArgumentParser(description="Interactive ElastomerDisplacementSensor Visualization")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
@@ -115,7 +115,7 @@ def main():
     n_probes = len(probe_positions)
 
     tactile = scene.add_sensor(
-        gs.sensors.ElastomerTactileSensor(
+        gs.sensors.ElastomerDisplacementSensor(
             entity_idx=pusher.idx,
             link_idx_local=0,
             probe_local_pos=probe_positions,
@@ -210,7 +210,7 @@ def main():
         )
 
     # ── Print info ─────────────────────────────────────────────────────
-    print("\n=== Interactive ElastomerTactileSensor ===")
+    print("\n=== Interactive ElastomerDisplacementSensor ===")
     print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher sphere with {n_probes} probes on bottom hemisphere")
     if args.vis:
         if IS_MATPLOTLIB_AVAILABLE:

@@ -784,3 +784,74 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
     assert_allclose(sphere_data.force, sphere_ground_truth.force, tol=gs.EPS)
     assert_allclose(sphere_data.penetration, 0.0, tol=gs.EPS)
     assert_allclose(sphere_data.force, 0.0, tol=gs.EPS)
+
+
+def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
+    """Probe positions and outward normals on the bottom hemisphere (z <= 0 in link frame)."""
+    theta = (np.pi / 2) * (1 + torch.arange(n_theta, dtype=gs.tc_float, device=gs.device) / n_theta)
+    phi = torch.arange(n_phi, dtype=gs.tc_float, device=gs.device) * (2 * np.pi) / n_phi
+    theta, phi = torch.meshgrid(theta, phi, indexing="ij")
+    theta = theta.ravel()
+    phi = phi.ravel()
+    x = radius * theta.sin() * phi.cos()
+    y = radius * theta.sin() * phi.sin()
+    z = radius * theta.cos()
+    positions = torch.stack([x, y, z], dim=-1)
+    normals = positions / radius
+    return positions, normals
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
+    """Test ElastomerDisplacementSensor with bottom-hemisphere probes on a sphere penetrating the ground."""
+    SPHERE_RADIUS = 0.1
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.015
+    N_THETA = 2
+    N_PHI = 4
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Sphere penetrating the ground (center below z=0 by PENETRATION)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, SPHERE_RADIUS - PENETRATION),
+            fixed=True,
+        ),
+    )
+
+    probe_positions, probe_normals = _build_hemisphere_probes(SPHERE_RADIUS, N_THETA, N_PHI)
+
+    sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacementSensor(
+            entity_idx=sphere.idx,
+            probe_local_pos=probe_positions,
+            probe_local_normal=probe_normals,
+            radius=PROBE_RADIUS,
+            draw_debug=show_viewer,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    data = sensor.read_ground_truth()
+    # Contact point in sphere link frame (south pole); direction away from contact for each probe
+    contact_link = torch.tensor([0.0, 0.0, -SPHERE_RADIUS], dtype=gs.tc_float, device=gs.device)
+    direction_away = probe_positions - contact_link
+    direction_away = direction_away / (direction_away.norm(dim=-1, keepdim=True).clamp(min=1e-12))
+    dots = (data * direction_away).sum(dim=-1)
+    assert (dots >= -tol).all(), "All displacements should point away from the contact"
+
+    sphere.set_pos((0.0, 0.0, SPHERE_RADIUS + 0.05))
+    scene.step()
+
+    data = sensor.read_ground_truth()
+    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
