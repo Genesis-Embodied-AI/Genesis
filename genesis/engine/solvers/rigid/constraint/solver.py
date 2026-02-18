@@ -23,8 +23,6 @@ if TYPE_CHECKING:
 
 IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
-GS_SOLVER_DECOMPOSE = os.environ.get("GS_SOLVER_DECOMPOSE", "1") == "1"
-
 
 class ConstraintSolver:
     def __init__(self, rigid_solver: "RigidSolver"):
@@ -3010,8 +3008,7 @@ def func_solve_body(
 ) -> None: ...
 
 
-if GS_SOLVER_DECOMPOSE:
-    solver_breakdown.register_decomposed_solver_body()
+solver_breakdown.register_decomposed_solver_body()
 
 
 @func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
