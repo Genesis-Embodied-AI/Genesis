@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable
+from typing import Callable, Any
 
 
 class LabeledIntEnum(IntEnum):
@@ -297,8 +297,8 @@ class Keybind:
     key: Key
     key_action: KeyAction = KeyAction.PRESS
     key_mods: tuple[KeyMod] | None = None
-    callback: Callable[[], None] | None = None
-    args: tuple = ()
+    callback: Callable[..., None] | None = None
+    args: tuple[Any, ...] = ()
     kwargs: dict = field(default_factory=dict)
 
     _modifiers: int | None = field(default=None, init=False, repr=False)

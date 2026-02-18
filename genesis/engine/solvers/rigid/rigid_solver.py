@@ -1416,9 +1416,12 @@ class RigidSolver(Solver):
             from genesis.engine.couplers import IPCCoupler
 
             if isinstance(self.sim.coupler, IPCCoupler):
-                return
+                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
+                # The rigid simulation will be done in post-coupling phase instead
+                if self.sim.coupler.has_any_rigid_coupling():
+                    return
 
-            # Run Genesis rigid simulation step
+            # Run Genesis rigid simulation step for non-IPC couplers
             self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
@@ -1621,16 +1624,16 @@ class RigidSolver(Solver):
                 errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # For IPCCoupler, perform full rigid body computation in post-coupling phase
-            # This allows IPC to handle rigid bodies during the coupling phase
-            # Temporarily disable ground collision if requested
-            if self.sim.coupler.options.disable_genesis_ground_contact:
-                original_enable_collision = self._enable_collision
-                self._enable_collision = False
-                self.substep(f)
-                self._enable_collision = original_enable_collision
-            else:
-                self.substep(f)
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase
+            if self.sim.coupler.has_any_rigid_coupling():
+                # Temporarily disable ground collision if requested
+                if self.sim.coupler.options.disable_genesis_contact:
+                    original_enable_collision = self._enable_collision
+                    self._enable_collision = False
+                    self.substep(f)
+                    self._enable_collision = original_enable_collision
+                else:
+                    self.substep(f)
 
     def substep_post_coupling_grad(self, f):
         pass
