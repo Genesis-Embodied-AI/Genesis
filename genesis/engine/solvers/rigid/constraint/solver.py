@@ -1,21 +1,21 @@
-from typing import TYPE_CHECKING
 import os
+from typing import TYPE_CHECKING
 
-from frozendict import frozendict
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
+from frozendict import frozendict
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch
 
-from . import backward as backward_constraint_solver
-from . import solver_breakdown
-from . import noslip as constraint_noslip
 from ..collider.contact_island import ContactIsland
+from . import backward as backward_constraint_solver
+from . import noslip as constraint_noslip
+from . import solver_breakdown
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -3114,6 +3114,7 @@ def func_update_qacc(
         constraint_state.is_warmstart[i_b] = True
 
 
-from genesis.utils.deprecated_module_wrapper import create_virtual_deprecated_module
+from genesis.utils.deprecated_module_wrapper import \
+    create_virtual_deprecated_module
 
 create_virtual_deprecated_module(__name__, "genesis.engine.solvers.rigid.constraint_solver_decomp")
