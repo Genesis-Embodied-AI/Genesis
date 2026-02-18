@@ -13,7 +13,7 @@ ALLOW_PATTERNS = {
     "coupling/**/*.py",
     "drone/interactive_drone.py",
     "drone/fly_route.py",
-    # "IPC_Solver/**/*.py",  # TODO: wait for IPC's wheel to be released
+    "IPC_Solver/**/*.py",
     "rigid/**/*.py",
     "render_async/**/*.py",
     "sap_coupling/**/*.py",
@@ -33,10 +33,11 @@ if sys.platform != "linux":
         "cut_dragon.py",
     }
 
-# Map example scripts to their required optional dependencies
-# Empty list means no optional dependencies required
+# Map example scripts or directories to their required optional dependencies.
+# Directory keys apply recursively to all scripts within that directory.
 EXAMPLE_DEPENDENCIES = {
     "import_stage.py": ["pxr"],  # Requires usd-core package (provides pxr module)
+    "IPC_Solver": ["uipc"],  # Requires pyuipc package (provides uipc module)
 }
 
 TIMEOUT = 600
@@ -64,9 +65,13 @@ def _discover_examples():
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("file", _discover_examples(), ids=lambda p: p.relative_to(EXAMPLES_DIR).as_posix())
 def test_example(file: Path):
-    # Check for required optional dependencies
-    script_name = file.name
-    module_deps = EXAMPLE_DEPENDENCIES.get(script_name, [])
+    # Check for required optional dependencies (script-level and inherited from parent dirs)
+    rel = file.relative_to(EXAMPLES_DIR)
+    module_deps = list(EXAMPLE_DEPENDENCIES.get(rel.name, []))
+    for parent in rel.parents:
+        if parent != Path("."):
+            module_deps.extend(EXAMPLE_DEPENDENCIES.get(parent.as_posix(), []))
+
     for module_name in module_deps:
         pytest.importorskip(module_name, reason=f"Python module '{module_name}' not installed.")
 

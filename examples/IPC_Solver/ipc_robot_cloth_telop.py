@@ -97,13 +97,13 @@ def main():
     cloth_asset_path = snapshot_download(
         repo_type="dataset",
         repo_id="Genesis-Intelligence/assets",
-        revision="f71514040a0303ac32562241b313237711c122b5",
-        allow_patterns="grid*.obj",
+        revision="8aa8fcd60500b9f3a36c356080224bdb1be9ee59",
+        allow_patterns="IPC/*",
         max_workers=1,
     )
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"{cloth_asset_path}/grid40x40.obj",
+            file=f"{cloth_asset_path}/IPC/grid40x40.obj",
             scale=0.5,
             pos=(0.5, 0.0, 0.1),
             euler=(90, 0, 0),
@@ -122,7 +122,7 @@ def main():
     )
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"{cloth_asset_path}/grid20x20.obj",
+            file=f"{cloth_asset_path}/IPC/grid20x20.obj",
             scale=0.3,
             pos=(0.5, 0.0, 0.14),
             euler=(90, 0, 0),
