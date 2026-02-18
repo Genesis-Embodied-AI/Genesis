@@ -136,7 +136,7 @@ def register_decomposed_solver_body() -> None:
     print("register_decomposed_solver_body", "gs.backend", gs.backend)
 
     @solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
-    def func_solve_decomposed_macrokernels(
+    def func_solve_decomposed(
         entities_info,
         dofs_state,
         constraint_state,
