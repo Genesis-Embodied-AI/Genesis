@@ -20,6 +20,7 @@ def kernel_rigid_entity_inverse_kinematics(
     links_idx: qd.types.ndarray(),
     poss: qd.types.ndarray(),
     quats: qd.types.ndarray(),
+    local_points: qd.types.ndarray(),
     n_links: qd.i32,
     dofs_idx: qd.types.ndarray(),
     n_dofs: qd.i32,
@@ -94,7 +95,11 @@ def kernel_rigid_entity_inverse_kinematics(
                     i_l_ee = links_idx[i_ee]
 
                     tgt_pos_i = qd.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
-                    err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
+                    local_point_i = qd.Vector([local_points[i_ee, 0], local_points[i_ee, 1], local_points[i_ee, 2]])
+                    pos_curr_i = links_state.pos[i_l_ee, i_b] + gu.qd_transform_by_quat(
+                        local_point_i, links_state.quat[i_l_ee, i_b]
+                    )
+                    err_pos_i = tgt_pos_i - pos_curr_i
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
@@ -123,10 +128,11 @@ def kernel_rigid_entity_inverse_kinematics(
                 for i_ee in range(n_links):
                     # update jacobian for ee link
                     i_l_ee = links_idx[i_ee]
+                    local_point_i = qd.Vector([local_points[i_ee, 0], local_points[i_ee, 1], local_points[i_ee, 2]])
                     rigid_entity._func_get_jacobian(
                         tgt_link_idx=i_l_ee,
                         i_b=i_b,
-                        p_local=qd.Vector.zero(gs.qd_float, 3),
+                        p_local=local_point_i,
                         pos_mask=pos_mask,
                         rot_mask=rot_mask,
                         dofs_info=dofs_info,
@@ -222,7 +228,11 @@ def kernel_rigid_entity_inverse_kinematics(
                     i_l_ee = links_idx[i_ee]
 
                     tgt_pos_i = qd.Vector([poss[i_ee, i_b_, 0], poss[i_ee, i_b_, 1], poss[i_ee, i_b_, 2]])
-                    err_pos_i = tgt_pos_i - links_state.pos[i_l_ee, i_b]
+                    local_point_i = qd.Vector([local_points[i_ee, 0], local_points[i_ee, 1], local_points[i_ee, 2]])
+                    pos_curr_i = links_state.pos[i_l_ee, i_b] + gu.qd_transform_by_quat(
+                        local_point_i, links_state.quat[i_l_ee, i_b]
+                    )
+                    err_pos_i = tgt_pos_i - pos_curr_i
                     for k in range(3):
                         err_pos_i[k] *= pos_mask[k] * link_pos_mask[i_ee]
                     if err_pos_i.norm() > pos_tol:
