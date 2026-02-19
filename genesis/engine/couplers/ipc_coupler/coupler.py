@@ -13,7 +13,6 @@ from genesis.repr_base import RBC
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
 from .utils import (
-    ArticulationState,
     build_ipc_scene_config,
     categorize_entities_by_coupling_type,
     compute_coupling_forces,
@@ -22,7 +21,6 @@ from .utils import (
     decompose_transform_matrix,
     extract_articulated_joints,
     find_target_link_for_fixed_merge,
-    get_articulation_state,
     read_ipc_geometry_metadata,
 )
 
@@ -172,7 +170,8 @@ class IPCCoupler(RBC):
         # Exact-sized buffers — allocated at build() time after scene is populated.
         self._coupling_out_forces: np.ndarray | None = None
         self._coupling_out_torques: np.ndarray | None = None
-        self.articulation_state: ArticulationState | None = None
+        self._ref_dof_prev: np.ndarray | None = None
+        self._delta_theta_ipc: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Build
@@ -809,7 +808,8 @@ class IPCCoupler(RBC):
 
         # Allocate articulation state with exact sizes.
         if total_articu_qs > 0:
-            self.articulation_state = get_articulation_state(total_articu_qs, total_articu_joints, self.sim._B)
+            self._ref_dof_prev = np.zeros((total_articu_qs, self.sim._B), dtype=gs.np_float)
+            self._delta_theta_ipc = np.zeros((total_articu_joints, self.sim._B), dtype=gs.np_float)
 
     def _find_abd_geometry_slot_by_link(self, link_idx, env_idx=0):
         """Return the ABD geometry slot for the given link, or None if not found."""
@@ -1313,12 +1313,8 @@ class IPCCoupler(RBC):
         env_indices = [it[1] for it in items]
         ipc_transforms = np.array([it[2] for it in items])
         aim_transforms = np.array([it[3] for it in items])
-        link_masses = np.array(
-            [float(self.rigid_solver.links_info.inertial_mass[li]) for li in link_indices]
-        )
-        inertia_tensors = np.array(
-            [self.rigid_solver.links_info.inertial_i[li].to_numpy() for li in link_indices]
-        )
+        link_masses = np.array([float(self.rigid_solver.links_info.inertial_mass[li]) for li in link_indices])
+        inertia_tensors = np.array([self.rigid_solver.links_info.inertial_i[li].to_numpy() for li in link_indices])
         out_forces = self._coupling_out_forces[:n_items]
         out_torques = self._coupling_out_torques[:n_items]
 
@@ -1398,7 +1394,6 @@ class IPCCoupler(RBC):
         if not self._articulated_entities:
             return
 
-        art_state = self.articulation_state
         rigid_solver = self.rigid_solver
         is_parallelized = self.sim._scene.n_envs > 0
 
@@ -1426,10 +1421,10 @@ class IPCCoupler(RBC):
 
                 # Compute delta_theta_tilde = qpos_current - ref_dof_prev (per joint).
                 for j_idx, qpos_idx in enumerate(joint_qpos_indices):
-                    ref = float(art_state.ref_dof_prev[qs_start + qpos_idx, i_env])
-                    cur = float(qpos_entity[qpos_idx])
+                    ref = self._ref_dof_prev[qs_start + qpos_idx, i_env]
+                    cur = qpos_entity[qpos_idx]
                     delta = cur - ref
-                    art_state.delta_theta_ipc[joint_start + j_idx, i_env] = delta
+                    self._delta_theta_ipc[joint_start + j_idx, i_env] = delta
 
             # Update IPC EAC geometry: set ref_dof_prev on instances.
             articulation_geo = art["articulation_geo"]
@@ -1437,15 +1432,14 @@ class IPCCoupler(RBC):
             if ref_dof_attr is not None:
                 ref_view = view(ref_dof_attr)
                 for j_idx, qpos_idx in enumerate(joint_qpos_indices):
-                    ref_val = float(art_state.ref_dof_prev[qs_start + qpos_idx, env_idx])
-                    ref_view[j_idx] = ref_val
+                    ref_view[j_idx] = self._ref_dof_prev[qs_start + qpos_idx, env_idx]
 
             # Set delta_theta_tilde on IPC geometry.
             delta_attr = articulation_geo["joint"].find("delta_theta_tilde")
             if delta_attr is not None:
                 delta_view = view(delta_attr)
                 for j_idx in range(n_joints):
-                    delta_view[j_idx] = float(art_state.delta_theta_ipc[joint_start + j_idx, env_idx])
+                    delta_view[j_idx] = self._delta_theta_ipc[joint_start + j_idx, env_idx]
 
             # Extract and transfer mass matrix (from rigid solver to IPC EAC).
             mass_mat_np = qd_to_numpy(rigid_solver.global_info.mass_mat, transpose=True)
@@ -1490,7 +1484,6 @@ class IPCCoupler(RBC):
         if not self._articulated_entities:
             return
 
-        art_state = self.articulation_state
         rigid_solver = self.rigid_solver
         is_parallelized = self.sim._scene.n_envs > 0
         qpos_np = qd_to_numpy(rigid_solver.global_info.qpos, transpose=True)
@@ -1516,7 +1509,7 @@ class IPCCoupler(RBC):
                 delta_theta_view = view(delta_theta_attr)
                 env_idx = 0  # EAC is env 0
                 for j_idx in range(n_joints):
-                    art_state.delta_theta_ipc[joint_start + j_idx, env_idx] = float(delta_theta_view[j_idx])
+                    self._delta_theta_ipc[joint_start + j_idx, env_idx] = float(delta_theta_view[j_idx])
 
             # Apply delta to all environments.
             for i_env in range(self.sim._B):
@@ -1524,8 +1517,8 @@ class IPCCoupler(RBC):
 
                 # For each joint DOF, apply delta on top of ref_dof_prev.
                 for j_idx, qpos_idx in enumerate(joint_qpos_indices):
-                    ref = float(art_state.ref_dof_prev[qs_start + qpos_idx, i_env])
-                    delta = float(art_state.delta_theta_ipc[joint_start + j_idx, 0])
+                    ref = self._ref_dof_prev[qs_start + qpos_idx, i_env]
+                    delta = self._delta_theta_ipc[joint_start + j_idx, 0]
                     qpos_entity[qpos_idx] = ref + delta
 
                 qpos_new_np = qpos_entity.astype(gs.np_float)
@@ -1538,7 +1531,7 @@ class IPCCoupler(RBC):
             qpos_np_updated = qd_to_numpy(rigid_solver.global_info.qpos, transpose=True)
             for i_env in range(self.sim._B):
                 for dof_idx in range(n_dofs):
-                    art_state.ref_dof_prev[qs_start + dof_idx, i_env] = float(qpos_np_updated[i_env, q_start + dof_idx])
+                    self._ref_dof_prev[qs_start + dof_idx, i_env] = qpos_np_updated[i_env, q_start + dof_idx]
 
             # For non-fixed base: apply IPC base link transform from abd_data_by_link.
             if art["has_non_fixed_base"]:

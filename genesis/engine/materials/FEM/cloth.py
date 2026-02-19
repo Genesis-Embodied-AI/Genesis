@@ -57,12 +57,12 @@ class Cloth(Base):
 
     def __init__(
         self,
-        E=1e4,                    # Young's modulus (Pa)
-        nu=0.49,                  # Poisson's ratio
-        rho=200.0,                # Density (kg/m³)
-        thickness=0.001,          # Shell thickness (m)
-        bending_stiffness=None,   # Optional bending stiffness
-        friction_mu=0.5,          # Friction coefficient for IPC contact
+        E=1e4,  # Young's modulus (Pa)
+        nu=0.49,  # Poisson's ratio
+        rho=200.0,  # Density (kg/m³)
+        thickness=0.001,  # Shell thickness (m)
+        bending_stiffness=None,  # Optional bending stiffness
+        friction_mu=0.5,  # Friction coefficient for IPC contact
         model="stable_neohookean",  # FEM model (unused for cloth)
     ):
         # Call FEM base constructor

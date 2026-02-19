@@ -109,9 +109,9 @@ class Simulator(RBC):
         self._cur_substep_global = 0
         self._gravity = np.array(options.gravity, dtype=gs.np_float)
 
+        # IPC handles all contact; Genesis rigid collision must not double-count
         if rigid_options is None:
             rigid_options = RigidOptions()
-        # IPC handles all contact; Genesis rigid collision must not double-count.
         if isinstance(coupler_options, IPCCouplerOptions):
             if rigid_options.enable_collision is True:
                 gs.raise_exception(

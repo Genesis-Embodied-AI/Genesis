@@ -966,7 +966,8 @@ class FEMSolver(Solver):
             from genesis.engine.couplers import IPCCoupler  # local: avoids circular import
 
             if isinstance(self.sim._coupler, IPCCoupler):
-                return  # IPC handles FEM physics entirely.
+                # IPC handles FEM physics entirely
+                return
             elif self._use_implicit_solver:
                 self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)
@@ -992,7 +993,8 @@ class FEMSolver(Solver):
             from genesis.engine.couplers import IPCCoupler  # local: avoids circular import
 
             if isinstance(self.sim._coupler, IPCCoupler):
-                return  # IPC writes vertex positions directly in couple().
+                # IPC writes vertex positions directly in couple().
+                return
             self.compute_pos(f)
             if self._constraints_initialized and not self._use_implicit_solver:
                 self.apply_hard_constraints(f)

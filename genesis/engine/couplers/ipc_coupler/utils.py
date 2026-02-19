@@ -6,7 +6,6 @@ from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.array_class import DATA_ORIENTED, BASE_METACLASS, V_ANNOTATION, V
 
 try:
     from uipc import Scene
@@ -262,32 +261,20 @@ def decompose_transform_matrix(transform_4x4):
     return pos, quat_wxyz
 
 
-# ==================================== Quadrants data structures ====================================
-
-
-@DATA_ORIENTED
-class ArticulationState(metaclass=BASE_METACLASS):
-    """GPU state for external articulation coupling (ref qpos + IPC joint displacements)."""
-
-    ref_dof_prev: V_ANNOTATION
-    delta_theta_ipc: V_ANNOTATION
-
-
-def get_articulation_state(total_articu_qs, total_articu_joints, n_envs):
-    """Allocate and return an ArticulationState with exact sizes."""
-    return ArticulationState(
-        ref_dof_prev=V(dtype=gs.qd_float, shape=(total_articu_qs, n_envs)),
-        delta_theta_ipc=V(dtype=gs.qd_float, shape=(total_articu_joints, n_envs)),
-    )
-
-
 # ==================================== Numba-accelerated functions ====================================
 
 
 @nb.njit(cache=True)
 def compute_coupling_forces(
-    ipc_transforms, aim_transforms, link_masses, inertia_tensors,
-    translation_strength, rotation_strength, dt2, out_forces, out_torques,
+    ipc_transforms,
+    aim_transforms,
+    link_masses,
+    inertia_tensors,
+    translation_strength,
+    rotation_strength,
+    dt2,
+    out_forces,
+    out_torques,
 ):
     """Compute soft-constraint coupling forces and torques for all links."""
     for i in range(ipc_transforms.shape[0]):
