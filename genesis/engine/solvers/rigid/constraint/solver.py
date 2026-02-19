@@ -15,7 +15,6 @@ from genesis.utils.misc import qd_to_torch
 from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
-from . import solver_breakdown
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -3006,9 +3005,6 @@ def func_solve_body(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ) -> None: ...
-
-
-solver_breakdown.register_decomposed_solver_body()
 
 
 @func_solve_body.register(is_compatible=lambda *args, **kwargs: True)

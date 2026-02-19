@@ -132,58 +132,57 @@ def _kernel_update_search_direction(
             )
 
 
-def register_decomposed_solver_body() -> None:
-    @solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
-    def func_solve_decomposed(
-        entities_info,
-        dofs_state,
-        constraint_state,
-        rigid_global_info,
-        static_rigid_sim_config,
-    ):
-        """
-        Uses separate kernels for each solver step per iteration.
+@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
+def func_solve_decomposed(
+    entities_info,
+    dofs_state,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+):
+    """
+    Uses separate kernels for each solver step per iteration.
 
-        This maximizes kernel granularity, potentially allowing better GPU scheduling
-        and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
-        """
-        iterations = rigid_global_info.iterations[None]
-        for _it in range(iterations):
-            _kernel_linesearch(
+    This maximizes kernel granularity, potentially allowing better GPU scheduling
+    and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
+    """
+    iterations = rigid_global_info.iterations[None]
+    for _it in range(iterations):
+        _kernel_linesearch(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
+            _kernel_cg_only_save_prev_grad(
+                constraint_state,
+                static_rigid_sim_config,
+            )
+        _kernel_update_constraint(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
+            _kernel_newton_only_nt_hessian(
                 entities_info,
-                dofs_state,
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
             )
-            if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
-                _kernel_cg_only_save_prev_grad(
-                    constraint_state,
-                    static_rigid_sim_config,
-                )
-            _kernel_update_constraint(
-                entities_info,
-                dofs_state,
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-            )
-            if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-                _kernel_newton_only_nt_hessian(
-                    entities_info,
-                    constraint_state,
-                    rigid_global_info,
-                    static_rigid_sim_config,
-                )
-            _kernel_update_gradient(
-                entities_info,
-                dofs_state,
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-            )
-            _kernel_update_search_direction(
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-            )
+        _kernel_update_gradient(
+            entities_info,
+            dofs_state,
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
+        _kernel_update_search_direction(
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
