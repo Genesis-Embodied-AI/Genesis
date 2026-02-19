@@ -202,12 +202,12 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Contact barrier distance in meters. Default is 0.001.
     contact_resistance : float, optional
         Contact stiffness. Default is 1e9.
-    newton_velocity_tol : float, optional
-        Velocity convergence tolerance for Newton solver. Default is 0.001.
-    line_search_max_iter : int, optional
-        Maximum line search iterations. Default is 30.
-    linear_system_tol_rate : float, optional
-        Linear system tolerance rate. Default is 1e-4.
+    newton_tolerance : float, optional
+        Convergence tolerance for the Newton solver. Default is 0.001.
+    n_linesearch_iterations : int, optional
+        Maximum number of line search iterations. Default is 30.
+    linear_system_tolerance : float, optional
+        Relative tolerance for the linear system solver. Default is 1e-4.
     constraint_strength_translation : float, optional
         Soft constraint translation stiffness for rigid–IPC coupling. Default is 100.0.
     constraint_strength_rotation : float, optional
@@ -220,9 +220,9 @@ class IPCCouplerOptions(BaseCouplerOptions):
 
     contact_d_hat: float = 0.001
     contact_resistance: float = 1e9
-    newton_velocity_tol: float = 0.001
-    line_search_max_iter: int = 30
-    linear_system_tol_rate: float = 1e-4
+    newton_tolerance: float = 0.001
+    n_linesearch_iterations: int = 30
+    linear_system_tolerance: float = 1e-4
     constraint_strength_translation: float = 100.0
     constraint_strength_rotation: float = 100.0
     enable_abd_self_contact: bool = False

@@ -27,7 +27,7 @@ def main():
         gs.options.IPCCouplerOptions(
             constraint_strength_translation=100.0,
             constraint_strength_rotation=100.0,
-            newton_velocity_tol=10.0,
+            newton_tolerance=10.0,
         )
         if args.ipc
         else None

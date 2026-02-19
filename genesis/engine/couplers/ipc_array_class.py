@@ -395,9 +395,9 @@ def build_ipc_scene_config(options, sim_options):
     g = sim_options.gravity
     config["gravity"] = [[g[0]], [g[1]], [g[2]]]
 
-    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_velocity_tol)
-    _set_if_not_none(config, ["line_search", "max_iter"], options.line_search_max_iter)
-    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tol_rate)
+    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_tolerance)
+    _set_if_not_none(config, ["line_search", "max_iter"], options.n_linesearch_iterations)
+    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tolerance)
     _set_if_not_none(config, ["contact", "d_hat"], options.contact_d_hat)
 
     return config

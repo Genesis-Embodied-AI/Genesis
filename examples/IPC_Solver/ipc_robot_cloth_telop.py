@@ -50,9 +50,9 @@ def main():
             constraint_strength_rotation=100.0,
             contact_d_hat=0.001,
             contact_resistance=1e7,
-            newton_velocity_tol=1e-1,
-            linear_system_tol_rate=1e-3,
-            line_search_max_iter=8,
+            newton_tolerance=1e-1,
+            linear_system_tolerance=1e-3,
+            n_linesearch_iterations=8,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -1.0, 1.5),
