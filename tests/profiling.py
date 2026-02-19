@@ -3,29 +3,39 @@ import pytest
 
 
 def parser_add_options(parser: pytest.Parser) -> None:
-    parser.addoption("--profile", action="store_true", default=False, help="Enable PyTorch profiling for benchmarks.")
-    parser.addoption("--profile-wait", type=int, default=5, help="Number of steps to skip before profiling.")
-    parser.addoption("--profile-warmup", type=int, default=0, help="Number of warmup steps for profiling.")
-    parser.addoption("--profile-active", type=int, default=1, help="Number of active profiling steps.")
-    parser.addoption("--profile-repeat", type=int, default=1, help="Number of times to repeat profiling.")
+    parser.addoption(
+        "--profile-wait",
+        type=int,
+        required=True,
+        help="Number of steps to wait before profiling. Depends on what you want to view, since the profile will likely vary throughout the benchmark.",
+    )
+    parser.addoption(
+        "--profile-warmup", type=int, default=0, help="Number of warmup steps for profiling (default 0 is ok)."
+    )
+    parser.addoption(
+        "--profile-active",
+        type=int,
+        default=1,
+        help="Number of active profiling steps. (default 1 is ok; more than 1 will create large trace files)",
+    )
+    parser.addoption(
+        "--profile-repeat",
+        type=int,
+        default=1,
+        help="Number of times to repeat profiling. (default 1 is ok, unless you want to profile at multiple points during the simulation)",
+    )
 
 
 def pytorch_profiler(pytestconfig):
     """Session-scoped fixture providing a PyTorch profiler context manager.
 
-    Activated by --profile with env var GS_PROFILING=1. Yields a (profiler, step_fn) tuple where step_fn
-    must be called after each simulation step. When --profile is not set, yields
-    (None, noop).
+    Activated by env var GS_PROFILING=1. Yields a (profiler, step_fn) tuple where step_fn
+    must be called after each simulation step.
 
     The profiler uses a schedule so that only a window of steps is actively
     traced, keeping the overhead minimal. On exit, a Chrome trace is written to
     ``profile_trace.json``.
     """
-    if not pytestconfig.getoption("--profile"):
-        noop = lambda: None  # noqa: E731
-        yield None, noop
-        return
-
     import torch
     from torch.profiler import ProfilerActivity
 
