@@ -568,21 +568,25 @@ def _next_pow2(n: int) -> int:
 
 
 def _precompute_dilate_kernel_fft(
-    lam: float, dx: float, dy: float, fft_nx: int, fft_ny: int
+    dilate_coeff: float, dx: float, dy: float, fft_nx: int, fft_ny: int
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Build 2D Gx, Gy kernels (grad of Gaussian G = exp(-lam*(x^2+y^2))) and return FFT2 of each.
-    Gx = 2*lam*x*exp(-lam*r2), Gy = 2*lam*y*exp(-lam*r2). Center at (fft_nx//2, fft_ny//2).
-    Returns (gx_re, gx_im, gy_re, gy_im) each shape (fft_nx * fft_ny,) real, float32.
+    Build 2D convolution kernels Kx, Ky for the dilate sum (see _elastomer_displacement_grid_fft_dilate).
+    K_x(Δx, Δy) = Δx*exp(-λ*r²), K_y = Δy*exp(-λ*r²) with r² = Δx²+Δy². Center at (fft_nx//2, fft_ny//2).
+    Returns FFT2 of Kx, Ky as (gx_re, gx_im, gy_re, gy_im) each shape (fft_nx * fft_ny,) real, float32.
     """
     i = torch.arange(fft_nx, dtype=gs.tc_float, device=gs.device)
     j = torch.arange(fft_ny, dtype=gs.tc_float, device=gs.device)
     xx, yy = torch.meshgrid((i - fft_nx // 2) * dx, (j - fft_ny // 2) * dy, indexing="ij")
-    g = torch.exp(torch.tensor(-lam, dtype=gs.tc_float) * (xx * xx + yy * yy))
-    gx = 2.0 * lam * xx * g
-    gy = 2.0 * lam * yy * g
-    gx_fft = torch.fft.fft2(gx)
-    gy_fft = torch.fft.fft2(gy)
+    r2 = xx * xx + yy * yy
+    g = torch.exp(torch.tensor(-dilate_coeff, dtype=gs.tc_float) * r2)
+    kx = xx * g
+    ky = yy * g
+    # FFT convolution assumes kernel origin at (0,0); we built it centered at (fft_nx//2, fft_ny//2)
+    kx = torch.fft.ifftshift(kx)
+    ky = torch.fft.ifftshift(ky)
+    gx_fft = torch.fft.fft2(kx)
+    gy_fft = torch.fft.fft2(ky)
     return gx_fft.real.ravel(), gx_fft.imag.ravel(), gy_fft.real.ravel(), gy_fft.imag.ravel()
 
 
@@ -654,11 +658,6 @@ def _elastomer_displacement_grid_fft_dilate(
     kernel_fft_gy_im: torch.Tensor,
     output: torch.Tensor,
 ) -> None:
-    """
-    Phase 2: dilate displacement via torch.fft (convolution: disp_x = -(H conv Gx), disp_y = -(H conv Gy)).
-    Fills output with disp_x, disp_y (z=0) for each grid probe; overwrites the cache slice.
-    Batches over the batch dimension: one fft2 per sensor over shape (n_batches, fft_nx_s, fft_ny_s).
-    """
     n_batches = contact_buf.shape[0]
     n_sensors = grid_nx.shape[0]
 
@@ -671,30 +670,30 @@ def _elastomer_displacement_grid_fft_dilate(
         cache_start = int(sensor_cache_start[i_s].item())
         fft_size_s = fft_nx_s * fft_ny_s
 
-        # Gather H (contact depth) for all batches into padded buffer (n_batches, fft_nx_s, fft_ny_s)
+        # H = contact depth grid (ix, iy) with first dim = x, second = y; zero-pad to fft size.
+        # Probes are stored flat as ix + iy*g_nx (iy slow, ix fast) -> view (g_ny, g_nx) then transpose to (g_nx, g_ny).
         H_buf = fft_re[:, i_s, :fft_size_s].view(n_batches, fft_nx_s, fft_ny_s)
         H_buf.zero_()
-        H_buf[:, :g_nx, :g_ny].copy_(
-            contact_buf[:, probe_start : probe_start + g_nx * g_ny, 3].view(n_batches, g_nx, g_ny)
-        )
+        contact_slice = contact_buf[:, probe_start : probe_start + g_nx * g_ny, 3]
+        H_buf[:, :g_nx, :g_ny].copy_(contact_slice.view(n_batches, g_ny, g_nx).transpose(1, 2))
 
+        # D_x = real(ifft(fft(H) * fft(K_x))), D_y = real(ifft(fft(H) * fft(K_y)))
         H_fft = torch.fft.fft2(H_buf)
-
         Kx = torch.complex(
             kernel_fft_gx_re[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
             kernel_fft_gx_im[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
         )
         disp_x = torch.fft.ifft2(H_fft * Kx).real
-
         Ky = torch.complex(
             kernel_fft_gy_re[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
             kernel_fft_gy_im[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
         )
         disp_y = torch.fft.ifft2(H_fft * Ky).real
 
+        # Cache order is probe flat index ix + iy*g_nx; reshape(..., -1) gives ix*g_ny+iy, so transpose first
         out_flat = output[:, cache_start : cache_start + g_nx * g_ny * 3].view(n_batches, g_nx * g_ny, 3)
-        out_flat[:, :, 0] = -disp_x[:, :g_nx, :g_ny].reshape(n_batches, -1)
-        out_flat[:, :, 1] = -disp_y[:, :g_nx, :g_ny].reshape(n_batches, -1)
+        out_flat[:, :, 0] = disp_x[:, :g_nx, :g_ny].transpose(1, 2).reshape(n_batches, -1)
+        out_flat[:, :, 1] = disp_y[:, :g_nx, :g_ny].transpose(1, 2).reshape(n_batches, -1)
         out_flat[:, :, 2] = 0
 
 
