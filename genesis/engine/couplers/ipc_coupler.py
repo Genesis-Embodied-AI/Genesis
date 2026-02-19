@@ -79,6 +79,8 @@ class IPCCoupler(RBC):
         self._ipc_dsb = None
         self._ipc_eac = None
         self._ipc_ext_force = None
+        self._ipc_stc = None
+        self._ipc_animator = None
         self._ipc_scene_subscenes = {}
         self._use_subscenes = False
 
@@ -256,9 +258,9 @@ class IPCCoupler(RBC):
         self._ipc_scene.contact_tabular().insert(
             self._ipc_fem_contact, self._ipc_abd_contact, rigid_friction, res, True
         )
-        # ABD-ABD (controlled by option)
+        # ABD-ABD (controlled by rigid solver's self-collision setting)
         self._ipc_scene.contact_tabular().insert(
-            self._ipc_abd_contact, self._ipc_abd_contact, rigid_friction, res, self.options.enable_abd_self_contact
+            self._ipc_abd_contact, self._ipc_abd_contact, rigid_friction, res, self.rigid_solver._enable_self_collision
         )
         # Cloth-Cloth (controlled by option)
         self._ipc_scene.contact_tabular().insert(
@@ -404,7 +406,7 @@ class IPCCoupler(RBC):
     def _add_rigid_geoms_to_ipc(self):
         """Register rigid geoms in the IPC scene as ABD objects, merging fixed-joint children."""
         from uipc.geometry import label_surface, label_triangle_orient, flip_inward_triangles, merge, ground
-        from uipc.constitution import AffineBodyExternalBodyForce
+        from uipc.constitution import AffineBodyExternalBodyForce, SoftTransformConstraint
         import genesis.utils.geom as gu
 
         rigid_solver = self.rigid_solver
@@ -514,7 +516,7 @@ class IPCCoupler(RBC):
                     gs.logger.warning(f"Failed to process geom {i_g}: {e}")
 
             # Second pass: merge geoms per link and create IPC ABD objects.
-            from uipc import view, Transform, Vector3, Quaternion
+            from uipc import view, builtin, Transform, Vector3, Quaternion
 
             for target_link_idx, link_data in link_geoms.items():
                 if not link_data["meshes"]:
@@ -563,6 +565,40 @@ class IPCCoupler(RBC):
                     # Apply external force constitution.
                     self._ipc_ext_force.apply_to(merged_mesh)
 
+                    # Set is_fixed to mark fixed links as static in IPC.
+                    link = rigid_solver.links[target_link_idx]
+                    is_fixed_attr = merged_mesh.instances().find(builtin.is_fixed)
+                    if is_fixed_attr is not None:
+                        view(is_fixed_attr)[0] = 1 if link.is_fixed else 0
+
+                    # Mark all ABD bodies as externally driven (Genesis controls their motion).
+                    external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
+                    if external_kinetic_attr is not None:
+                        view(external_kinetic_attr)[:] = 1
+
+                    # SoftTransformConstraint: pulls IPC ABD body toward Genesis target transform.
+                    # Required for two_way links and the non-fixed base of external_articulation entities.
+                    coupling_type = self._entity_coupling_types.get(entity_idx)
+                    entity_obj = rigid_solver._entities[entity_idx]
+                    needs_stc = coupling_type == "two_way" or (
+                        coupling_type == "external_articulation"
+                        and not entity_obj.links[0].is_fixed
+                        and target_link_idx == entity_obj.base_link_idx
+                    )
+                    if needs_stc:
+                        if self._ipc_stc is None:
+                            self._ipc_stc = SoftTransformConstraint()
+                            scene.constitution_tabular().insert(self._ipc_stc)
+                        self._ipc_stc.apply_to(
+                            merged_mesh,
+                            np.array(
+                                [
+                                    self.options.constraint_strength_translation,
+                                    self.options.constraint_strength_rotation,
+                                ]
+                            ),
+                        )
+
                     # Add metadata for geometry identification.
                     meta_attrs = merged_mesh.meta()
                     meta_attrs.create("solver_type", "rigid")
@@ -577,13 +613,37 @@ class IPCCoupler(RBC):
                     rigid_solver._mesh_handles[obj_name] = merged_mesh
                     self._link_to_abd_slot[(i_b, target_link_idx)] = geo_slot
 
+                    # IPC Animator: feeds Genesis stored states to IPC as aim_transform each step.
+                    if needs_stc:
+                        if self._ipc_animator is None:
+                            self._ipc_animator = scene.animator()
+
+                        def _make_animate_cb(env_i, link_i, coupler_ref):
+                            def _animate(info):
+                                geo_slots = info.geo_slots()
+                                if not geo_slots:
+                                    return
+                                geo = geo_slots[0].geometry()
+                                stored = coupler_ref._genesis_stored_states
+                                if link_i not in stored or env_i not in stored[link_i]:
+                                    return
+                                transform_matrix = stored[link_i][env_i]
+                                is_constrained_attr = geo.instances().find(builtin.is_constrained)
+                                aim_transform_attr = geo.instances().find(builtin.aim_transform)
+                                if is_constrained_attr is not None and aim_transform_attr is not None:
+                                    view(is_constrained_attr)[0] = 1
+                                    view(aim_transform_attr)[:] = transform_matrix
+
+                            return _animate
+
+                        self._ipc_animator.insert(link_obj, _make_animate_cb(i_b, target_link_idx, self))
+
                     # Track primary ABD links (for AffineBodyStateAccessorFeature index mapping).
                     if i_b == 0 or not any(lk == target_link_idx for _, lk in self._primary_abd_links):
                         self._primary_abd_links.append((i_b, target_link_idx))
 
                     # Contact proxy: map IPC global vertex indices to their parent link.
                     # Only two_way links contribute contact gradient forces to Genesis.
-                    coupling_type = self._entity_coupling_types.get(entity_idx)
                     if self.options.enable_contact_proxy and coupling_type == "two_way":
                         n_verts = merged_mesh.vertices().size()
                         for local_idx in range(n_verts):

@@ -212,8 +212,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Soft constraint translation stiffness for rigid–IPC coupling. Default is 100.0.
     constraint_strength_rotation : float, optional
         Soft constraint rotation stiffness for rigid–IPC coupling. Default is 100.0.
-    enable_abd_self_contact : bool, optional
-        Enable ABD–ABD (rigid body) contact within IPC. Default is False.
     enable_cloth_self_contact : bool, optional
         Enable cloth self-collision within IPC. Default is True.
     enable_contact_proxy : bool, optional
@@ -231,7 +229,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
     linear_system_tolerance: float = 1e-4
     constraint_strength_translation: float = 100.0
     constraint_strength_rotation: float = 100.0
-    enable_abd_self_contact: bool = False
     enable_cloth_self_contact: bool = True
     enable_contact_proxy: bool = False
 

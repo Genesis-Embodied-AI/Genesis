@@ -34,14 +34,12 @@ def main():
     )
     args.vis = args.vis or args.vis_ipc
 
-    franka_material = (
-        gs.materials.Rigid(
+    rigid_options_kwargs = {}
+    if args.ipc:
+        rigid_options_kwargs = dict(
             coupling_mode=args.coupling_type,
             coupling_link_filter=("left_finger", "right_finger"),
         )
-        if args.ipc
-        else None
-    )
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
@@ -57,7 +55,7 @@ def main():
 
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
-        material=franka_material,
+        material=gs.materials.Rigid(**rigid_options_kwargs),
     )
 
     material = (
