@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Generic, NamedTuple, Type, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, NamedTuple, Type, TypeVar
 
 import numpy as np
 import quadrants as qd
@@ -641,18 +641,18 @@ def _kernel_elastomer_displacement_grid_contact(
 
 def _elastomer_displacement_grid_fft_dilate(
     contact_buf: torch.Tensor,
-    output: torch.Tensor,
+    sensor_probe_start: torch.Tensor,
+    sensor_cache_start: torch.Tensor,
     grid_nx: torch.Tensor,
     grid_ny: torch.Tensor,
     fft_nx: torch.Tensor,
     fft_ny: torch.Tensor,
-    sensor_probe_start: torch.Tensor,
-    sensor_cache_start: torch.Tensor,
+    fft_re: torch.Tensor,
     kernel_fft_gx_re: torch.Tensor,
     kernel_fft_gx_im: torch.Tensor,
     kernel_fft_gy_re: torch.Tensor,
     kernel_fft_gy_im: torch.Tensor,
-    fft_re: torch.Tensor,
+    output: torch.Tensor,
 ) -> None:
     """
     Phase 2: dilate displacement via torch.fft (convolution: disp_x = -(H conv Gx), disp_y = -(H conv Gy)).
@@ -863,6 +863,36 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
+    def _draw_debug_probes(self, context: "RasterizerContext", func: Callable[[tuple | torch.Tensor, int], float]):
+        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
+
+        for obj in self._debug_objects:
+            if obj is not None:
+                context.clear_debug_object(obj)
+        self._debug_objects = []
+
+        if self._link is None:
+            return
+
+        link_pos = self._link.get_pos(env_idx).reshape((3,))
+        link_quat = self._link.get_quat(env_idx).reshape((4,))
+        data = self.read_ground_truth(env_idx)
+
+        for i, pos in enumerate(self._probe_local_pos):
+            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
+
+            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
+            probe_radius = self._shared_metadata.probe_radius[probe_global_idx].item()
+
+            magnitude = func(data, i)
+
+            sphere_obj = context.draw_debug_sphere(
+                pos=tensor_to_array(probe_world),
+                radius=probe_radius,
+                color=self._options.debug_sphere_color if magnitude <= gs.EPS else self._options.debug_contact_color,
+            )
+            self._debug_objects.append(sphere_obj)
+
 
 class KinematicContactProbeData(NamedTuple):
     """
@@ -952,34 +982,10 @@ class KinematicContactProbe(
         )
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
-        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
-
-        for obj in self._debug_objects:
-            if obj is not None:
-                context.clear_debug_object(obj)
-        self._debug_objects = []
-
-        if self._link is None:
-            return
-
-        link_pos = self._link.get_pos(env_idx).reshape((3,))
-        link_quat = self._link.get_quat(env_idx).reshape((4,))
-        data = self.read_ground_truth(env_idx)
-
-        for i, pos in enumerate(self._probe_local_pos):
-            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
-
-            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
-            probe_radius = self._shared_metadata.probe_radius[probe_global_idx].item()
-
-            penetration = data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item()
-
-            sphere_obj = context.draw_debug_sphere(
-                pos=tensor_to_array(probe_world),
-                radius=probe_radius,
-                color=self._options.debug_sphere_color if penetration <= gs.EPS else self._options.debug_contact_color,
-            )
-            self._debug_objects.append(sphere_obj)
+        self._draw_debug_probes(
+            context,
+            lambda data, i: data.penetration[i].item() if data.penetration.dim() > 0 else data.penetration.item(),
+        )
 
 
 @dataclass
@@ -1097,34 +1103,7 @@ class ElastomerDisplacementSensor(
         )
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
-        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
-
-        for obj in self._debug_objects:
-            if obj is not None:
-                context.clear_debug_object(obj)
-        self._debug_objects = []
-
-        if self._link is None:
-            return
-
-        link_pos = self._link.get_pos(env_idx).reshape((3,))
-        link_quat = self._link.get_quat(env_idx).reshape((4,))
-        data = self.read_ground_truth(env_idx)
-
-        for i, pos in enumerate(self._probe_local_pos):
-            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
-
-            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
-            probe_radius = self._shared_metadata.probe_radius[probe_global_idx].item()
-
-            magnitude = torch.linalg.norm(data[i])
-
-            sphere_obj = context.draw_debug_sphere(
-                pos=tensor_to_array(probe_world),
-                radius=probe_radius,
-                color=self._options.debug_sphere_color if magnitude <= gs.EPS else self._options.debug_contact_color,
-            )
-            self._debug_objects.append(sphere_obj)
+        self._draw_debug_probes(context, lambda data, i: torch.linalg.norm(data[i]))
 
 
 @dataclass
@@ -1235,7 +1214,7 @@ class ElastomerDisplacementGridSensor(
             dim=0,
         )
 
-        # Assemble padded kernel FFT tensors from per-sensor list (allocated once in metadata)
+        # Assemble padded kernel FFT tensors from per-sensor list
         kernel_list = self._shared_metadata._fft_kernel_list
         n_sensors = len(kernel_list)
         max_fft_nx = int(self._shared_metadata.fft_nx.max().item())
@@ -1256,8 +1235,6 @@ class ElastomerDisplacementGridSensor(
         self._shared_metadata.kernel_fft_gx_im = kernel_fft_gx_im
         self._shared_metadata.kernel_fft_gy_re = kernel_fft_gy_re
         self._shared_metadata.kernel_fft_gy_im = kernel_fft_gy_im
-
-        # Allocate run buffers once (n_batches, n_sensors, total_n_probes fixed after build)
         self._shared_metadata.fft_re = torch.zeros(
             (self._manager._sim._B, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device
         )
@@ -1294,18 +1271,18 @@ class ElastomerDisplacementGridSensor(
 
         _elastomer_displacement_grid_fft_dilate(
             shared_metadata.contact_buf,
-            shared_ground_truth_cache,
+            shared_metadata.sensor_probe_start,
+            shared_metadata.sensor_cache_start,
             shared_metadata.grid_nx,
             shared_metadata.grid_ny,
             shared_metadata.fft_nx,
             shared_metadata.fft_ny,
-            shared_metadata.sensor_probe_start,
-            shared_metadata.sensor_cache_start,
+            shared_metadata.fft_re,
             shared_metadata.kernel_fft_gx_re,
             shared_metadata.kernel_fft_gx_im,
             shared_metadata.kernel_fft_gy_re,
             shared_metadata.kernel_fft_gy_im,
-            shared_metadata.fft_re,
+            shared_ground_truth_cache,
         )
 
         _kernel_elastomer_displacement_grid_shear_twist(
@@ -1328,32 +1305,4 @@ class ElastomerDisplacementGridSensor(
         )
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
-        """Draw debug spheres colored by displacement magnitude (same as list elastomer sensor)."""
-        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
-
-        for obj in self._debug_objects:
-            if obj is not None:
-                context.clear_debug_object(obj)
-        self._debug_objects = []
-
-        if self._link is None:
-            return
-
-        link_pos = self._link.get_pos(env_idx).reshape((3,))
-        link_quat = self._link.get_quat(env_idx).reshape((4,))
-        data = self.read_ground_truth(env_idx)
-
-        for i, pos in enumerate(self._probe_local_pos):
-            probe_world = link_pos + gu.transform_by_quat(pos, link_quat)
-
-            probe_global_idx = self._shared_metadata.sensor_probe_start[self._idx].item() + i
-            probe_radius = self._shared_metadata.probe_radius[probe_global_idx].item()
-
-            magnitude = torch.linalg.norm(data[i])
-
-            sphere_obj = context.draw_debug_sphere(
-                pos=tensor_to_array(probe_world),
-                radius=probe_radius,
-                color=self._options.debug_sphere_color if magnitude <= gs.EPS else self._options.debug_contact_color,
-            )
-            self._debug_objects.append(sphere_obj)
+        self._draw_debug_probes(context, lambda data, i: torch.linalg.norm(data[i]))
