@@ -11,7 +11,6 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--ipc", action="store_true", default=False)
-    parser.add_argument("--vis_ipc", action="store_true", default=False)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument(
         "--coupling_type",
@@ -32,7 +31,6 @@ def main():
         if args.ipc
         else None
     )
-    args.vis = args.vis or args.vis_ipc
 
     rigid_options_kwargs = {}
     if args.ipc:

@@ -10,6 +10,27 @@ except ImportError:
     pytest.skip("IPC Coupler is not supported because 'uipc' module is not available.", allow_module_level=True)
 
 
+def get_cloth_vertex_positions(scene):
+    """Extract cloth vertex positions from IPC scene.
+
+    Returns an (N, 3) array of cloth vertex positions, or None if no cloth geometry is found.
+    """
+    from uipc.backend import SceneVisitor
+    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
+    visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
+    for geo_slot in visitor.geometries():
+        if isinstance(geo_slot, SimplicialComplexSlot):
+            geo = geo_slot.geometry()
+            if geo.dim() == 2:  # Cloth is 2D shell
+                proc_geo = geo
+                if geo.instances().size() >= 1:
+                    proc_geo = merge(apply_transform(geo))
+                positions = proc_geo.positions().view().reshape(-1, 3)
+                return positions  # Shape: (num_vertices, 3)
+    return None
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_ipc_cloth(n_envs, show_viewer):
@@ -22,22 +43,6 @@ def test_ipc_cloth(n_envs, show_viewer):
        - v_{n+1} = (x_{n+1} - x_n) / dt
     """
     import numpy as np
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-
-    def get_cloth_vertex_positions(scene):
-        """Extract cloth vertex positions from IPC scene."""
-        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
-        for geo_slot in visitor.geometries():
-            if isinstance(geo_slot, SimplicialComplexSlot):
-                geo = geo_slot.geometry()
-                if geo.dim() == 2:  # Cloth is 2D shell
-                    proc_geo = geo
-                    if geo.instances().size() >= 1:
-                        proc_geo = merge(apply_transform(geo))
-                    positions = proc_geo.positions().view().reshape(-1, 3)
-                    return positions  # Shape: (num_vertices, 3)
-        return None
 
     dt = 2e-3
     g = 9.8
@@ -341,22 +346,6 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     The test tracks vertex 0 position and validates within 1% tolerance.
     """
     import numpy as np
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-
-    def get_cloth_vertex_positions(scene):
-        """Extract cloth vertex positions from IPC scene."""
-        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
-        for geo_slot in visitor.geometries():
-            if isinstance(geo_slot, SimplicialComplexSlot):
-                geo = geo_slot.geometry()
-                if geo.dim() == 2:  # Cloth is 2D shell
-                    proc_geo = geo
-                    if geo.instances().size() >= 1:
-                        proc_geo = merge(apply_transform(geo))
-                    positions = proc_geo.positions().view().reshape(-1, 3)
-                    return positions  # Shape: (num_vertices, 3)
-        return None
 
     # Physics parameters
     dt = 2e-3  # 2ms timestep
@@ -428,11 +417,11 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     # Validation with 1% tolerance
     tolerance = 0.01
     print("\nFree fall validation:")
-    print("  Initial Z:              {z_initial:.6f} m")
-    print("  Final Z:                {z_final:.6f} m")
-    print("  Actual displacement:    {actual_displacement:.6f} m")
-    print("  Expected displacement:  {expected_displacement:.6f} m")
-    print("  Relative error:         {relative_error * 100:.4f}%")
+    print(f"  Initial Z:              {z_initial:.6f} m")
+    print(f"  Final Z:                {z_final:.6f} m")
+    print(f"  Actual displacement:    {actual_displacement:.6f} m")
+    print(f"  Expected displacement:  {expected_displacement:.6f} m")
+    print(f"  Relative error:         {relative_error * 100:.4f}%")
 
     assert relative_error < tolerance, (
         f"Physics validation failed: {relative_error * 100:.4f}% error (tolerance: {tolerance * 100}%)"

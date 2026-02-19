@@ -212,7 +212,9 @@ class IPCCoupler(RBC):
     def _init_ipc(self):
         """Create IPC engine, world, scene, constitutions, and contact model."""
         import os
+        import logging as _logging
         import tempfile
+        from uipc import Logger as UIPCLogger
         from uipc.core import Engine, World, Scene
         from uipc.constitution import (
             AffineBodyConstitution,
@@ -222,6 +224,16 @@ class IPCCoupler(RBC):
             StrainLimitingBaraffWitkinShell,
             DiscreteShellBending,
         )
+
+        # Configure uipc logging level from Genesis logger
+        if gs.logger.level >= _logging.ERROR:
+            UIPCLogger.set_level(UIPCLogger.Level.Error)
+        elif gs.logger.level >= _logging.WARNING:
+            UIPCLogger.set_level(UIPCLogger.Level.Warn)
+        elif gs.logger.level >= _logging.INFO:
+            UIPCLogger.set_level(UIPCLogger.Level.Warn)
+        elif gs.logger.level >= _logging.DEBUG:
+            UIPCLogger.set_level(UIPCLogger.Level.Info)
 
         workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_workspace_{os.getpid()}")
         os.makedirs(workspace, exist_ok=True)
@@ -573,20 +585,26 @@ class IPCCoupler(RBC):
                     if is_fixed_attr is not None:
                         view(is_fixed_attr)[0] = 1 if link.is_fixed else 0
 
-                    # Mark all ABD bodies as externally driven (Genesis controls their motion).
-                    external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
-                    if external_kinetic_attr is not None:
-                        view(external_kinetic_attr)[:] = 1
-
-                    # SoftTransformConstraint: pulls IPC ABD body toward Genesis target transform.
-                    # Required for two_way links and the non-fixed base of external_articulation entities.
+                    # Determine whether this link's base is free and driven by IPC.
                     coupling_type = self._entity_coupling_types.get(entity_idx)
                     entity_obj = rigid_solver._entities[entity_idx]
-                    needs_stc = coupling_type == "two_way" or (
+                    is_free_base = (
                         coupling_type == "external_articulation"
                         and not entity_obj.links[0].is_fixed
                         and target_link_idx == entity_obj.base_link_idx
                     )
+                    ipc_driven_base = is_free_base and self.options.free_base_driven_by_ipc
+
+                    # Mark ABD bodies as externally driven (Genesis controls their motion),
+                    # except for free bases explicitly driven by IPC physics.
+                    external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
+                    if external_kinetic_attr is not None:
+                        view(external_kinetic_attr)[:] = 0 if ipc_driven_base else 1
+
+                    # SoftTransformConstraint: pulls IPC ABD body toward Genesis target transform.
+                    # Required for two_way links and the non-fixed base of external_articulation entities
+                    # (unless free_base_driven_by_ipc is True).
+                    needs_stc = coupling_type == "two_way" or (is_free_base and not ipc_driven_base)
                     if needs_stc:
                         if self._ipc_stc is None:
                             self._ipc_stc = SoftTransformConstraint()

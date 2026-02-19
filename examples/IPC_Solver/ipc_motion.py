@@ -294,7 +294,8 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    if args.vis:
+        plt.show()
 
 
 if __name__ == "__main__":

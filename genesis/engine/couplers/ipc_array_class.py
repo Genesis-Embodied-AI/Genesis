@@ -397,10 +397,56 @@ def build_ipc_scene_config(options, sim_options):
     config["dt"] = sim_options.dt
     g = sim_options.gravity
     config["gravity"] = [[g[0]], [g[1]], [g[2]]]
-    config["newton"]["velocity_tol"] = options.newton_tolerance
-    config["line_search"]["max_iter"] = options.n_linesearch_iterations
-    config["linear_system"]["tol_rate"] = options.linear_system_tolerance
+
+    # contact
     config["contact"]["d_hat"] = options.contact_d_hat
+    if options.contact_enable is not None:
+        config["contact"]["enable"] = options.contact_enable
+    if options.contact_friction_enable is not None:
+        config["contact"]["friction"]["enable"] = options.contact_friction_enable
+    if options.contact_eps_velocity is not None:
+        config["contact"]["eps_velocity"] = options.contact_eps_velocity
+    if options.contact_constitution is not None:
+        config["contact"]["constitution"] = options.contact_constitution
+
+    # newton solver
+    config["newton"]["velocity_tol"] = options.newton_tolerance
+    if options.newton_max_iter is not None:
+        config["newton"]["max_iter"] = options.newton_max_iter
+    if options.newton_min_iter is not None:
+        config["newton"]["min_iter"] = options.newton_min_iter
+    if options.newton_ccd_tol is not None:
+        config["newton"]["ccd_tol"] = options.newton_ccd_tol
+    if options.newton_use_adaptive_tol is not None:
+        config["newton"]["use_adaptive_tol"] = options.newton_use_adaptive_tol
+    if options.newton_transrate_tol is not None:
+        config["newton"]["transrate_tol"] = options.newton_transrate_tol
+    if options.newton_semi_implicit_enable is not None:
+        config["newton"]["semi_implicit"]["enable"] = options.newton_semi_implicit_enable
+    if options.newton_semi_implicit_beta_tol is not None:
+        config["newton"]["semi_implicit"]["beta_tol"] = options.newton_semi_implicit_beta_tol
+
+    # line search
+    config["line_search"]["max_iter"] = options.n_linesearch_iterations
+    if options.linesearch_report_energy is not None:
+        config["line_search"]["report_energy"] = options.linesearch_report_energy
+
+    # linear system
+    config["linear_system"]["tol_rate"] = options.linear_system_tolerance
+    if options.linear_system_solver is not None:
+        config["linear_system"]["solver"] = options.linear_system_solver
+
+    # collision detection
+    if options.collision_detection_method is not None:
+        config["collision_detection"]["method"] = options.collision_detection_method
+
+    # CFL condition
+    if options.cfl_enable is not None:
+        config["cfl"]["enable"] = options.cfl_enable
+
+    # sanity check
+    if options.sanity_check_enable is not None:
+        config["sanity_check"]["enable"] = options.sanity_check_enable
 
     return config
 
