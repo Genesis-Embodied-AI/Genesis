@@ -1413,8 +1413,9 @@ class RigidSolver(Solver):
         if self.is_active:
             from genesis.engine.couplers import IPCCoupler
 
+            # Rigid substep is deferred to substep_post_coupling for IPC.
             if isinstance(self.sim.coupler, IPCCoupler) and self.sim.coupler.has_rigid_coupling:
-                return  # Rigid substep is deferred to substep_post_coupling for IPC.
+                return
 
             self.substep(f)
 

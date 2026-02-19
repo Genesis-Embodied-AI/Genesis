@@ -189,14 +189,13 @@ class IPCCouplerOptions(BaseCouplerOptions):
 
     Note
     ----
-    Requires Python module 'uipc'. Only CUDA backend is supported.
-    Install via: ``pip install pyuipc`` (Linux/Windows x86 only).
-    ``dt`` and ``gravity`` are read from ``SimOptions`` automatically.
-    Contact friction is per-material: use ``friction`` on ``gs.materials.Rigid`` and
-    ``friction_mu`` on ``gs.materials.FEM.Elastic`` / ``gs.materials.FEM.Cloth``.
-    Per-entity IPC coupling is configured via ``coupling_mode`` on ``gs.materials.Rigid``.
-    Optional fields (``None`` by default) are forwarded to libuipc only when explicitly set;
-    otherwise libuipc's own defaults apply.
+    - Requires Python module ``uipc``. Install via: ``pip install pyuipc`` (Linux/Windows x86 only).
+    - Only CUDA backend is supported.
+    - Contact friction is per-material: use ``friction`` on ``gs.materials.Rigid`` and
+      ``friction_mu`` on ``gs.materials.FEM.Elastic`` / ``gs.materials.FEM.Cloth``.
+    - Per-entity IPC coupling is configured via ``coupling_mode`` on ``gs.materials.Rigid``.
+    - Optional fields (``None`` by default) are forwarded to libuipc only when explicitly set;
+      otherwise libuipc's own defaults apply.
 
     Parameters
     ----------

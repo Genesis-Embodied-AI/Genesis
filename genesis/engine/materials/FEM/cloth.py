@@ -8,23 +8,27 @@ class Cloth(Base):
     Parameters
     ----------
     E : float, optional
-        Young's modulus in Pa. Default is 1e5.
+        Young's modulus in Pa. Default is 1e4.
     nu : float, optional
-        Poisson's ratio. Default is 0.45.
+        Poisson's ratio. Default is 0.49.
     rho : float, optional
         Density in kg/m³. Default is 200.0.
     thickness : float, optional
         Shell thickness in meters. Default is 0.001.
     bending_stiffness : float, optional
-        Bending resistance coefficient. Default is 10.0.
+        Bending resistance coefficient. If None, no bending resistance.
+        Default is None.
     friction_mu : float, optional
         Friction coefficient for IPC contact. Default is 0.5.
+    model : str, optional
+        FEM material model. Default is "stable_neohookean".
     """
 
-    def __init__(self, E=1e5, nu=0.45, rho=200.0, thickness=0.001, bending_stiffness=10.0, friction_mu=0.5):
+    def __init__(self, E=1e4, nu=0.49, rho=200.0, thickness=0.001, bending_stiffness=None, friction_mu=0.5, model="stable_neohookean"):
         super().__init__(E=E, nu=nu, rho=rho, friction_mu=friction_mu)
         self._thickness = thickness
         self._bending_stiffness = bending_stiffness
+        self._model = model
 
     @property
     def thickness(self):
@@ -35,3 +39,8 @@ class Cloth(Base):
     def bending_stiffness(self):
         """Bending resistance coefficient."""
         return self._bending_stiffness
+
+    @property
+    def model(self):
+        """FEM material model name."""
+        return self._model

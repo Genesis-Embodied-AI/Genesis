@@ -156,7 +156,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with revolute joint.
 
     Tests both coupling types:
-    - two_way: Soft constraint coupling for rigid links
+    - two_way_soft_constraint: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
     scene = gs.Scene(
@@ -246,7 +246,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with prismatic joint.
 
     Tests both coupling types:
-    - two_way: Soft constraint coupling for rigid links
+    - two_way_soft_constraint: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
     scene = gs.Scene(

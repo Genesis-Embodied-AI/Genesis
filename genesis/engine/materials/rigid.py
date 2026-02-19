@@ -34,12 +34,12 @@ class Rigid(Material):
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
         coupling_mode : str, optional
-            IPC coupling mode. One of None (not coupled to IPC), ``'two_way'`` (bidirectional
-            soft constraint), ``'external_articulation'`` (joint-level coupling), or
-            ``'ipc_only'`` (IPC drives the entity; Genesis reads transforms). Default is None.
+            Coupling mode for the entity. One of ``'two_way_soft_constraint'``,
+            ``'external_articulation'``, or ``'ipc_only'``. Default is None (no coupling).
+            Ignored if the active coupler does not support it (only used by IPC).
         coupling_link_filter : tuple of str, optional
-            Names of links to include in IPC coupling. If None, all links are included.
-            Only meaningful when ``coupling_mode`` is not None. Default is None.
+            Names of links to include in coupling. If None, all links are included.
+            Ignored if the active coupler does not support it (only used by IPC).
     """
 
     def __init__(
