@@ -26,7 +26,7 @@ from huggingface_hub import snapshot_download
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level="info", performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--vis_ipc", action="store_true", default=False)

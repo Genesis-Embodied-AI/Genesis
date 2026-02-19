@@ -139,7 +139,7 @@ def main():
     parser = _build_parser()
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu, logging_level="debug", performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="debug")
 
     dt = args.dt
     scene = gs.Scene(

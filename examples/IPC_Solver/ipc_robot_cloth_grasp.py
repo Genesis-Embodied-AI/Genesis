@@ -7,7 +7,7 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level="debug", performance_mode=True)
+    gs.init(backend=gs.gpu, logging_level="debug")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--ipc", action="store_true", default=False)
@@ -134,7 +134,7 @@ def main():
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.4]),
         quat=np.array([0, 1, 0, 0]),
     )
 
