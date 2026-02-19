@@ -1595,7 +1595,6 @@ def test_multilink_inverse_kinematics(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_inverse_kinematics_local_point(n_envs, show_viewer):
     """Test IK with local_point parameter - positions an offset point at the target instead of link origin."""
 
