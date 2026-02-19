@@ -11,7 +11,7 @@ class KinematicTactileSensorMixin:
     """
     Parameters
     ----------
-    radius : float | array-like[float]
+    probe_radius : float | array-like[float]
         Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
     debug_sphere_color: array-like[float, float, float, float]
         The color of the debug sphere. Defaults to (1.0, 0.5, 0.0, 0.4).
@@ -19,7 +19,7 @@ class KinematicTactileSensorMixin:
         The color of the debug contact. Defaults to (1.0, 0.2, 0.0, 0.8).
     """
 
-    radius: float | FArrayType = 0.005
+    probe_radius: float | FArrayType = 0.005
 
     debug_sphere_color: Vec4FType = (1.0, 0.5, 0.0, 0.4)
     debug_contact_color: Vec4FType = (1.0, 0.2, 0.0, 0.8)
@@ -35,8 +35,8 @@ class KinematicTactileSensorMixin:
     def model_post_init(self, _):
         super().model_post_init(_)
 
-        if np.any(np.array(self.radius) < 0):
-            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
+        if np.any(np.array(self.probe_radius) < 0):
+            gs.raise_exception(f"radius must be non-negative, got: {self.probe_radius}")
 
 
 class ElastomerDisplacementSensorMixin:
@@ -108,10 +108,10 @@ class KinematicContactProbe(
                 "probe_local_pos and probe_local_normal must have the same length. "
                 f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
             )
-        if not isinstance(self.radius, float) and len(self.radius) != len(probe_local_pos):
+        if not isinstance(self.probe_radius, float) and len(self.probe_radius) != len(probe_local_pos):
             gs.raise_exception(
                 "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
+                f"Got {len(self.probe_radius)} radii and {len(probe_local_pos)} probe positions."
             )
 
 
@@ -148,10 +148,10 @@ class ElastomerDisplacementSensor(
                 "probe_local_pos and probe_local_normal must have the same length. "
                 f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
             )
-        if not isinstance(self.radius, float) and len(self.radius) != len(probe_local_pos):
+        if not isinstance(self.probe_radius, float) and len(self.probe_radius) != len(probe_local_pos):
             gs.raise_exception(
                 "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
+                f"Got {len(self.probe_radius)} radii and {len(probe_local_pos)} probe positions."
             )
 
 

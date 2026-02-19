@@ -699,7 +699,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
                 (0.0, 0.0, -BOX_SIZE / 2),  # bottom of box, center
             ),
             probe_local_normal=probe_normals,
-            radius=(
+            probe_radius=(
                 PROBE_RADIUS,
                 PROBE_RADIUS / 10,  # small radius which cannot detect sphere unless it's perfectly on top
                 BOX_SIZE / 3,  # large radius that can detect sphere when not aligned
@@ -717,7 +717,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
             entity_idx=sphere.idx,
             probe_local_pos=[(0.0, 0.0, -SPHERE_RADIUS)],
             probe_local_normal=[(0.0, 0.0, -1.0)],
-            radius=PROBE_RADIUS,
+            probe_radius=PROBE_RADIUS,
             stiffness=STIFFNESS,
             debug_sphere_color=(0.0, 0.0, 1.0, 0.5),
             draw_debug=show_viewer,
@@ -833,7 +833,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
             entity_idx=sphere.idx,
             probe_local_pos=probe_positions,
             probe_local_normal=probe_normals,
-            radius=PROBE_RADIUS,
+            probe_radius=PROBE_RADIUS,
             draw_debug=show_viewer,
         )
     )

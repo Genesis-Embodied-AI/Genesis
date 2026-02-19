@@ -144,7 +144,7 @@ def main():
                 probe_local_pos_grid_bounds=grid_bounds,
                 probe_grid_size=GRID_SIZE,
                 probe_local_normal=(0.0, 0.0, -1.0),
-                radius=PROBE_RADIUS,
+                probe_radius=PROBE_RADIUS,
                 draw_debug=args.vis,
             )
         )
@@ -164,7 +164,7 @@ def main():
                 link_idx_local=0,
                 probe_local_pos=probe_positions,
                 probe_local_normal=probe_normals,
-                radius=PROBE_RADIUS,
+                probe_radius=PROBE_RADIUS,
                 draw_debug=args.vis,
             )
         )
