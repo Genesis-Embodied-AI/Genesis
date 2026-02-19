@@ -14,11 +14,12 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 # Teleop
 KEY_DPOS = 0.01
 
-# Pusher (sphere with tactile on bottom hemisphere)
-PUSHER_RADIUS = 0.1
-PROBE_RADIUS = 0.02
+# Pusher (sphere with tactile on bottom hemisphere, or box with grid sensor on bottom face)
+PUSHER_SIZE = 0.1
+PROBE_RADIUS = 0.01
 HEMISPHERE_N_THETA = 4
 HEMISPHERE_N_PHI = 12
+GRID_SIZE = (6, 8)  # (nx, ny) for --grid
 
 # Sandbox
 SANDBOX_SIZE = 1.2
@@ -44,14 +45,33 @@ def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
     return positions.astype(np.float32), normals.astype(np.float32)
 
 
+def _build_grid_probe_positions(bounds: tuple, grid_size: tuple[int, int]) -> np.ndarray:
+    """Probe positions on a 2D grid (row-major iy, ix) for plotting. Same layout as ElastomerDisplacementGridSensor."""
+    lo, hi = np.array(bounds[0]), np.array(bounds[1])
+    nx, ny = grid_size[0], grid_size[1]
+    dx = (hi[0] - lo[0]) / (nx - 1) if nx > 1 else 0.0
+    dy = (hi[1] - lo[1]) / (ny - 1) if ny > 1 else 0.0
+    positions = []
+    for iy in range(ny):
+        for ix in range(nx):
+            positions.append((lo[0] + ix * dx, lo[1] + iy * dy, lo[2]))
+    return np.array(positions, dtype=np.float32)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Interactive ElastomerDisplacementSensor Visualization")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("--grid", action="store_true", help="Use box pusher with ElastomerDisplacementGridSensor")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
+    gs.init(
+        backend=gs.cpu if args.cpu else gs.gpu,
+        precision="32",
+        logging_level="info",
+        debug=True,
+    )
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -60,7 +80,7 @@ def main():
             max_FPS=60,
         ),
         profiling_options=gs.options.ProfilingOptions(
-            show_FPS=False,
+            show_FPS=True,
         ),
         show_viewer=args.vis,
     )
@@ -104,26 +124,50 @@ def main():
         surface=wall_surface,
     )
 
-    # Controllable pusher sphere with tactile on bottom hemisphere
-    pusher_start = np.array([0.0, 0.0, PUSHER_RADIUS + 0.01], dtype=np.float32)
-    pusher = scene.add_entity(
-        gs.morphs.Sphere(radius=PUSHER_RADIUS, pos=pusher_start),
-        surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
-    )
-
-    probe_positions, probe_normals = _build_hemisphere_probes(PUSHER_RADIUS, HEMISPHERE_N_THETA, HEMISPHERE_N_PHI)
-    n_probes = len(probe_positions)
-
-    tactile = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
-            entity_idx=pusher.idx,
-            link_idx_local=0,
-            probe_local_pos=probe_positions,
-            probe_local_normal=probe_normals,
-            radius=PROBE_RADIUS,
-            draw_debug=args.vis,
+    # Controllable pusher: sphere with hemisphere tactile, or box with grid tactile
+    if args.grid:
+        box_size = np.array((PUSHER_SIZE, PUSHER_SIZE, PUSHER_SIZE / 2), dtype=np.float32)
+        pusher_start = np.array([0.0, 0.0, box_size[2] / 2 + 0.01], dtype=np.float32)
+        pusher = scene.add_entity(
+            gs.morphs.Box(size=box_size, pos=pusher_start),
+            surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
         )
-    )
+        half_xy = box_size[:2] / 2
+        grid_bounds = [
+            [-float(half_xy[0]), -float(half_xy[1]), -float(box_size[2]) / 2],
+            [float(half_xy[0]), float(half_xy[1]), -float(box_size[2]) / 2],
+        ]
+        tactile = scene.add_sensor(
+            gs.sensors.ElastomerDisplacementGridSensor(
+                entity_idx=pusher.idx,
+                link_idx_local=0,
+                probe_local_pos_grid_bounds=grid_bounds,
+                probe_grid_size=GRID_SIZE,
+                probe_local_normal=(0.0, 0.0, -1.0),
+                radius=PROBE_RADIUS,
+                draw_debug=args.vis,
+            )
+        )
+        probe_positions = _build_grid_probe_positions(grid_bounds, GRID_SIZE)
+        n_probes = len(probe_positions)
+    else:
+        pusher_start = np.array([0.0, 0.0, PUSHER_SIZE + 0.01], dtype=np.float32)
+        pusher = scene.add_entity(
+            gs.morphs.Sphere(radius=PUSHER_SIZE, pos=pusher_start),
+            surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
+        )
+        probe_positions, probe_normals = _build_hemisphere_probes(PUSHER_SIZE, HEMISPHERE_N_THETA, HEMISPHERE_N_PHI)
+        n_probes = len(probe_positions)
+        tactile = scene.add_sensor(
+            gs.sensors.ElastomerDisplacementSensor(
+                entity_idx=pusher.idx,
+                link_idx_local=0,
+                probe_local_pos=probe_positions,
+                probe_local_normal=probe_normals,
+                radius=PROBE_RADIUS,
+                draw_debug=args.vis,
+            )
+        )
 
     if args.vis:
         scene.viewer.add_plugin(
@@ -132,12 +176,13 @@ def main():
             )
         )
         if IS_MATPLOTLIB_AVAILABLE:
+            plot_normal = (0.0, 0.0, -1.0) if args.grid else (0.0, 0.0, 1.0)
             scene.start_recording(
                 data_func=lambda: tactile.read(),
                 rec_options=gs.recorders.MPLVectorFieldPlot(
                     title="Tactile Displacement",
                     positions=probe_positions,
-                    normal=(0.0, 0.0, 1.0),
+                    normal=plot_normal,
                     scale_factor=10.0,
                     max_magnitude=1.0e-2,
                 ),
@@ -211,14 +256,15 @@ def main():
 
     # ── Print info ─────────────────────────────────────────────────────
     print("\n=== Interactive ElastomerDisplacementSensor ===")
-    print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher sphere with {n_probes} probes on bottom hemisphere")
+    print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher box with {n_probes} probes")
+
     if args.vis:
         if IS_MATPLOTLIB_AVAILABLE:
             print("Live vector field plot: tactile displacement (2D projection, color = magnitude)")
         print()
         print("Keyboard Controls:")
-        print("  [↑/↓/←/→]  Move pusher sphere in XY")
-        print("  [j / k]     Lower / raise pusher sphere")
+        print("  [↑/↓/←/→]  Move pusher in XY")
+        print("  [j / k]     Lower / raise pusher")
         print("  [SPACE]     Drop an object at pusher location")
         print("  [\\]         Reset pusher position")
     else:
