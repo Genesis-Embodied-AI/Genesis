@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 import genesis as gs
@@ -9,15 +10,15 @@ try:
 except ImportError:
     pytest.skip("IPC Coupler is not supported because 'uipc' module is not available.", allow_module_level=True)
 
+from uipc.backend import SceneVisitor
+from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
 
 def get_cloth_vertex_positions(scene):
     """Extract cloth vertex positions from IPC scene.
 
     Returns an (N, 3) array of cloth vertex positions, or None if no cloth geometry is found.
     """
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-
     visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
     for geo_slot in visitor.geometries():
         if isinstance(geo_slot, SimplicialComplexSlot):
@@ -42,8 +43,6 @@ def test_ipc_cloth(n_envs, show_viewer):
        - dx_{n+1} = v_n * dt + g * dt^2
        - v_{n+1} = (x_{n+1} - x_n) / dt
     """
-    import numpy as np
-
     dt = 2e-3
     g = 9.8
 
@@ -161,8 +160,6 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
     - two_way: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
-    import numpy as np
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -253,8 +250,6 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
     - two_way: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
-    import numpy as np
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -345,8 +340,6 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
     The test tracks vertex 0 position and validates within 1% tolerance.
     """
-    import numpy as np
-
     # Physics parameters
     dt = 2e-3  # 2ms timestep
     g = 9.8  # Gravity magnitude (m/s²)

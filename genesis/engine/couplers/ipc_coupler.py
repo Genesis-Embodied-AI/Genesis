@@ -1,32 +1,38 @@
+import logging as _logging
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 import numpy as np
+
 import quadrants as qd
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
 from genesis.utils.array_class import V, V_VEC, V_MAT
 from genesis.utils.misc import qd_to_numpy
+
 from .ipc_array_class import (
     ArticulationState,
     IPCCouplingData,
+    build_ipc_scene_config,
+    build_link_transform_matrix,
+    categorize_entities_by_coupling_type,
+    compute_coupling_forces_kernel,
+    compute_external_force_kernel,
+    compute_link_contact_forces_kernel,
+    compute_link_init_world_rotation,
+    compute_link_to_link_transform,
+    decompose_transform_matrix,
+    extract_articulated_joints,
+    find_target_link_for_fixed_merge,
     get_articulation_state,
     get_ipc_coupling_data,
-    compute_external_force_kernel,
-    compute_coupling_forces_kernel,
-    compute_link_contact_forces_kernel,
-    find_target_link_for_fixed_merge,
-    compute_link_to_link_transform,
-    compute_link_init_world_rotation,
     is_robot_entity,
-    categorize_entities_by_coupling_type,
-    extract_articulated_joints,
-    build_ipc_scene_config,
     read_ipc_geometry_metadata,
-    decompose_transform_matrix,
-    build_link_transform_matrix,
 )
 
 if TYPE_CHECKING:
@@ -38,7 +44,37 @@ try:
     UIPC_AVAILABLE = True
 except ImportError:
     UIPC_AVAILABLE = False
-    uipc = None
+
+if UIPC_AVAILABLE:
+    from uipc import Logger as UIPCLogger, Quaternion, Transform, Vector3, builtin, view
+    from uipc.backend import SceneVisitor
+    from uipc.constitution import (
+        AffineBodyConstitution,
+        AffineBodyExternalBodyForce,
+        AffineBodyPrismaticJoint,
+        AffineBodyRevoluteJoint,
+        DiscreteShellBending,
+        ElasticModuli,
+        ElasticModuli2D,
+        ExternalArticulationConstraint,
+        NeoHookeanShell,
+        SoftTransformConstraint,
+        StableNeoHookean,
+        StrainLimitingBaraffWitkinShell,
+    )
+    from uipc.core import AffineBodyStateAccessorFeature, Engine, Scene, World
+    from uipc.geometry import (
+        Geometry,
+        SimplicialComplexSlot,
+        affine_body,
+        apply_transform,
+        ground,
+        label_surface,
+        linemesh,
+        merge,
+        tetmesh,
+        trimesh as uipc_trimesh,
+    )
 
 
 class IPCCoupler(RBC):
@@ -211,20 +247,6 @@ class IPCCoupler(RBC):
 
     def _init_ipc(self):
         """Create IPC engine, world, scene, constitutions, and contact model."""
-        import os
-        import logging as _logging
-        import tempfile
-        from uipc import Logger as UIPCLogger
-        from uipc.core import Engine, World, Scene
-        from uipc.constitution import (
-            AffineBodyConstitution,
-            StableNeoHookean,
-            NeoHookeanShell,
-            ExternalArticulationConstraint,
-            StrainLimitingBaraffWitkinShell,
-            DiscreteShellBending,
-        )
-
         # Configure uipc logging level from Genesis logger
         if gs.logger.level >= _logging.ERROR:
             UIPCLogger.set_level(UIPCLogger.Level.Error)
@@ -359,9 +381,6 @@ class IPCCoupler(RBC):
 
     def _add_fem_entities_to_ipc(self):
         """Register FEM and cloth entities in the IPC scene."""
-        from uipc.constitution import ElasticModuli, ElasticModuli2D
-        from uipc.geometry import label_surface, tetmesh, trimesh
-
         fem_solver = self.fem_solver
         scene = self._ipc_scene
 
@@ -381,7 +400,7 @@ class IPCCoupler(RBC):
                 if is_cloth:
                     verts = entity.init_positions.cpu().numpy().astype(np.float64)
                     faces = entity.surface_triangles.astype(np.int32)
-                    mesh = trimesh(verts, faces)
+                    mesh = uipc_trimesh(verts, faces)
                 else:
                     mesh = tetmesh(entity.init_positions.cpu().numpy(), entity.elems)
 
@@ -421,10 +440,6 @@ class IPCCoupler(RBC):
 
     def _add_rigid_geoms_to_ipc(self):
         """Register rigid geoms in the IPC scene as ABD objects, merging fixed-joint children."""
-        from uipc.geometry import label_surface, merge, ground
-        from uipc.constitution import AffineBodyExternalBodyForce, SoftTransformConstraint
-        import genesis.utils.geom as gu
-
         rigid_solver = self.rigid_solver
         scene = self._ipc_scene
 
@@ -498,8 +513,6 @@ class IPCCoupler(RBC):
                     continue
 
                 try:
-                    from uipc.geometry import trimesh as uipc_trimesh
-
                     vert_start = rigid_solver.geoms_info.vert_start[i_g]
                     vert_end = rigid_solver.geoms_info.vert_end[i_g]
                     face_start = rigid_solver.geoms_info.face_start[i_g]
@@ -532,8 +545,6 @@ class IPCCoupler(RBC):
                     gs.logger.warning(f"Failed to process geom {i_g}: {e}")
 
             # Second pass: merge geoms per link and create IPC ABD objects.
-            from uipc import view, builtin, Transform, Vector3, Quaternion
-
             for target_link_idx, link_data in link_geoms.items():
                 if not link_data["meshes"]:
                     continue
@@ -707,13 +718,6 @@ class IPCCoupler(RBC):
 
     def _add_articulated_entities_to_ipc(self):
         """Register articulated robots in IPC using ExternalArticulationConstraint."""
-        from uipc.constitution import (
-            AffineBodyRevoluteJoint,
-            AffineBodyPrismaticJoint,
-        )
-        from uipc.geometry import linemesh
-        from uipc import view
-
         rigid_solver = self.rigid_solver
         scene = self._ipc_scene
 
@@ -867,9 +871,6 @@ class IPCCoupler(RBC):
     def _init_abd_state_accessor(self):
         """Set up AffineBodyStateAccessorFeature for efficient batch ABD state retrieval."""
         try:
-            from uipc.core import AffineBodyStateAccessorFeature
-            from uipc import builtin
-
             self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
             if self._abd_state_feature is None:
                 return
@@ -891,7 +892,7 @@ class IPCCoupler(RBC):
 
             gs.logger.info(f"AffineBodyStateAccessorFeature initialized ({body_count} bodies).")
 
-        except (ImportError, Exception) as e:
+        except Exception as e:
             gs.logger.warning(f"AffineBodyStateAccessorFeature not available: {e}. Using legacy path.")
             self._abd_state_feature = None
             self._abd_state_geo = None
@@ -1047,8 +1048,6 @@ class IPCCoupler(RBC):
         self.abd_data_by_link = self._retrieve_rigid_states_legacy(entity_set)
 
     def _retrieve_rigid_states_optimized(self, entity_set=None):
-        from uipc import builtin
-
         abd_data_by_link = {}
         self._abd_state_feature.copy_to(self._abd_state_geo)
 
@@ -1096,10 +1095,6 @@ class IPCCoupler(RBC):
         return abd_data_by_link
 
     def _retrieve_rigid_states_legacy(self, entity_set=None):
-        from uipc import builtin, view
-        from uipc.backend import SceneVisitor
-        from uipc.geometry import SimplicialComplexSlot
-
         rigid_solver = self.rigid_solver
         visitor = SceneVisitor(self._ipc_scene)
         abd_data_by_link = {}
@@ -1141,10 +1136,6 @@ class IPCCoupler(RBC):
         """Write IPC vertex positions back to Genesis FEM entities."""
         if not self.fem_solver.is_active:
             return
-
-        from uipc import builtin
-        from uipc.backend import SceneVisitor
-        from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
 
         visitor = SceneVisitor(self._ipc_scene)
         fem_geo_by_entity = {}
@@ -1195,10 +1186,6 @@ class IPCCoupler(RBC):
         and torques using ``compute_link_contact_forces_kernel``, and stores results in
         ``_ipc_contact_forces``.
         """
-        from uipc import view
-        from uipc.geometry import Geometry, SimplicialComplexSlot
-        from uipc.backend import SceneVisitor
-
         self._ipc_contact_forces.clear()
 
         if not self._vertex_to_link_mapping:
@@ -1443,8 +1430,6 @@ class IPCCoupler(RBC):
         Pre-advance: read Genesis qpos, compute joint deltas, send to IPC.
         Updates ref_dof_prev snapshot and sends delta_theta_tilde to EAC geometry.
         """
-        from uipc import view
-
         if not self._articulated_entities:
             return
 
@@ -1513,8 +1498,6 @@ class IPCCoupler(RBC):
                         mass_view[j * n_joints + i] = float(mass_mat_entity[dof_i, dof_j])
 
             # Synchronize per-ABD-body ref_dof_prev from stored Genesis transforms.
-            from uipc.geometry import affine_body
-
             for joint_idx, joint in enumerate(art["revolute_joints"] + art["prismatic_joints"]):
                 child_link_idx = joint.link.idx
                 abd_geo_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx=0)
@@ -1539,8 +1522,6 @@ class IPCCoupler(RBC):
         """
         Post-advance: read IPC's delta_theta output, compute new qpos, write to Genesis.
         """
-        from uipc import view
-
         if not self._articulated_entities:
             return
 
