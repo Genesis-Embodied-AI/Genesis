@@ -137,18 +137,15 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             if ray_hit is None:
                 return
 
-            new_mouse_3d_pos = ray_hit.position
-            prev_pos = self._prev_mouse_scene_pos
-            delta_3d_pos = new_mouse_3d_pos - prev_pos
-            self._prev_mouse_scene_pos = new_mouse_3d_pos
+            self._prev_mouse_scene_pos = ray_hit.position
 
             if self.use_force:
-                self._apply_spring_force(new_mouse_3d_pos, self.scene.sim.dt)
+                self._apply_spring_force(ray_hit.position, self.scene.sim.dt)
             else:
-                # apply displacement
-                pos = tensor_to_array(self._held_link.entity.get_pos())
-                pos = pos + delta_3d_pos
-                self._held_link.entity.set_pos(pos)
+                assert self._held_point_local is not None
+                link_quat = tensor_to_array(self._held_link.get_quat())
+                offset_world = gu.transform_by_quat(self._held_point_local, link_quat)
+                self._held_link.entity.set_pos(ray_hit.position - offset_world)
 
     @with_lock
     @override

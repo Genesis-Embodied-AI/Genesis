@@ -201,7 +201,7 @@ class Viewer(pyglet.window.Window):
         plane_reflection=False,
         env_separate_rigid=False,
         plugins=None,
-        disable_help_text=False,
+        enable_help_text=True,
         **kwargs,
     ):
         #######################################################################
@@ -345,8 +345,8 @@ class Viewer(pyglet.window.Window):
         self._reset_view()
 
         # Setup help text functionality
-        self._disable_help_text = disable_help_text
-        if not self._disable_help_text:
+        self._enable_help_text = enable_help_text
+        if self._enable_help_text:
             self._collapse_instructions = True
             instr_key_str = str(Key(HELP_TEXT_KEY))
             self._instr_texts: tuple[list[str], list[str]] = (
@@ -926,13 +926,14 @@ class Viewer(pyglet.window.Window):
 
         try:
             # Importing tkinter is very slow and not used very often. Let's delay import.
-            from tkinter import Tk, filedialog
+            from tkinter import filedialog
 
-            if root is None:
-                root = Tk()
-                root.withdraw()
             dialog = filedialog.SaveAs(
-                root, initialdir=save_dir, title="Select file save location", filetypes=filetypes
+                parent=None,
+                initialdir=save_dir,
+                title="Select file save location",
+                filetypes=filetypes,
+                defaultextension=".png",
             )
             filename = dialog.show()
         except Exception as e:
@@ -941,7 +942,7 @@ class Viewer(pyglet.window.Window):
 
         if not filename:
             return None
-        return filename
+        return os.path.normpath(filename)
 
     def _save_image(self):
         # Postpone import of OpenCV at runtime to reduce hard system dependencies
@@ -1177,6 +1178,8 @@ class Viewer(pyglet.window.Window):
                 AttributeError,
                 ArgumentError,
                 RuntimeError,
+                TypeError,  # Race conditions wheno accessing OpenGL resources not binded to context yet
+                Exception,  # Just in case, to avoid deadlock when running in thread
             ) as e:
                 if not confs:
                     # It is essential to set the exception before closing the viewer, otherwise the main thread preempt
@@ -1346,7 +1349,7 @@ class Viewer(pyglet.window.Window):
 
     def _update_instr_texts(self):
         """Update the instruction text based on current keybindings."""
-        if self._disable_help_text:
+        if not self._enable_help_text:
             return
 
         self._key_instr_texts = self._instr_texts[0] + [
@@ -1358,7 +1361,7 @@ class Viewer(pyglet.window.Window):
 
     def _toggle_instructions(self):
         """Toggle the display of keyboard instructions."""
-        if self._disable_help_text:
+        if not self._enable_help_text:
             raise RuntimeError("Instructions display is disabled.")
         self._collapse_instructions = not self._collapse_instructions
 
@@ -1369,7 +1372,7 @@ class Viewer(pyglet.window.Window):
 
     def _render_help_text(self):
         """Render help text and messages on the viewer."""
-        if self._disable_help_text:
+        if not self._enable_help_text:
             return
 
         # Render temporary message

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.14"
+version = "0.4.0"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -92,6 +92,8 @@ dev = [
     "av",
     # Used for validating polar decomposition in unit tests
     "scipy",
+    # Used for code formatting during commits
+    "pre_commit",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.
