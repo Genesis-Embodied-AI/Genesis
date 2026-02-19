@@ -220,6 +220,13 @@ class IPCCouplerOptions(BaseCouplerOptions):
         are accumulated into per-link forces and torques via ``compute_link_contact_forces_kernel``
         and applied to Genesis. Requires at least one entity with ``coupling_mode="two_way"``.
         Default is False.
+    two_way_coupling : bool, optional
+        Enable soft-constraint coupling forces from IPC back to Genesis rigid bodies for
+        entities with ``coupling_mode="two_way"``. Set to False to disable force application
+        while still running IPC simulation (useful for debugging). Default is True.
+    enable_ground_contact : bool, optional
+        Enable IPC ground–ABD contact. Set to False to disable ground contact in IPC
+        (e.g. when using a Genesis ground plane separately). Default is True.
     """
 
     contact_d_hat: float = 0.001
@@ -231,6 +238,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     constraint_strength_rotation: float = 100.0
     enable_cloth_self_contact: bool = True
     enable_contact_proxy: bool = False
+    two_way_coupling: bool = True
+    enable_ground_contact: bool = True
 
 
 ############################ Solvers inside simulator ############################

@@ -125,6 +125,10 @@ class IPCCoupler(RBC):
         # Link collision overrides: {entity_idx: {link_idx: bool}}
         self._link_collision_settings = {}
 
+        # Previous link transforms for per-ABD ref_dof_prev synchronization.
+        # Maps (entity_idx, joint_idx, env_idx) -> 4×4 transform matrix.
+        self._prev_link_transforms = {}
+
         # Contact proxy state — only used when options.enable_contact_proxy is True.
         # Maps IPC global vertex index -> (link_idx, env_idx, local_vertex_idx).
         # Built during _add_rigid_geoms_to_ipc for two_way coupled links.
@@ -276,7 +280,7 @@ class IPCCoupler(RBC):
         )
         # Ground-ABD
         self._ipc_scene.contact_tabular().insert(
-            self._ipc_ground_contact, self._ipc_abd_contact, rigid_friction, res, True
+            self._ipc_ground_contact, self._ipc_abd_contact, rigid_friction, res, self.options.enable_ground_contact
         )
         # Ground-FEM
         self._ipc_scene.contact_tabular().insert(
@@ -788,21 +792,16 @@ class IPCCoupler(RBC):
             n_joints = joint_info["n_joints"]
             n_dofs = entity.n_qs
 
-            art_verts = np.zeros((n_joints, 3), dtype=np.float64)
-            art_edges = np.array([[i, i] for i in range(n_joints)], dtype=np.int32)
-            art_mesh = linemesh(art_verts, art_edges)
+            indices = [0] * len(joint_geo_slots)
+            articulation_geo = self._ipc_eac.create_geometry(joint_geo_slots, indices)
 
             mass_matrix = np.eye(n_joints, dtype=np.float64) * 1e4
-
-            self._ipc_eac.apply_to(
-                art_mesh,
-                joint_geo_slots,
-                list(range(n_joints)),
-                mass_matrix.flatten().tolist(),
-            )
+            mass_attr = articulation_geo["joint_joint"].find("mass")
+            mass_view = view(mass_attr)
+            mass_view[:] = mass_matrix.T.flatten()  # Column-major
 
             art_obj = scene.objects().create(f"articulation_{entity_idx}")
-            articulation_slot, _ = art_obj.geometries().create(art_mesh)
+            articulation_slot, _ = art_obj.geometries().create(articulation_geo)
 
             qs_start = total_articu_qs
             joint_start = total_articu_joints
@@ -821,7 +820,9 @@ class IPCCoupler(RBC):
                 "joint_dof_indices": joint_info["joint_dof_indices"],
                 "revolute_joints": joint_info["revolute_joints"],
                 "prismatic_joints": joint_info["prismatic_joints"],
+                "articulation_geo": articulation_geo,
                 "articulation_slot": articulation_slot,
+                "articulation_object": art_obj,
                 "has_non_fixed_base": has_non_fixed_base,
                 "base_link_idx": base_link_idx,
             }
@@ -953,7 +954,8 @@ class IPCCoupler(RBC):
             self._retrieve_rigid_states(f, rigid_entities)
 
         if two_way_entities:
-            self._apply_abd_coupling_forces(set(two_way_entities))
+            if self.options.two_way_coupling:
+                self._apply_abd_coupling_forces(set(two_way_entities))
             if self.options.enable_contact_proxy:
                 self._record_ipc_contact_forces()
                 self._apply_ipc_contact_forces()
@@ -1408,10 +1410,10 @@ class IPCCoupler(RBC):
                     continue
                 try:
                     rigid_solver.apply_links_external_force(
-                        force=force.reshape(1, 1, 3), links_idx=link_idx, envs_idx=None
+                        force=force.reshape(1, 3), links_idx=link_idx, envs_idx=None
                     )
                     rigid_solver.apply_links_external_torque(
-                        torque=torque.reshape(1, 1, 3), links_idx=link_idx, envs_idx=None
+                        torque=torque.reshape(1, 3), links_idx=link_idx, envs_idx=None
                     )
                 except Exception as e:
                     gs.logger.warning(f"Failed to apply ABD coupling force: {e}")
@@ -1464,8 +1466,8 @@ class IPCCoupler(RBC):
                     art_state.delta_theta_ipc[joint_start + j_idx, i_env] = delta
 
             # Update IPC EAC geometry: set ref_dof_prev on instances.
-            scene_art_geo = articulation_slot.geometry()
-            ref_dof_attr = scene_art_geo["joint"].find("ref_dof_prev")
+            articulation_geo = art["articulation_geo"]
+            ref_dof_attr = articulation_geo["joint"].find("ref_dof_prev")
             if ref_dof_attr is not None:
                 ref_view = view(ref_dof_attr)
                 for j_idx, qpos_idx in enumerate(joint_qpos_indices):
@@ -1473,7 +1475,7 @@ class IPCCoupler(RBC):
                     ref_view[j_idx] = ref_val
 
             # Set delta_theta_tilde on IPC geometry.
-            delta_attr = scene_art_geo["joint"].find("delta_theta_tilde")
+            delta_attr = articulation_geo["joint"].find("delta_theta_tilde")
             if delta_attr is not None:
                 delta_view = view(delta_attr)
                 for j_idx in range(n_joints):
@@ -1484,7 +1486,7 @@ class IPCCoupler(RBC):
             # mass_mat_np shape: [n_envs, n_dofs, n_dofs]
             mass_mat_entity = mass_mat_np[env_idx, q_start : q_start + n_dofs, q_start : q_start + n_dofs]
 
-            mass_attr = scene_art_geo["joint"].find("mass_matrix")
+            mass_attr = articulation_geo["joint_joint"].find("mass")
             if mass_attr is not None:
                 mass_view = view(mass_attr)
                 for i in range(n_joints):
@@ -1493,6 +1495,29 @@ class IPCCoupler(RBC):
                         dof_j = joint_dof_indices[j]
                         # column-major order for IPC
                         mass_view[j * n_joints + i] = float(mass_mat_entity[dof_i, dof_j])
+
+            # Synchronize per-ABD-body ref_dof_prev from stored Genesis transforms.
+            from uipc.geometry import affine_body
+
+            for joint_idx, joint in enumerate(art["revolute_joints"] + art["prismatic_joints"]):
+                child_link_idx = joint.link.idx
+                abd_geo_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx=0)
+                if abd_geo_slot is None:
+                    continue
+                abd_geo = abd_geo_slot.geometry()
+                if abd_geo is None:
+                    continue
+                ref_dof_prev_attr = abd_geo.instances().find("ref_dof_prev")
+                if ref_dof_prev_attr is None:
+                    continue
+                ref_dof_view = view(ref_dof_prev_attr)
+                key = (entity_idx, joint_idx, 0)
+                if key in self._prev_link_transforms:
+                    q = affine_body.transform_to_q(self._prev_link_transforms[key])
+                    ref_dof_view[0] = q
+                elif child_link_idx in self._genesis_stored_states and 0 in self._genesis_stored_states[child_link_idx]:
+                    q = affine_body.transform_to_q(self._genesis_stored_states[child_link_idx][0])
+                    ref_dof_view[0] = q
 
     def _post_advance_external_articulation(self, entity_indices):
         """
@@ -1588,6 +1613,13 @@ class IPCCoupler(RBC):
                             entity.set_dofs_velocity(base_vel, dofs_idx_local=base_dofs_local, envs_idx=i_env)
                         else:
                             entity.set_dofs_velocity(base_vel, dofs_idx_local=base_dofs_local)
+
+            # Store current link transforms for next step's per-ABD ref_dof_prev sync.
+            for joint_idx, joint in enumerate(art["revolute_joints"] + art["prismatic_joints"]):
+                child_link_idx = joint.link.idx
+                if child_link_idx in self._genesis_stored_states and 0 in self._genesis_stored_states[child_link_idx]:
+                    key = (entity_idx, joint_idx, 0)
+                    self._prev_link_transforms[key] = self._genesis_stored_states[child_link_idx][0].copy()
 
     # ------------------------------------------------------------------
     # IPC-only coupling
