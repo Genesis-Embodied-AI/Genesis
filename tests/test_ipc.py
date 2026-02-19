@@ -85,7 +85,7 @@ def test_ipc_cloth(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=500,
             friction=0.3,
-            coupling_mode="two_way",
+            coupling_mode="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -152,7 +152,7 @@ def test_ipc_cloth(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-@pytest.mark.parametrize("coupling_type", ["two_way", "external_articulation"])
+@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with revolute joint.
 
@@ -242,7 +242,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-@pytest.mark.parametrize("coupling_type", ["two_way", "external_articulation"])
+@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with prismatic joint.
 

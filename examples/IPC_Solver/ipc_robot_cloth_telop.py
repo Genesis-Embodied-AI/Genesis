@@ -34,7 +34,7 @@ def main():
         "--coupling_type",
         type=str,
         default="external_articulation",
-        choices=["two_way", "external_articulation"],
+        choices=["two_way_soft_constraint", "external_articulation"],
     )
     args = parser.parse_args()
 
@@ -51,6 +51,8 @@ def main():
             contact_d_hat=0.001,
             contact_resistance=1e7,
             newton_tolerance=1e-1,
+            newton_translation_tolerance=1.0,
+            newton_semi_implicit_enable=False,
             linear_system_tolerance=1e-3,
             n_linesearch_iterations=8,
         ),

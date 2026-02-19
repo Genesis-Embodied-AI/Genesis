@@ -88,7 +88,7 @@ class IPCCoupler(RBC):
     ``coupling_mode`` on ``gs.materials.Rigid``. Valid modes are:
 
     - ``None``: entity is ignored by IPC (default).
-    - ``'two_way'``: bidirectional soft-constraint coupling.
+    - ``'two_way_soft_constraint'``: bidirectional soft-constraint coupling.
     - ``'external_articulation'``: joint-level coupling for articulated robots.
     - ``'ipc_only'``: IPC drives the entity; Genesis reads the resulting transforms.
     """
@@ -488,7 +488,7 @@ class IPCCoupler(RBC):
                     continue
 
                 # Apply link filter for two_way mode.
-                if coupling_type == "two_way" and entity_idx in self._ipc_link_filters:
+                if coupling_type == "two_way_soft_constraint" and entity_idx in self._ipc_link_filters:
                     link_filter = self._ipc_link_filters[entity_idx]
                     if link_filter is not None and link_idx not in link_filter:
                         continue
@@ -615,7 +615,7 @@ class IPCCoupler(RBC):
                     # SoftTransformConstraint: pulls IPC ABD body toward Genesis target transform.
                     # Required for two_way links and the non-fixed base of external_articulation entities
                     # (unless free_base_driven_by_ipc is True).
-                    needs_stc = coupling_type == "two_way" or (is_free_base and not ipc_driven_base)
+                    needs_stc = coupling_type == "two_way_soft_constraint" or (is_free_base and not ipc_driven_base)
                     if needs_stc:
                         if self._ipc_stc is None:
                             self._ipc_stc = SoftTransformConstraint()
@@ -675,7 +675,7 @@ class IPCCoupler(RBC):
 
                     # Contact proxy: map IPC global vertex indices to their parent link.
                     # Only two_way links contribute contact gradient forces to Genesis.
-                    if self.options.enable_contact_proxy and coupling_type == "two_way":
+                    if self.options.enable_contact_proxy and coupling_type == "two_way_soft_constraint":
                         n_verts = merged_mesh.vertices().size()
                         for local_idx in range(n_verts):
                             self._vertex_to_link_mapping[self._global_vertex_offset + local_idx] = (
@@ -952,7 +952,7 @@ class IPCCoupler(RBC):
             return
 
         entities_by_type = categorize_entities_by_coupling_type(self._entity_coupling_types)
-        two_way_entities = entities_by_type["two_way"]
+        two_way_entities = entities_by_type["two_way_soft_constraint"]
         articulation_entities = entities_by_type["external_articulation"]
         ipc_only_entities = entities_by_type["ipc_only"]
 

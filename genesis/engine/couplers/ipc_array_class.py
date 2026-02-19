@@ -366,7 +366,7 @@ def categorize_entities_by_coupling_type(entity_coupling_types):
         Maps each coupling mode string to a list of entity indices.
     """
     result = {
-        "two_way": [],
+        "two_way_soft_constraint": [],
         "external_articulation": [],
         "ipc_only": [],
     }
@@ -411,20 +411,20 @@ def build_ipc_scene_config(options, sim_options):
 
     # newton solver
     config["newton"]["velocity_tol"] = options.newton_tolerance
-    if options.newton_max_iter is not None:
-        config["newton"]["max_iter"] = options.newton_max_iter
-    if options.newton_min_iter is not None:
-        config["newton"]["min_iter"] = options.newton_min_iter
-    if options.newton_ccd_tol is not None:
-        config["newton"]["ccd_tol"] = options.newton_ccd_tol
-    if options.newton_use_adaptive_tol is not None:
-        config["newton"]["use_adaptive_tol"] = options.newton_use_adaptive_tol
-    if options.newton_transrate_tol is not None:
-        config["newton"]["transrate_tol"] = options.newton_transrate_tol
+    if options.newton_max_iterations is not None:
+        config["newton"]["max_iter"] = options.newton_max_iterations
+    if options.newton_min_iterations is not None:
+        config["newton"]["min_iter"] = options.newton_min_iterations
+    if options.newton_ccd_tolerance is not None:
+        config["newton"]["ccd_tol"] = options.newton_ccd_tolerance
+    if options.newton_use_adaptive_tolerance is not None:
+        config["newton"]["use_adaptive_tol"] = options.newton_use_adaptive_tolerance
+    if options.newton_translation_tolerance is not None:
+        config["newton"]["transrate_tol"] = options.newton_translation_tolerance
     if options.newton_semi_implicit_enable is not None:
         config["newton"]["semi_implicit"]["enable"] = options.newton_semi_implicit_enable
-    if options.newton_semi_implicit_beta_tol is not None:
-        config["newton"]["semi_implicit"]["beta_tol"] = options.newton_semi_implicit_beta_tol
+    if options.newton_semi_implicit_beta_tolerance is not None:
+        config["newton"]["semi_implicit"]["beta_tol"] = options.newton_semi_implicit_beta_tolerance
 
     # line search
     config["line_search"]["max_iter"] = options.n_linesearch_iterations

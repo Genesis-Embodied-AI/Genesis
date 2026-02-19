@@ -22,7 +22,10 @@ def main():
 
     dt = 2e-2
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+        ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=0.01,
         ),
@@ -56,7 +59,10 @@ def main():
             thickness=0.001,  # Shell thickness (m) - 1mm
             bending_stiffness=50.0,  # Bending resistance
         ),
-        surface=gs.surfaces.Plastic(color=(0.3, 0.5, 0.8, 1.0), double_sided=True),
+        surface=gs.surfaces.Plastic(
+            color=(0.3, 0.5, 0.8, 1.0),
+            double_sided=True,
+        ),
     )
 
     cube_size = 0.2
@@ -67,14 +73,30 @@ def main():
             pos=(0, 0, cube_height),
             size=(cube_size, cube_size, cube_size),
         ),
-        material=gs.materials.Rigid(rho=500, friction=0.3, coupling_mode="ipc_only"),
-        surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
+        material=gs.materials.Rigid(
+            rho=500,
+            friction=0.3,
+            coupling_mode="ipc_only",
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.8, 0.3, 0.2, 0.8),
+        ),
     )
     # Optional: Add another FEM volume object
     soft_ball = scene.add_entity(
-        morph=gs.morphs.Sphere(pos=(0.5, 0.0, 0.1), radius=0.08),
-        material=gs.materials.FEM.Elastic(E=1.0e3, nu=0.3, rho=1000.0, model="stable_neohookean"),
-        surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.3, 0.8)),
+        morph=gs.morphs.Sphere(
+            pos=(0.5, 0.0, 0.1),
+            radius=0.08,
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1.0e3,
+            nu=0.3,
+            rho=1000.0,
+            model="stable_neohookean",
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.2, 0.8, 0.3, 0.8),
+        ),
     )
 
     gs.logger.info("Building scene...")

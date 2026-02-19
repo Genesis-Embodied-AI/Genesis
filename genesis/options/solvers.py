@@ -214,19 +214,19 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Contact constitution model ('ipc', 'isometric'). Default is None (libuipc default: 'ipc').
     newton_tolerance : float
         Velocity convergence tolerance for the Newton solver. Default is 0.001.
-    newton_max_iter : int, optional
+    newton_max_iterations : int, optional
         Maximum Newton iterations. Default is None (libuipc default: 1024).
-    newton_min_iter : int, optional
+    newton_min_iterations : int, optional
         Minimum Newton iterations. Default is None (libuipc default: 1).
-    newton_ccd_tol : float, optional
+    newton_ccd_tolerance : float, optional
         CCD tolerance for Newton solver. Default is None (libuipc default: 1.0).
-    newton_use_adaptive_tol : bool, optional
+    newton_use_adaptive_tolerance : bool, optional
         Whether Newton solver uses adaptive tolerance. Default is None (libuipc default: False).
-    newton_transrate_tol : float, optional
+    newton_translation_tolerance : float, optional
         Translation rate tolerance for Newton solver. Default is None (libuipc default: 0.1).
     newton_semi_implicit_enable : bool, optional
         Whether to enable semi-implicit Newton solver. Default is None (libuipc default: False).
-    newton_semi_implicit_beta_tol : float, optional
+    newton_semi_implicit_beta_tolerance : float, optional
         Beta tolerance for semi-implicit Newton solver. Default is None (libuipc default: 1e-3).
     n_linesearch_iterations : int
         Maximum number of line search iterations. Default is 30.
@@ -252,11 +252,11 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Apply actual IPC contact gradient forces to Genesis rigid bodies in addition to
         soft-constraint coupling forces. When True, per-vertex contact gradients from IPC
         are accumulated into per-link forces and torques via ``compute_link_contact_forces_kernel``
-        and applied to Genesis. Requires at least one entity with ``coupling_mode="two_way"``.
+        and applied to Genesis. Requires at least one entity with ``coupling_mode="two_way_soft_constraint"``.
         Default is False.
     two_way_coupling : bool
         Enable soft-constraint coupling forces from IPC back to Genesis rigid bodies for
-        entities with ``coupling_mode="two_way"``. Set to False to disable force application
+        entities with ``coupling_mode="two_way_soft_constraint"``. Set to False to disable force application
         while still running IPC simulation (useful for debugging). Default is True.
     enable_ground_contact : bool
         Enable IPC ground-ABD contact. Set to False to disable ground contact in IPC
@@ -279,13 +279,13 @@ class IPCCouplerOptions(BaseCouplerOptions):
 
     # newton solver
     newton_tolerance: float = 0.001
-    newton_max_iter: Optional[int] = None
-    newton_min_iter: Optional[int] = None
-    newton_ccd_tol: Optional[float] = None
-    newton_use_adaptive_tol: Optional[bool] = None
-    newton_transrate_tol: Optional[float] = None
+    newton_max_iterations: Optional[int] = None
+    newton_min_iterations: Optional[int] = None
+    newton_ccd_tolerance: Optional[float] = None
+    newton_use_adaptive_tolerance: Optional[bool] = None
+    newton_translation_tolerance: Optional[float] = None
     newton_semi_implicit_enable: Optional[bool] = None
-    newton_semi_implicit_beta_tol: Optional[float] = None
+    newton_semi_implicit_beta_tolerance: Optional[float] = None
 
     # line search
     n_linesearch_iterations: int = 30

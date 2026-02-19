@@ -2,9 +2,6 @@ import genesis as gs
 
 from .base import Material
 
-_VALID_IPC_COUPLING_MODES = (None, "two_way", "external_articulation", "ipc_only")
-
-
 class Rigid(Material):
     """
     The Rigid class represents a material used in rigid body simulation.
@@ -84,8 +81,11 @@ class Rigid(Material):
         if sdf_min_res > sdf_max_res:
             gs.raise_exception("`sdf_min_res` must be smaller than or equal to `sdf_max_res`.")
 
-        if coupling_mode not in _VALID_IPC_COUPLING_MODES:
-            gs.raise_exception(f"`coupling_mode` must be one of {_VALID_IPC_COUPLING_MODES}, got {coupling_mode!r}.")
+        if coupling_mode not in (None, "two_way_soft_constraint", "external_articulation", "ipc_only"):
+            gs.raise_exception(
+                f"`coupling_mode` must be one of None, 'two_way_soft_constraint', "
+                f"'external_articulation', or 'ipc_only', got {coupling_mode!r}."
+            )
 
         self._friction = float(friction) if friction is not None else None
         self._needs_coup = bool(needs_coup)

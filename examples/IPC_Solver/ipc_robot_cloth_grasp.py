@@ -16,7 +16,7 @@ def main():
         "--coupling_type",
         type=str,
         default="external_articulation",
-        choices=["two_way", "external_articulation"],
+        choices=["two_way_soft_constraint", "external_articulation"],
     )
     args = parser.parse_args()
 
@@ -26,7 +26,8 @@ def main():
         gs.options.IPCCouplerOptions(
             constraint_strength_translation=100.0,
             constraint_strength_rotation=100.0,
-            newton_tolerance=10.0,
+            newton_translation_tolerance=10.0,
+            enable_ground_contact=False,
         )
         if args.ipc
         else None
@@ -40,7 +41,10 @@ def main():
         )
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+        ),
         rigid_options=None,
         coupler_options=coupler_options,
         show_viewer=args.vis,
@@ -57,13 +61,21 @@ def main():
     )
 
     material = (
-        gs.materials.FEM.Elastic(E=5.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")
+        gs.materials.FEM.Elastic(
+            E=5.0e4,
+            nu=0.45,
+            rho=1000.0,
+            model="stable_neohookean",
+        )
         if args.ipc
         else gs.materials.Rigid()
     )
 
     cube = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.65, 0.0, 0.03), size=(0.05, 0.05, 0.05)),
+        morph=gs.morphs.Box(
+            pos=(0.65, 0.0, 0.03),
+            size=(0.05, 0.05, 0.05),
+        ),
         material=material,
         surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.2, 0.5)),
     )
