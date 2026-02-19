@@ -1225,8 +1225,8 @@ class IPCCoupler(RBC):
                         external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
                         if external_kinetic_attr is not None:
                             external_kinetic_view = view(external_kinetic_attr)
-                            # Don't set external_kinetic for IPC-driven free base
-                            if not is_free_base_ipc_driven:
+                            # Don't set external_kinetic for IPC-driven free base and IPC-only entities (they are kinematic targets, not dynamic bodies in IPC)
+                            if not is_free_base_ipc_driven and not is_ipc_only:
                                 external_kinetic_view[:] = 1
                             else:
                                 external_kinetic_view[:] = 0

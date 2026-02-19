@@ -78,7 +78,7 @@ def main():
         # === Rigid body linear momentum ===
         # For rigid cube (link_idx=1, skip plane at link_idx=0)
         link_idx = 1
-        rigid_mass = rigid_solver.links_info.inertial_mass[link_idx] * 2
+        rigid_mass = rigid_solver.links_info.inertial_mass[link_idx]
 
         # Get rigid COM position
         rigid_pos = rigid_solver.get_links_pos(links_idx=link_idx, ref="link_com").detach().cpu().numpy()
@@ -291,11 +291,13 @@ def main():
     # Plot 4: Momentum Conservation Error
     ax = axes[1, 1]
     expected_momentum = np.array([4.0 * rigid_mass, 0.0, 0.0])
-    momentum_error = np.linalg.norm(total_p_history - expected_momentum, axis=1)
-    ax.plot(time_history, momentum_error, "r-", linewidth=2)
+    momentum_error_relative = np.linalg.norm(total_p_history - expected_momentum, axis=1) / np.linalg.norm(
+        expected_momentum
+    )
+    ax.plot(time_history, momentum_error_relative, "r-", linewidth=2)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Error (kg·m/s)")
-    ax.set_title("Momentum Conservation Error")
+    ax.set_ylabel("Error (relative)")
+    ax.set_title("Momentum Conservation Error (Relative)")
     ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
 

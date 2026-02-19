@@ -26,7 +26,7 @@ from huggingface_hub import snapshot_download
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level="info")
+    gs.init(backend=gs.gpu, logging_level="info", performance_mode=True)
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--vis_ipc", action="store_true", default=False)
@@ -84,7 +84,7 @@ def main():
     # Add Franka robot
     franka = scene.add_entity(
         gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
+            file="xml/franka_emika_panda/panda_non_overlap.xml",
             pos=(0.0, 0.0, 0.005),
         ),
         vis_mode="collision",
