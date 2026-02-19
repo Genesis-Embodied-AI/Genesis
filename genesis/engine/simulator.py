@@ -111,7 +111,6 @@ class Simulator(RBC):
 
         if rigid_options is None:
             rigid_options = RigidOptions()
-
         # IPC handles all contact; Genesis rigid collision must not double-count.
         if isinstance(coupler_options, IPCCouplerOptions):
             if rigid_options.enable_collision is True:
@@ -120,7 +119,6 @@ class Simulator(RBC):
                     "IPC handles contact; Genesis rigid collision is disabled automatically."
                 )
             rigid_options.enable_collision = False
-
         if rigid_options.enable_collision is None:
             rigid_options.enable_collision = True
 

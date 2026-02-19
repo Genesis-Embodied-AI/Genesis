@@ -24,7 +24,16 @@ class Cloth(Base):
         FEM material model. Default is "stable_neohookean".
     """
 
-    def __init__(self, E=1e4, nu=0.49, rho=200.0, thickness=0.001, bending_stiffness=None, friction_mu=0.5, model="stable_neohookean"):
+    def __init__(
+        self,
+        E=1e4,                    # Young's modulus (Pa)
+        nu=0.49,                  # Poisson's ratio
+        rho=200.0,                # Density (kg/m³)
+        thickness=0.001,          # Shell thickness (m)
+        bending_stiffness=None,   # Optional bending stiffness
+        friction_mu=0.5,          # Friction coefficient for IPC contact
+        model="stable_neohookean",
+    ):
         super().__init__(E=E, nu=nu, rho=rho, friction_mu=friction_mu)
         self._thickness = thickness
         self._bending_stiffness = bending_stiffness
@@ -44,3 +53,6 @@ class Cloth(Base):
     def model(self):
         """FEM material model name."""
         return self._model
+
+    def __repr__(self):
+        return f"<gs.materials.FEM.Cloth(E={self.E}, nu={self.nu}, rho={self.rho}, thickness={self.thickness})>"

@@ -187,8 +187,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     """
     Options for IPC (Incremental Potential Contact) coupler.
 
-    Note
-    ----
+    Warning
+    -------
     - Requires Python module ``uipc``. Install via: ``pip install pyuipc`` (Linux/Windows x86 only).
     - Only CUDA backend is supported.
     - Contact friction is per-material: use ``friction`` on ``gs.materials.Rigid`` and
@@ -197,8 +197,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     - Optional fields (``None`` by default) are forwarded to libuipc only when explicitly set;
       otherwise libuipc's own defaults apply.
 
-    Parameters
-    ----------
+    Contact Options
+    ---------------
     contact_d_hat : float
         Contact barrier distance in meters. Default is 0.001.
     contact_resistance : float
@@ -211,6 +211,9 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Epsilon velocity for contact. Default is None (libuipc default: 0.01).
     contact_constitution : str, optional
         Contact constitution model ('ipc', 'isometric'). Default is None (libuipc default: 'ipc').
+
+    Newton Solver Options
+    ---------------------
     newton_tolerance : float
         Velocity convergence tolerance for the Newton solver. Default is 0.001.
     newton_max_iterations : int, optional
@@ -227,20 +230,38 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to enable semi-implicit Newton solver. Default is None (libuipc default: False).
     newton_semi_implicit_beta_tolerance : float, optional
         Beta tolerance for semi-implicit Newton solver. Default is None (libuipc default: 1e-3).
+
+    Line Search Options
+    -------------------
     n_linesearch_iterations : int
         Maximum number of line search iterations. Default is 30.
     linesearch_report_energy : bool, optional
         Whether to report energy during line search. Default is None (libuipc default: False).
+
+    Linear System Options
+    ---------------------
     linear_system_tolerance : float
         Relative tolerance for the linear system solver. Default is 1e-4.
     linear_system_solver : str, optional
         Linear system solver type ('linear_pcg', 'direct'). Default is None (libuipc default: 'linear_pcg').
+
+    Collision Detection Options
+    ---------------------------
     collision_detection_method : str, optional
         Collision detection method ('linear_bvh', 'spatial_hash'). Default is None (libuipc default: 'linear_bvh').
+
+    CFL Options
+    -----------
     cfl_enable : bool, optional
         Whether to enable CFL condition. Default is None (libuipc default: False).
+
+    Sanity Check Options
+    --------------------
     sanity_check_enable : bool, optional
         Whether to enable sanity checks. Default is None (libuipc default: True).
+
+    Genesis Coupling Options
+    ------------------------
     constraint_strength_translation : float
         Soft constraint translation stiffness for rigid-IPC coupling. Default is 100.0.
     constraint_strength_rotation : float

@@ -13,25 +13,23 @@ from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
 from genesis.utils.array_class import V, V_VEC, V_MAT
-from genesis.utils.misc import qd_to_numpy
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from .ipc_array_class import (
+from .array_class import (
     ArticulationState,
-    IPCCouplingData,
-    build_ipc_scene_config,
-    build_link_transform_matrix,
-    categorize_entities_by_coupling_type,
     compute_coupling_forces_kernel,
     compute_external_force_kernel,
     compute_link_contact_forces_kernel,
+    get_articulation_state,
+)
+from .utils import (
+    build_ipc_scene_config,
+    categorize_entities_by_coupling_type,
     compute_link_init_world_rotation,
     compute_link_to_link_transform,
     decompose_transform_matrix,
     extract_articulated_joints,
     find_target_link_for_fixed_merge,
-    get_articulation_state,
-    get_ipc_coupling_data,
-    is_robot_entity,
     read_ipc_geometry_metadata,
 )
 
@@ -179,7 +177,8 @@ class IPCCoupler(RBC):
         self.abd_data_by_link = {}
 
         # Exact-sized buffers — allocated at build() time after scene is populated.
-        self.coupling_data: IPCCouplingData | None = None
+        self._coupling_out_forces: np.ndarray | None = None
+        self._coupling_out_torques: np.ndarray | None = None
         self.articulation_state: ArticulationState | None = None
 
         # Pre-allocated Quadrants fields for contact force pipeline.
@@ -688,10 +687,11 @@ class IPCCoupler(RBC):
                 except Exception as e:
                     gs.logger.warning(f"Failed to add rigid link {target_link_idx} to IPC: {e}")
 
-        # Allocate coupling_data with exact size (number of primary ABD links).
+        # Pre-allocate output buffers for soft-constraint coupling forces.
         n_coupled_links = len(self._primary_abd_links)
         if n_coupled_links > 0:
-            self.coupling_data = get_ipc_coupling_data(n_coupled_links)
+            self._coupling_out_forces = np.empty((n_coupled_links, 3), dtype=gs.np_float)
+            self._coupling_out_torques = np.empty((n_coupled_links, 3), dtype=gs.np_float)
 
         # Pre-allocate Quadrants contact force fields with exact sizes.
         n_links_total = rigid_solver.n_links_ if rigid_solver.is_active else 0
@@ -1012,11 +1012,11 @@ class IPCCoupler(RBC):
 
         for env_idx in range(self.sim._B):
             if is_parallelized:
-                all_pos = rigid_solver.get_links_pos(envs_idx=env_idx).detach().cpu().numpy()
-                all_quat = rigid_solver.get_links_quat(envs_idx=env_idx).detach().cpu().numpy()
+                all_pos = tensor_to_array(rigid_solver.get_links_pos(envs_idx=env_idx))
+                all_quat = tensor_to_array(rigid_solver.get_links_quat(envs_idx=env_idx))
             else:
-                all_pos = rigid_solver.get_links_pos().detach().cpu().numpy()
-                all_quat = rigid_solver.get_links_quat().detach().cpu().numpy()
+                all_pos = tensor_to_array(rigid_solver.get_links_pos())
+                all_quat = tensor_to_array(rigid_solver.get_links_quat())
 
             if all_pos.ndim == 3:
                 all_pos = all_pos[0]
@@ -1024,7 +1024,11 @@ class IPCCoupler(RBC):
                 all_quat = all_quat[0]
 
             for link_idx in range(all_pos.shape[0]):
-                transform = build_link_transform_matrix(all_pos[link_idx], all_quat[link_idx])
+                pos, quat = all_pos[link_idx], all_quat[link_idx]
+                t = Transform.Identity()
+                t.translate(Vector3.Values((float(pos[0]), float(pos[1]), float(pos[2]))))
+                t.rotate(Quaternion(quat))
+                transform = t.matrix().copy()
                 if link_idx not in self._genesis_stored_states:
                     self._genesis_stored_states[link_idx] = {}
                 self._genesis_stored_states[link_idx][env_idx] = transform
@@ -1059,9 +1063,6 @@ class IPCCoupler(RBC):
         vel_attr = self._abd_state_geo.instances().find(builtin.velocity)
         velocities = vel_attr.view() if vel_attr is not None else None
 
-        cd = self.coupling_data
-        n_items = 0
-
         for abd_body_idx, (env_idx, link_idx, entity_idx) in self._abd_body_idx_to_link.items():
             if entity_set is not None and entity_idx not in entity_set:
                 continue
@@ -1079,18 +1080,6 @@ class IPCCoupler(RBC):
             if velocities is not None:
                 entry["velocity"] = velocities[abd_body_idx].copy()
             abd_data_by_link[link_idx][env_idx] = entry
-
-            if cd is not None and n_items < cd.link_indices.shape[0]:
-                cd.link_indices[n_items] = link_idx
-                cd.env_indices[n_items] = env_idx
-                cd.ipc_transforms[n_items] = transform_matrix
-                cd.aim_transforms[n_items] = aim_transform
-                cd.link_masses[n_items] = float(self.rigid_solver.links_info.inertial_mass[link_idx])
-                cd.inertia_tensors[n_items] = self.rigid_solver.links_info.inertial_i[link_idx].to_numpy()
-                n_items += 1
-
-        if cd is not None:
-            cd.n_items = n_items
 
         return abd_data_by_link
 
@@ -1351,11 +1340,29 @@ class IPCCoupler(RBC):
 
     def _apply_abd_coupling_forces(self, entity_set=None):
         """Apply soft-constraint coupling forces from IPC to Genesis rigid bodies."""
-        cd = self.coupling_data
-        if cd is None or cd.n_items == 0:
+        # Build kernel inputs from abd_data_by_link + rigid solver queries.
+        items = [
+            (link_idx, env_idx, data["transform"], data["aim_transform"])
+            for link_idx, env_dict in self.abd_data_by_link.items()
+            for env_idx, data in env_dict.items()
+        ]
+        n_items = len(items)
+        if n_items == 0 or self._coupling_out_forces is None:
             return
 
-        n_items = cd.n_items
+        link_indices = [it[0] for it in items]
+        env_indices = [it[1] for it in items]
+        ipc_transforms = np.array([it[2] for it in items])
+        aim_transforms = np.array([it[3] for it in items])
+        link_masses = np.array(
+            [float(self.rigid_solver.links_info.inertial_mass[li]) for li in link_indices]
+        )
+        inertia_tensors = np.array(
+            [self.rigid_solver.links_info.inertial_i[li].to_numpy() for li in link_indices]
+        )
+        out_forces = self._coupling_out_forces[:n_items]
+        out_torques = self._coupling_out_torques[:n_items]
+
         translation_strength = float(self.options.constraint_strength_translation)
         rotation_strength = float(self.options.constraint_strength_rotation)
         dt = float(self.sim._dt)
@@ -1363,15 +1370,15 @@ class IPCCoupler(RBC):
 
         compute_coupling_forces_kernel(
             n_items,
-            cd.ipc_transforms[:n_items],
-            cd.aim_transforms[:n_items],
-            cd.link_masses[:n_items],
-            cd.inertia_tensors[:n_items],
+            ipc_transforms,
+            aim_transforms,
+            link_masses,
+            inertia_tensors,
             translation_strength,
             rotation_strength,
             dt2,
-            cd.out_forces[:n_items],
-            cd.out_torques[:n_items],
+            out_forces,
+            out_torques,
         )
 
         rigid_solver = self.rigid_solver
@@ -1380,12 +1387,12 @@ class IPCCoupler(RBC):
         if is_parallelized:
             env_batches = {}
             for i in range(n_items):
-                env_idx = int(cd.env_indices[i])
+                env_idx = env_indices[i]
                 if env_idx not in env_batches:
                     env_batches[env_idx] = {"link_indices": [], "forces": [], "torques": []}
-                env_batches[env_idx]["link_indices"].append(int(cd.link_indices[i]))
-                env_batches[env_idx]["forces"].append(cd.out_forces[i])
-                env_batches[env_idx]["torques"].append(cd.out_torques[i])
+                env_batches[env_idx]["link_indices"].append(link_indices[i])
+                env_batches[env_idx]["forces"].append(out_forces[i])
+                env_batches[env_idx]["torques"].append(out_torques[i])
 
             for env_idx, batch in env_batches.items():
                 for j, link_idx in enumerate(batch["link_indices"]):
@@ -1405,9 +1412,9 @@ class IPCCoupler(RBC):
                         gs.logger.warning(f"Failed to apply ABD coupling force: {e}")
         else:
             for i in range(n_items):
-                link_idx = int(cd.link_indices[i])
-                force = cd.out_forces[i]
-                torque = cd.out_torques[i]
+                link_idx = link_indices[i]
+                force = out_forces[i]
+                torque = out_torques[i]
                 if np.isnan(force).any() or np.isnan(torque).any():
                     gs.logger.warning(f"NaN in coupling force for link {link_idx}. Skipping.")
                     continue
@@ -1639,11 +1646,11 @@ class IPCCoupler(RBC):
 
                 pos, quat_wxyz = decompose_transform_matrix(ipc_transform)
 
-                if is_robot_entity(entity) and entity.n_qs >= 7:
+                if entity.base_joint.type == gs.JOINT_TYPE.FREE:
                     if is_parallelized:
-                        qpos_current = entity.get_qpos(envs_idx=i_env).detach().cpu().numpy()
+                        qpos_current = tensor_to_array(entity.get_qpos(envs_idx=i_env))
                     else:
-                        qpos_current = entity.get_qpos().detach().cpu().numpy()
+                        qpos_current = tensor_to_array(entity.get_qpos())
                     if qpos_current.ndim > 1:
                         qpos_current = qpos_current[0]
                     qpos_new = qpos_current.copy()

@@ -1411,11 +1411,14 @@ class RigidSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
+            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             from genesis.engine.couplers import IPCCoupler
 
-            # Rigid substep is deferred to substep_post_coupling for IPC.
-            if isinstance(self.sim.coupler, IPCCoupler) and self.sim.coupler.has_rigid_coupling:
-                return
+            if isinstance(self.sim.coupler, IPCCoupler):
+                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation.
+                # The rigid simulation will be done in post-coupling phase instead.
+                if self.sim.coupler.has_rigid_coupling:
+                    return
 
             self.substep(f)
 
@@ -1619,6 +1622,7 @@ class RigidSolver(Solver):
                 errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler) and self.sim.coupler.has_rigid_coupling:
+            # IPC: rigid simulation was deferred from pre-coupling; run it now.
             self.substep(f)
 
     def substep_post_coupling_grad(self, f):
