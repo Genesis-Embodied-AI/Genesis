@@ -40,8 +40,8 @@ def test_interactive_viewer_disable_viewer_defaults():
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             run_in_thread=(sys.platform == "linux"),
-            disable_help_text=True,
-            disable_default_keybinds=True,
+            enable_help_text=False,
+            enable_default_keybinds=False,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -53,7 +53,7 @@ def test_interactive_viewer_disable_viewer_defaults():
     assert pyrender_viewer.is_active
 
     # Verify the flag is set correctly
-    assert pyrender_viewer._disable_help_text is True
+    assert pyrender_viewer._enable_help_text is False
     # Verify that no keybindings are registered
     assert len(pyrender_viewer._keybindings) == 0
 
@@ -68,8 +68,8 @@ def test_default_viewer_plugin():
             camera_fov=30,
             res=CAM_RES,
             run_in_thread=(sys.platform == "linux"),
-            disable_help_text=False,
-            disable_default_keybinds=False,
+            enable_help_text=True,
+            enable_default_keybinds=True,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,

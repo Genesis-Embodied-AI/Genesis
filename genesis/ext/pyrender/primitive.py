@@ -328,7 +328,6 @@ class Primitive(object):
     def get_buffer_id(self, buffer_name):
         if self._vaid is None:
             return -1
-            # self._add_to_context()
         if buffer_name not in self._buffers:
             raise ValueError(f"Buffer {buffer_name} does not exist")
         return self._buffers[buffer_name]
@@ -354,7 +353,6 @@ class Primitive(object):
     def _add_to_context(self):
         if self._vaid is not None:
             return
-            # raise ValueError('Mesh is already bound to a context')
 
         # Generate and bind VAO
         self._vaid = glGenVertexArrays(1)

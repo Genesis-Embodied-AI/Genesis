@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<robot name="two_cube_prismatic">
+  <!-- Base link (fixed cube) -->
+  <link name="base">
+    <visual>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <material name="red">
+        <color rgba="1 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.00667" ixy="0.0" ixz="0.0" iyy="0.00667" iyz="0.0" izz="0.00667"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+  <!-- Moving link (cube connected by prismatic joint) -->
+  <link name="moving">
+    <visual>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+      <origin xyz="0.1 0 0" rpy="0 0 0"/>
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.1 0.1 0.1"/>
+      </geometry>
+      <origin xyz="0.1 0 0" rpy="0 0 0"/>
+    </collision>
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.00667" ixy="0.0" ixz="0.0" iyy="0.00667" iyz="0.0" izz="0.00667"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+  <!-- Prismatic joint connecting base to moving link (slides along X axis) -->
+  <joint name="joint1" type="prismatic">
+    <parent link="base"/>
+    <child link="moving"/>
+    <origin xyz="0.0 0 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.3" upper="0.3" effort="100" velocity="1.0"/>
+  </joint>
+
+</robot>

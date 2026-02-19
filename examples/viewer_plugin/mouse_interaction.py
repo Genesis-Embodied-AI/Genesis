@@ -7,7 +7,9 @@ import genesis.vis.keybindings as kb
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mouse interaction viewer plugin example.")
-    parser.add_argument("--use_force", action="store_true", help="Apply spring forces instead of setting position")
+    parser.add_argument(
+        "--use_force", "-f", action="store_true", help="Apply spring forces instead of setting position"
+    )
     args = parser.parse_args()
 
     gs.init(backend=gs.gpu)
