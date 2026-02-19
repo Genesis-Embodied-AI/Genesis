@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Callable, Iterable, Literal
 
 import numpy as np
 import torch
-import gstaichi as ti
-from gstaichi.lang import impl
+import quadrants as qd
+from quadrants.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -104,7 +104,7 @@ class Scene(RBC):
         show_viewer: bool | None = None,
         show_FPS: bool | None = None,  # deprecated, use profiling_options.show_FPS instead
     ):
-        # Delay simulator import to allow specifying gstaichi array type at init
+        # Delay simulator import to allow specifying Quadrants array type at init
         from genesis.engine.simulator import Simulator
 
         # Handling of default arguments
@@ -273,7 +273,7 @@ class Scene(RBC):
         else:
             if sim_options.requires_grad and gs.use_ndarray:
                 gs.logger.info(
-                    "Use GsTaichi dynamic array mode while enabling gradient computation is not recommended. Please "
+                    "Use Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
                 )
         if rigid_options.box_box_detection is None:
@@ -322,6 +322,7 @@ class Scene(RBC):
         surface: Surface | None = None,
         visualize_contact: bool = False,
         vis_mode: str | None = None,
+        name: str | None = None,
     ):
         """
         Add an entity to the scene.
@@ -342,6 +343,9 @@ class Scene(RBC):
         vis_mode : str | None, optional
             The visualization mode of the entity. This is a handy shortcut for setting `surface.vis_mode` without
             explicitly creating a surface object.
+        name : str | None, optional
+            User-specified name for the entity. If not provided, an auto-generated name will be assigned
+            based on the morph type and entity UID (e.g., "box_a1b2c3d4"). Must be unique within the scene.
 
         Returns
         -------
@@ -463,7 +467,7 @@ class Scene(RBC):
             if morph.convexify is None:
                 morph.convexify = isinstance(material, gs.materials.Rigid)
 
-        entity = self._sim._add_entity(morph, material, surface, visualize_contact)
+        entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
         return entity
 
@@ -1326,7 +1330,7 @@ class Scene(RBC):
     def _backward(self):
         """
         At this point, all the scene states the simulation run should have been filled with gradients.
-        Next, we run backward from scene state back to scene's internal taichi variables, then back through time.
+        Next, we run backward from scene state back to scene's internal# Quadrants variables, then back through time.
         """
 
         if not self._backward_ready:
@@ -1341,7 +1345,7 @@ class Scene(RBC):
 
     def dump_ckpt_to_numpy(self) -> dict[str, np.ndarray]:
         """
-        Collect every Taichi field in the **scene and its active solvers** and
+        Collect every Quadrants field in the **scene and its active solvers** and
         return them as a flat ``{key: ndarray}`` dictionary.
 
         Returns
@@ -1352,7 +1356,7 @@ class Scene(RBC):
         arrays: dict[str, np.ndarray] = {}
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (ti.Field, ti.Ndarray)):
+            if isinstance(value, (qd.Field, qd.Ndarray)):
                 arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
@@ -1392,7 +1396,7 @@ class Scene(RBC):
         arrays = state["arrays"]
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (ti.Field, ti.Ndarray)):
+            if isinstance(value, (qd.Field, qd.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
                     value.from_numpy(arrays[key])
@@ -1501,6 +1505,49 @@ class Scene(RBC):
     def entities(self) -> list["Entity"]:
         """All the entities in the scene."""
         return self._sim.entities
+
+    @property
+    def entity_names(self) -> tuple[str, ...]:
+        """
+        Get the names of all entities in the scene.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Tuple of entity names in order of creation.
+        """
+        return tuple(entity.name for entity in self.entities)
+
+    def get_entity(self, name: str | None = None, *, uid: str | None = None) -> "Entity":
+        """
+        Get an entity by name or UID. Raises an exception if not found.
+
+        Parameters
+        ----------
+        name : str, optional
+            The exact name of the entity to find.
+        uid : str, optional
+            The short UID (7-character) of the entity to find.
+
+        Returns
+        -------
+        Entity
+            The matching entity.
+        """
+        if not ((name is None) ^ (uid is None)):
+            gs.raise_exception("Please specify either one argument between `name` or `uid`.")
+
+        if name is not None:
+            try:
+                return next(entity for entity in self.entities if entity.name == name)
+            except StopIteration as e:
+                gs.raise_exception_from(f"Entity not found for name: '{name}'.", e)
+        else:  # uid is not None
+            matches = [entity for entity in self.entities if entity.uid.match(uid, short_only=True)]
+            if matches:
+                (match,) = matches
+                return match
+            gs.raise_exception(f"Entity not found for uid: '{uid}'.")
 
     @property
     def emitters(self):

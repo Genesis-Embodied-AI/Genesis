@@ -1,112 +1,35 @@
 import os
-import time
-import threading
 
-from pynput import keyboard
 import numpy as np
 
 import genesis as gs
+from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 
 class DroneController:
     def __init__(self):
-        self.thrust = 14475.8  # Base hover RPM - constant hover
-        self.rotation_delta = 200.0  # Differential RPM for rotation
+        self.thrust = 14475.8  # Base RPM for constant hover
+        self.rotation_delta = 100.0  # Differential RPM for rotation
         self.thrust_delta = 10.0  # Amount to change thrust by when accelerating/decelerating
-        self.running = True
-        self.rpms = [self.thrust] * 4
-        self.pressed_keys = set()
+        self.cur_dir = np.array([0.0, 0.0, 0.0, 0.0])  # rotor directions
 
-    def on_press(self, key):
-        try:
-            if key == keyboard.Key.esc:
-                self.running = False
-                return False
-            self.pressed_keys.add(key)
-            print(f"Key pressed: {key}")
-        except AttributeError:
-            pass
+    def update_rpms(self):
+        """Compute RPMs based on current direction and thrust"""
+        clipped_dir = np.clip(self.cur_dir, -1.0, 1.0)
+        rpms = self.thrust + clipped_dir * self.rotation_delta
+        return np.clip(rpms, 0, 25000)
 
-    def on_release(self, key):
-        try:
-            self.pressed_keys.discard(key)
-        except KeyError:
-            pass
+    def add_direction(self, direction: np.ndarray):
+        """Add direction vector (on key press)"""
+        self.cur_dir += direction
 
-    def update_thrust(self):
-        # Store previous RPMs for debugging
-        prev_rpms = self.rpms.copy()
+    def accelerate(self):
+        """Increase base thrust"""
+        self.thrust = min(self.thrust + self.thrust_delta, 25000)
 
-        # Reset RPMs to hover thrust
-        self.rpms = [self.thrust] * 4
-
-        # Acceleration (Spacebar) - All rotors spin faster
-        if keyboard.Key.space in self.pressed_keys:
-            self.thrust += self.thrust_delta
-            self.rpms = [self.thrust] * 4
-            print("Accelerating")
-
-        # Deceleration (Left Shift) - All rotors spin slower
-        if keyboard.Key.shift in self.pressed_keys:
-            self.thrust -= self.thrust_delta
-            self.rpms = [self.thrust] * 4
-            print("Decelerating")
-
-        # Forward (North) - Front rotors spin faster
-        if keyboard.Key.up in self.pressed_keys:
-            self.rpms[0] += self.rotation_delta  # Front left
-            self.rpms[1] += self.rotation_delta  # Front right
-            self.rpms[2] -= self.rotation_delta  # Back left
-            self.rpms[3] -= self.rotation_delta  # Back right
-            print("Moving Forward")
-
-        # Backward (South) - Back rotors spin faster
-        if keyboard.Key.down in self.pressed_keys:
-            self.rpms[0] -= self.rotation_delta  # Front left
-            self.rpms[1] -= self.rotation_delta  # Front right
-            self.rpms[2] += self.rotation_delta  # Back left
-            self.rpms[3] += self.rotation_delta  # Back right
-            print("Moving Backward")
-
-        # Left (West) - Left rotors spin faster
-        if keyboard.Key.left in self.pressed_keys:
-            self.rpms[0] -= self.rotation_delta  # Front left
-            self.rpms[2] -= self.rotation_delta  # Back left
-            self.rpms[1] += self.rotation_delta  # Front right
-            self.rpms[3] += self.rotation_delta  # Back right
-            print("Moving Left")
-
-        # Right (East) - Right rotors spin faster
-        if keyboard.Key.right in self.pressed_keys:
-            self.rpms[0] += self.rotation_delta  # Front left
-            self.rpms[2] += self.rotation_delta  # Back left
-            self.rpms[1] -= self.rotation_delta  # Front right
-            self.rpms[3] -= self.rotation_delta  # Back right
-            print("Moving Right")
-
-        self.rpms = np.clip(self.rpms, 0, 25000)
-
-        # Debug print if any RPMs changed
-        if not np.array_equal(prev_rpms, self.rpms):
-            print(f"RPMs changed from {prev_rpms} to {self.rpms}")
-
-        return self.rpms
-
-
-def run_sim(scene, drone, controller):
-    while controller.running:
-        # Update drone with current RPMs
-        rpms = controller.update_thrust()
-        drone.set_propellels_rpm(rpms)
-
-        # Update physics
-        scene.step(refresh_visualizer=False)
-
-        # Limit simulation rate
-        time.sleep(1.0 / scene.viewer.max_FPS)
-
-        if "PYTEST_VERSION" in os.environ:
-            break
+    def decelerate(self):
+        """Decrease base thrust"""
+        self.thrust = max(self.thrust - self.thrust_delta, 0)
 
 
 def main():
@@ -129,6 +52,7 @@ def main():
             show_world_frame=False,
         ),
         show_viewer=True,
+        show_FPS=False,
     )
 
     # Add entities
@@ -145,13 +69,45 @@ def main():
     # Initialize controller
     controller = DroneController()
 
-    # Start keyboard listener.
-    # Note that instantiating the listener after building the scene causes segfault on MacOS.
-    listener = keyboard.Listener(on_press=controller.on_press, on_release=controller.on_release)
-    listener.start()
-
     # Build scene
     scene.build()
+
+    # Register keybindings
+    def direction_keybinds(name: str, key: Key, direction: tuple[float, float, float, float]):
+        """Helper to create press/release keybinds for a direction"""
+        dir_arr = np.array(direction)
+        return [
+            Keybind(
+                name=f"{name}_press",
+                key=key,
+                key_action=KeyAction.PRESS,
+                callback=controller.add_direction,
+                args=(dir_arr,),
+            ),
+            Keybind(
+                name=f"{name}_release",
+                key=key,
+                key_action=KeyAction.RELEASE,
+                callback=controller.add_direction,
+                args=(-dir_arr,),
+            ),
+        ]
+
+    is_running = True
+
+    def stop():
+        nonlocal is_running
+        is_running = False
+
+    scene.viewer.register_keybinds(
+        *direction_keybinds("move_forward", Key.UP, (1.0, 1.0, -1.0, -1.0)),
+        *direction_keybinds("move_backward", Key.DOWN, (-1.0, -1.0, 1.0, 1.0)),
+        *direction_keybinds("move_left", Key.LEFT, (-1.0, 1.0, -1.0, 1.0)),
+        *direction_keybinds("move_right", Key.RIGHT, (1.0, -1.0, 1.0, -1.0)),
+        Keybind("accelerate", Key.SPACE, KeyAction.HOLD, callback=controller.accelerate),
+        Keybind("decelerate", Key.LSHIFT, KeyAction.HOLD, callback=controller.decelerate),
+        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+    )
 
     # Print control instructions
     print("\nDrone Controls:")
@@ -161,19 +117,23 @@ def main():
     print("→ - Move Right (East)")
     print("space - Increase RPM")
     print("shift - Decrease RPM")
-    print("ESC - Quit\n")
-    print("Initial hover RPM:", controller.thrust)
 
-    # Run simulation in another thread
-    threading.Thread(target=run_sim, args=(scene, drone, controller)).start()
-    if "PYTEST_VERSION" not in os.environ:
-        scene.viewer.run()
-
+    # Run simulation
     try:
-        listener.stop()
-    except NotImplementedError:
-        # Dummy backend does not implement stop
-        pass
+        while is_running:
+            # Update and apply RPMs based on current direction
+            rpms = controller.update_rpms()
+            drone.set_propellels_rpm(rpms)
+
+            # Step simulation
+            scene.step()
+
+            if "PYTEST_VERSION" in os.environ:
+                break
+    except KeyboardInterrupt:
+        gs.logger.info("Simulation interrupted, exiting.")
+    finally:
+        gs.logger.info("Simulation finished.")
 
 
 if __name__ == "__main__":

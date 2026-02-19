@@ -90,7 +90,7 @@ def trimesh_to_particles_pbs(mesh, p_size, sampler, pos=(0, 0, 0)):
     """
     assert "pbs" in sampler
 
-    if not (gs.platform == "Linux" and platform.machine() == "x86_64"):
+    if not (sys.platform == "linux" and platform.machine() == "x86_64"):
         gs.raise_exception(f"Physics-based particle sampler '{sampler}' is only supported on Linux x86.")
 
     # compute file name via hashing for caching
@@ -359,8 +359,8 @@ def particles_to_mesh(positions, radius, backend):
     args_dict = parse_args(backend)
 
     if "openvdb" in backend:
-        if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
-            gs.raise_exception("Backend 'openvdb' is only supported on Linux and Python 3.9 specfically.")
+        if sys.platform != "linux" or sys.version_info[:2] == (3, 9):
+            gs.raise_exception("Backend 'openvdb' is only supported on Linux and Python 3.9 specifically.")
 
         import ParticleMesherPy
 
@@ -414,7 +414,7 @@ def init_foam_generator(
     k_foam,
     foam_density,
 ):
-    if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
+    if sys.platform != "linux" or sys.version_info[:2] == (3, 9):
         gs.raise_exception("This method is only supported on Linux and Python 3.9 specfically.")
 
     import ParticleMesherPy
@@ -453,7 +453,7 @@ def generate_foam_particles(generator, positions, velocities):
 
 
 def filter_surface(positions, radii, particle_radius, half_width=8.0, radius_scale=1.0):
-    if gs.platform != "Linux" or sys.version_info[:2] == (3, 9):
+    if sys.platform != "linux" or sys.version_info[:2] == (3, 9):
         gs.raise_exception("This method is only supported on Linux and Python 3.9 specfically.")
 
     import ParticleMesherPy

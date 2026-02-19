@@ -1,11 +1,11 @@
-import gstaichi as ti
+import quadrants as qd
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import gjk as GJK
+from . import gjk as GJK, contact, epa
 
 
-@ti.func
+@qd.func
 def func_gjk_contact(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -15,9 +15,9 @@ def func_gjk_contact(
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
@@ -26,6 +26,10 @@ def func_gjk_contact(
     i_ga,
     i_gb,
     i_b,
+    ga_pos: qd.types.vector(3, dtype=gs.qd_float),
+    ga_quat: qd.types.vector(4, dtype=gs.qd_float),
+    gb_pos: qd.types.vector(3, dtype=gs.qd_float),
+    gb_quat: qd.types.vector(4, dtype=gs.qd_float),
     pos_tol,
     normal_tol,
 ):
@@ -63,17 +67,19 @@ def func_gjk_contact(
 
     gjk_state.n_diff_contact_input[i_b] = 0
 
-    # Backup state before local perturbation
-    ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-    gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+    # Thread-local copies for perturbation (stored in registers, not global state)
+    ga_pos_local = ga_pos
+    ga_quat_local = ga_quat
+    gb_pos_local = gb_pos
+    gb_quat_local = gb_quat
 
     # Axis to rotate the geometry for perturbation
-    axis_0 = ti.Vector.zero(gs.ti_float, 3)
-    axis_1 = ti.Vector.zero(gs.ti_float, 3)
+    axis_0 = qd.Vector.zero(gs.qd_float, 3)
+    axis_1 = qd.Vector.zero(gs.qd_float, 3)
 
     # Default contact point and penetration in the original configuration
-    default_contact_pos = gs.ti_vec3(0.0, 0.0, 0.0)
-    default_penetration = gs.ti_float(0.0)
+    default_contact_pos = gs.qd_vec3(0.0, 0.0, 0.0)
+    default_penetration = gs.qd_float(0.0)
     found_default_epa = False
 
     # 4 (small) + 4 (large) perturbated configurations
@@ -85,20 +91,27 @@ def func_gjk_contact(
         # 2,3,4,5: Detect contacts in slightly perturbed configuration.
         # 6,7,8,9: Detect contacts in more perturbed configuration.
         if i > 0:
-            # Convert back to the default configuration
-            geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-            geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
+            # Reset to the default configuration
+            ga_pos_local = ga_pos
+            ga_quat_local = ga_quat
+            gb_pos_local = gb_pos
+            gb_quat_local = gb_quat
 
             # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
             # otherwise it would be more sensitive to ill-conditionning.
             axis = (2 * (i % 2) - 1) * axis_0 + (1 - 2 * ((i // 2) % 2)) * axis_1
             rotang = 1e-2 * (100 ** ((i - 1) // 4))
-            qrot = gu.ti_rotvec_to_quat(rotang * axis, EPS)
-            func_rotate_frame(i_ga, default_contact_pos, qrot, i_b, geoms_state, geoms_info)
-            func_rotate_frame(i_gb, default_contact_pos, gu.ti_inv_quat(qrot), i_b, geoms_state, geoms_info)
+            qrot = gu.qd_rotvec_to_quat(rotang * axis, EPS)
+
+            # Apply perturbation to local variables
+            ga_pos_local, ga_quat_local = contact.func_rotate_frame(
+                ga_pos_local, ga_quat_local, default_contact_pos, qrot
+            )
+            gb_pos_local, gb_quat_local = contact.func_rotate_frame(
+                gb_pos_local, gb_quat_local, default_contact_pos, gu.qd_inv_quat(qrot)
+            )
 
         gjk_flag = GJK.func_safe_gjk(
-            geoms_state,
             geoms_info,
             verts_info,
             rigid_global_info,
@@ -110,6 +123,10 @@ def func_gjk_contact(
             support_field_info,
             i_ga,
             i_gb,
+            ga_pos_local,
+            ga_quat_local,
+            gb_pos_local,
+            gb_quat_local,
             i_b,
         )
 
@@ -121,22 +138,16 @@ def func_gjk_contact(
             gjk_state.polytope.horizon_nedges[i_b] = 0
 
             # Construct the initial polytope from the GJK simplex
-            GJK.func_safe_epa_init(
-                gjk_state,
-                gjk_info,
-                i_ga,
-                i_gb,
-                i_b,
-            )
+            epa.func_safe_epa_init(gjk_state, gjk_info, i_ga, i_gb, i_b)
 
             if i == 0:
                 # In default configuration, we use the extended EPA algorithm to find multiple contact points.
                 max_epa_iter = gjk_info.epa_max_iterations[None]
                 while max_epa_iter > 0:
                     i_f, num_iter = func_extended_epa(
-                        geoms_state,
                         geoms_info,
                         verts_info,
+                        rigid_global_info,
                         static_rigid_sim_config,
                         collider_state,
                         collider_static_config,
@@ -146,6 +157,10 @@ def func_gjk_contact(
                         i_ga,
                         i_gb,
                         i_b,
+                        ga_pos_local,
+                        ga_quat_local,
+                        gb_pos_local,
+                        gb_quat_local,
                         max_epa_iter,
                     )
                     max_epa_iter -= num_iter
@@ -172,7 +187,6 @@ def func_gjk_contact(
 
                     # Add input data for differentiable contact detection
                     func_add_diff_contact_input(
-                        geoms_state,
                         geoms_info,
                         verts_info,
                         static_rigid_sim_config,
@@ -184,6 +198,10 @@ def func_gjk_contact(
                         i_ga,
                         i_gb,
                         i_b,
+                        ga_pos_local,
+                        ga_quat_local,
+                        gb_pos_local,
+                        gb_quat_local,
                         i_f,
                     )
 
@@ -220,8 +238,7 @@ def func_gjk_contact(
                 if not found_default_epa:
                     break
             else:
-                i_f = GJK.func_safe_epa(
-                    geoms_state,
+                i_f = epa.func_safe_epa(
                     geoms_info,
                     verts_info,
                     rigid_global_info,
@@ -233,18 +250,17 @@ def func_gjk_contact(
                     support_field_info,
                     i_ga,
                     i_gb,
+                    ga_pos_local,
+                    ga_quat_local,
+                    gb_pos_local,
+                    gb_quat_local,
                     i_b,
                 )
                 if i_f == -1:
                     continue
 
-                # Convert back to the default configuration
-                geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-                geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
-
                 # Add input data for differentiable contact detection
                 func_add_diff_contact_input(
-                    geoms_state,
                     geoms_info,
                     verts_info,
                     static_rigid_sim_config,
@@ -256,16 +272,16 @@ def func_gjk_contact(
                     i_ga,
                     i_gb,
                     i_b,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
                     i_f,
                 )
 
         elif i == 0:
             # If there was no intersection at the default configuration, we do not add any contact point.
             break
-
-    # Convert back to the default configuration
-    geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b] = ga_pos, ga_quat
-    geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b] = gb_pos, gb_quat
 
     ### Compute the differentiable contact data from the non-differentiable data.
     n_contacts = 0
@@ -348,20 +364,24 @@ def func_gjk_contact(
     gjk_state.multi_contact_flag[i_b] = True
 
 
-@ti.func
+@qd.func
 def func_extended_epa(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
     i_b,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     max_iter,
 ):
     """
@@ -373,12 +393,12 @@ def func_extended_epa(
     Therefore, we use this function to find such nearly-farthest boundary faces for differentiability.
     """
     tolerance = gjk_info.tolerance[None]
-    nearest_i_f = gs.ti_int(-1)
+    nearest_i_f = gs.qd_int(-1)
 
-    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = GJK.func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
-        tolerance = gs.EPS
+        tolerance = rigid_global_info.EPS[None]
 
     k = 0
     converged = False
@@ -403,10 +423,9 @@ def func_extended_epa(
             break
 
         # Find a new support point w from the nearest face's normal
-        lower = ti.sqrt(lower2)
+        lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
-        wi = GJK.func_epa_support(
-            geoms_state,
+        wi = epa.func_epa_support(
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -417,6 +436,10 @@ def func_extended_epa(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             1.0,
@@ -450,7 +473,7 @@ def func_extended_epa(
         gjk_state.polytope.horizon_w[i_b] = w
 
         # Compute horizon
-        horizon_flag = GJK.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
+        horizon_flag = epa.func_epa_horizon(gjk_state, gjk_info, i_b, nearest_i_f)
 
         if horizon_flag:
             # There was an error in the horizon construction, so the horizon edge is not a closed loop.
@@ -493,7 +516,7 @@ def func_extended_epa(
             adj_i_f_1 = horizon_i_f
             adj_i_f_2 = i_f1
 
-            attach_flag = GJK.func_safe_attach_face_to_polytope(
+            attach_flag = epa.func_safe_attach_face_to_polytope(
                 gjk_state,
                 gjk_info,
                 i_b,
@@ -535,10 +558,10 @@ def func_extended_epa(
     if nearest_i_f != -1:
         # Nearest face found
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
-        flag = GJK.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
+        flag = epa.func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == GJK.RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
-            gjk_state.distance[i_b] = -ti.sqrt(dist2)
+            gjk_state.distance[i_b] = -qd.sqrt(dist2)
         else:
             # Failed to compute witness points, so the objects are not colliding
             gjk_state.n_witness[i_b] = 0
@@ -552,20 +575,23 @@ def func_extended_epa(
     return nearest_i_f, k
 
 
-@ti.func
+@qd.func
 def func_add_diff_contact_input(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
     i_b,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_f,
 ):
     """
@@ -579,11 +605,11 @@ def func_add_diff_contact_input(
     i_v3 = gjk_state.polytope_faces.verts_idx[i_b, i_f][2]
 
     # Define the face (possibly) on the boundary of the Minkowski difference in the default configuration
-    mink1 = gs.ti_vec3(0.0, 0.0, 0.0)
-    mink2 = gs.ti_vec3(0.0, 0.0, 0.0)
-    mink3 = gs.ti_vec3(0.0, 0.0, 0.0)
+    mink1 = gs.qd_vec3(0.0, 0.0, 0.0)
+    mink2 = gs.qd_vec3(0.0, 0.0, 0.0)
+    mink3 = gs.qd_vec3(0.0, 0.0, 0.0)
 
-    for i in ti.static(range(3)):
+    for i in qd.static(range(3)):
         curr_i_v = i_v1
         if i == 1:
             curr_i_v = i_v2
@@ -591,10 +617,10 @@ def func_add_diff_contact_input(
             curr_i_v = i_v3
 
         mink = func_compute_minkowski_point(
-            geoms_state.pos[i_ga, i_b],
-            geoms_state.quat[i_ga, i_b],
-            geoms_state.pos[i_gb, i_b],
-            geoms_state.quat[i_gb, i_b],
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             gjk_state.polytope_verts.local_obj1[i_b, curr_i_v],
             gjk_state.polytope_verts.local_obj2[i_b, curr_i_v],
         )
@@ -626,7 +652,6 @@ def func_add_diff_contact_input(
 
     ### Compute the support point along the face normal.
     obj1, obj2, localpos1, localpos2, id1, id2, mink = GJK.func_support(
-        geoms_state,
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -639,6 +664,10 @@ def func_add_diff_contact_input(
         i_gb,
         i_b,
         normal,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
         False,
     )
 
@@ -654,11 +683,11 @@ def func_add_diff_contact_input(
     gjk_state.n_diff_contact_input[i_b] += 1
 
 
-@ti.func
+@qd.func
 def func_contact_orthogonals(
     i_ga,
     i_gb,
-    normal: ti.types.vector(3),
+    normal: qd.types.vector(3),
     i_b,
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -669,8 +698,8 @@ def func_contact_orthogonals(
 ):
     EPS = rigid_global_info.EPS[None]
 
-    axis_0 = ti.Vector.zero(gs.ti_float, 3)
-    axis_1 = ti.Vector.zero(gs.ti_float, 3)
+    axis_0 = qd.Vector.zero(gs.qd_float, 3)
+    axis_1 = qd.Vector.zero(gs.qd_float, 3)
 
     # The reference geometry is the one that will have the largest impact on the position of
     # the contact point. Basically, the smallest one between the two, which can be approximated
@@ -685,11 +714,11 @@ def func_contact_orthogonals(
 
     # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
     i_l = geoms_info.link_idx[i_g]
-    rot = gu.ti_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
-    axis_idx = gs.ti_int(0)
-    axis_angle_max = gs.ti_float(0.0)
-    for i in ti.static(range(3)):
-        axis_angle = ti.abs(rot[:, i].dot(normal))
+    rot = gu.qd_quat_to_R(links_state.i_quat[i_l, i_b], EPS)
+    axis_idx = gs.qd_int(0)
+    axis_angle_max = gs.qd_float(0.0)
+    for i in qd.static(range(3)):
+        axis_angle = qd.abs(rot[:, i].dot(normal))
         if axis_angle > axis_angle_max:
             axis_angle_max = axis_angle
             axis_idx = i
@@ -701,42 +730,25 @@ def func_contact_orthogonals(
     return axis_0, axis_1
 
 
-@ti.func
-def func_rotate_frame(
-    i_g,
-    contact_pos: ti.types.vector(3),
-    qrot: ti.types.vector(4),
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-):
-    geoms_state.quat[i_g, i_b] = gu.ti_transform_quat_by_quat(geoms_state.quat[i_g, i_b], qrot)
-
-    rel = contact_pos - geoms_state.pos[i_g, i_b]
-    vec = gu.ti_transform_by_quat(rel, qrot)
-    vec = vec - rel
-    geoms_state.pos[i_g, i_b] = geoms_state.pos[i_g, i_b] - vec
-
-
-@ti.func
+@qd.func
 def func_compute_minkowski_point(
-    ga_pos: ti.types.vector(3),
-    ga_quat: ti.types.vector(4),
-    gb_pos: ti.types.vector(3),
-    gb_quat: ti.types.vector(4),
-    va: ti.types.vector(3),
-    vb: ti.types.vector(3),
+    ga_pos: qd.types.vector(3),
+    ga_quat: qd.types.vector(4),
+    gb_pos: qd.types.vector(3),
+    gb_quat: qd.types.vector(4),
+    va: qd.types.vector(3),
+    vb: qd.types.vector(3),
 ):
     # Transform the points to the global frame
-    va_ = gu.ti_transform_by_trans_quat(va, ga_pos, ga_quat)
-    vb_ = gu.ti_transform_by_trans_quat(vb, gb_pos, gb_quat)
+    va_ = gu.qd_transform_by_trans_quat(va, ga_pos, ga_quat)
+    vb_ = gu.qd_transform_by_trans_quat(vb, gb_pos, gb_quat)
     return va_ - vb_
 
 
 # ------------------------------ Differentiable functions ------------------------------------
 # These functions have minimal number of branches to align backward pass with forward pass.
 # --------------------------------------------------------------------------------------------
-@ti.func
+@qd.func
 def func_differentiable_contact(
     geoms_state: array_class.GeomsState,
     diff_contact_input: array_class.DiffContactInput,
@@ -755,10 +767,10 @@ def func_differentiable_contact(
     eps_D = gjk_info.diff_contact_eps_distance[None]
 
     # Result
-    contact_pos = gs.ti_vec3(0.0, 0.0, 0.0)
-    contact_normal = gs.ti_vec3(0.0, 0.0, 0.0)
-    penetration = gs.ti_float(0.0)
-    weight = gs.ti_float(0.0)
+    contact_pos = gs.qd_vec3(0.0, 0.0, 0.0)
+    contact_normal = gs.qd_vec3(0.0, 0.0, 0.0)
+    penetration = gs.qd_float(0.0)
+    weight = gs.qd_float(0.0)
 
     # Transformations of the geometries
     trans1 = geoms_state.pos[i_ga, i_b]
@@ -779,12 +791,12 @@ def func_differentiable_contact(
     w_local_pos2 = diff_contact_input.w_local_pos2[i_b, i_c]
 
     # Compute global positions of the vertices
-    pos1a = gu.ti_transform_by_trans_quat(local_pos1_a, trans1, quat1)
-    pos1b = gu.ti_transform_by_trans_quat(local_pos1_b, trans1, quat1)
-    pos1c = gu.ti_transform_by_trans_quat(local_pos1_c, trans1, quat1)
-    pos2a = gu.ti_transform_by_trans_quat(local_pos2_a, trans2, quat2)
-    pos2b = gu.ti_transform_by_trans_quat(local_pos2_b, trans2, quat2)
-    pos2c = gu.ti_transform_by_trans_quat(local_pos2_c, trans2, quat2)
+    pos1a = gu.qd_transform_by_trans_quat(local_pos1_a, trans1, quat1)
+    pos1b = gu.qd_transform_by_trans_quat(local_pos1_b, trans1, quat1)
+    pos1c = gu.qd_transform_by_trans_quat(local_pos1_c, trans1, quat1)
+    pos2a = gu.qd_transform_by_trans_quat(local_pos2_a, trans2, quat2)
+    pos2b = gu.qd_transform_by_trans_quat(local_pos2_b, trans2, quat2)
+    pos2c = gu.qd_transform_by_trans_quat(local_pos2_c, trans2, quat2)
 
     # Compute the vertices on the Minkowski difference
     mink1 = pos1a - pos2a
@@ -823,24 +835,24 @@ def func_differentiable_contact(
         face_normal = -normal
     face_normal = face_normal.normalized()
 
-    w_pos1 = gu.ti_transform_by_trans_quat(w_local_pos1, trans1, quat1)
-    w_pos2 = gu.ti_transform_by_trans_quat(w_local_pos2, trans2, quat2)
+    w_pos1 = gu.qd_transform_by_trans_quat(w_local_pos1, trans1, quat1)
+    w_pos2 = gu.qd_transform_by_trans_quat(w_local_pos2, trans2, quat2)
     w = w_pos1 - w_pos2
 
     # Boundary weight
-    bsdist = ti.max(w.dot(face_normal) - face_center.dot(face_normal), 0.0)
-    boundary_weight = 1.0 - ti.math.clamp(bsdist / eps_B, 0.0, 1.0)
+    bsdist = qd.max(w.dot(face_normal) - face_center.dot(face_normal), 0.0)
+    boundary_weight = 1.0 - qd.math.clamp(bsdist / eps_B, 0.0, 1.0)
 
     # Distance weight
     distance_weight = 1.0
     if ref_penetration >= 0.0:
-        distance_weight = 1.0 - ti.math.clamp((penetration - ref_penetration) / eps_D, 0.0, 1.0)
+        distance_weight = 1.0 - qd.math.clamp((penetration - ref_penetration) / eps_D, 0.0, 1.0)
 
     # Affine weight: Theoretically we need this, but in practice it could cause instability
     # FIXME: Can we stabilize it?
-    # affine_weight_0 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[0], _lambda[0] - 1.0) / eps_A, 0.0, 1.0)
-    # affine_weight_1 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[1], _lambda[1] - 1.0) / eps_A, 0.0, 1.0)
-    # affine_weight_2 = 1.0 - ti.math.clamp(ti.max(0.0 - _lambda[2], _lambda[2] - 1.0) / eps_A, 0.0, 1.0)
+    # affine_weight_0 = 1.0 - qd.math.clamp(qd.max(0.0 - _lambda[0], _lambda[0] - 1.0) / eps_A, 0.0, 1.0)
+    # affine_weight_1 = 1.0 - qd.math.clamp(qd.max(0.0 - _lambda[1], _lambda[1] - 1.0) / eps_A, 0.0, 1.0)
+    # affine_weight_2 = 1.0 - qd.math.clamp(qd.max(0.0 - _lambda[2], _lambda[2] - 1.0) / eps_A, 0.0, 1.0)
     # affine_weight = (affine_weight_0 + affine_weight_1 + affine_weight_2) / 3.0
     affine_weight = 1.0
 
@@ -850,7 +862,7 @@ def func_differentiable_contact(
     return contact_pos, contact_normal, penetration, weight
 
 
-@ti.func
+@qd.func
 def func_plane_normal(v1, v2, v3):
     """
     Compute the normal of the plane defined by three points. The length of the normal corresponds to the two times the
@@ -862,10 +874,10 @@ def func_plane_normal(v1, v2, v3):
     return normal
 
 
-@ti.func
+@qd.func
 def func_project_origin_to_plane(v1, v2, v3, normal):
     """
-    Project the origin onto the plane defined by the simplex vertices.
+    Project the origin onto the plane defined by a point on the plane and its normal.
 
     @ normal: The face normal computed as (v2 - v1) x (v3 - v1). Its length should be guaranteed to be larger than the
     minimum normal norm in [gjk_info], but we do not check it here.
@@ -877,7 +889,7 @@ def func_project_origin_to_plane(v1, v2, v3, normal):
     return normal * (nv / nn)
 
 
-@ti.func
+@qd.func
 def func_triangle_affine_coords(v1, v2, v3, normal, point):
     """
     Compute the affine coordinates of the point with respect to the triangle.
@@ -890,7 +902,7 @@ def func_triangle_affine_coords(v1, v2, v3, normal, point):
     nn = normal.norm_sqr()
     inv_nn = 1.0 / nn
 
-    return gs.ti_vec3(
+    return gs.qd_vec3(
         (v2 - point).cross(v3 - point).dot(normal) * inv_nn,
         (v3 - point).cross(v1 - point).dot(normal) * inv_nn,
         (v1 - point).cross(v2 - point).dot(normal) * inv_nn,

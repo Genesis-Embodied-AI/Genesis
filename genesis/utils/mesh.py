@@ -6,15 +6,14 @@ import pickle as pkl
 from functools import lru_cache
 from pathlib import Path
 
-import numpy as np
-import tetgen
-import trimesh
-import OpenEXR
-import Imath
-from PIL import Image
-
 import coacd
 import igl
+import Imath
+import numpy as np
+import OpenEXR
+import tetgen
+import trimesh
+from PIL import Image
 
 import genesis as gs
 
@@ -23,13 +22,13 @@ from .misc import (
     get_assets_dir,
     get_cvx_cache_dir,
     get_exr_cache_dir,
-    get_gsd_cache_dir,
     get_gnd_cache_dir,
+    get_gsd_cache_dir,
     get_ptc_cache_dir,
     get_remesh_cache_dir,
     get_src_dir,
-    get_usd_cache_dir,
     get_tet_cache_dir,
+    get_usd_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -38,6 +37,18 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
     [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]], dtype=np.float32
 )
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
+
+
+def color_f32_to_u8(color) -> np.ndarray:
+    return np.round(np.asarray(color, dtype=np.float32) * 255.0).astype(np.uint8)
+
+
+def color_u8_to_f32(color) -> np.ndarray:
+    return np.asarray(color, dtype=np.uint8).astype(np.float32) / 255.0
+
+
+def glossiness_to_roughness(glossiness: float) -> float:
+    return (2 / (glossiness + 2)) ** (1.0 / 4.0)
 
 
 class MeshInfo:
@@ -170,7 +181,12 @@ def get_hashkey(*args):
 
 def load_mesh(file):
     if isinstance(file, (str, Path)):
-        return trimesh.load(file, force="mesh", skip_texture=True)
+        try:
+            return trimesh.load_mesh(file, force="mesh", skip_texture=False)
+        except Exception as e:
+            gs.logger.warning(f"Failed to load mesh with texture: {e}")
+            # try loading without texture data
+            return trimesh.load_mesh(file, force="mesh", skip_texture=True)
     return file
 
 
@@ -220,6 +236,7 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
         if n_verts is None:
             gs.raise_exception("n_verts is required for color texture.")
         visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(np.array(texture.color), [n_verts, 1]))
+        assert visual.defined
     else:
         gs.raise_exception("Cannot get texture when generating trimesh visual.")
 
@@ -469,7 +486,7 @@ def postprocess_collision_geoms(
 
 def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     meshes = []
-    scene = trimesh.load_scene(path, group_material=group_by_material, process=False)
+    scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
             gs.raise_exception(f"Mesh type not supported: {path}")
@@ -717,7 +734,7 @@ def create_sphere(radius, subdivisions=3, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_sphere_impl(subdivisions=subdivisions)
     vertices = vertices * radius
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -738,7 +755,7 @@ def create_cylinder(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
     vertices, faces, attrs = _create_unit_cylinder_impl(sections=sections)
     vertices = vertices * (radius, radius, height)
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -763,7 +780,7 @@ def create_cone(radius, height, sections=None, color=(1.0, 1.0, 1.0, 1.0)):
         normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
         attrs[name] = normals
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -884,7 +901,7 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
         vertices = vertices * extents + pos
 
     visual = trimesh.visual.ColorVisuals()
-    visual._data["vertex_colors"] = np.tile((np.asarray(color) * 255).astype(np.uint8), (len(vertices), 1))
+    visual._data["vertex_colors"] = np.tile(color_f32_to_u8(color), (len(vertices), 1))
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     mesh._cache.id_set()
     mesh._cache.cache.update(attrs)
@@ -893,7 +910,11 @@ def create_box(extents=None, color=(1.0, 1.0, 1.0, 1.0), bounds=None, wireframe=
 
 
 def create_plane(
-    normal=(0.0, 0.0, 1.0), plane_size=(1e3, 1e3), tile_size=(1, 1), color_or_texture=DEFAULT_PLANE_TEXTURE_PATH
+    normal=(0.0, 0.0, 1.0),
+    plane_size=(1e3, 1e3),
+    tile_size=(1, 1),
+    color_or_texture=DEFAULT_PLANE_TEXTURE_PATH,
+    double_sided=False,
 ):
     if isinstance(color_or_texture, str):
         color, texture_path = None, color_or_texture
@@ -918,24 +939,34 @@ def create_plane(
         dtype=np.float32,
     )
     faces = np.arange(6, dtype=np.int32).reshape(-1, 3)
+
+    if double_sided:
+        # Add reversed faces for back-facing visibility
+        faces = np.vstack([faces, faces[:, ::-1]])
+
     vmesh = trimesh.Trimesh(verts, faces, process=False)
     vmesh.vertices[:, 2] -= thickness / 2
     vmesh.vertices = gu.transform_by_R(vmesh.vertices, gu.z_up_to_R(np.asarray(normal, dtype=np.float32)))
 
     if texture_path is not None:
         n_tile_x, n_tile_y = plane_size[0] / tile_size[0], plane_size[1] / tile_size[1]
+        uv_coords = np.array(
+            [
+                [0, 0],
+                [n_tile_x, 0],
+                [n_tile_x, n_tile_y],
+                [0, 0],
+                [n_tile_x, n_tile_y],
+                [0, n_tile_y],
+            ],
+            dtype=np.float32,
+        )
+        if double_sided:
+            # Duplicate UV coords for back faces
+            uv_coords = np.vstack([uv_coords, uv_coords])
+
         vmesh.visual = trimesh.visual.TextureVisuals(
-            uv=np.array(
-                [
-                    [0, 0],
-                    [n_tile_x, 0],
-                    [n_tile_x, n_tile_y],
-                    [0, 0],
-                    [n_tile_x, n_tile_y],
-                    [0, n_tile_y],
-                ],
-                dtype=np.float32,
-            ),
+            uv=uv_coords,
             material=trimesh.visual.material.SimpleMaterial(
                 image=Image.open(os.path.join(get_assets_dir(), texture_path)),
             ),

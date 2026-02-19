@@ -311,6 +311,8 @@ class JITRenderer:
         floor_existed = False
 
         for i, primitive in enumerate(primitive_list):
+            if primitive._vaid is None:
+                primitive._add_to_context()
             self.vao_id[i] = primitive._vaid
             self.pose[i] = scene.get_pose(node_list[i])
 

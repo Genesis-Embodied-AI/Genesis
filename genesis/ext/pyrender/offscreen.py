@@ -75,8 +75,7 @@ class OffscreenRenderer(object):
 
         self._platform.make_current()
 
-        # If platform does not support dynamically-resizing framebuffers,
-        # destroy it and restart it
+        # If platform does not support dynamically-resizing framebuffers, destroy it and restart it
         if (
             self._platform.viewport_height != self.viewport_height
             or self._platform.viewport_width != self.viewport_width
@@ -261,8 +260,8 @@ class OffscreenRenderer(object):
         else:
             raise ValueError("Unsupported PyOpenGL platform: {}".format(platform))
         self._platform.init_context()
-        self._platform.make_current()
 
+        self._platform.make_current()
         try:
             from OpenGL.GL import glGetString, GL_RENDERER
 
@@ -276,6 +275,7 @@ class OffscreenRenderer(object):
                 "Software rendering context detected. Shadows and plane reflection not supported. Beware rendering "
                 "will be extremely slow."
             )
+        self._platform.make_uncurrent()
 
     def __del__(self):
         try:

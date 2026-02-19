@@ -1,9 +1,6 @@
-import gstaichi as ti
-
 from .base import Base
 
 
-@ti.data_oriented
 class Elastic(Base):
     """
     The 3D elastic volumentric material class for PBD.

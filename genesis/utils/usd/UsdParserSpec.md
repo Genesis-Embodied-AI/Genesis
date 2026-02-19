@@ -61,8 +61,8 @@ $$
 \begin{bmatrix}
 \hat{e}^w \\
 0
-\end{bmatrix} 
-= T^w_{l_0} \cdot T^{l_0}_{J} \cdot 
+\end{bmatrix}
+= T^w_{l_0} \cdot T^{l_0}_{J} \cdot
 \begin{bmatrix}
 \hat{e} \\
 0
@@ -70,8 +70,8 @@ $$
 \begin{bmatrix}
 \hat{e}^w \\
 0
-\end{bmatrix} 
-= T^w_{l_1} \cdot T^{l_1}_{J} \cdot 
+\end{bmatrix}
+= T^w_{l_1} \cdot T^{l_1}_{J} \cdot
 \begin{bmatrix}
 \hat{e} \\
 0
@@ -87,8 +87,8 @@ $$
 \begin{bmatrix}
 P^w \\
 1
-\end{bmatrix} 
-= T^w_{l_0} \cdot T^{l_0}_{J} \cdot 
+\end{bmatrix}
+= T^w_{l_0} \cdot T^{l_0}_{J} \cdot
 \begin{bmatrix}
 P \\
 1
@@ -96,8 +96,8 @@ P \\
 \begin{bmatrix}
 P^w \\
 1
-\end{bmatrix} 
-= T^w_{l_1} \cdot T^{l_1}_{J} \cdot 
+\end{bmatrix}
+= T^w_{l_1} \cdot T^{l_1}_{J} \cdot
 \begin{bmatrix}
 P \\
 1

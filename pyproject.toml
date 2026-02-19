@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.3.13"
+version = "0.4.0"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "gstaichi==4.6.0",
+    "quadrants==0.4.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "trimesh",
@@ -21,6 +21,8 @@ dependencies = [
     "moviepy>=2.0.0",
     # Used by `pyrender` to manage onscreen graphical windows
     # * 2.1.8 breaks headless windowing, which is used in unit tests of the interactive viewer.
+    # * 2.0.15 <= 2.1.8 breaks old-style option overwrite for string literal.
+    # * 2.1.10 changes default DPI scaling behavior.
     "pyglet>=1.5,!=2.1.8",
     # Used by `pyrender` to load fonts
     "freetype-py",
@@ -53,7 +55,8 @@ dependencies = [
     "rtree",
     # Constraint Satisfaction Solver.
     # Used to compute contype and conaffinity bitmasks from complete list of excluded collision pairs.
-    "z3-solver",
+    # * >= 4.15.5.0 does not provide pre-compiled wheels on Linux
+    "z3-solver<4.15.5.0",
     # Used for loading raytracing special texture images used by LuisaRender
     "OpenEXR",
     # Native batch renderer specifically designed for Genesis
@@ -70,7 +73,6 @@ dev = [
     "pytest",
     "pytest-xdist",
     "pytest-forked",
-    "pytest-random-order",
     "pytest-print",
     # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
@@ -90,6 +92,8 @@ dev = [
     "av",
     # Used for validating polar decomposition in unit tests
     "scipy",
+    # Used for code formatting during commits
+    "pre_commit",
 ]
 docs = [
     # Note that currently sphinx 7 does not work, so we must use v6.2.1. Once fixed we can use a later version.

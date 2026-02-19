@@ -11,6 +11,7 @@ from enum import Enum
 from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 import setproctitle
 import psutil
 import pyglet
@@ -19,15 +20,13 @@ from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
 
-has_display = True
+# Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
+has_tkinter = False
 try:
-    from tkinter import Tk
+    import tkinter
 
-    root = Tk()
-    root.withdraw()
-    root.destroy()
-except Exception:  # ImportError, TclError
-    # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
+    has_tkinter = True
+except ImportError:
     tkinter = type(sys)("tkinter")
     tkinter.Tk = type(sys)("Tk")
     tkinter.filedialog = type(sys)("filedialog")
@@ -35,18 +34,38 @@ except Exception:  # ImportError, TclError
     sys.modules["tkinter.Tk"] = tkinter.Tk
     sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
-    # Assuming headless server if tkinder is not installed
-    has_display = False
+# Determine whether a screen is available
+if has_tkinter:
+    has_display = True
+    try:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.destroy()
+    except tkinter.TclError:
+        has_display = False
+else:
+    # Assuming headless server if tkinter is not installed unless DISPLAY env var is available on Linux
+    if sys.platform.startswith("linux"):
+        has_display = bool(os.environ.get("DISPLAY"))
+    else:
+        has_display = False
 
+# Determine whether EGL driver is available
 has_egl = True
 try:
     pyglet.lib.load_library("EGL")
 except ImportError:
     has_egl = False
 
+# Forcibly disable Mujoco OpenGL to avoid conflicts with Genesis
+os.environ["MUJOCO_GL"] = "0"
+
+# Forcibly disable tqdm to avoid random crashes on the MacOS CI
+os.environ["TQDM_DISABLE"] = "1"
+
+# pyglet must be configured in headless mode before importing Genesis if necessary.
+# Note that environment variables are used instead of global options to ease option propagation to subprocesses.
 if not has_display and has_egl:
-    # It is necessary to configure pyglet in headless mode if necessary before importing Genesis.
-    # Note that environment variables are used instead of global options to ease option propagation to subprocesses.
     pyglet.options["headless"] = True
     os.environ["PYGLET_HEADLESS"] = "1"
 
@@ -56,6 +75,7 @@ TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
 IMG_STD_ERR_THR = 1.0
 IMG_NUM_ERR_THR = 0.001
+IMG_BLUR_KERNEL_SIZE = 1  # Size of the blur kernel (must be odd)
 
 
 def is_mem_monitoring_supported():
@@ -115,7 +135,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         config.option.forked = False
 
     # Force disabling distributed framework if interactive viewer is enabled
-    show_viewer = config.getoption("--vis")
+    show_viewer = config.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
     if show_viewer:
         config.option.numprocesses = 0
 
@@ -135,13 +155,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if config.option.numprocesses > max_workers:
             raise ValueError(f"The number of workers cannot exceed '{max_workers}' on this machine.")
 
-    # Properly configure Taichi std out stream right away to avoid significant performance penalty (~10%)
+    # Properly configure Quadrants std out stream right away to avoid significant performance penalty (~10%)
     # Note that this variable must be set in the main thread BEFORE spawning the distributed workers, otherwise
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
     # relying on this mechanism is fragile.
-    os.environ.setdefault("TI_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
+    os.environ.setdefault("QD_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
-    # Disable GsTaichi dynamic array mode by default on MacOS because it is not supported by Metal
+    # Disable Quadrants dynamic array mode by default on MacOS because it is not supported by Metal
     if sys.platform == "darwin":
         os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
 
@@ -149,11 +169,13 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
         # Enforce GPU affinity
-        worker_num = int(worker_id[2:])
         gpu_indices = _get_gpu_indices()
-        gpu_index = gpu_indices[worker_num % len(gpu_indices)]
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-        os.environ["TI_VISIBLE_DEVICE"] = str(gpu_index)
+        if gpu_indices:
+            worker_num = int(worker_id[2:])
+            gpu_index = gpu_indices[worker_num % len(gpu_indices)]
+            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+            os.environ["QD_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
         if is_benchmarks:
@@ -163,7 +185,7 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             physical_core_count = psutil.cpu_count(logical=config.option.logical)
             num_workers = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
             num_cpu_per_worker = str(max(int(physical_core_count / num_workers), 1))
-        os.environ["TI_NUM_THREADS"] = num_cpu_per_worker
+        os.environ["QD_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OMP_NUM_THREADS"] = num_cpu_per_worker
         os.environ["OPENBLAS_NUM_THREADS"] = num_cpu_per_worker
         os.environ["MKL_NUM_THREADS"] = num_cpu_per_worker
@@ -173,19 +195,15 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
 
 
 def _get_gpu_indices():
-    nvidia_gpu_indices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if nvidia_gpu_indices is not None:
-        return tuple(sorted(map(int, nvidia_gpu_indices.split(","))))
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible_devices is not None:
+        return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
         nvidia_gpu_indices = []
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
         if os.path.exists(nvidia_gpu_interface_path):
-            for device_path in os.listdir(nvidia_gpu_interface_path):
-                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                    gpu_id = int(re.search(r"Device Minor:\s+(\d+)", f.read()).group(1))
-                nvidia_gpu_indices.append(gpu_id)
-            return tuple(sorted(nvidia_gpu_indices))
+            return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
 
     return (0,)
 
@@ -201,11 +219,11 @@ def _torch_get_gpu_idx(device):
         device_uuid = str(device_property.uuid)
 
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_path in os.listdir(nvidia_gpu_interface_path):
+        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
             with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
                 device_info = f.read()
             if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return int(re.search(r"Device Minor:\s+(\d+)", device_info).group(1))
+                return device_idx
 
     return -1
 
@@ -308,7 +326,7 @@ def pytest_xdist_auto_num_workers(config):
                 vram_memory = float("inf")
 
     # Compute the default number of workers based on available RAM, VRAM, and number of physical cores.
-    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Taichi
+    # Note that if `forked` is not enabled, up to 7.5Gb per worker is necessary on Linux because Quadrants
     # does not completely release memory between each test.
     if sys.platform == "darwin":
         ram_memory_per_worker = vram_memory_per_worker = 3.0
@@ -371,11 +389,16 @@ def pytest_runtest_setup(item):
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
-        gpu_index = int(os.environ["CUDA_VISIBLE_DEVICES"])
-        try:
-            os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
-        except Exception:
-            pass
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda_visible_devices is not None:
+            gpu_index = int(cuda_visible_devices)
+            if has_egl:
+                try:
+                    os.environ["EGL_DEVICE_ID"] = str(_get_egl_index(gpu_index))
+                except (AttributeError, KeyError):
+                    # AttributeError: CUDA is not supported on this machine
+                    # KeyError: The selected GPU does not support CUDA
+                    pass
 
 
 def pytest_addoption(parser):
@@ -383,7 +406,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
     )
-    parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    if IS_INTERACTIVE_VIEWER_AVAILABLE:
+        parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
     supported, _reason = is_mem_monitoring_supported()
     help_text = (
@@ -396,7 +420,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis") and IS_INTERACTIVE_VIEWER_AVAILABLE
+    return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
 
 
 @pytest.fixture(scope="session")
@@ -511,16 +535,16 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def taichi_offline_cache(request):
-    taichi_offline_cache = None
-    for mark in request.node.iter_markers("taichi_offline_cache"):
+def disable_cache(request):
+    disable_cache = None
+    for mark in request.node.iter_markers("disable_cache"):
         if mark.args:
-            if taichi_offline_cache is not None:
-                pytest.fail("'taichi_offline_cache' can only be specified once.")
-            (taichi_offline_cache,) = mark.args
-    if taichi_offline_cache is None:
-        taichi_offline_cache = True
-    return taichi_offline_cache
+            if disable_cache is not None:
+                pytest.fail("'disable_cache' can only be specified once.")
+            (disable_cache,) = mark.args
+    if disable_cache is None:
+        disable_cache = True
+    return disable_cache
 
 
 @pytest.fixture
@@ -548,9 +572,7 @@ def debug(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(
-    request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, taichi_offline_cache
-):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, disable_cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -566,10 +588,10 @@ def initialize_genesis(
     if debug is None:
         debug = request.config.getoption("--dev")
 
-    if not taichi_offline_cache:
-        monkeypatch.setenv("TI_OFFLINE_CACHE", "0")
+    if not disable_cache:
+        monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
-        monkeypatch.setenv("TI_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "taichi"))
+        monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
@@ -585,11 +607,11 @@ def initialize_genesis(
 
         # Skip test if not supported by this machine
         if sys.platform == "darwin" and backend != gs.cpu:
-            if os.environ.get("TI_ENABLE_METAL", "1") != "0" and precision == "64":
+            if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip("Apple Metal GPU does not support 64bits precision.")
             if os.environ.get("GS_ENABLE_NDARRAY") == "1":
                 pytest.skip(
-                    "Using GsTaichi dynamic array type is not supported on Apple Metal GPU because this backend only "
+                    "Using Quadrants dynamic array type is not supported on Apple Metal GPU because this backend only "
                     "supports up to 31 kernel parameters, which is not enough for most solvers."
                 )
 
@@ -604,8 +626,8 @@ def initialize_genesis(
         gc.collect()
 
         if gs.backend != gs.cpu and gs.device.index is not None:
-            if _torch_get_gpu_idx(gs.device) not in _get_gpu_indices():
-                raise RuntimeError("Wrong CUDA GPU device.")
+            if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
+                raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip("No GPU available on this machine")
@@ -613,7 +635,7 @@ def initialize_genesis(
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
+        # Double garbage collection is over-zealous since Quadrants 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 
@@ -710,29 +732,66 @@ def box_obj_path(asset_tmp_path, cube_verts_and_faces):
     return filename
 
 
+def _apply_blur(img_arr: np.ndarray, kernel_size: int) -> np.ndarray:
+    # Early return if nothing to do:
+    if kernel_size == 1:
+        return img_arr
+
+    # Create normalized box kernel
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.float32) / (kernel_size**2)
+
+    pad_size = kernel_size // 2
+    h, w = img_arr.shape[:2]
+
+    # Pad the image
+    if img_arr.ndim == 2:
+        padded = np.pad(img_arr, pad_size, mode="edge")
+    else:
+        padded = np.pad(img_arr, ((pad_size, pad_size), (pad_size, pad_size), (0, 0)), mode="edge")
+
+    # Apply convolution
+    blurred_arr = np.zeros_like(img_arr, dtype=np.float32)
+    if img_arr.ndim == 2:
+        for i in range(h):
+            for j in range(w):
+                blurred_arr[i, j] = np.sum(padded[i : i + kernel_size, j : j + kernel_size] * kernel)
+    else:
+        for c in range(img_arr.shape[-1]):
+            for i in range(h):
+                for j in range(w):
+                    blurred_arr[i, j, c] = np.sum(padded[i : i + kernel_size, j : j + kernel_size, c] * kernel)
+
+    return blurred_arr
+
+
 class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
     _std_err_threshold: float = IMG_STD_ERR_THR
     _ratio_err_threshold: float = IMG_NUM_ERR_THR
+    _blurred_kernel_size: int = IMG_BLUR_KERNEL_SIZE
 
     def matches(self, *, serialized_data, snapshot_data) -> bool:
-        import numpy as np
-
-        img_arrays = []
+        img_arrays, blurred_arrays = [], []
         for data in (serialized_data, snapshot_data):
             buffer = BytesIO()
             buffer.write(data)
             buffer.seek(0)
-            img_arrays.append(np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.int32))
+            img_array = np.atleast_3d(np.asarray(Image.open(buffer))).astype(np.float32)
+            blurred_array = _apply_blur(img_array, self._blurred_kernel_size)
+            img_arrays.append(img_array)
+            blurred_arrays.append(blurred_array)
 
         if img_arrays[0].shape != img_arrays[1].shape:
             return False
 
-        img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
+        # Compute difference on blurred images
+        img_err = np.minimum(np.abs(blurred_arrays[1] - blurred_arrays[0]), 255).astype(np.uint8)
+
         if (
-            np.max(np.std(img_delta.reshape((-1, img_delta.shape[-1])), axis=0)) > self._std_err_threshold
-            and (np.abs(img_delta) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_delta.size
+            np.max(np.std(img_err.reshape((-1, img_err.shape[-1])), axis=0)) > self._std_err_threshold
+            and (np.abs(img_err) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_err.size
         ):
             raw_bytes = BytesIO()
+            img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
             img_obj.save(raw_bytes, "PNG")
             raw_bytes.seek(0)
@@ -747,8 +806,8 @@ def png_snapshot(request, snapshot):
     snapshot_dir = Path(PixelMatchSnapshotExtension.dirname(test_location=snapshot_obj.test_location))
     snapshot_name = PixelMatchSnapshotExtension.get_snapshot_name(test_location=snapshot_obj.test_location)
 
-    must_update_snapshop = request.config.getoption("--snapshot-update")
-    if must_update_snapshop:
+    must_update_snapshot = request.config.getoption("--snapshot-update")
+    if must_update_snapshot:
         for path in (Path(snapshot_dir.parent) / snapshot_dir.name).glob(f"{snapshot_name}*"):
             assert path.is_file()
             path.unlink()

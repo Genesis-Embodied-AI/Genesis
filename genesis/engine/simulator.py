@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
+
 import numpy as np
-import gstaichi as ti
 
 import genesis as gs
 from genesis.options.morphs import Morph
@@ -45,7 +45,6 @@ if TYPE_CHECKING:
 RATE_CHECK_ERRNO = 10
 
 
-@ti.data_oriented
 class Simulator(RBC):
     """
     A simulator is a scene-level simulation manager, which manages all simulation-related operations in the scene, including multiple solvers and the inter-solver coupler.
@@ -154,22 +153,24 @@ class Simulator(RBC):
         # sensors
         self._sensor_manager = SensorManager(self)
 
-    def _add_entity(self, morph: Morph, material, surface, visualize_contact=False):
+    def _add_entity(self, morph: Morph, material, surface, visualize_contact=False, name: str | None = None):
         if isinstance(material, gs.materials.Tool):
-            entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface)
+            entity = self.tool_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Rigid):
-            entity = self.rigid_solver.add_entity(self.n_entities, material, morph, surface, visualize_contact)
+            entity = self.rigid_solver.add_entity(
+                self.n_entities, material, morph, surface, visualize_contact, name=name
+            )
         elif isinstance(material, gs.materials.MPM.Base):
-            entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface)
+            entity = self.mpm_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.SPH.Base):
-            entity = self.sph_solver.add_entity(self.n_entities, material, morph, surface)
+            entity = self.sph_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.PBD.Base):
-            entity = self.pbd_solver.add_entity(self.n_entities, material, morph, surface)
+            entity = self.pbd_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.FEM.Base):
-            entity = self.fem_solver.add_entity(self.n_entities, material, morph, surface)
+            entity = self.fem_solver.add_entity(self.n_entities, material, morph, surface, name=name)
         elif isinstance(material, gs.materials.Hybrid):
             # Note that adding to solver is handled in the hybrid entity
-            entity = HybridEntity(self.n_entities, self.scene, material, morph, surface)
+            entity = HybridEntity(self.n_entities, self.scene, material, morph, surface, name=name)
         else:
             gs.raise_exception(f"Material not supported.: {material}")
 

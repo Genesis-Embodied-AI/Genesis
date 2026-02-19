@@ -6,50 +6,44 @@ penetration depth and contact normals for intersecting convex objects.
 Includes both standard and numerically robust ("safe") variants.
 """
 
-import gstaichi as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
-from . import support_field
 
-# Import shared constants and helper functions from gjk
-from .gjk import (
-    RETURN_CODE,
-    EPA_POLY_INIT_RETURN_CODE,
-    func_is_discrete_geoms,
-    func_support,
-    func_project_origin_to_plane,
-    func_project_origin_to_line,
-    func_simplex_vertex_linear_comb,
-    func_det3,
-    support_driver,
+from .constants import RETURN_CODE, EPA_POLY_INIT_RETURN_CODE, GJK_RETURN_CODE
+from .gjk_utils import (
+    func_triangle_affine_coords,
     func_ray_triangle_intersection,
     func_point_triangle_intersection,
-    func_triangle_affine_coords,
     func_origin_tetra_intersection,
-    func_point_plane_same_side,
-    func_is_colinear,
-    func_is_coplanar,
-    func_safe_gjk_support,
-    count_support_driver,
-    func_count_support,
+    func_project_origin_to_plane,
+)
+from .utils import (
+    func_is_discrete_geoms,
 )
 
+# Import func_support from gjk_support to avoid circular dependency
+from .gjk_support import func_support
 
-@ti.func
+
+@qd.func
 def func_epa(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
 ):
     """
@@ -68,7 +62,7 @@ def func_epa(
     nearest_i_f = -1
     prev_nearest_i_f = -1
 
-    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = gjk_info.FLOAT_MIN[None]
@@ -98,10 +92,9 @@ def func_epa(
             break
 
         # Find a new support point w from the nearest face's normal
-        lower = ti.sqrt(lower2)
+        lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -112,6 +105,10 @@ def func_epa(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             lower,
@@ -221,7 +218,7 @@ def func_epa(
         dist2 = gjk_state.polytope_faces.dist2[i_b, nearest_i_f]
         func_epa_witness(gjk_state, i_ga, i_gb, i_b, nearest_i_f)
         gjk_state.n_witness[i_b] = 1
-        gjk_state.distance[i_b] = -ti.sqrt(dist2)
+        gjk_state.distance[i_b] = -qd.sqrt(dist2)
     else:
         # No face found, so the objects are not colliding
         gjk_state.n_witness[i_b] = 0
@@ -230,7 +227,7 @@ def func_epa(
     return nearest_i_f
 
 
-@ti.func
+@qd.func
 def func_epa_witness(
     gjk_state: array_class.GJKState,
     i_ga,
@@ -273,7 +270,7 @@ def func_epa_witness(
     gjk_state.witness.point_obj2[i_b, 0] = witness2
 
 
-@ti.func
+@qd.func
 def func_epa_horizon(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -343,7 +340,7 @@ def func_epa_horizon(
     return flag
 
 
-@ti.func
+@qd.func
 def func_add_edge_to_horizon(
     gjk_state: array_class.GJKState,
     i_b,
@@ -361,7 +358,7 @@ def func_add_edge_to_horizon(
     return RETURN_CODE.SUCCESS
 
 
-@ti.func
+@qd.func
 def func_get_edge_idx(
     gjk_state: array_class.GJKState,
     i_b,
@@ -375,7 +372,7 @@ def func_get_edge_idx(
     Therefore, if i_v was v1, the edge index is 0, and if i_v was v2, the edge index is 1.
     """
     verts = gjk_state.polytope_faces.verts_idx[i_b, i_f]
-    ret = gs.ti_int(2)
+    ret = gs.qd_int(2)
     if verts[0] == i_v:
         ret = 0
     elif verts[1] == i_v:
@@ -383,7 +380,7 @@ def func_get_edge_idx(
     return ret
 
 
-@ti.func
+@qd.func
 def func_delete_face_from_polytope(
     gjk_state: array_class.GJKState,
     i_b,
@@ -407,7 +404,7 @@ def func_delete_face_from_polytope(
     gjk_state.polytope_faces.map_idx[i_b, i_f] = -2
 
 
-@ti.func
+@qd.func
 def func_epa_insert_vertex_to_polytope(
     gjk_state: array_class.GJKState,
     i_b: int,
@@ -434,20 +431,23 @@ def func_epa_insert_vertex_to_polytope(
     return n
 
 
-@ti.func
+@qd.func
 def func_epa_init_polytope_2d(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
 ):
     """
@@ -466,18 +466,18 @@ def func_epa_init_polytope_2d(
     diff = v2 - v1
 
     # Find the element in [diff] with the smallest magnitude, because it will give us the largest cross product
-    min_val = ti.abs(diff[0])
+    min_val = qd.abs(diff[0])
     min_i = 0
-    for i in ti.static(range(1, 3)):
-        abs_diff_i = ti.abs(diff[i])
+    for i in qd.static(range(1, 3)):
+        abs_diff_i = qd.abs(diff[i])
         if abs_diff_i < min_val:
             min_val = abs_diff_i
             min_i = i
 
     # Cross product with the found axis, then rotate it by 120 degrees around the axis [diff] to get three more
     # points spaced 120 degrees apart
-    rotmat = gu.ti_rotvec_to_R(diff * ti.math.radians(120.0), rigid_global_info.EPS[None])
-    e = gs.ti_vec3(0.0, 0.0, 0.0)
+    rotmat = gu.qd_rotvec_to_R(diff * qd.math.radians(120.0), rigid_global_info.EPS[None])
+    e = gs.qd_vec3(0.0, 0.0, 0.0)
     e[min_i] = 1.0
 
     d1 = e.cross(diff)
@@ -485,7 +485,7 @@ def func_epa_init_polytope_2d(
     d3 = rotmat @ d2
 
     # Insert the first two vertices into the polytope
-    vi = ti.Vector([0, 0, 0, 0, 0], dt=ti.i32)
+    vi = qd.Vector([0, 0, 0, 0, 0], dt=qd.i32)
     for i in range(2):
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
@@ -508,7 +508,6 @@ def func_epa_init_polytope_2d(
             di = d3
         di_norm = di.norm()
         vi[i + 2] = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -519,6 +518,10 @@ def func_epa_init_polytope_2d(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             di,
             di_norm,
@@ -570,7 +573,7 @@ def func_epa_init_polytope_2d(
 
     if flag == RETURN_CODE.SUCCESS:
         # Initialize face map
-        for i in ti.static(range(6)):
+        for i in qd.static(range(6)):
             gjk_state.polytope_faces_map[i_b, i] = i
             gjk_state.polytope_faces.map_idx[i_b, i] = i
         gjk_state.polytope.nfaces_map[i_b] = 6
@@ -578,19 +581,22 @@ def func_epa_init_polytope_2d(
     return flag
 
 
-@ti.func
+@qd.func
 def func_epa_init_polytope_3d(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
 ):
     """
@@ -616,7 +622,7 @@ def func_epa_init_polytope_3d(
     n_neg = -n
 
     # Save vertices in the polytope
-    vi = ti.Vector([0, 0, 0, 0, 0], dt=ti.i32)
+    vi = qd.Vector([0, 0, 0, 0, 0], dt=qd.i32)
     for i in range(3):
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
@@ -636,7 +642,6 @@ def func_epa_init_polytope_3d(
     for i in range(2):
         dir = n if i == 0 else n_neg
         vi[i + 3] = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -647,6 +652,10 @@ def func_epa_init_polytope_3d(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             n_norm,
@@ -666,7 +675,7 @@ def func_epa_init_polytope_3d(
         # If origin does not lie inside the triangle, we need to
         # check if the hexahedron contains the origin.
 
-        tets_has_origin = gs.ti_ivec2(0, 0)
+        tets_has_origin = gs.qd_ivec2(0, 0)
         for i in range(2):
             v = v4 if i == 0 else v5
             tets_has_origin[i] = 1 if func_origin_tetra_intersection(v1, v2, v3, v) == RETURN_CODE.SUCCESS else 0
@@ -710,7 +719,7 @@ def func_epa_init_polytope_3d(
 
     if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
-        for i in ti.static(range(6)):
+        for i in qd.static(range(6)):
             gjk_state.polytope_faces_map[i_b, i] = i
             gjk_state.polytope_faces.map_idx[i_b, i] = i
         gjk_state.polytope.nfaces_map[i_b] = 6
@@ -718,7 +727,7 @@ def func_epa_init_polytope_3d(
     return flag
 
 
-@ti.func
+@qd.func
 def func_epa_init_polytope_4d(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -737,7 +746,7 @@ def func_epa_init_polytope_4d(
     flag = EPA_POLY_INIT_RETURN_CODE.SUCCESS
 
     # Insert simplex vertices into the polytope
-    vi = ti.Vector([0, 0, 0, 0], dt=ti.i32)
+    vi = qd.Vector([0, 0, 0, 0], dt=qd.i32)
     for i in range(4):
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
@@ -789,7 +798,7 @@ def func_epa_init_polytope_4d(
 
     if flag == EPA_POLY_INIT_RETURN_CODE.SUCCESS:
         # Initialize face map
-        for i in ti.static(range(4)):
+        for i in qd.static(range(4)):
             gjk_state.polytope_faces_map[i_b, i] = i
             gjk_state.polytope_faces.map_idx[i_b, i] = i
         gjk_state.polytope.nfaces_map[i_b] = 4
@@ -797,19 +806,22 @@ def func_epa_init_polytope_4d(
     return flag
 
 
-@ti.func
+@qd.func
 def func_epa_support(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
     dir,
     dir_norm,
@@ -819,10 +831,10 @@ def func_epa_support(
 
     Parameters
     ----------
-    dir: gs.ti_vec3
+    dir: gs.qd_vec3
         Vector from [ga] (obj1) to [gb] (obj2).
     """
-    d = gs.ti_vec3(1, 0, 0)
+    d = gs.qd_vec3(1, 0, 0)
     if dir_norm > gjk_info.FLOAT_MIN[None]:
         d = dir / dir_norm
 
@@ -835,7 +847,6 @@ def func_epa_support(
         support_point_id_obj2,
         support_point_minkowski,
     ) = func_support(
-        geoms_state,
         geoms_info,
         verts_info,
         static_rigid_sim_config,
@@ -848,6 +859,10 @@ def func_epa_support(
         i_gb,
         i_b,
         d,
+        pos_a,
+        quat_a,
+        pos_b,
+        quat_b,
         False,
     )
 
@@ -867,7 +882,7 @@ def func_epa_support(
     return v_index
 
 
-@ti.func
+@qd.func
 def func_attach_face_to_polytope(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -916,7 +931,7 @@ def func_attach_face_to_polytope(
     return dist2
 
 
-@ti.func
+@qd.func
 def func_replace_simplex_3(
     gjk_state: array_class.GJKState,
     i_b,
@@ -933,7 +948,7 @@ def func_replace_simplex_3(
         Indices of the vertices in the polytope that will be used to form the triangle.
     """
     gjk_state.simplex.nverts[i_b] = 3
-    for i in ti.static(range(3)):
+    for i in qd.static(range(3)):
         i_v = i_v1
         if i == 1:
             i_v = i_v2
@@ -951,20 +966,23 @@ def func_replace_simplex_3(
     gjk_state.polytope.nfaces_map[i_b] = 0
 
 
-@ti.func
+@qd.func
 def func_safe_epa(
-    geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
-    collider_static_config: ti.template(),
+    collider_static_config: qd.template(),
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
+    pos_a: qd.types.vector(3, dtype=gs.qd_float),
+    quat_a: qd.types.vector(4, dtype=gs.qd_float),
+    pos_b: qd.types.vector(3, dtype=gs.qd_float),
+    quat_b: qd.types.vector(4, dtype=gs.qd_float),
     i_b,
 ):
     """
@@ -979,15 +997,15 @@ def func_safe_epa(
     """
     upper = gjk_info.FLOAT_MAX[None]
     upper2 = gjk_info.FLOAT_MAX_SQ[None]
-    lower = gs.ti_float(0.0)
+    lower = gs.qd_float(0.0)
     tolerance = gjk_info.tolerance[None]
     EPS = rigid_global_info.EPS[None]
 
     # Index of the nearest face
-    nearest_i_f = gs.ti_int(-1)
-    prev_nearest_i_f = gs.ti_int(-1)
+    nearest_i_f = gs.qd_int(-1)
+    prev_nearest_i_f = gs.qd_int(-1)
 
-    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb, i_b)
+    discrete = func_is_discrete_geoms(geoms_info, i_ga, i_gb)
     if discrete:
         # If the objects are discrete, we do not use tolerance.
         tolerance = rigid_global_info.EPS[None]
@@ -1013,10 +1031,9 @@ def func_safe_epa(
             break
 
         # Find a new support point w from the nearest face's normal
-        lower = ti.sqrt(lower2)
+        lower = qd.sqrt(lower2)
         dir = gjk_state.polytope_faces.normal[i_b, nearest_i_f]
         wi = func_epa_support(
-            geoms_state,
             geoms_info,
             verts_info,
             static_rigid_sim_config,
@@ -1027,6 +1044,10 @@ def func_safe_epa(
             support_field_info,
             i_ga,
             i_gb,
+            pos_a,
+            quat_a,
+            pos_b,
+            quat_b,
             i_b,
             dir,
             1.0,
@@ -1128,6 +1149,7 @@ def func_safe_epa(
                 gjk_state.polytope.nfaces_map[i_b] += 1
 
         if attach_flag != RETURN_CODE.SUCCESS:
+            nearest_i_f = -1
             break
 
         # Clear the horizon data for the next iteration
@@ -1135,6 +1157,7 @@ def func_safe_epa(
 
         if (gjk_state.polytope.nfaces_map[i_b] == 0) or (nearest_i_f == -1):
             # No face candidate left
+            nearest_i_f = -1
             break
 
     if nearest_i_f != -1:
@@ -1143,11 +1166,12 @@ def func_safe_epa(
         flag = func_safe_epa_witness(gjk_state, gjk_info, i_ga, i_gb, i_b, nearest_i_f)
         if flag == RETURN_CODE.SUCCESS:
             gjk_state.n_witness[i_b] = 1
-            gjk_state.distance[i_b] = -ti.sqrt(dist2)
+            gjk_state.distance[i_b] = -qd.sqrt(dist2)
         else:
             # Failed to compute witness points, so the objects are not colliding
             gjk_state.n_witness[i_b] = 0
             gjk_state.distance[i_b] = 0.0
+            nearest_i_f = -1
     else:
         # No face found, so the objects are not colliding
         gjk_state.n_witness[i_b] = 0
@@ -1156,7 +1180,7 @@ def func_safe_epa(
     return nearest_i_f
 
 
-@ti.func
+@qd.func
 def func_safe_epa_witness(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -1191,7 +1215,7 @@ def func_safe_epa_witness(
     reprojection_error = (proj_o - proj_o_lambda).norm()
 
     # Take into account the face magnitude, as the error is relative to the face size.
-    max_edge_len_inv = ti.rsqrt(
+    max_edge_len_inv = qd.rsqrt(
         max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), gjk_info.FLOAT_MIN_SQ[None])
     )
     rel_reprojection_error = reprojection_error * max_edge_len_inv
@@ -1217,7 +1241,7 @@ def func_safe_epa_witness(
     return flag
 
 
-@ti.func
+@qd.func
 def func_safe_epa_init(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -1232,7 +1256,7 @@ def func_safe_epa_init(
     """
 
     # Insert simplex vertices into the polytope
-    vi = ti.Vector([0, 0, 0, 0], dt=ti.i32)
+    vi = qd.Vector([0, 0, 0, 0], dt=qd.i32)
     for i in range(4):
         vi[i] = func_epa_insert_vertex_to_polytope(
             gjk_state,
@@ -1264,13 +1288,13 @@ def func_safe_epa_init(
         func_safe_attach_face_to_polytope(gjk_state, gjk_info, i_b, v1, v2, v3, a1, a2, a3)
 
     # Initialize face map
-    for i in ti.static(range(4)):
+    for i in qd.static(range(4)):
         gjk_state.polytope_faces_map[i_b, i] = i
         gjk_state.polytope_faces.map_idx[i_b, i] = i
     gjk_state.polytope.nfaces_map[i_b] = 4
 
 
-@ti.func
+@qd.func
 def func_safe_attach_face_to_polytope(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
@@ -1316,7 +1340,7 @@ def func_safe_attach_face_to_polytope(
 
         # Use origin for initialization
         max_orient = -normal.dot(face_center)
-        max_abs_orient = ti.abs(max_orient)
+        max_abs_orient = qd.abs(max_orient)
 
         # Consider other vertices in the polytope to reorient the normal
         nverts = gjk_state.polytope.nverts[i_b]
@@ -1324,8 +1348,8 @@ def func_safe_attach_face_to_polytope(
             if i_v != i_v1 and i_v != i_v2 and i_v != i_v3:
                 diff = gjk_state.polytope_verts.mink[i_b, i_v] - face_center
                 orient = normal.dot(diff)
-                if ti.abs(orient) > max_abs_orient:
-                    max_abs_orient = ti.abs(orient)
+                if qd.abs(orient) > max_abs_orient:
+                    max_abs_orient = qd.abs(orient)
                     max_orient = orient
 
         if max_orient > 0.0:
@@ -1338,7 +1362,7 @@ def func_safe_attach_face_to_polytope(
         # vertices, because the face normal could be unstable, which ends up in significantly different dot product
         # values for different vertices.
         min_dist2 = gjk_info.FLOAT_MAX[None]
-        for i in ti.static(range(3)):
+        for i in qd.static(range(3)):
             i_v = i_v1
             if i == 1:
                 i_v = i_v2
@@ -1355,7 +1379,7 @@ def func_safe_attach_face_to_polytope(
     return flag
 
 
-@ti.func
+@qd.func
 def func_plane_normal(
     gjk_info: array_class.GJKInfo,
     v1,
@@ -1365,16 +1389,16 @@ def func_plane_normal(
     """
     Compute the reliable normal of the plane defined by three points.
     """
-    normal, flag = gs.ti_vec3(0.0, 0.0, 0.0), RETURN_CODE.FAIL
+    normal, flag = gs.qd_vec3(0.0, 0.0, 0.0), RETURN_CODE.FAIL
     finished = False
 
     d21 = v2 - v1
     d31 = v3 - v1
     d32 = v3 - v2
 
-    for i in ti.static(range(3)):
+    for i in qd.static(range(3)):
         if not finished:
-            n = gs.ti_vec3(0.0, 0.0, 0.0)
+            n = gs.qd_vec3(0.0, 0.0, 0.0)
             if i == 0:
                 # Normal = (v1 - v2) x (v3 - v2)
                 n = d32.cross(d21)

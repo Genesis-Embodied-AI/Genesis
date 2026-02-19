@@ -1,13 +1,14 @@
 import platform
+import sys
 
-import gstaichi as ti
+import quadrants as qd
 
 import genesis as gs
 
 from ..base import Material
 
 
-@ti.data_oriented
+@qd.data_oriented
 class Base(Material):
     """
     The base class of MPM materials.
@@ -48,7 +49,7 @@ class Base(Material):
         super().__init__()
 
         if sampler is None:
-            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
+            sampler = "pbs" if (sys.platform == "linux" and platform.machine() == "x86_64") else "random"
         if not (sampler in ("pbs", "random", "regular") or sampler.startswith("pbs-")):
             gs.raise_exception(
                 f"Particle sampler must be either 'pbs(-[0-9]+)', 'random' or 'regular. Got '{sampler}'."
@@ -78,15 +79,15 @@ class Base(Material):
     def _repr_type(cls):
         return f"<gs.materials.MPM.{cls.__name__}>"
 
-    @ti.func
+    @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
         raise NotImplementedError
 
-    @ti.func
+    @qd.func
     def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        # NOTE: class member function inheritance will still introduce redundant computation graph in taichi
-        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + ti.Matrix.identity(
-            gs.ti_float, 3
+        # NOTE: class member function inheritance will still introduce redundant computation graph in quadrants
+        stress = 2 * self._mu * (F_new - U @ V.transpose()) @ F_new.transpose() + qd.Matrix.identity(
+            gs.qd_float, 3
         ) * self._lam * J * (J - 1)
 
         return stress

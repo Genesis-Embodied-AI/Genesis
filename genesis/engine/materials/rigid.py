@@ -1,11 +1,8 @@
-import gstaichi as ti
-
 import genesis as gs
 
 from .base import Material
 
 
-@ti.data_oriented
 class Rigid(Material):
     """
     The Rigid class represents a material used in rigid body simulation.
@@ -93,7 +90,7 @@ class Rigid(Material):
         return self._gravity_compensation
 
     @property
-    def friction(self) -> float:
+    def friction(self) -> float | None:
         """Friction coefficient used within the rigid solver."""
         return self._friction
 
