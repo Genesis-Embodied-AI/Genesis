@@ -717,8 +717,8 @@ def test_pendulum_links_acc(gs_sim, tol):
     pendulum.set_dofs_velocity([theta_dot])
     for _ in range(100):
         # Backup state before integration
-        theta = float(gs_sim.rigid_solver.qpos.to_numpy())
-        theta_dot = float(gs_sim.rigid_solver.dofs_state.vel.to_numpy())
+        theta = gs_sim.rigid_solver.qpos[0, 0]
+        theta_dot = gs_sim.rigid_solver.dofs_state.vel[0, 0]
 
         # Run one simulation step
         gs_sim.scene.step()
