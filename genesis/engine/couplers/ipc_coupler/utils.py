@@ -15,30 +15,51 @@ except ImportError:
 
 
 def find_target_link_for_fixed_merge(rigid_solver, link_idx):
-    """Walk up the kinematic tree, skipping FIXED joints, to find the merge-target link."""
+    """
+    Find the target link for merging fixed joints.
+
+    Walks up the kinematic tree, skipping links connected via FIXED joints,
+    until finding a link with a non-FIXED joint (or the root).
+
+    This is similar to _merge_target_id in mjcf.py.
+    """
     target_idx = link_idx
 
     while True:
         link = rigid_solver.links[target_idx]
 
+        # If this is the root link (no parent), stop
         if link.parent_idx < 0:
             break
 
+        # Check if all joints connecting this link to parent are FIXED
+        # In Genesis/MuJoCo convention:
+        # - len(joints) == 0: means this link has no joints (fixed to parent)
+        # - all joints are FIXED type: also means fixed to parent
         joints = link.joints
         if len(joints) == 0:
+            # No joints means this is a fixed joint, continue merging
             target_idx = link.parent_idx
             continue
 
         if not all(joint.type == gs.JOINT_TYPE.FIXED for joint in joints):
+            # Found a link with non-FIXED joint, this is our target
             break
 
+        # All joints are FIXED, move up to parent
         target_idx = link.parent_idx
 
     return target_idx
 
 
 def compute_link_to_link_transform(rigid_solver, from_link_idx, to_link_idx):
-    """Compute the relative (R, t) transform from ``from_link`` to ``to_link`` up the tree."""
+    """
+    Compute the relative transform from from_link to to_link.
+
+    Similar to _accumulate_body_to_parent_transform in mjcf.py, but computed
+    using Genesis link positions and quaternions.
+    """
+    # Accumulate transforms going up from from_link to common ancestor (to_link)
     R_acc = np.eye(3, dtype=np.float32)
     t_acc = np.zeros(3, dtype=np.float32)
 
@@ -47,10 +68,15 @@ def compute_link_to_link_transform(rigid_solver, from_link_idx, to_link_idx):
         link = rigid_solver.links[current_idx]
 
         if link.parent_idx < 0:
+            # Reached root without finding to_link - this shouldn't happen
             gs.logger.error(f"Cannot compute transform from link {from_link_idx} to {to_link_idx}")
             break
 
         link_rot = gu.quat_to_R(link.quat)
+        # Accumulate: transform from current link to its parent
+        # New point = R_link @ old_point + t_link
+        # Accumulated: R_acc_new = R_link @ R_acc_old
+        #              t_acc_new = R_link @ t_acc_old + t_link
         R_acc = link_rot @ R_acc
         t_acc = link_rot @ t_acc + link.pos
         current_idx = link.parent_idx
@@ -59,12 +85,22 @@ def compute_link_to_link_transform(rigid_solver, from_link_idx, to_link_idx):
 
 
 def compute_link_init_world_rotation(rigid_solver, link_idx):
-    """Recursively compute the world rotation of a link in the initial configuration."""
+    """
+    Compute the world rotation matrix for a link in its initial configuration.
+    This recursively computes the rotation by traversing up the kinematic tree.
+
+    Note: In MuJoCo/URDF, the joint origin rotation (rpy) is baked into the child
+    link's body transformation. Therefore, we use link.quat (not joint.quat) which
+    contains the complete transformation including the joint origin rotation.
+    """
     link = rigid_solver.links[link_idx]
     if link.parent_idx < 0:
+        # Root link, just use its own orientation
         return gu.quat_to_R(link.quat)
 
     parent_rot = compute_link_init_world_rotation(rigid_solver, link.parent_idx)
+    # Use link.quat which contains the joint origin rotation (from URDF <origin rpy="..."/>)
+    # Note: joint.quat is hardcoded to [1,0,0,0] in Genesis's MJCF parser and is NOT used
     return parent_rot @ gu.quat_to_R(link.quat)
 
 
