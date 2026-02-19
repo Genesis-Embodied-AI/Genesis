@@ -844,7 +844,6 @@ class Scene(RBC):
 
         with gs.logger.timer("Compiling simulation kernels..."):
             self._sim.step()
-            self._sim.step()
             self._reset()
 
         # visualizer
