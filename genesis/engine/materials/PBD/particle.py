@@ -1,13 +1,9 @@
+import sys
 import platform
-
-import gstaichi as ti
-
-import genesis as gs
 
 from .base import Base
 
 
-@ti.data_oriented
 class Particle(Base):
     """
     The liquid material class for PBD.
@@ -33,7 +29,7 @@ class Particle(Base):
         sampler=None,
     ):
         if sampler is None:
-            sampler = "pbs" if (gs.platform == "Linux" and platform.machine() == "x86_64") else "random"
+            sampler = "pbs" if (sys.platform == "linux" and platform.machine() == "x86_64") else "random"
 
         super().__init__()
 

@@ -9,7 +9,7 @@ from genesis.repr_base import RBC
 from genesis.utils import geom as gu
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 
-from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
+from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from .rigid_entity import RigidEntity
     from .rigid_joint import RigidJoint
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-    from genesis.ext.pyrender.interaction.vec3 import Pose
 
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
 MASS_EPS = 0.005
+AABB_EPS = 0.002
 INERTIA_RATIO_MAX = 100.0
 
 
@@ -110,9 +110,9 @@ class RigidLink(RBC):
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
         self._inertial_pos: "np.typing.ArrayLike | None" = inertial_pos
-        if inertial_quat is not None:
-            inertial_quat = np.asarray(inertial_quat, dtype=gs.np_float)
-        self._inertial_quat: "np.typing.ArrayLike | None" = inertial_quat
+        if inertial_quat is None:
+            inertial_quat = (1.0, 0.0, 0.0, 0.0)
+        self._inertial_quat: "np.typing.ArrayLike" = np.asarray(inertial_quat, dtype=gs.np_float)
         if inertial_mass is not None:
             inertial_mass = float(inertial_mass)
         self._inertial_mass: float | None = inertial_mass
@@ -138,6 +138,8 @@ class RigidLink(RBC):
         hint_mass = 0.0
         hint_com = np.zeros(3, dtype=gs.np_float)
         hint_inertia = np.zeros((3, 3), dtype=gs.np_float)
+        aabb_min = np.full((3,), float("inf"), dtype=gs.np_float)
+        aabb_max = np.full((3,), float("-inf"), dtype=gs.np_float)
         if not self._is_fixed:
             # Determine which geom list to use: geoms first, then vgeoms, then fallback
             if self._geoms:
@@ -221,8 +223,29 @@ class RigidLink(RBC):
                     hint_mass, hint_com, hint_inertia, geom_mass, geom_com_link, geom_inertia_link
                 )
 
+            # Compute the bounding box of the links using both visual and collision geometries to be conservative
+            for geoms, is_visual in zip((self._geoms, self._vgeoms), (False, True)):
+                for geom in geoms:
+                    verts = geom.init_vverts if is_visual else geom.init_verts
+                    verts = gu.transform_by_trans_quat(verts, geom._init_pos, geom._init_quat)
+                    aabb_min = np.minimum(aabb_min, verts.min(axis=0))
+                    aabb_max = np.maximum(aabb_max, verts.max(axis=0))
+
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
         if hint_mass > MASS_EPS:
+            if self._inertial_pos is not None:
+                tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
+                if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
+                    com_str: list[str] = []
+                    aabb_str: list[str] = []
+                    for name, pos, axis_min, axis_max in zip(("x", "y", "z"), self._inertial_pos, aabb_min, aabb_max):
+                        com_str.append(f"{name}={pos:0.3f}")
+                        aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
+                    gs.logger.warning(
+                        f"Link '{self._name}' has dubious center of mass [{', '.join(com_str)}] compared to the "
+                        f"bounding box from geometry [{', '.join(aabb_str)}]."
+                    )
+
             if self._inertial_mass is not None:
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):
                     gs.logger.warning(
@@ -230,6 +253,7 @@ class RigidLink(RBC):
                         f"from geometry {hint_mass:0.3f} given material density {rho:0.0f}."
                     )
                 hint_inertia *= self._inertial_mass / hint_mass
+
             if self._inertial_i is not None:
                 inertia_diag = np.diag(self._inertial_i)
                 hint_inertia_diag = np.diag(hint_inertia)
@@ -248,9 +272,13 @@ class RigidLink(RBC):
 
         if self._inertial_mass is None or self._inertial_pos is None or self._inertial_i is None:
             if not self._is_fixed:
-                if not self._geoms and not self._vgeoms:
+                if (
+                    not self._geoms
+                    and not self._vgeoms
+                    and any(joint.type is not gs.JOINT_TYPE.FIXED for joint in self.joints)
+                ):
                     gs.logger.info(
-                        f"Link mass is not specified and no geoms found for link '{self.name}'. Mass is set to 'gs.EPS'."
+                        f"Link mass not specified and no geoms found for link '{self.name}'. Setting mass to 'gs.EPS'."
                     )
                 elif not self._geoms:
                     gs.logger.info(
@@ -387,9 +415,9 @@ class RigidLink(RBC):
 
         verts_idx = slice(self._verts_state_start, self._verts_state_start + self.n_verts)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
         else:
-            tensor = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor
@@ -783,11 +811,6 @@ class RigidLink(RBC):
     @property
     def is_free(self):
         raise DeprecationError("This property has been removed.")
-
-    @property
-    def pose(self) -> "Pose":
-        """Return the current pose of the link (note, this is not necessarily the same as the principal axes frame)."""
-        return Pose.from_link(self)
 
     # ------------------------------------------------------------------------------------
     # -------------------------------------- repr ----------------------------------------

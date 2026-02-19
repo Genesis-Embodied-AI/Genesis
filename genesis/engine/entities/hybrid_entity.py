@@ -1,10 +1,14 @@
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
 import numpy as np
-import gstaichi as ti
+import quadrants as qd
 import trimesh
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
+import genesis.utils.urdf as uu
 from genesis.ext.urdfpy.urdf import URDF
 
 from genesis.utils.hybrid import (
@@ -22,7 +26,7 @@ from .base_entity import Entity
 from .mpm_entity import MPMEntity
 
 
-@ti.data_oriented
+@qd.data_oriented
 class HybridEntity(Entity):
     """
     A hybrid simulation entity composed of both rigid and soft components.
@@ -54,8 +58,9 @@ class HybridEntity(Entity):
         material,
         morph,
         surface,
+        name: str | None = None,
     ):
-        super().__init__(idx, scene, morph, None, material, surface)
+        super().__init__(idx, scene, morph, None, material, surface, name=name)
 
         material_rigid = material.material_rigid
         material_soft = material.material_soft
@@ -144,20 +149,20 @@ class HybridEntity(Entity):
             material_soft._n_groups = len(link_idcs)
             self._muscle_group_cache = muscle_group
 
-            # set up info in taichi field
+            # set up info in Quadrants field
             if isinstance(material_soft, gs.materials.MPM.Base):
-                part_soft_info = ti.types.struct(
-                    link_idx=gs.ti_int,
-                    geom_idx=gs.ti_int,
-                    trans_local_to_global=gs.ti_vec3,
-                    quat_local_to_global=gs.ti_vec4,
-                ).field(shape=(material_soft.n_groups,), needs_grad=False, layout=ti.Layout.SOA)
+                part_soft_info = qd.types.struct(
+                    link_idx=gs.qd_int,
+                    geom_idx=gs.qd_int,
+                    trans_local_to_global=gs.qd_vec3,
+                    quat_local_to_global=gs.qd_vec4,
+                ).field(shape=(material_soft.n_groups,), needs_grad=False, layout=qd.Layout.SOA)
                 part_soft_info.link_idx.from_numpy(np.asarray(link_idcs, dtype=gs.np_int))
                 part_soft_info.geom_idx.from_numpy(np.asarray(geom_idcs, dtype=gs.np_int))
                 part_soft_info.trans_local_to_global.from_numpy(np.asarray(trans_local_to_global, dtype=gs.np_float))
                 part_soft_info.quat_local_to_global.from_numpy(np.asarray(quat_local_to_global, dtype=gs.np_float))
 
-                part_soft_init_positions = ti.field(dtype=gs.ti_vec3, shape=(part_soft.init_particles.shape[0],))
+                part_soft_init_positions = qd.field(dtype=gs.qd_vec3, shape=(part_soft.init_particles.shape[0],))
                 part_soft_init_positions.from_torch(gs.Tensor(part_soft.init_particles))
 
                 self._part_soft_info = part_soft_info
@@ -200,6 +205,25 @@ class HybridEntity(Entity):
 
         # TODO: test with different dt
         assert self._solver_rigid.dt == self._solver_soft.dt, "Rigid and soft solver should have the same dt for now"
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+        if isinstance(morph, gs.morphs.URDF):
+            if isinstance(morph.file, str):
+                # Try to get robot name from URDF file, fall back to filename stem
+                try:
+                    return uu.get_robot_name(morph.file)
+                except (ValueError, ET.ParseError, FileNotFoundError, OSError) as e:
+                    gs.logger.warning(f"Could not extract robot name from URDF: {e}. Using filename stem instead.")
+                    return Path(morph.file).stem
+            return morph.file.name
+        if isinstance(morph, gs.morphs.Mesh):
+            return Path(morph.file).stem
+        return "hybrid"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- basic ops --------------------------------------
@@ -386,18 +410,18 @@ class HybridEntity(Entity):
         else:
             raise NotImplementedError
 
-    @ti.kernel
+    @qd.kernel
     def _kernel_update_soft_part_mpm(
         self,
-        f: ti.i32,
+        f: qd.i32,
         geoms_info: array_class.GeomsInfo,
         links_state: array_class.LinksState,
     ):
-        for i_p_, i_b in ti.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
+        for i_p_, i_b in qd.ndrange(self._part_soft.n_particles, self._part_soft._sim._B):
             if self._solver_soft.particles_ng[f, i_p_, i_b].active:
                 i_global = i_p_ + self._part_soft.particle_start
                 f_ = f
-                if ti.static(not self._update_soft_part_at_pre_coupling):
+                if qd.static(not self._update_soft_part_at_pre_coupling):
                     f_ = f + 1  # NOTE: this is after g2p and thus we use f + 1
 
                 # get corresponding link
@@ -413,20 +437,20 @@ class HybridEntity(Entity):
 
                 # compute new pos in minimal coordinate using rigid-bodied dynamics
                 x_init_pos = self._part_soft_init_positions[i_p_]
-                x_init_local = gu.ti_inv_transform_by_trans_quat(
+                x_init_local = gu.qd_inv_transform_by_trans_quat(
                     x_init_pos, trans_local_to_global, quat_local_to_global
                 )
-                scaled_pos = gu.ti_transform_by_quat(
-                    gu.ti_inv_transform_by_quat(g_pos_0, g_quat_0),
+                scaled_pos = gu.qd_transform_by_quat(
+                    gu.qd_inv_transform_by_quat(g_pos_0, g_quat_0),
                     g_quat_0,
                 )
-                tx_pos, tx_quat = gu.ti_transform_pos_quat_by_trans_quat(
+                tx_pos, tx_quat = gu.qd_transform_pos_quat_by_trans_quat(
                     scaled_pos,
                     g_quat_0,
                     links_state.pos[link_idx, i_b],
                     links_state.quat[link_idx, i_b],
                 )
-                new_x_pos = gu.ti_transform_by_trans_quat(
+                new_x_pos = gu.qd_transform_by_trans_quat(
                     x_init_local,
                     trans=tx_pos,
                     quat=tx_quat,
@@ -442,7 +466,7 @@ class HybridEntity(Entity):
                 xd_vel *= dt_scale  # assume linear scaling between the timestep difference of soft/rigid solver
 
                 vel_d = xd_vel - self._solver_soft.particles.vel[f_, i_global, i_b]
-                vel_d *= ti.exp(-self._solver_soft.dt * self.material.damping)
+                vel_d *= qd.exp(-self._solver_soft.dt * self.material.damping)
 
                 # soft-to-rigid coupling
                 dt_for_rigid_acc = (

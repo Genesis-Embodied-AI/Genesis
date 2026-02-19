@@ -1,9 +1,8 @@
-import gstaichi as ti
+import quadrants as qd
 
 from .base import Base
 
 
-@ti.data_oriented
 class Cloth(Base):
     """
     The cloth material class for PBD.

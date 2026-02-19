@@ -79,24 +79,60 @@ class Font(object):
         self._character_map = {}
 
         for i in range(0, 128):
-            # Generate texture
             face = self._face
-            face.load_char(chr(i))
-            src = np.asarray(face.glyph.bitmap.buffer, dtype=np.float32) / 255.0
-            src = src.reshape((face.glyph.bitmap.rows, face.glyph.bitmap.width))
+
+            if "PYTEST_VERSION" in os.environ:
+                # Bit-exact, ugly but deterministic
+                face.load_char(
+                    chr(i),
+                    freetype.FT_LOAD_RENDER
+                    | freetype.FT_LOAD_MONOCHROME
+                    | freetype.FT_LOAD_NO_HINTING
+                    | freetype.FT_LOAD_NO_AUTOHINT,
+                )
+
+                # FreeType mono bitmaps are 1 bit per pixel, packed
+                bitmap = face.glyph.bitmap
+                buf = np.asarray(bitmap.buffer, dtype=np.uint8)
+                bits = np.unpackbits(buf).reshape(bitmap.rows, bitmap.pitch * 8)
+                src = bits[:, : bitmap.width].astype(np.float32)
+                if src.size == 1:
+                    src = np.zeros((0, 0), dtype=np.float32)
+
+                sampler = Sampler(
+                    magFilter=GL_NEAREST,
+                    minFilter=GL_NEAREST,
+                    wrapS=GL_CLAMP_TO_EDGE,
+                    wrapT=GL_CLAMP_TO_EDGE,
+                )
+            else:
+                # Normal, pretty rendering
+                face.load_char(chr(i))
+
+                bitmap = face.glyph.bitmap
+                src = np.asarray(bitmap.buffer, dtype=np.float32) / 255.0
+                src = src.reshape((bitmap.rows, bitmap.width))
+
+                sampler = Sampler(
+                    magFilter=GL_LINEAR,
+                    minFilter=GL_LINEAR,
+                    wrapS=GL_CLAMP_TO_EDGE,
+                    wrapT=GL_CLAMP_TO_EDGE,
+                )
+
             tex = Texture(
-                sampler=Sampler(
-                    magFilter=GL_LINEAR, minFilter=GL_LINEAR, wrapS=GL_CLAMP_TO_EDGE, wrapT=GL_CLAMP_TO_EDGE
-                ),
+                sampler=sampler,
                 source=src,
                 source_channels="R",
             )
+
             character = Character(
                 texture=tex,
-                size=np.array([face.glyph.bitmap.width, face.glyph.bitmap.rows]),
-                bearing=np.array([face.glyph.bitmap_left, face.glyph.bitmap_top]),
+                size=np.array([bitmap.width, bitmap.rows], dtype=np.int32),
+                bearing=np.array([face.glyph.bitmap_left, face.glyph.bitmap_top], dtype=np.int32),
                 advance=face.glyph.advance.x,
             )
+
             self._character_map[chr(i)] = character
 
         self._vbo = None
@@ -248,7 +284,7 @@ class Font(object):
 
             glBindBuffer(GL_ARRAY_BUFFER, self._vbo)
             glBufferData(GL_ARRAY_BUFFER, FLOAT_SZ * 6 * 4, vertices, GL_DYNAMIC_DRAW)
-            # TODO MAKE THIS MORE EFFICIENT, lgBufferSubData is broken
+            # TODO MAKE THIS MORE EFFICIENT, glBufferSubData is broken
             # glBufferSubData(
             #     GL_ARRAY_BUFFER, 0, 6 * 4 * FLOAT_SZ,
             #     np.ascontiguousarray(vertices.flatten)

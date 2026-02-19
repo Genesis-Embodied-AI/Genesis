@@ -1,8 +1,8 @@
 import os
 import pickle as pkl
+from itertools import chain
 from typing import TYPE_CHECKING
 
-import gstaichi as ti
 import igl
 import numpy as np
 import skimage
@@ -13,7 +13,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
-from genesis.utils.misc import tensor_to_array, ti_to_torch, DeprecationError
+from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 if TYPE_CHECKING:
     from genesis.engine.materials.rigid import Rigid as RigidMaterial
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 NUM_VERTS_VISUAL_GEOM_AABB = 200
 
 
-@ti.data_oriented
 class RigidGeom(RBC):
     """
     A `RigidGeom` is the basic building block of a `RigidEntity` for collision checking. It is usually constructed from a single mesh. This can be accessed via `link.geoms`.
@@ -120,8 +119,28 @@ class RigidGeom(RBC):
                 "decimation. (see FileMorph options)"
             )
 
-        # collision mesh uses default color
-        self._preprocess()
+        # Compute adjacency graph
+        tmesh = trimesh.Trimesh(vertices=self._init_verts, faces=self._init_faces, process=False)
+        all_vert_neighbors_list = tmesh.vertex_neighbors
+        assert self.n_verts == len(all_vert_neighbors_list)
+        self.vert_neighbors = np.array(tuple(chain.from_iterable(all_vert_neighbors_list)), dtype=gs.np_int)
+        self.vert_n_neighbors = np.array(tuple(map(len, all_vert_neighbors_list)), dtype=gs.np_int)
+        self.vert_neighbor_start = np.array((0, *np.cumsum(self.vert_n_neighbors)[:-1]), dtype=gs.np_int)
+
+        # NOTE: sdf size is from the center of the lower voxel cell to the center of the upper voxel cell
+        # add padding. Adjust the cell size to keep resolution within bounds.
+        padding_ratio = 0.2
+        lower = self._init_verts.min(axis=0)
+        upper = self._init_verts.max(axis=0)
+        grid_size = (upper - lower).max() * padding_ratio + (upper - lower)
+        self._sdf_cell_size = gs.EPS + np.clip(
+            self._material.sdf_cell_size,
+            grid_size.max() / (self._material.sdf_max_res - 1),
+            grid_size.min() / max(self._material.sdf_min_res - 1, 2),
+        )
+        self._sdf_res = np.ceil(grid_size / self._sdf_cell_size).astype(gs.np_int) + 1
+        self._sdf_grad_delta = 0.0 if self.type == gs.GEOM_TYPE.TERRAIN else self._sdf_cell_size * 1e-2
+        self._is_preprocessed = False
 
     def _build(self):
         pass
@@ -158,97 +177,57 @@ class RigidGeom(RBC):
                 # add padding. Adjust the cell size to keep resolution within bounds.
                 padding_ratio = 0.2
                 grid_size = (upper - lower).max() * padding_ratio + (upper - lower)
-                sdf_cell_size = gs.EPS + np.clip(
-                    self._material.sdf_cell_size,
-                    grid_size.max() / (self._material.sdf_max_res - 1),
-                    grid_size.min() / max(self._material.sdf_min_res - 1, 2),
-                )
-                sdf_res = np.ceil(grid_size / sdf_cell_size).astype(gs.np_int) + 1
 
                 # round up to multiple of sdf_cell_size
-                grid_size = (sdf_res - 1) * sdf_cell_size
+                grid_size = (self._sdf_res - 1) * self._sdf_cell_size
 
                 halfsize = grid_size / 2.0
                 voxel_lower = center - halfsize
                 voxel_upper = center + halfsize
 
-                x = np.linspace(voxel_lower[0], voxel_upper[0], sdf_res[0])
-                y = np.linspace(voxel_lower[1], voxel_upper[1], sdf_res[1])
-                z = np.linspace(voxel_lower[2], voxel_upper[2], sdf_res[2])
+                x = np.linspace(voxel_lower[0], voxel_upper[0], self._sdf_res[0])
+                y = np.linspace(voxel_lower[1], voxel_upper[1], self._sdf_res[1])
+                z = np.linspace(voxel_lower[2], voxel_upper[2], self._sdf_res[2])
                 X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
                 query_points = np.stack([X, Y, Z], axis=-1).reshape((-1, 3))
 
                 sdf_val = self._compute_sd(query_points)
                 sdf_closest_vert = self._compute_closest_verts(query_points)
-                sdf_val = sdf_val.reshape(sdf_res)
-                sdf_closest_vert = sdf_closest_vert.reshape(sdf_res)
+                sdf_val = sdf_val.reshape(self._sdf_res)
+                sdf_closest_vert = sdf_closest_vert.reshape(self._sdf_res)
                 T_mesh_to_centered = np.eye(4)
                 T_mesh_to_centered[:3, 3] = -center
                 T_centered_to_sdf = np.eye(4)
-                T_centered_to_sdf[:3, :3] *= (sdf_res - 1) / grid_size
-                T_centered_to_sdf[:3, 3] = (sdf_res - 1) / 2
+                T_centered_to_sdf[:3, :3] *= (self._sdf_res - 1) / grid_size
+                T_centered_to_sdf[:3, 3] = (self._sdf_res - 1) / 2
                 T_mesh_to_sdf = T_centered_to_sdf @ T_mesh_to_centered
 
                 ######## sdf gradient ########
                 if self.type == gs.GEOM_TYPE.TERRAIN:  # terrain uses finite difference for sdf gradient computation
                     # dummy
-                    sdf_grad_delta = 0.0
-                    sdf_grad = np.zeros([*sdf_res, 3])
+                    sdf_grad = np.zeros((*self._sdf_res, 3), dtype=gs.np_float)
                 else:
-                    sdf_grad_delta = sdf_cell_size * 1e-2
-                    sdf_grad = self._compute_sd_grad(query_points, sdf_grad_delta).reshape([*sdf_res, 3])
-
-                ######## adjacency graph ########
-                all_vert_neighbors_list = trimesh.Trimesh(
-                    vertices=self._init_verts, faces=self._init_faces, process=False
-                ).vertex_neighbors
-                assert self.n_verts == len(all_vert_neighbors_list)
-
-                vert_neighbor_start = list()
-                vert_n_neighbors = list()
-                vert_neighbors = list()
-                n = 0
-                for vert_neighbors_list in all_vert_neighbors_list:
-                    n_vert_neighbors = len(vert_neighbors_list)
-                    vert_neighbors += vert_neighbors_list
-                    vert_neighbor_start.append(n)
-                    vert_n_neighbors.append(n_vert_neighbors)
-                    n += n_vert_neighbors
-
-                vert_neighbors = np.array(vert_neighbors)
-                vert_n_neighbors = np.array(vert_n_neighbors)
-                vert_neighbor_start = np.array(vert_neighbor_start)
+                    sdf_grad = self._compute_sd_grad(query_points, self._sdf_grad_delta).reshape((*self._sdf_res, 3))
 
                 # caching
                 gsd_dict = {
-                    "sdf_res": sdf_res,
                     "sdf_val": sdf_val,
                     "sdf_grad": sdf_grad,
                     "sdf_max": np.max(sdf_val),
-                    "sdf_grad_delta": sdf_grad_delta,
-                    "sdf_cell_size": sdf_cell_size,
                     "sdf_closest_vert": sdf_closest_vert,
                     "T_mesh_to_sdf": T_mesh_to_sdf,
-                    "vert_neighbors": vert_neighbors,
-                    "vert_n_neighbors": vert_n_neighbors,
-                    "vert_neighbor_start": vert_neighbor_start,
                 }
                 os.makedirs(os.path.dirname(self._gsd_path), exist_ok=True)
                 with open(self._gsd_path, "wb") as file:
                     pkl.dump(gsd_dict, file)
 
-        self._sdf_res = gsd_dict["sdf_res"]
         self._sdf_val = gsd_dict["sdf_val"]
         self._sdf_grad = gsd_dict["sdf_grad"]
         self._sdf_max = gsd_dict["sdf_max"]
-        self._sdf_cell_size = gsd_dict["sdf_cell_size"]
-        self._sdf_grad_delta = gsd_dict["sdf_grad_delta"]
         self._sdf_closest_vert = gsd_dict["sdf_closest_vert"]
         self._T_mesh_to_sdf = gsd_dict["T_mesh_to_sdf"]
 
-        self.vert_neighbors = gsd_dict["vert_neighbors"]
-        self.vert_n_neighbors = gsd_dict["vert_n_neighbors"]
-        self.vert_neighbor_start = gsd_dict["vert_neighbor_start"]
+        self._is_preprocessed = True
 
     def _compute_sd(self, query_points):
         signed_distance, *_ = igl.signed_distance(query_points, self._sdf_verts, self._sdf_faces)
@@ -265,12 +244,12 @@ class RigidGeom(RBC):
 
     def _compute_sd_grad(self, query_points, delta=5e-4):
         ######## sdf gradient via finite differencing ########
-        sd_val_xpos = self._compute_sd(query_points + np.array([delta, 0.0, 0.0]))
-        sd_val_xneg = self._compute_sd(query_points - np.array([delta, 0.0, 0.0]))
-        sd_val_ypos = self._compute_sd(query_points + np.array([0.0, delta, 0.0]))
-        sd_val_yneg = self._compute_sd(query_points - np.array([0.0, delta, 0.0]))
-        sd_val_zpos = self._compute_sd(query_points + np.array([0.0, 0.0, delta]))
-        sd_val_zneg = self._compute_sd(query_points - np.array([0.0, 0.0, delta]))
+        sd_val_xpos = self._compute_sd(query_points + np.array((delta, 0.0, 0.0), dtype=gs.np_float))
+        sd_val_xneg = self._compute_sd(query_points - np.array((delta, 0.0, 0.0), dtype=gs.np_float))
+        sd_val_ypos = self._compute_sd(query_points + np.array((0.0, delta, 0.0), dtype=gs.np_float))
+        sd_val_yneg = self._compute_sd(query_points - np.array((0.0, delta, 0.0), dtype=gs.np_float))
+        sd_val_zpos = self._compute_sd(query_points + np.array((0.0, 0.0, delta), dtype=gs.np_float))
+        sd_val_zneg = self._compute_sd(query_points - np.array((0.0, 0.0, delta), dtype=gs.np_float))
 
         sd_grad_x = (sd_val_xpos - sd_val_xneg) / (2 * delta)
         sd_grad_y = (sd_val_ypos - sd_val_yneg) / (2 * delta)
@@ -365,7 +344,7 @@ class RigidGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.geoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -373,7 +352,7 @@ class RigidGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.geoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -385,9 +364,9 @@ class RigidGeom(RBC):
 
         verts_idx = slice(self.verts_state_start, self.verts_state_end)
         if self.is_fixed and not self._entity._batch_fixed_verts:
-            tensor = ti_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
+            tensor = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx, copy=True)
         else:
-            tensor = ti_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
+            tensor = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True, copy=True)
             if self._solver.n_envs == 0:
                 tensor = tensor[0]
         return tensor
@@ -627,6 +606,8 @@ class RigidGeom(RBC):
         """
         Get the signed distance field (SDF) of the geom.
         """
+        if not self._is_preprocessed:
+            self._preprocess()
         return self._sdf_val
 
     @property
@@ -634,13 +615,15 @@ class RigidGeom(RBC):
         """
         Get the flattened signed distance field (SDF) of the geom.
         """
-        return self._sdf_val.reshape((-1,))
+        return self.sdf_val.reshape((-1,))
 
     @property
     def sdf_grad(self):
         """
         Get the gradient of the geom's signed distance field (SDF).
         """
+        if not self._is_preprocessed:
+            self._preprocess()
         return self._sdf_grad
 
     @property
@@ -648,13 +631,15 @@ class RigidGeom(RBC):
         """
         Get the flattened gradient of the geom's signed distance field (SDF).
         """
-        return self._sdf_grad.reshape(-1, 3)
+        return self.sdf_grad.reshape(-1, 3)
 
     @property
     def sdf_max(self):
         """
         Get the maximum value of the geom's signed distance field (SDF).
         """
+        if not self._is_preprocessed:
+            self._preprocess()
         return self._sdf_max
 
     @property
@@ -676,6 +661,8 @@ class RigidGeom(RBC):
         """
         Get the closest vertex of each cell of the geom's signed distance field (SDF).
         """
+        if not self._is_preprocessed:
+            self._preprocess()
         return self._sdf_closest_vert
 
     @property
@@ -683,13 +670,15 @@ class RigidGeom(RBC):
         """
         Get the flattened closest vertex of each cell of the geom's signed distance field (SDF).
         """
-        return self._sdf_closest_vert.reshape((-1,))
+        return self.sdf_closest_vert.reshape((-1,))
 
     @property
     def T_mesh_to_sdf(self):
         """
         Get the transformation matrix of the geom's mesh frame w.r.t its signed distance field (SDF) frame.
         """
+        if not self._is_preprocessed:
+            self._preprocess()
         return self._T_mesh_to_sdf
 
     @property
@@ -697,7 +686,7 @@ class RigidGeom(RBC):
         """
         Number of cells in the geom's signed distance field (SDF).
         """
-        return np.prod(self._sdf_res)
+        return np.prod(self.sdf_res)
 
     @property
     def n_verts(self) -> int:
@@ -816,7 +805,6 @@ class RigidGeom(RBC):
         return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
-@ti.data_oriented
 class RigidVisGeom(RBC):
     """
     A `RigidVisGeom` is a counterpart of `RigidGeom`, but for visualization purposes. This can be accessed via `link.vis_geoms`.
@@ -882,7 +870,7 @@ class RigidVisGeom(RBC):
         """
         Get the position of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built
@@ -890,7 +878,7 @@ class RigidVisGeom(RBC):
         """
         Get the quaternion of the geom in world frame.
         """
-        tensor = ti_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
+        tensor = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, self._idx, transpose=True, copy=True)[..., 0, :]
         return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @gs.assert_built

@@ -4,13 +4,15 @@ from pathlib import Path
 from itertools import chain
 from bisect import bisect_right
 
+# Note the importing mujoco with env var `MUJOCO_GL=EGL` forcibly defines `PYOPENGL_PLATFORM=egl`
+import mujoco
+
 import numpy as np
 import trimesh
+import z3
 from trimesh.visual.texture import TextureVisuals
 from PIL import Image
 
-import z3
-import mujoco
 import genesis as gs
 from genesis.ext import urdfpy
 
@@ -20,6 +22,41 @@ from .misc import get_assets_dir, redirect_libc_stderr
 
 
 MIN_TIMECONST = np.finfo(np.double).eps
+
+
+def get_model_name(file_path):
+    """
+    Extract the model name from an MJCF file, if specified.
+
+    The name is extracted from the optional ``<mujoco model="...">`` attribute.
+
+    Reference: https://mujoco.readthedocs.io/en/stable/XMLreference.html#mujoco
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to the MJCF file.
+
+    Returns
+    -------
+    str or None
+        The model name, or None if not specified.
+
+    Raises
+    ------
+    ET.ParseError
+        If the file cannot be parsed as XML.
+    FileNotFoundError
+        If the file does not exist.
+    OSError
+        If there is an error reading the file.
+    """
+    path = os.path.join(get_assets_dir(), file_path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+    if root.tag == "mujoco":
+        return root.attrib.get("model")
+    return None
 
 
 def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=False, links_to_keep=()):
@@ -107,7 +144,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             compiler.attrib |= dict(
                 fusestatic="false",
                 strippath="false",
-                inertiafromgeom="false",  # This option is unreliable, so doing this ourselves
+                inertiafromgeom="false",
                 balanceinertia="false",
                 discardvisual="true" if discard_visual else "false",
                 autolimits="true",
@@ -136,7 +173,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure
-                for i, link in enumerate(robot.links):
+                for link in robot.links:
                     if link.inertial is None:
                         body = mj.body(link.name)
                         body.inertia[:] = 0.0
@@ -196,7 +233,7 @@ def parse_link(mj, i_l, scale):
     l_info = dict()
 
     name_start = mj.name_bodyadr[i_l]
-    l_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+    l_info["name"], *_ = mj.names[name_start:].decode("utf-8").split("\x00")
 
     l_info["pos"] = mj.body_pos[i_l]
     l_info["quat"] = mj.body_quat[i_l]
@@ -247,7 +284,10 @@ def parse_link(mj, i_l, scale):
             j_info["pos"] = np.array([0.0, 0.0, 0.0])
         else:
             name_start = mj.name_jntadr[i_j]
-            j_info["name"], *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+            joint_name, *_ = mj.names[name_start:].decode("utf-8").split("\x00")
+            if not joint_name:
+                joint_name = l_info["name"]
+            j_info["name"] = joint_name
             j_info["pos"] = mj.jnt_pos[i_j]
         j_info["quat"] = np.array([1.0, 0.0, 0.0, 0.0])
         j_info["init_qpos"] = np.array(mj.qpos0[mj_qpos_offset : (mj_qpos_offset + n_qs)])
@@ -433,8 +473,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         else:
             mj_mat_img = None
         mj_rgba = np.asarray(mj_mat.rgba, dtype=np.float32)
-        mj_specular = np.full(3, float(mj_mat.specular), dtype=np.float32)
-        mj_glossiness = float(mj_mat.shininess) * 128.0
+        mj_specular = np.full(3, mj_mat.specular[0], dtype=np.float32)
+        mj_glossiness = mj_mat.shininess[0] * 128.0
         tmesh_mat = trimesh.visual.material.SimpleMaterial(
             image=mj_mat_img,
             diffuse=mj_rgba,
@@ -551,7 +591,7 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
         geom_data = None
 
         mesh_path_start = mj.mesh_pathadr[mj_mesh.id]
-        metadata["mesh_path"], *_ = filter(None, mj.paths[mesh_path_start:].decode("utf-8").split("\x00"))
+        metadata["mesh_path"], *_ = mj.paths[mesh_path_start:].decode("utf-8").split("\x00")
     else:
         gs.logger.warning(f"Unsupported MJCF geom type '{mj_geom.type}'.")
         return None
@@ -720,30 +760,48 @@ def parse_equalities(mj, scale):
         eq_info["data"] = mj.eq_data[i_e]
         eq_info["sol_params"] = np.concatenate((mj.eq_solref[i_e], mj.eq_solimp[i_e]))
 
+        objs_idx = [mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]]
+        if mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_SITE:
+            # Must convert site into relative link position because Genesis does not implement site abstraction
+            name_objadr = mj.name_bodyadr
+            sites_pos, sites_quat = [], []
+            for i, site_idx in enumerate(objs_idx):
+                objs_idx[i] = mj.site_bodyid[site_idx]
+                sites_pos.append(mj.site_pos[site_idx])
+                sites_quat.append(mj.site_quat[site_idx])
+            if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[1], sites_pos[0])
+                eq_info["data"][6:10] = gu.transform_quat_by_quat(sites_quat[0], gu.inv_quat(sites_quat[1]))
+            else:
+                eq_info["data"][:3], eq_info["data"][3:6] = (sites_pos[0], sites_pos[1])
+        elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
+            name_objadr = mj.name_jntadr
+        elif mj.eq_objtype[i_e] == mujoco.mjtObj.mjOBJ_BODY:
+            name_objadr = mj.name_bodyadr
+        else:
+            gs.raise_exception(f"Unsupported MJCF equality object type: {mj.eq_objtype[i_e]}")
+
         if mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_CONNECT:
             eq_info["type"] = gs.EQUALITY_TYPE.CONNECT
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_WELD:
             eq_info["type"] = gs.EQUALITY_TYPE.WELD
             eq_info["data"][:6] *= scale
-            name_objadr = mj.name_bodyadr
         elif mj.eq_type[i_e] == mujoco.mjtEq.mjEQ_JOINT:
             # y -y0 = a0 + a1 * (x-x0) + a2 * (x-x0)^2 + a3 * (x-x0)^3 + a4 * (x-x0)^4
             eq_info["type"] = gs.EQUALITY_TYPE.JOINT
-            name_objadr = mj.name_jntadr
         else:
             gs.raise_exception(f"Unsupported MJCF equality type: {mj.eq_type[i_e]}")
 
         objs_name = []
-        for obj_idx in (mj.eq_obj1id[i_e], mj.eq_obj2id[i_e]):
+        for obj_idx in objs_idx:
             if obj_idx < 0:
                 obj_name = None
             else:
                 name_start = name_objadr[obj_idx]
-                obj_name, *_ = filter(None, mj.names[name_start:].decode("utf-8").split("\x00"))
+                obj_name, *_ = mj.names[name_start:].decode("utf-8").split("\x00")
             objs_name.append(obj_name)
-        eq_info["objs_name"] = objs_name
+        eq_info["objs_name"] = tuple(objs_name)
 
         eqs_info.append(eq_info)
 

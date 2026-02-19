@@ -122,7 +122,6 @@ class MeshLight(ShapeLight):
 
 class Raytracer:
     def __init__(self, options, vis_options):
-        self.device_index = options.device_index
         self.logging_level = options.logging_level
         self.state_limit = options.state_limit
         self.tracing_depth = options.tracing_depth
@@ -162,11 +161,27 @@ class Raytracer:
             light_surface.update_texture()
             self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
 
+        # backend and device selection: aligning with genesis if possible
+        backend = gs.backend.name
+        device_index = options.device_index
+        if device_index is None:
+            # If no device index has been specified, use Torch GPU device ID if any, 0 otherwise
+            device_index = 0 if gs.device.type == "cpu" else gs.device.index
+        if backend == "amdgpu":
+            # Luisa does not support HIP for AMD GPU: using DirectX on Windows, falling back to CPU otherwise
+            if sys.platform == "win32":
+                backend = "dx"
+            else:
+                backend = "cpu"
+                device_index = 0
+        self.backend = backend
+        self.device_index = device_index
+
         LuisaRenderPy.init(
             context_path=os.path.dirname(LuisaRenderPy.__file__),
             context_id=str(gs.UID()),
-            backend="cuda" if gs.platform != "macOS" else "metal",
-            device_index=self.device_index,
+            backend=backend,
+            device_index=device_index,
             log_level=logging_class[self.logging_level],
         )
 
@@ -301,7 +316,7 @@ class Raytracer:
         if self.sim.fem_solver.is_active:
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
-                    self.add_deformable(str(fem_entity.id))
+                    self.add_deformable(str(fem_entity.uid))
 
     def get_transform(self, matrix):
         if matrix is None:
@@ -745,9 +760,10 @@ class Raytracer:
 
         # FEM entities
         if self.sim.fem_solver.is_active:
-            vertices_all, triangles_all = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
+            vertices_all, triangles_all, uvs_qd = self.sim.fem_solver.get_state_render(self.sim.cur_substep_local)
             vertices_all = vertices_all.to_numpy()[:, self.rendered_envs_idx[0]]
-            triangles_all = triangles_all.to_numpy()
+            triangles_all = triangles_all.to_numpy().reshape((-1, 3))
+            uvs_all = uvs_qd.to_numpy()
 
             for fem_entity in self.sim.fem_solver.entities:
                 if fem_entity.surface.vis_mode == "visual":
@@ -756,13 +772,15 @@ class Raytracer:
                         triangles_all[fem_entity.s_start : (fem_entity.s_start + fem_entity.n_surfaces)]
                         - fem_entity.v_start
                     )
+                    vertex_normals = trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals
+                    uvs = uvs_all[fem_entity.v_start : fem_entity.v_start + fem_entity.n_vertices]
 
                     self.update_deformable(
                         str(fem_entity.uid),
                         vertices,
                         triangles,
-                        trimesh.Trimesh(vertices=vertices, faces=triangles, process=False).vertex_normals,
-                        np.array([]),
+                        vertex_normals,
+                        uvs,
                     )
 
         # Flush the update buffer.

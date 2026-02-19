@@ -269,7 +269,7 @@ class Mesh(object):
         # Process texture colors
         if mesh.visual.kind == "texture":
             # Configure UV coordinates
-            if mesh.visual.uv is not None:
+            if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
                 uv = mesh.visual.uv.copy()
                 if smooth:
                     texcoords = uv

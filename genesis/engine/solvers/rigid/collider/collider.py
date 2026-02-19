@@ -14,23 +14,16 @@ import trimesh
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-import genesis.utils.sdf as sdf
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.utils.misc import tensor_to_array, ti_to_torch, ti_to_numpy
+from genesis.utils.misc import tensor_to_array, qd_to_torch, qd_to_numpy
 from genesis.utils.sdf import SDF
 
-from . import gjk
-from . import diff_gjk
 from . import mpr
+from . import gjk
 from . import support_field
-from .mpr import MPR
-from .gjk import GJK
-from .support_field import SupportField
 
 # Import and re-export from submodules for backward compatibility
 from .broadphase import (
-    func_point_in_geom_aabb,
-    func_is_geom_aabbs_overlap,
     func_find_intersect_midpoint,
     func_check_collision_valid,
     func_collision_clear,
@@ -49,7 +42,7 @@ from .contact import (
     func_rotate_frame,
     func_set_upstream_grad,
 )
-
+from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
     func_contact_sphere_sdf,
@@ -61,7 +54,6 @@ from .narrowphase import (
     func_plane_box_contact,
     func_convex_convex_contact,
     func_box_box_contact,
-    func_narrow_phase_convex_vs_convex,
     func_narrow_phase_diff_convex_vs_convex,
     func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
@@ -93,10 +85,17 @@ class Collider:
         self._init_static_config()
         self._init_collision_fields()
 
-        self._mpr = MPR(rigid_solver, is_active=self._collider_static_config.has_terrain)
-        self._sdf = SDF(rigid_solver, is_active=self._collider_static_config.has_nonconvex_nonterrain)
-        self._gjk = GJK(rigid_solver, is_active=self._collider_static_config.has_convex_convex)
-        self._support_field = SupportField(rigid_solver, is_active=self._mpr.is_active or self._gjk.is_active)
+        self._sdf = SDF(rigid_solver)
+        self._mpr = mpr.MPR(rigid_solver)
+        self._gjk = gjk.GJK(rigid_solver)
+        self._support_field = support_field.SupportField(rigid_solver)
+
+        if self._collider_static_config.has_nonconvex_nonterrain:
+            self._sdf.activate()
+        if self._collider_static_config.has_convex_convex:
+            self._gjk.activate()
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_convex_convex:
+            self._support_field.activate()
 
         if gs.use_zerocopy:
             self._contact_data: dict[str, torch.Tensor] = {}
@@ -110,7 +109,7 @@ class Collider:
                 ("normal", "normal"),
                 ("force", "force"),
             ):
-                self._contact_data[key] = ti_to_torch(
+                self._contact_data[key] = qd_to_torch(
                     getattr(self._collider_state.contact_data, name), transpose=True, copy=False
                 )
 
@@ -185,7 +184,7 @@ class Collider:
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
 
-        # Initialize [info], which stores every data that must be considered mutable from taichi's perspective,
+        # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
         self._collider_info = array_class.get_collider_info(
             self._solver,
@@ -213,7 +212,7 @@ class Collider:
             self._collider_static_config,
         )
 
-        # 'contact_data_cache' is not used in Taichi kernels, so keep it outside of the collider state / info
+        # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
         self.reset()
@@ -399,13 +398,13 @@ class Collider:
         if gs.use_zerocopy:
             envs_idx = slice(None) if envs_idx is None else envs_idx
             if not cache_only:
-                first_time = ti_to_torch(self._collider_state.first_time, copy=False)
+                first_time = qd_to_torch(self._collider_state.first_time, copy=False)
                 if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                     first_time.masked_fill_(envs_idx, True)
                 else:
                     first_time[envs_idx] = True
 
-            normal = ti_to_torch(self._collider_state.contact_cache.normal, copy=False)
+            normal = qd_to_torch(self._collider_state.contact_cache.normal, copy=False)
             if isinstance(envs_idx, torch.Tensor) and (not IS_OLD_TORCH or envs_idx.dtype == torch.bool):
                 if envs_idx.dtype == torch.bool:
                     normal.masked_fill_(envs_idx[None, :, None], 0.0)
@@ -459,7 +458,7 @@ class Collider:
             self._solver._errno,
         )
         if self._collider_static_config.has_convex_convex:
-            func_narrow_phase_convex_vs_convex(
+            narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
@@ -501,7 +500,6 @@ class Collider:
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
@@ -537,7 +535,7 @@ class Collider:
 
         n_envs = self._solver.n_envs
         if gs.use_zerocopy:
-            n_contacts = ti_to_torch(self._collider_state.n_contacts, copy=False)
+            n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
             if as_tensor or n_envs == 0:
                 n_contacts_max = (n_contacts if n_envs == 0 else n_contacts.max()).item()
 
@@ -564,7 +562,7 @@ class Collider:
             return contact_data.copy()
 
         # Find out how much dynamic memory must be allocated
-        n_contacts = ti_to_numpy(self._collider_state.n_contacts)
+        n_contacts = qd_to_numpy(self._collider_state.n_contacts)
         n_contacts_max = n_contacts.max().item()
         if as_tensor:
             out_size = n_contacts_max * max(n_envs, 1)
@@ -644,9 +642,7 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_state,
             self._collider_info,
-            self._gjk._gjk_state,
             self._gjk._gjk_info,
-            self._gjk._gjk_static_config,
             self._collider_state.diff_contact_input,
         )
 

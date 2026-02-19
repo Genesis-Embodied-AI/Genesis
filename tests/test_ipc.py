@@ -60,10 +60,10 @@ def test_ipc_cloth(n_envs, show_viewer):
         show_viewer=show_viewer,
     )
 
-    asset_path = get_hf_dataset(pattern="grid20x20.obj")
+    asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
     scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"{asset_path}/grid20x20.obj",
+            file=f"{asset_path}/IPC/grid20x20.obj",
             scale=2.0,
             pos=(0.0, 0.0, 1.5),
             euler=(0, 0, 0),
@@ -415,12 +415,12 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     # NO ground plane - pure free fall test
 
     # Get cloth mesh asset
-    asset_path = get_hf_dataset(pattern="grid20x20.obj")
+    asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
 
     # Create cloth at initial height
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
-            file=f"{asset_path}/grid20x20.obj",
+            file=f"{asset_path}/IPC/grid20x20.obj",
             scale=2.0,
             pos=(0.0, 0.0, z0),
             euler=(0, 0, 0),

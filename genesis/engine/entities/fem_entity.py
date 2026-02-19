@@ -1,8 +1,9 @@
 from functools import wraps
+from pathlib import Path
 
 import igl
 import numpy as np
-import gstaichi as ti
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -28,7 +29,7 @@ def assert_muscle(method):
     return wrapper
 
 
-@ti.data_oriented
+@qd.data_oriented
 class FEMEntity(Entity):
     """
     A finite element method (FEM)-based entity for deformable simulation.
@@ -59,8 +60,10 @@ class FEMEntity(Entity):
         Starting index of this entity's surface triangles in the global surface array (default is 0).
     """
 
-    def __init__(self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0):
-        super().__init__(idx, scene, morph, solver, material, surface)
+    def __init__(
+        self, scene, solver, material, morph, surface, idx, v_start=0, el_start=0, s_start=0, name: str | None = None
+    ):
+        super().__init__(idx, scene, morph, solver, material, surface, name=name)
 
         self._v_start = v_start  # offset for vertex index of elements
         self._el_start = el_start  # offset for element index
@@ -389,6 +392,7 @@ class FEMEntity(Entity):
         from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 
         is_cloth = isinstance(self.material, ClothMaterial)
+        self._uvs = None
 
         if is_cloth:
             # Cloth: load surface mesh directly (no tetrahedralization)
@@ -400,6 +404,14 @@ class FEMEntity(Entity):
                 faces = mesh.faces
                 # For cloth, we store faces as "elements" (treating them as surface elements)
                 self.instantiate(verts, faces)
+
+                # Load UVs from mesh (1:1 mapping for cloth).
+                # UVs are not always available in 3D file, in case they are missing we set the entity UVs to None when UVs are None,
+                # the solver will use 0 UVs for rendering. A mesh with 0 UVs means that no tangent directions can be recomputed,
+                # thus texture mapping and anisotropic surfaces will not work properly.
+                self._uvs = None
+                if isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals) and mesh.visual.uv is not None:
+                    self._uvs = mesh.visual.uv.astype(gs.np_float, copy=False)
             else:
                 gs.raise_exception(f"Cloth material only supports Mesh morph. Got: {self.morph}.")
         else:
@@ -419,7 +431,11 @@ class FEMEntity(Entity):
             elif isinstance(self.morph, gs.options.morphs.Cylinder):
                 verts, elems = eu.cylinder_to_elements()
             elif isinstance(self.morph, gs.options.morphs.Mesh):
-                verts, elems = eu.mesh_to_elements(
+                # We don't need to proces UVs here because the tetrahedralization process append new vertices
+                # and faces at the end of the vertex list, thus the original UVs are preserved at the beginning.
+                # We can't generate UVs for newly created internal vertices as it doesn't make sense but they're
+                # not used for rendering so it's fine.
+                verts, elems, self._uvs = eu.mesh_to_elements(
                     file=self._morph.file,
                     pos=self._morph.pos,
                     scale=self._morph.scale,
@@ -443,6 +459,7 @@ class FEMEntity(Entity):
 
         # Convert to appropriate numpy array types
         verts_numpy = tensor_to_array(self.init_positions, dtype=gs.np_float)
+        uvs_np = self._uvs if self._uvs is not None else np.zeros((0, 2), dtype=gs.np_float)
 
         if is_cloth:
             # Cloth: add only vertices and surfaces for rendering (no physics computation)
@@ -456,6 +473,7 @@ class FEMEntity(Entity):
                 s_start=self._s_start,
                 verts=verts_numpy,
                 tri2v=self._surface_tri_np,
+                uvs=uvs_np,
             )
         else:
             # Regular FEM: add vertices, elements, and surfaces for physics and rendering
@@ -475,6 +493,7 @@ class FEMEntity(Entity):
                 elems=elems_np,
                 tri2v=self._surface_tri_np,
                 tri2el=self._surface_el_np,
+                uvs=uvs_np,
             )
 
         self.active = True
@@ -624,7 +643,7 @@ class FEMEntity(Entity):
             self.set_vel(self._sim.cur_substep_local, self._tgt["vel"])
 
         if self._tgt["act"] is not None:
-            assert self._tgt["act"] in [gs.ACTIVE, gs.INACTIVE]
+            assert self._tgt["act"] in (gs.ACTIVE, gs.INACTIVE)
             self.set_active(self._sim.cur_substep_local, self._tgt["act"])
 
         if self._tgt["actu"] is not None:
@@ -649,13 +668,13 @@ class FEMEntity(Entity):
         _tgt_pos = self._tgt_buffer["pos"].pop()
 
         if _tgt_actu is not None and _tgt_actu.requires_grad:
-            _tgt_actu._backward_from_ti(self.set_actu_grad, self._sim.cur_substep_local)
+            _tgt_actu._backward_from_qd(self.set_actu_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None and _tgt_vel.requires_grad:
-            _tgt_vel._backward_from_ti(self.set_vel_grad, self._sim.cur_substep_local)
+            _tgt_vel._backward_from_qd(self.set_vel_grad, self._sim.cur_substep_local)
 
         if _tgt_pos is not None and _tgt_pos.requires_grad:
-            _tgt_pos._backward_from_ti(self.set_pos_grad, self._sim.cur_substep_local)
+            _tgt_pos._backward_from_qd(self.set_pos_grad, self._sim.cur_substep_local)
 
         if _tgt_vel is not None or _tgt_pos is not None or _tgt_actu is not None:
             # manually zero the grad since manually setting state breaks gradient flow
@@ -928,7 +947,7 @@ class FEMEntity(Entity):
             gs.logger.warning("Ignoring remove_vertex_constraints; constraints have not been initialized.")
             return
 
-        # FIXME: GsTaichi 'fill' method is very inefficient. Try using zero-copy if possible.
+        # FIXME: Quadrants 'fill' method is very inefficient. Try using zero-copy if possible.
         if verts_idx_local is None:
             self._solver.vertex_constraints.is_constrained.fill(0)
             return
@@ -939,12 +958,12 @@ class FEMEntity(Entity):
 
         self._solver._kernel_remove_specific_constraints(verts_idx, envs_idx)
 
-    @ti.kernel
-    def _kernel_get_verts_pos(self, f: ti.i32, pos: ti.types.ndarray(), verts_idx: ti.types.ndarray()):
+    @qd.kernel
+    def _kernel_get_verts_pos(self, f: qd.i32, pos: qd.types.ndarray(), verts_idx: qd.types.ndarray()):
         # get current position of vertices
-        for i_v, i_b in ti.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
+        for i_v, i_b in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
             i_global = verts_idx[i_v, i_b] + self.v_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
 
     def get_el2v(self):
@@ -960,8 +979,8 @@ class FEMEntity(Entity):
         self._solver._kernel_get_el2v(element_el_start=self._el_start, n_elements=self.n_elements, el2v=el2v)
         return el2v
 
-    @ti.kernel
-    def get_frame(self, f: ti.i32, pos: ti.types.ndarray(), vel: ti.types.ndarray(), active: ti.types.ndarray()):
+    @qd.kernel
+    def get_frame(self, f: qd.i32, pos: qd.types.ndarray(), vel: qd.types.ndarray(), active: qd.types.ndarray()):
         """
         Fetch the position, velocity, and activation state of the FEM entity at a specific substep.
 
@@ -980,18 +999,18 @@ class FEMEntity(Entity):
             Output array of shape (n_envs, n_elements) to store active flags.
         """
 
-        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
-            for j in ti.static(range(3)):
+            for j in qd.static(range(3)):
                 pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
                 vel[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].vel[j]
 
-        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
             active[i_b, i_v] = self._solver.elements_el_ng[f, i_global, i_b].active
 
-    @ti.kernel
-    def clear_grad(self, f: ti.i32):
+    @qd.kernel
+    def clear_grad(self, f: qd.i32):
         """
         Zero out the gradients of position, velocity, and actuation for the current substep.
 
@@ -1006,14 +1025,31 @@ class FEMEntity(Entity):
         that may be corrupted by explicit state setting.
         """
         # TODO: not well-tested
-        for i_v, i_b in ti.ndrange(self.n_vertices, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_vertices, self._sim._B):
             i_global = i_v + self.v_start
             self._solver.elements_v.grad[f, i_global, i_b].pos = 0
             self._solver.elements_v.grad[f, i_global, i_b].vel = 0
 
-        for i_v, i_b in ti.ndrange(self.n_elements, self._sim._B):
+        for i_v, i_b in qd.ndrange(self.n_elements, self._sim._B):
             i_global = i_v + self.el_start
             self._solver.elements_el.grad[f, i_global, i_b].actu = 0
+
+    # ------------------------------------------------------------------------------------
+    # --------------------------------- naming methods -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _get_morph_identifier(self) -> str:
+        morph = self._morph
+
+        if isinstance(morph, gs.morphs.Box):
+            return "fem_box"
+        if isinstance(morph, gs.morphs.Sphere):
+            return "fem_sphere"
+        if isinstance(morph, gs.morphs.Cylinder):
+            return "fem_cylinder"
+        if isinstance(morph, gs.morphs.Mesh):
+            return f"fem_{Path(morph.file).stem}"
+        return "fem_entity"
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
@@ -1073,6 +1109,11 @@ class FEMEntity(Entity):
     def surface_triangles(self):
         """Surface triangles of the FEM mesh."""
         return self._surface_tri_np
+
+    @property
+    def uvs(self):
+        """UV coordinates for this entity's vertices, or None if not available."""
+        return self._uvs
 
     @property
     def tet_cfg(self):

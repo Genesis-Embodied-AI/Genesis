@@ -93,6 +93,45 @@ git clone https://github.com/Genesis-Embodied-AI/Genesis.git
 cd Genesis
 pip install -e ".[dev]"
 ```
+Il est recommandé d'exécuter systématiquement `pip install -e ".[dev]"` après avoir déplacé le HEAD pour s'assurer que toutes les dépendances et points d'entrée sont à jour.
+
+### Utiliser uv
+
+[uv](https://docs.astral.sh/uv/) est un gestionnaire de paquets et de projets Python rapide.
+
+**Installer uv :**
+```bash
+# Sur macOS et Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Sur Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**Démarrage rapide avec uv :**
+```bash
+git clone https://github.com/Genesis-Embodied-AI/Genesis.git
+cd Genesis
+uv sync
+```
+
+Ensuite, installez PyTorch pour votre plateforme :
+
+```bash
+# GPU NVIDIA (CUDA 12.6 par exemple)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu126
+
+# CPU uniquement (Linux/Windows)
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Apple Silicon (Metal/MPS)
+uv pip install torch
+```
+
+Exécutez un exemple :
+```bash
+uv run examples/rigid/single_franka.py
+```
 
 ## Docker
 
@@ -140,7 +179,7 @@ docker run -it --network=host \
  genesis-amd
 ```
 
-Les exemples seront accessibles depuis `/workspace/examples`. Note : Les utilisateurs AMD doivent utiliser le backend Vulkan. Cela signifie que vous devrez appeler `gs.init(vulkan)` pour initialiser Genesis.
+Les exemples seront accessibles depuis `/workspace/examples`. Note : Les utilisateurs AMD doivent utiliser le backend ROCm (HIP). Cela signifie que vous devrez appeler `gs.init(backend=gs.amdgpu)` pour initialiser Genesis.
 
 ## Documentation
 
