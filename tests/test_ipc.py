@@ -74,7 +74,6 @@ def test_ipc_cloth(n_envs, show_viewer):
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.5, 0.8, 1.0),
-            double_sided=True,
         ),
     )
     box = scene.add_entity(
@@ -379,7 +378,6 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.5, 0.8, 1.0),
-            double_sided=True,
         ),
     )
 

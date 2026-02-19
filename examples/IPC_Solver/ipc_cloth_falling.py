@@ -61,7 +61,6 @@ def main():
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.5, 0.8, 1.0),
-            double_sided=True,
         ),
     )
 
