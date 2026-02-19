@@ -33,9 +33,9 @@ def main():
         else None
     )
 
-    rigid_options_kwargs = {}
+    material_options = {}
     if args.ipc:
-        rigid_options_kwargs = dict(
+        material_options = dict(
             coupling_mode=args.coupling_type,
             coupling_link_filter=("left_finger", "right_finger"),
         )
@@ -57,7 +57,7 @@ def main():
 
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
-        material=gs.materials.Rigid(**rigid_options_kwargs),
+        material=gs.materials.Rigid(**material_options),
     )
 
     material = (

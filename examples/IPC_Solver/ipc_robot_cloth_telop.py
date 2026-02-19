@@ -38,11 +38,9 @@ def main():
     )
     args = parser.parse_args()
 
-    dt = 2e-2
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
+            dt=2e-2,
             gravity=(0.0, 0.0, -9.8),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
