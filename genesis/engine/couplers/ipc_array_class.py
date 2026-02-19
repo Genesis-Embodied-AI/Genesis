@@ -16,6 +16,11 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.array_class import DATA_ORIENTED, BASE_METACLASS, V_ANNOTATION, V, V_VEC
 
+try:
+    from uipc import Scene, Transform, Vector3, Quaternion
+except ImportError:
+    pass
+
 
 # ==================================== Quadrants data structures ====================================
 
@@ -387,30 +392,17 @@ def build_ipc_scene_config(options, sim_options):
     dict
         Config dict ready to pass to ``Scene(config)``.
     """
-    from uipc import Scene
-
     config = Scene.default_config()
 
     config["dt"] = sim_options.dt
     g = sim_options.gravity
     config["gravity"] = [[g[0]], [g[1]], [g[2]]]
-
-    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_tolerance)
-    _set_if_not_none(config, ["line_search", "max_iter"], options.n_linesearch_iterations)
-    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tolerance)
-    _set_if_not_none(config, ["contact", "d_hat"], options.contact_d_hat)
+    config["newton"]["velocity_tol"] = options.newton_tolerance
+    config["line_search"]["max_iter"] = options.n_linesearch_iterations
+    config["linear_system"]["tol_rate"] = options.linear_system_tolerance
+    config["contact"]["d_hat"] = options.contact_d_hat
 
     return config
-
-
-def _set_if_not_none(config, keys, value):
-    """Set a nested config value only if it is not None."""
-    if value is None:
-        return
-    d = config
-    for key in keys[:-1]:
-        d = d[key]
-    d[keys[-1]] = value
 
 
 def read_ipc_geometry_metadata(geo):
@@ -484,8 +476,6 @@ def build_link_transform_matrix(pos_3, quat_4):
     np.ndarray
         4×4 transformation matrix.
     """
-    from uipc import Transform, Vector3, Quaternion
-
     t = Transform.Identity()
     t.translate(Vector3.Values((float(pos_3[0]), float(pos_3[1]), float(pos_3[2]))))
     t.rotate(Quaternion(quat_4))

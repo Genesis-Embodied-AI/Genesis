@@ -216,6 +216,12 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Enable ABD–ABD (rigid body) contact within IPC. Default is False.
     enable_cloth_self_contact : bool, optional
         Enable cloth self-collision within IPC. Default is True.
+    enable_contact_proxy : bool, optional
+        Apply actual IPC contact gradient forces to Genesis rigid bodies in addition to
+        soft-constraint coupling forces. When True, per-vertex contact gradients from IPC
+        are accumulated into per-link forces and torques via ``compute_link_contact_forces_kernel``
+        and applied to Genesis. Requires at least one entity with ``coupling_mode="two_way"``.
+        Default is False.
     """
 
     contact_d_hat: float = 0.001
@@ -227,6 +233,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     constraint_strength_rotation: float = 100.0
     enable_abd_self_contact: bool = False
     enable_cloth_self_contact: bool = True
+    enable_contact_proxy: bool = False
 
 
 ############################ Solvers inside simulator ############################
