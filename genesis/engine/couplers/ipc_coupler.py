@@ -409,7 +409,7 @@ class IPCCoupler(RBC):
 
     def _add_rigid_geoms_to_ipc(self):
         """Register rigid geoms in the IPC scene as ABD objects, merging fixed-joint children."""
-        from uipc.geometry import label_surface, label_triangle_orient, flip_inward_triangles, merge, ground
+        from uipc.geometry import label_surface, merge, ground
         from uipc.constitution import AffineBodyExternalBodyForce, SoftTransformConstraint
         import genesis.utils.geom as gu
 
@@ -534,8 +534,6 @@ class IPCCoupler(RBC):
                         merged_mesh = merge(meshes_to_merge)
 
                     label_surface(merged_mesh)
-                    label_triangle_orient(merged_mesh)
-                    flip_inward_triangles(merged_mesh)
 
                     link_world_pos = link_data["link_world_pos"]
                     link_world_quat = link_data["link_world_quat"]
