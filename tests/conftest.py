@@ -423,18 +423,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 @pytest.fixture(scope="session")
-def show_viewer(pytestconfig):
-    return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
-
-
-@pytest.fixture(scope="session")
 def pytorch_profiler(pytestconfig):
     if os.environ.get("GS_PROFILING", "0") == "1":
         for res in profiling.pytorch_profiler(pytestconfig):
             yield res
     else:
         noop = lambda: None  # noqa: E731
-        yield None, noop
+        yield noop
+
+
+@pytest.fixture(scope="session")
+def show_viewer(pytestconfig):
+    return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
 
 
 @pytest.fixture(scope="session")

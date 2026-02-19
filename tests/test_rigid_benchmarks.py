@@ -314,7 +314,7 @@ def factory_logger(stream_writers):
 
 @pytest.fixture
 def go2(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -378,7 +378,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler):
 
 @pytest.fixture
 def anymal(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -430,7 +430,7 @@ def anymal(solver, n_envs, gjk, pytorch_profiler):
 
 @pytest.fixture
 def anymal_random(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -571,7 +571,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
 
 @pytest.fixture
 def franka(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _franka(
         solver, n_envs, gjk, is_collision_free=False, is_randomized=False, accessors=False, profiler_step=profiler_step
     )
@@ -579,7 +579,7 @@ def franka(solver, n_envs, gjk, pytorch_profiler):
 
 @pytest.fixture
 def franka_random(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _franka(
         solver, n_envs, gjk, is_collision_free=False, is_randomized=True, accessors=False, profiler_step=profiler_step
     )
@@ -587,7 +587,7 @@ def franka_random(solver, n_envs, gjk, pytorch_profiler):
 
 @pytest.fixture
 def franka_free(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _franka(
         solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=False, profiler_step=profiler_step
     )
@@ -595,7 +595,7 @@ def franka_free(solver, n_envs, gjk, pytorch_profiler):
 
 @pytest.fixture
 def franka_accessors(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _franka(
         solver, n_envs, gjk, is_collision_free=True, is_randomized=False, accessors=True, profiler_step=profiler_step
     )
@@ -667,13 +667,13 @@ def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
 
 @pytest.fixture
 def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=profiler_step)
 
 
 @pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=profiler_step)
 
 
@@ -739,25 +739,25 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
 
 @pytest.fixture
 def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=profiler_step)
 
 
 @pytest.fixture
 def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=profiler_step)
 
 
 @pytest.fixture
 def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=profiler_step)
 
 
 @pytest.fixture
 def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler):
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
     return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=profiler_step)
 
 
@@ -766,7 +766,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler):
     """G1 humanoid robot falling from above a plane."""
     import quadrants as qd
 
-    _, profiler_step = pytorch_profiler
+    profiler_step = pytorch_profiler
 
     # This is sufficient, as long as we use sync
     duration_warmup = 20.0

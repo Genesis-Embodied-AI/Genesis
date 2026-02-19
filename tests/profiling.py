@@ -1,4 +1,3 @@
-import argparse
 import pytest
 
 
@@ -60,11 +59,8 @@ def pytorch_profiler(pytestconfig):
     )
 
     print(f"PyTorch profiling enabled (wait={wait}, warmup={warmup}, active={active})")
-    prof.__enter__()
-
-    yield prof, prof.step
-
-    prof.__exit__(None, None, None)
+    with prof:
+        yield prof.step
 
     trace_path = "profile_trace.json"
     prof.export_chrome_trace(str(trace_path))
