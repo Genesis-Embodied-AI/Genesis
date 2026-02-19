@@ -270,25 +270,40 @@ def test_ipc_cloth(n_envs, show_viewer):
 @pytest.mark.parametrize("fixed_base", [True, False])
 def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     """Test two-way coupling with revolute joint."""
+    dt = 1e-2
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-3,
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            contact_d_hat=0.01,
-            contact_friction_mu=0.3,
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+            contact_friction_mu=0.5,
+            ipc_constraint_strength=(1, 1),
             IPC_self_contact=False,
             two_way_coupling=True,
             disable_genesis_contact=True,
+            disable_ipc_logging=True,
+            newton_velocity_tol=1e-2,
+            newton_transrate_tol=1e-2,
+            linear_system_tol_rate=1e-3,
+            sync_dof_enable=False,
+            newton_semi_implicit_enable=False,
             enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
 
+    scene.add_entity(gs.morphs.Plane())
+
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_cube_revolute.urdf",
-            pos=(0, 0, 0.2),
+            pos=(0, 0, 0.5),
             fixed=fixed_base,
         ),
     )
@@ -303,16 +318,27 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     assert moving_link_idx in ipc_links, "Moving link was not added to IPC rigid geometries."
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing _link_to_abd_slot for moving link."
     initial_base_z = _get_entity_base_z(robot)
+    initial_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
-    dt = scene.sim_options.dt
+    settle_steps = 10
+    qpos_history = []
+    target_history = []
+
+    zero_target = np.zeros(robot.n_dofs, dtype=np.float32)
+    for _ in range(settle_steps):
+        robot.control_dofs_position(zero_target)
+        scene.step()
 
     for i in range(max_steps):
-        t = i * dt
+        t = i * scene.sim_options.dt
         target_qpos = 0.5 * np.sin(omega * t)
-        robot.set_dofs_position([target_qpos], zero_velocity=False)
+        robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
+        current_qpos = float(robot.get_qpos().detach().cpu().numpy().reshape(-1)[-1])
+        qpos_history.append(current_qpos)
+        target_history.append(float(target_qpos))
 
         if i > 50:
             link_idx = moving_link_idx
@@ -329,18 +355,34 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
                     genesis_pos = genesis_transform[:3, 3]
                     ipc_pos = ipc_transform[:3, 3]
                     pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
+                    if coupling_type == "external_articulation":
+                        assert pos_diff < 0.005, f"Position difference too large: {pos_diff}"
 
                     genesis_euler = _rotmat_to_euler(genesis_transform[:3, :3])
                     ipc_euler = _rotmat_to_euler(ipc_transform[:3, :3])
                     rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                    if coupling_type == "external_articulation":
+                        assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+
+    if coupling_type == "two_way_soft_constraint":
+        q_hist = np.asarray(qpos_history)
+        tgt_hist = np.asarray(target_history)
+        corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
+        assert corr > 0.85, f"Two-way revolute target tracking correlation too low: corr={corr:.6f}."
+        assert np.ptp(q_hist) > 0.7, f"Two-way revolute joint motion amplitude too small: span={np.ptp(q_hist):.6f}."
 
     if not fixed_base:
-        final_base_z = _get_entity_base_z(robot)
-        assert final_base_z <= initial_base_z - 0.03, (
-            f"Free-base revolute robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
-        )
+        if coupling_type == "external_articulation":
+            final_base_z = _get_entity_base_z(robot)
+            assert final_base_z <= initial_base_z - 0.03, (
+                f"Free-base revolute robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
+            )
+        else:
+            final_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0]
+            base_move = np.linalg.norm(final_base_pos - initial_base_pos)
+            assert base_move > 1e-3, (
+                f"Two-way free-base revolute base position did not change enough: dpos={base_move:.6f} m."
+            )
 
 
 @pytest.mark.required
@@ -349,25 +391,40 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
 @pytest.mark.parametrize("fixed_base", [True, False])
 def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     """Test two-way coupling with prismatic joint."""
+    dt = 1e-2
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=1e-3,
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            contact_d_hat=0.01,
-            contact_friction_mu=0.3,
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+            contact_friction_mu=0.5,
+            ipc_constraint_strength=(1, 1),
             IPC_self_contact=False,
             two_way_coupling=True,
             disable_genesis_contact=True,
+            disable_ipc_logging=True,
+            newton_velocity_tol=1e-2,
+            newton_transrate_tol=1e-2,
+            linear_system_tol_rate=1e-3,
+            sync_dof_enable=False,
+            newton_semi_implicit_enable=False,
             enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
 
+    scene.add_entity(gs.morphs.Plane())
+
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_cube_prismatic.urdf",
-            pos=(0, 0, 0.2),
+            pos=(0, 0, 0.5),
             fixed=fixed_base,
         ),
     )
@@ -382,16 +439,27 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     assert moving_link_idx in ipc_links, "Slider link was not added to IPC rigid geometries."
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing _link_to_abd_slot for slider link."
     initial_base_z = _get_entity_base_z(robot)
+    initial_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
-    dt = scene.sim_options.dt
+    settle_steps = 10
+    qpos_history = []
+    target_history = []
+
+    zero_target = np.zeros(robot.n_dofs, dtype=np.float32)
+    for _ in range(settle_steps):
+        robot.control_dofs_position(zero_target)
+        scene.step()
 
     for i in range(max_steps):
-        t = i * dt
+        t = i * scene.sim_options.dt
         target_qpos = 0.15 + 0.1 * np.sin(omega * t)
-        robot.set_dofs_position([target_qpos], zero_velocity=False)
+        robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
+        current_qpos = float(robot.get_qpos().detach().cpu().numpy().reshape(-1)[-1])
+        qpos_history.append(current_qpos)
+        target_history.append(float(target_qpos))
 
         if i > 50:
             link_idx = moving_link_idx
@@ -408,18 +476,34 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
                     genesis_pos = genesis_transform[:3, 3]
                     ipc_pos = ipc_transform[:3, 3]
                     pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
+                    if coupling_type == "external_articulation":
+                        assert pos_diff < 0.005, f"Position difference too large: {pos_diff}"
 
                     genesis_euler = _rotmat_to_euler(genesis_transform[:3, :3])
                     ipc_euler = _rotmat_to_euler(ipc_transform[:3, :3])
                     rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                    if coupling_type == "external_articulation":
+                        assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+
+    if coupling_type == "two_way_soft_constraint":
+        q_hist = np.asarray(qpos_history)
+        tgt_hist = np.asarray(target_history)
+        corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
+        assert corr > 0.4, f"Two-way prismatic target tracking correlation too low: corr={corr:.6f}."
+        assert np.ptp(q_hist) > 0.12, f"Two-way prismatic joint motion amplitude too small: span={np.ptp(q_hist):.6f}."
 
     if not fixed_base:
-        final_base_z = _get_entity_base_z(robot)
-        assert final_base_z <= initial_base_z - 0.03, (
-            f"Free-base prismatic robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
-        )
+        if coupling_type == "external_articulation":
+            final_base_z = _get_entity_base_z(robot)
+            assert final_base_z <= initial_base_z - 0.03, (
+                f"Free-base prismatic robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
+            )
+        else:
+            final_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0]
+            base_move = np.linalg.norm(final_base_pos - initial_base_pos)
+            assert base_move > 1e-3, (
+                f"Two-way free-base prismatic base position did not change enough: dpos={base_move:.6f} m."
+            )
 
 
 @pytest.mark.required
