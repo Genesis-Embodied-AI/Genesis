@@ -963,11 +963,10 @@ class FEMSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
-            # Skip FEM solver step if using IPCCoupler (IPC handles FEM simulation)
-            from genesis.engine.couplers import IPCCoupler
+            from genesis.engine.couplers import IPCCoupler  # local: avoids circular import
 
             if isinstance(self.sim._coupler, IPCCoupler):
-                pass  # IPC coupler handles FEM simulation
+                return  # IPC handles FEM physics entirely.
             elif self._use_implicit_solver:
                 self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)
@@ -990,6 +989,10 @@ class FEMSolver(Solver):
 
     def substep_post_coupling(self, f):
         if self.is_active:
+            from genesis.engine.couplers import IPCCoupler  # local: avoids circular import
+
+            if isinstance(self.sim._coupler, IPCCoupler):
+                return  # IPC writes vertex positions directly in couple().
             self.compute_pos(f)
             if self._constraints_initialized and not self._use_implicit_solver:
                 self.apply_hard_constraints(f)

@@ -17,7 +17,7 @@ def main():
         "--coupling_type",
         type=str,
         default="external_articulation",
-        choices=["two_way_soft_constraint", "external_articulation"],
+        choices=["two_way", "external_articulation"],
     )
     args = parser.parse_args()
 
@@ -25,21 +25,23 @@ def main():
 
     coupler_options = (
         gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(100, 100),  # (translation, rotation) strength ratios,
-            # coupling_strategy="external_articulation",
-            disable_ipc_ground_contact=True,
-            disable_ipc_logging=True,
-            IPC_self_contact=False,
-            contact_friction_mu=0.8,
-            enable_ipc_gui=args.vis_ipc,
-            newton_transrate_tol=10,
+            constraint_strength_translation=100.0,
+            constraint_strength_rotation=100.0,
+            newton_velocity_tol=10.0,
         )
         if args.ipc
         else None
     )
     args.vis = args.vis or args.vis_ipc
+
+    franka_material = (
+        gs.materials.Rigid(
+            coupling_mode=args.coupling_type,
+            coupling_link_filter=("left_finger", "right_finger"),
+        )
+        if args.ipc
+        else None
+    )
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
@@ -55,17 +57,8 @@ def main():
 
     franka = scene.add_entity(
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
+        material=franka_material,
     )
-
-    if args.ipc:
-        scene.sim.coupler.set_entity_coupling_type(
-            entity=franka,
-            coupling_type=args.coupling_type,
-        )
-        scene.sim.coupler.set_ipc_coupling_link_filter(
-            entity=franka,
-            link_names=["left_finger", "right_finger"],
-        )
 
     material = (
         gs.materials.FEM.Elastic(E=5.0e4, nu=0.45, rho=1000.0, model="stable_neohookean")

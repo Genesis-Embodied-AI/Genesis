@@ -18,25 +18,16 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--vis", action="store_true", default=False)
-    parser.add_argument("--vis_ipc", action="store_true", default=False)
     args = parser.parse_args()
 
     dt = 2e-2
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -9.8),
-            contact_d_hat=0.01,  # Contact barrier distance (10mm) - must be appropriate for mesh resolution
-            contact_friction_mu=0.3,  # Friction coefficient
-            IPC_self_contact=False,  # Disable rigid self-contact in IPC
-            two_way_coupling=True,  # Enable two-way coupling (forces from IPC to Genesis rigid bodies)
-            disable_genesis_contact=True,  # Disable Genesis contact to avoid double contact handling
-            enable_ipc_gui=args.vis_ipc,
+            contact_d_hat=0.01,
         ),
         show_viewer=args.vis,
     )
-    args.vis = args.vis or args.vis_ipc
 
     # Ground plane
     scene.add_entity(gs.morphs.Plane())
@@ -76,10 +67,9 @@ def main():
             pos=(0, 0, cube_height),
             size=(cube_size, cube_size, cube_size),
         ),
-        material=gs.materials.Rigid(rho=500, friction=0.3),
+        material=gs.materials.Rigid(rho=500, friction=0.3, coupling_mode="ipc_only"),
         surface=gs.surfaces.Plastic(color=(0.8, 0.3, 0.2, 0.8)),
     )
-    scene.sim.coupler.set_entity_coupling_type(entity=box, coupling_type="ipc_only")
     # Optional: Add another FEM volume object
     soft_ball = scene.add_entity(
         morph=gs.morphs.Sphere(pos=(0.5, 0.0, 0.1), radius=0.08),

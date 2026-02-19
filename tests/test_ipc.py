@@ -48,14 +48,7 @@ def test_ipc_cloth(n_envs, show_viewer):
             gravity=(0.0, 0.0, -g),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
             contact_d_hat=0.01,
-            contact_friction_mu=0.3,
-            IPC_self_contact=False,
-            two_way_coupling=True,
-            disable_genesis_contact=True,
-            enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
@@ -88,14 +81,11 @@ def test_ipc_cloth(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=500,
             friction=0.3,
+            coupling_mode="two_way",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
         ),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=box,
-        coupling_type="two_way_soft_constraint",
     )
     soft_ball = scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -158,12 +148,12 @@ def test_ipc_cloth(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize("coupling_type", ["two_way", "external_articulation"])
 def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with revolute joint.
 
     Tests both coupling types:
-    - two_way_soft_constraint: Soft constraint coupling for rigid links
+    - two_way: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
     import numpy as np
@@ -174,11 +164,6 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=0.01,
-            contact_friction_mu=0.3,
-            IPC_self_contact=False,
-            two_way_coupling=True,
-            disable_genesis_contact=True,
-            enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
@@ -190,12 +175,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
             pos=(0, 0, 0.2),
             fixed=True,
         ),
-    )
-
-    # Set coupling type for the robot
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=robot,
-        coupling_type=coupling_type,
+        material=gs.materials.Rigid(coupling_mode=coupling_type),
     )
 
     scene.build(n_envs=n_envs)
@@ -260,12 +240,12 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize("coupling_type", ["two_way", "external_articulation"])
 def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
     """Test two-way coupling with prismatic joint.
 
     Tests both coupling types:
-    - two_way_soft_constraint: Soft constraint coupling for rigid links
+    - two_way: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
     import numpy as np
@@ -276,11 +256,6 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=0.01,
-            contact_friction_mu=0.3,
-            IPC_self_contact=False,
-            two_way_coupling=True,
-            disable_genesis_contact=True,
-            enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
@@ -292,12 +267,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
             pos=(0, 0, 0.2),
             fixed=True,
         ),
-    )
-
-    # Set coupling type for the robot
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=robot,
-        coupling_type=coupling_type,
+        material=gs.materials.Rigid(coupling_mode=coupling_type),
     )
 
     scene.build(n_envs=n_envs)
@@ -400,14 +370,7 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
             gravity=(0.0, 0.0, -g),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
             contact_d_hat=0.01,
-            contact_friction_mu=0.3,
-            IPC_self_contact=False,
-            two_way_coupling=True,
-            disable_genesis_contact=True,
-            enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )

@@ -472,7 +472,7 @@ class RigidSolver(Solver):
                 gs.raise_exception(
                     "Only approximate_implicitfast integrator is supported yet when requires_grad is True."
                 )
-            from genesis.engine.couplers import SAPCoupler, IPCCoupler
+            from genesis.engine.couplers import SAPCoupler, IPCCoupler  # local: avoids circular import
 
             if isinstance(self.sim.coupler, (SAPCoupler, IPCCoupler)):
                 gs.raise_exception(
@@ -1114,7 +1114,6 @@ class RigidSolver(Solver):
             self.constraint_solver = ConstraintSolver(self)
 
     def substep(self, f):
-        # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
 
         if self._requires_grad and f == 0:
@@ -1412,16 +1411,11 @@ class RigidSolver(Solver):
 
     def substep_pre_coupling(self, f):
         if self.is_active:
-            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
             from genesis.engine.couplers import IPCCoupler
 
-            if isinstance(self.sim.coupler, IPCCoupler):
-                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
-                # The rigid simulation will be done in post-coupling phase instead
-                if self.sim.coupler.has_any_rigid_coupling():
-                    return
+            if isinstance(self.sim.coupler, IPCCoupler) and self.sim.coupler.has_rigid_coupling:
+                return  # Rigid substep is deferred to substep_post_coupling for IPC.
 
-            # Run Genesis rigid simulation step for non-IPC couplers
             self.substep(f)
 
     def substep_pre_coupling_grad(self, f):
@@ -1623,17 +1617,8 @@ class RigidSolver(Solver):
                 is_backward=self._is_backward,
                 errno=self._errno,
             )
-        elif isinstance(self.sim.coupler, IPCCoupler):
-            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase
-            if self.sim.coupler.has_any_rigid_coupling():
-                # Temporarily disable ground collision if requested
-                if self.sim.coupler.options.disable_genesis_contact:
-                    original_enable_collision = self._enable_collision
-                    self._enable_collision = False
-                    self.substep(f)
-                    self._enable_collision = original_enable_collision
-                else:
-                    self.substep(f)
+        elif isinstance(self.sim.coupler, IPCCoupler) and self.sim.coupler.has_rigid_coupling:
+            self.substep(f)
 
     def substep_post_coupling_grad(self, f):
         pass

@@ -18,10 +18,8 @@ def main():
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, 0.0),
-            ipc_constraint_strength=(1, 1),  # (translation, rotation) strength ratios
-            IPC_self_contact=False,  # Disable rigid-rigid contact in IPC
+            constraint_strength_translation=1.0,
+            constraint_strength_rotation=1.0,
         ),
         show_viewer=args.vis,
     )
@@ -41,12 +39,8 @@ def main():
     # This enables contact between rigid bodies and FEM bodies through IPC
     rigid_cube = scene.add_entity(
         morph=gs.morphs.Box(pos=(0.0, 0.0, 0.4), size=(0.1, 0.1, 0.1), euler=(0, 0, 0)),
-        material=gs.materials.Rigid(rho=1000, friction=0.3),
+        material=gs.materials.Rigid(rho=1000, friction=0.3, coupling_mode="two_way"),
         surface=gs.surfaces.Plastic(color=(0.8, 0.2, 0.2, 0.8)),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=rigid_cube,
-        coupling_type="two_way_soft_constraint",
     )
     scene.build(n_envs=1)
 

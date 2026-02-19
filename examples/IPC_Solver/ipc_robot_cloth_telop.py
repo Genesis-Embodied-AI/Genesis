@@ -34,7 +34,7 @@ def main():
         "--coupling_type",
         type=str,
         default="external_articulation",
-        choices=["two_way_soft_constraint", "external_articulation"],
+        choices=["two_way", "external_articulation"],
     )
     args = parser.parse_args()
 
@@ -45,28 +45,14 @@ def main():
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
         ),
-        rigid_options=gs.options.RigidOptions(
-            # Disable rigid collision when using IPC
-            enable_collision=False,
-        ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -9.8),
-            ipc_constraint_strength=(100.0, 100.0),
-            contact_friction_mu=0.5,
-            fem_fem_friction_mu=0.00,
+            constraint_strength_translation=100.0,
+            constraint_strength_rotation=100.0,
             contact_d_hat=0.001,
-            IPC_self_contact=False,
-            contact_enable=True,
-            disable_genesis_contact=True,
-            disable_ipc_logging=True,
-            newton_semi_implicit_enable=False,  # True: you will see time stealing artifact
-            line_search_max_iter=8,
-            line_search_report_energy=False,
-            newton_velocity_tol=1e-1,
-            newton_transrate_tol=1,
-            linear_system_tol_rate=1e-3,
             contact_resistance=1e7,
+            newton_velocity_tol=1e-1,
+            linear_system_tol_rate=1e-3,
+            line_search_max_iter=8,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -1.0, 1.5),
@@ -87,15 +73,11 @@ def main():
             file="xml/franka_emika_panda/panda.xml",
             pos=(0.0, 0.0, 0.005),
         ),
+        material=gs.materials.Rigid(
+            coupling_mode=args.coupling_type,
+            coupling_link_filter=("left_finger", "right_finger"),
+        ),
         vis_mode="collision",
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=franka,
-        coupling_type=args.coupling_type,
-    )
-    scene.sim.coupler.set_ipc_coupling_link_filter(
-        entity=franka,
-        link_names=["left_finger", "right_finger"],
     )
 
     # Add cloths
@@ -154,7 +136,7 @@ def main():
         for j in range(4):
             x = (i + 1.7) * grid_spacing
             y = (j - 1.5) * grid_spacing
-            box = scene.add_entity(
+            scene.add_entity(
                 morph=gs.morphs.Box(
                     pos=(x, y, cube_height),
                     size=(cube_size, cube_size, cube_size),
@@ -163,14 +145,11 @@ def main():
                 material=gs.materials.Rigid(
                     rho=500,
                     friction=0.3,
+                    coupling_mode="ipc_only",
                 ),
                 surface=gs.surfaces.Plastic(
                     color=(0.8, 0.3, 0.2, 0.8),
                 ),
-            )
-            scene.sim.coupler.set_entity_coupling_type(
-                entity=box,
-                coupling_type="ipc_only",
             )
 
     motors_dof = slice(0, 7)

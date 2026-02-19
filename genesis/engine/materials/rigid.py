@@ -2,6 +2,8 @@ import genesis as gs
 
 from .base import Material
 
+_VALID_IPC_COUPLING_MODES = (None, "two_way", "external_articulation", "ipc_only")
+
 
 class Rigid(Material):
     """
@@ -34,6 +36,13 @@ class Rigid(Material):
             Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
+        coupling_mode : str, optional
+            IPC coupling mode. One of None (not coupled to IPC), ``'two_way'`` (bidirectional
+            soft constraint), ``'external_articulation'`` (joint-level coupling), or
+            ``'ipc_only'`` (IPC drives the entity; Genesis reads transforms). Default is None.
+        coupling_link_filter : tuple of str, optional
+            Names of links to include in IPC coupling. If None, all links are included.
+            Only meaningful when ``coupling_mode`` is not None. Default is None.
     """
 
     def __init__(
@@ -48,6 +57,8 @@ class Rigid(Material):
         sdf_min_res=32,
         sdf_max_res=128,
         gravity_compensation=0,
+        coupling_mode=None,
+        coupling_link_filter=None,
     ):
         super().__init__()
 
@@ -73,6 +84,9 @@ class Rigid(Material):
         if sdf_min_res > sdf_max_res:
             gs.raise_exception("`sdf_min_res` must be smaller than or equal to `sdf_max_res`.")
 
+        if coupling_mode not in _VALID_IPC_COUPLING_MODES:
+            gs.raise_exception(f"`coupling_mode` must be one of {_VALID_IPC_COUPLING_MODES}, got {coupling_mode!r}.")
+
         self._friction = float(friction) if friction is not None else None
         self._needs_coup = bool(needs_coup)
         self._coup_friction = float(coup_friction)
@@ -83,6 +97,8 @@ class Rigid(Material):
         self._sdf_max_res = int(sdf_max_res)
         self._rho = float(rho)
         self._gravity_compensation = float(gravity_compensation)
+        self._coupling_mode = coupling_mode
+        self._coupling_link_filter = tuple(coupling_link_filter) if coupling_link_filter is not None else None
 
     @property
     def gravity_compensation(self) -> float:
@@ -133,3 +149,13 @@ class Rigid(Material):
     def rho(self) -> float:
         """Density of the rigid material."""
         return self._rho
+
+    @property
+    def coupling_mode(self) -> str | None:
+        """IPC coupling mode for this entity."""
+        return self._coupling_mode
+
+    @property
+    def coupling_link_filter(self) -> tuple | None:
+        """Tuple of link names to include in IPC coupling, or None for all links."""
+        return self._coupling_link_filter
