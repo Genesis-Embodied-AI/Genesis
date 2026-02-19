@@ -1228,6 +1228,10 @@ class Viewer(pyglet.window.Window):
                 except AttributeError:
                     # The graphical window has been closed manually
                     pass
+                except Exception as e:
+                    gs.logger.debug(f"Viewer thread encountered an error during refresh: {e}")
+                    self._exception = e
+                    break
             self.on_close()
         else:
             self.refresh()
@@ -1244,6 +1248,9 @@ class Viewer(pyglet.window.Window):
             except AttributeError:
                 # The graphical window has been closed manually
                 pass
+            except Exception as e:
+                gs.logger.debug(f"Viewer encountered an error during refresh: {e}")
+                break
         self.on_close()
 
     def refresh(self):

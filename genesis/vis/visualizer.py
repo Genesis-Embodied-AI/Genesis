@@ -202,7 +202,11 @@ class Visualizer(RBC):
             if self._viewer.is_alive():
                 self._viewer.update(auto_refresh=auto, force=force)
             else:
-                gs.raise_exception("Viewer closed.")
+                pyrender_viewer = self._viewer._pyrender_viewer
+                if pyrender_viewer is not None and pyrender_viewer._exception is not None:
+                    gs.raise_exception(f"Viewer closed unexpectedly: {pyrender_viewer._exception}")
+                else:
+                    gs.raise_exception("Viewer closed.")
 
     def update_visual_states(self, force_render: bool = False):
         """
