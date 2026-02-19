@@ -590,14 +590,15 @@ def func_convex_convex_contact(
         gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
 
         # Pre-allocate some buffers
-        # note that the variables post-fixed with _0 are the values of these
-        # variables for contact 0 (used for multi-contact)
+        # Note that the variables post-fixed with _0 are the values of these
+        # variables for contact 0 (used for multi-contact).
         is_col_0 = False
         penetration_0 = gs.ti_float(0.0)
         normal_0 = ti.Vector.zero(gs.ti_float, 3)
         contact_pos_0 = ti.Vector.zero(gs.ti_float, 3)
 
-        is_col = False  # did narrowphase detect a contact?
+        # Did narrowphase detect a contact?
+        is_col = False
         penetration = gs.ti_float(0.0)
         normal = ti.Vector.zero(gs.ti_float, 3)
         contact_pos = ti.Vector.zero(gs.ti_float, 3)
