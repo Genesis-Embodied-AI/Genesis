@@ -1,10 +1,12 @@
-"""Utility functions for the IPC coupler."""
+"""Utility functions and data structures for the IPC coupler."""
 
+import numba as nb
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.array_class import DATA_ORIENTED, BASE_METACLASS, V_ANNOTATION, V
 
 try:
     from uipc import Scene
@@ -222,3 +224,52 @@ def decompose_transform_matrix(transform_4x4):
     quat_xyzw = R.from_matrix(transform_4x4[:3, :3]).as_quat()
     quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
     return pos, quat_wxyz
+
+
+# ==================================== Quadrants data structures ====================================
+
+
+@DATA_ORIENTED
+class ArticulationState(metaclass=BASE_METACLASS):
+    """GPU state for external articulation coupling (ref qpos + IPC joint displacements)."""
+
+    ref_dof_prev: V_ANNOTATION
+    delta_theta_ipc: V_ANNOTATION
+
+
+def get_articulation_state(total_articu_qs, total_articu_joints, n_envs):
+    """Allocate and return an ArticulationState with exact sizes."""
+    return ArticulationState(
+        ref_dof_prev=V(dtype=gs.qd_float, shape=(total_articu_qs, n_envs)),
+        delta_theta_ipc=V(dtype=gs.qd_float, shape=(total_articu_joints, n_envs)),
+    )
+
+
+# ==================================== Numba-accelerated functions ====================================
+
+
+@nb.njit(cache=True)
+def compute_coupling_forces(
+    ipc_transforms, aim_transforms, link_masses, inertia_tensors,
+    translation_strength, rotation_strength, dt2, out_forces, out_torques,
+):
+    """Compute soft-constraint coupling forces and torques for all links."""
+    for i in range(ipc_transforms.shape[0]):
+        delta_pos = ipc_transforms[i, :3, 3] - aim_transforms[i, :3, 3]
+        out_forces[i] = translation_strength * link_masses[i] * delta_pos / dt2
+
+        R_current = ipc_transforms[i, :3, :3]
+        R_rel = R_current @ aim_transforms[i, :3, :3].T
+        trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
+        cos_val = min(max((trace - 1.0) / 2.0, -1.0), 1.0)
+        theta = np.arccos(cos_val)
+
+        rotvec = np.zeros(3)
+        if theta > 1e-6:
+            ax = np.array([R_rel[2, 1] - R_rel[1, 2], R_rel[0, 2] - R_rel[2, 0], R_rel[1, 0] - R_rel[0, 1]])
+            norm = np.sqrt(ax[0] ** 2 + ax[1] ** 2 + ax[2] ** 2)
+            if norm > 1e-8:
+                rotvec = theta * ax / norm
+
+        I_world = R_current @ inertia_tensors[i] @ R_current.T
+        out_torques[i] = (rotation_strength / dt2) * (I_world @ rotvec)

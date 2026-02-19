@@ -5,31 +5,24 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-import quadrants as qd
-
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
-from genesis.utils.array_class import V, V_VEC, V_MAT
 from genesis.utils.misc import qd_to_numpy, tensor_to_array
 
-from .array_class import (
-    ArticulationState,
-    compute_coupling_forces_kernel,
-    compute_external_force_kernel,
-    compute_link_contact_forces_kernel,
-    get_articulation_state,
-)
 from .utils import (
+    ArticulationState,
     build_ipc_scene_config,
     categorize_entities_by_coupling_type,
+    compute_coupling_forces,
     compute_link_init_world_rotation,
     compute_link_to_link_transform,
     decompose_transform_matrix,
     extract_articulated_joints,
     find_target_link_for_fixed_merge,
+    get_articulation_state,
     read_ipc_geometry_metadata,
 )
 
@@ -180,22 +173,6 @@ class IPCCoupler(RBC):
         self._coupling_out_forces: np.ndarray | None = None
         self._coupling_out_torques: np.ndarray | None = None
         self.articulation_state: ArticulationState | None = None
-
-        # Pre-allocated Quadrants fields for contact force pipeline.
-        # Sizes are set in build() once the number of coupled links is known.
-        self._contact_forces_ti = None
-        self._contact_torques_ti = None
-        self._abd_transforms_ti = None
-        self._out_forces_ti = None
-        self._link_indices_ti = None
-        self._env_indices_ti = None
-        self._link_contact_forces_out = None
-        self._link_contact_torques_out = None
-        self._vertex_force_gradients = None
-        self._vertex_link_indices = None
-        self._vertex_env_indices = None
-        self._vertex_positions_world = None
-        self._vertex_link_centers = None
 
     # ------------------------------------------------------------------
     # Build
@@ -693,29 +670,6 @@ class IPCCoupler(RBC):
             self._coupling_out_forces = np.empty((n_coupled_links, 3), dtype=gs.np_float)
             self._coupling_out_torques = np.empty((n_coupled_links, 3), dtype=gs.np_float)
 
-        # Pre-allocate Quadrants contact force fields with exact sizes.
-        n_links_total = rigid_solver.n_links_ if rigid_solver.is_active else 0
-        n_envs = self.sim._B
-        if n_coupled_links > 0:
-            self._contact_forces_ti = V_VEC(3, dtype=gs.qd_float, shape=n_coupled_links)
-            self._contact_torques_ti = V_VEC(3, dtype=gs.qd_float, shape=n_coupled_links)
-            self._abd_transforms_ti = V_MAT(n=4, m=4, dtype=gs.qd_float, shape=n_coupled_links)
-            self._out_forces_ti = V_VEC(12, dtype=gs.qd_float, shape=n_coupled_links)
-            self._link_indices_ti = V(dtype=gs.qd_int, shape=n_coupled_links)
-            self._env_indices_ti = V(dtype=gs.qd_int, shape=n_coupled_links)
-        if n_links_total > 0 and n_envs > 0:
-            self._link_contact_forces_out = V_VEC(3, dtype=gs.qd_float, shape=(n_links_total, n_envs))
-            self._link_contact_torques_out = V_VEC(3, dtype=gs.qd_float, shape=(n_links_total, n_envs))
-
-        # Allocate exact-size per-vertex proxy buffers for contact gradient mapping.
-        n_proxy_verts = len(self._vertex_to_link_mapping)
-        if n_proxy_verts > 0:
-            self._vertex_force_gradients = V_VEC(3, dtype=gs.qd_float, shape=n_proxy_verts)
-            self._vertex_link_indices = V(dtype=gs.qd_int, shape=n_proxy_verts)
-            self._vertex_env_indices = V(dtype=gs.qd_int, shape=n_proxy_verts)
-            self._vertex_positions_world = V_VEC(3, dtype=gs.qd_float, shape=n_proxy_verts)
-            self._vertex_link_centers = V_VEC(3, dtype=gs.qd_float, shape=n_proxy_verts)
-
     def _add_articulated_entities_to_ipc(self):
         """Register articulated robots in IPC using ExternalArticulationConstraint."""
         rigid_solver = self.rigid_solver
@@ -1172,7 +1126,7 @@ class IPCCoupler(RBC):
 
         Reads vertex force gradients from IPC's ``contact_system`` feature, maps them to
         Genesis rigid links via ``_vertex_to_link_mapping``, accumulates per-link forces
-        and torques using ``compute_link_contact_forces_kernel``, and stores results in
+        and torques via numpy scatter-add, and stores results in
         ``_ipc_contact_forces``.
         """
         self._ipc_contact_forces.clear()
@@ -1246,11 +1200,15 @@ class IPCCoupler(RBC):
 
         link_centers_dict = {key: np.mean(verts, axis=0) for key, verts in link_vertex_positions.items()}
 
-        # Fill per-vertex buffers for kernel call (only vertices with actual contact forces).
-        n_entries = 0
-        max_entries = len(vertex_to_link)
+        # Collect per-vertex data for scatter-add accumulation.
+        force_grads_list = []
+        link_idxs_list = []
+        env_idxs_list = []
+        positions_list = []
+        centers_list = []
+
         for vert_idx, force_grad in total_force_dict.items():
-            if vert_idx not in vertex_to_link or n_entries >= max_entries:
+            if vert_idx not in vertex_to_link:
                 continue
             link_idx, env_idx, local_idx = vertex_to_link[vert_idx]
             if (link_idx, env_idx) not in link_vertex_positions:
@@ -1258,33 +1216,34 @@ class IPCCoupler(RBC):
             center_pos = link_centers_dict.get((link_idx, env_idx))
             if center_pos is None:
                 continue
-            self._vertex_force_gradients[n_entries] = force_grad
-            self._vertex_link_indices[n_entries] = link_idx
-            self._vertex_env_indices[n_entries] = env_idx
-            self._vertex_positions_world[n_entries] = link_vertex_positions[(link_idx, env_idx)][local_idx]
-            self._vertex_link_centers[n_entries] = center_pos
-            n_entries += 1
+            force_grads_list.append(force_grad)
+            link_idxs_list.append(link_idx)
+            env_idxs_list.append(env_idx)
+            positions_list.append(link_vertex_positions[(link_idx, env_idx)][local_idx])
+            centers_list.append(center_pos)
 
-        if n_entries == 0:
+        if not force_grads_list:
             return
 
-        self._link_contact_forces_out.fill(0.0)
-        self._link_contact_torques_out.fill(0.0)
+        # Compute per-vertex forces and torques, then scatter-add onto links.
+        rigid_solver = self.rigid_solver
+        forces = -np.array(force_grads_list)
+        r = np.array(positions_list) - np.array(centers_list)
+        torques = np.cross(r, forces)
 
-        compute_link_contact_forces_kernel(
-            n_entries,
-            self._vertex_force_gradients,
-            self._vertex_link_indices,
-            self._vertex_env_indices,
-            self._vertex_positions_world,
-            self._vertex_link_centers,
-            self._link_contact_forces_out,
-            self._link_contact_torques_out,
-        )
+        n_links_total = rigid_solver.n_links_
+        n_envs = self.sim._B
+        link_idxs = np.array(link_idxs_list, dtype=int)
+        env_idxs = np.array(env_idxs_list, dtype=int)
 
-        # Extract results once and store per-link.
-        forces_all = qd_to_numpy(self._link_contact_forces_out, transpose=True)
-        torques_all = qd_to_numpy(self._link_contact_torques_out, transpose=True)
+        forces_all = np.zeros((n_links_total, n_envs, 3))
+        torques_all = np.zeros((n_links_total, n_envs, 3))
+        np.add.at(forces_all, (link_idxs, env_idxs), forces)
+        np.add.at(torques_all, (link_idxs, env_idxs), torques)
+
+        # Transpose to (n_envs, n_links, 3) to match extraction indexing.
+        forces_all = forces_all.transpose(1, 0, 2)
+        torques_all = torques_all.transpose(1, 0, 2)
 
         for link_idx, env_idx in link_centers_dict:
             force = forces_all[env_idx, link_idx]
@@ -1368,8 +1327,7 @@ class IPCCoupler(RBC):
         dt = float(self.sim._dt)
         dt2 = dt * dt
 
-        compute_coupling_forces_kernel(
-            n_items,
+        compute_coupling_forces(
             ipc_transforms,
             aim_transforms,
             link_masses,
