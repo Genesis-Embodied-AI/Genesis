@@ -597,7 +597,7 @@ def func_convex_convex_contact(
         normal_0 = ti.Vector.zero(gs.ti_float, 3)
         contact_pos_0 = ti.Vector.zero(gs.ti_float, 3)
 
-        # Did narrowphase detect a contact?
+        # Whether narrowphase detected a contact.
         is_col = False
         penetration = gs.ti_float(0.0)
         normal = ti.Vector.zero(gs.ti_float, 3)
