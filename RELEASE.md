@@ -1,5 +1,39 @@
 # Genesis Release Note
 
+This release polishes our newly introduced USD parser and external interactive viewer plugin mechanism. Beyond that, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%) and robots using capsule/sphere collision geometries (up to 20%).
+
+### Breaking changes
+
+* Migrate from GsTaichi to Quadrants. (@hughperkins, @duburcqa) (#2399, #2409)
+
+### New Features
+
+* Replace partial broken Vulkan backend by (experimental) AMD ROCm backend. (@duburcqa) (#2393, #2402)
+* Support ArticulationRoot-free robots and instanced prims in USD. (@alanray-tech) (#2411)
+* Add KinematicContactProbe sensor. (@Milotrince) (#2389)
+* Add support of USD in 'gs view'. (@duburcqa) (#2423)
+* Add IPC Robot-Cloth Coupling. (@Roushelfy, @alanray-tech) (#2427, #2352)
+
+### Bug Fixes
+
+* Fix weld and connect equality constraints. (@duburcqa) (#2390)
+* Fix color overwrite for primitive geometries in URDF. (@duburcqa) (#2403)
+* Fix merging chained fixed links. (@duburcqa) (#2404, #2429)
+* Fix handling of unspecified spatial inertia properties in USD. (@alanray-tech) (#2401)
+* Tune GJK to avoid false negative collision detection. (@SonSang) (#2419)
+* Fix object slowly falling when holding object using mouse interaction plugin. (@Milotrince) (#2418)
+* Fix interactive viewer deadlock on Wayland. (@alexis779) (#2422)
+* Fix default file extension for interactive viewer save. (@duburcqa) (#2424)
+* Fix viewer raycast kernel compilation race condition. (@duburcqa) (#2430)
+
+### Miscellaneous
+
+* Speed up linesearch via reducing global reads by recomputing quad. (@erizmr) (#2384)
+* Speed up capsule-capsule and capsule-sphere collision detection. (@hughperkins) (#2363, #2413, #2414)
+* Lazy-initialize SDF pre-processing in RigidGeom. (@duburcqa) (#2392)
+* Add uv installation instructions to translated READMEs. (@antoinedandi) (#2416)
+* Fix support of fastcache for raycast kernels. (@duburcqa) (#2417)
+
 ## 0.3.14
 
 This release mainly focuses on usability, by extending support of USD and introducing a new external plugin mechanism for the interactive viewer. Besides, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%).
@@ -162,10 +196,13 @@ Small release mainly fixing bugs.
 
 Small release mainly polishing features that were introduced in previous release.
 
+### Breaking changes
+
+* Replace SDF fallback by GJK. (@duburcqa) (#2081)
+* Improve inertial estimation if undefined. (@YilingQiao) (#2100)
+
 ### New Features
 
-* [CHANGING] Replace SDF fallback by GJK. (@duburcqa) (#2081)
-* [CHANGING] Improve inertial estimation if undefined. (@YilingQiao) (#2100)
 * Add support of boolean masking as index. (@duburcqa) (#2087)
 * Fix and improve merging of rigid entities. (@duburcqa) (#2098)
 
@@ -189,10 +226,13 @@ Small release mainly polishing features that were introduced in previous release
 
 The performance of data accessors have been dramatically improved by leveraging zero-copy memory sharing between GsTaichi and Torch. Beyond that, the robustness of the default contact algorithm has been improved, and differentiable forward dynamics for Rigid Body simulation is not partially available. Last, but not least, GsTaichi dynamic array mode is finally enabled back by default!
 
+### Breaking changes
+
+* More robust MPR+SDF collision detection algorithm. (@duburcqa) (#1983, #1985)
+* Disable box-box by default. (@duburcqa) (#1982)
+
 ### New Features
 
-* [CHANGING] More robust MPR+SDF collision detection algorithm. (@duburcqa) (#1983, #1985)
-* [CHANGING] Disable box-box by default. (@duburcqa) (#1982)
 * Enable back GsTaichi dynamic array mode by default except for MacOS. (@duburcqa) (#1977)
 * Add error code to rigid solver. (@duburcqa) (#1979)
 * Add option to force batching of fixed vertices. (@duburcqa) (#1998)

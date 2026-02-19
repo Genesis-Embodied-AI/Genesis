@@ -377,6 +377,9 @@ class Raycaster:
 
         self.update()
 
+        # Make sure raycasting is pre-compiled to avoid race condition with Quadrants.
+        self.cast(ray_origin=np.zeros(3, dtype=gs.np_float), ray_direction=np.zeros(3, dtype=gs.np_float))
+
     def _raycast_from_result(self, result: array_class.RaycastResult) -> "RayHit | None":
         distance = float(qd_to_numpy(result.distance))
         if math.isnan(distance):

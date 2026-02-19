@@ -717,8 +717,8 @@ def test_pendulum_links_acc(gs_sim, tol):
     pendulum.set_dofs_velocity([theta_dot])
     for _ in range(100):
         # Backup state before integration
-        theta = float(gs_sim.rigid_solver.qpos.to_numpy())
-        theta_dot = float(gs_sim.rigid_solver.dofs_state.vel.to_numpy())
+        theta = gs_sim.rigid_solver.qpos[0, 0]
+        theta_dot = gs_sim.rigid_solver.dofs_state.vel[0, 0]
 
         # Run one simulation step
         gs_sim.scene.step()
@@ -1591,6 +1591,149 @@ def test_multilink_inverse_kinematics(show_viewer):
     assert_allclose(index_finger_distal.get_pos(envs_idx=(1,)), index_finger_pos, tol=TOL)
     assert_allclose(middle_finger_distal.get_pos(envs_idx=(1,)), middle_finger_pos, tol=TOL)
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_inverse_kinematics_local_point(n_envs, show_viewer):
+    """Test IK with local_point parameter - positions an offset point at the target instead of link origin."""
+
+    TOL = 2e-3  # 2mm tolerance for final position check
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+
+    end_effector = robot.get_link("hand")
+
+    # Define a local offset point in the end-effector frame (e.g., 10cm along Z-axis)
+    local_offset = torch.tensor([0.0, 0.0, 0.1], dtype=gs.tc_float, device=gs.device)
+
+    # Create different target positions and quaternions for each environment
+    num_envs = max(n_envs, 1)
+    target_pos_base = torch.tensor(
+        [[0.5, 0.2, 0.4], [0.45, 0.15, 0.35], [0.55, 0.25, 0.45]], dtype=gs.tc_float, device=gs.device
+    )[:num_envs]
+    target_quat_base = torch.tensor(
+        [[0.0, 1.0, 0.0, 0.0], [0.0, 0.9239, 0.3827, 0.0], [0.0, 0.9239, -0.3827, 0.0]],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )[:num_envs]
+
+    # Handle different shapes based on n_envs
+    if n_envs > 0:
+        target_pos = target_pos_base
+        target_quat = target_quat_base
+    else:
+        target_pos = target_pos_base[0]
+        target_quat = target_quat_base[0]
+
+    # Solve IK with local_point (local_offset stays 1D - it gets broadcast internally)
+    qpos, err = robot.inverse_kinematics(
+        link=end_effector,
+        pos=target_pos,
+        quat=target_quat,
+        local_point=local_offset,
+        return_error=True,
+    )
+
+    # Apply the solution
+    robot.set_qpos(qpos)
+    scene.step()
+
+    # Verify the offset point is at the target position
+    link_pos = end_effector.get_pos()
+    link_quat = end_effector.get_quat()
+
+    # Transform local offset to world frame
+    world_offset = gu.transform_by_quat(local_offset, link_quat)
+    actual_point_pos = link_pos + world_offset
+
+    # Check that the offset point reached the target
+    assert_allclose(actual_point_pos, target_pos, tol=TOL)
+
+    # Also verify via forward kinematics
+    links_pos, links_quat = robot.forward_kinematics(qpos)
+
+    # Handle indexing based on n_envs
+    if n_envs > 0:
+        fk_link_pos = links_pos[:, end_effector.idx_local]
+        fk_link_quat = links_quat[:, end_effector.idx_local]
+    else:
+        fk_link_pos = links_pos[end_effector.idx_local]
+        fk_link_quat = links_quat[end_effector.idx_local]
+
+    fk_world_offset = gu.transform_by_quat(local_offset, fk_link_quat)
+    fk_actual_point_pos = fk_link_pos + fk_world_offset
+    assert_allclose(fk_actual_point_pos, target_pos, tol=TOL)
+
+    if show_viewer:
+        scene.visualizer.update()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_inverse_kinematics_multilink_local_points(show_viewer):
+    """Test multi-link IK with local_points parameter."""
+
+    TOL = 2e-3  # 2mm tolerance for final position check
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(file="urdf/shadow_hand/shadow_hand.urdf"),
+    )
+    scene.build()
+
+    index_finger = robot.get_link("index_finger_distal")
+    middle_finger = robot.get_link("middle_finger_distal")
+
+    # Different local offsets for each finger (e.g., fingertip positions)
+    index_local_offset = torch.tensor([0.0, 0.0, 0.02], dtype=gs.tc_float, device=gs.device)
+    middle_local_offset = torch.tensor([0.0, 0.0, 0.02], dtype=gs.tc_float, device=gs.device)
+
+    # Target positions for the fingertips
+    index_target = torch.tensor([0.6, 0.5, 0.2], dtype=gs.tc_float, device=gs.device)
+    middle_target = torch.tensor([0.63, 0.5, 0.2], dtype=gs.tc_float, device=gs.device)
+
+    # Solve multi-link IK with local_points
+    qpos, err = robot.inverse_kinematics_multilink(
+        links=[index_finger, middle_finger],
+        poss=[index_target, middle_target],
+        local_points=[index_local_offset, middle_local_offset],
+        return_error=True,
+    )
+
+    # Apply solution
+    robot.set_qpos(qpos)
+    scene.step()
+
+    # Verify each offset point is at its target
+    for link, local_offset, target in [
+        (index_finger, index_local_offset, index_target),
+        (middle_finger, middle_local_offset, middle_target),
+    ]:
+        link_pos = link.get_pos()
+        link_quat = link.get_quat()
+        world_offset = gu.transform_by_quat(local_offset, link_quat)
+        actual_point_pos = link_pos + world_offset
+        assert_allclose(actual_point_pos, target, tol=TOL)
+
+    if show_viewer:
+        scene.visualizer.update()
 
 
 @pytest.mark.slow  # ~180s
@@ -2677,7 +2820,10 @@ def test_urdf_parsing(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_urdf_parsing_merge_fixed_links(show_viewer):
+def test_urdf_parsing_merge_fixed_links(show_viewer, tol):
+    POS = (0.0, -0.2, 0.5)
+    EULER = (0.0, 90.0, 45.0)
+
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -2685,8 +2831,10 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     robot_1 = scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/chain.urdf",
-            merge_fixed_links=False,
+            pos=POS,
+            euler=EULER,
             recompute_inertia=True,
+            merge_fixed_links=False,
         ),
         surface=gs.surfaces.Default(
             color=(1, 0, 0, 0.5),
@@ -2695,8 +2843,10 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     robot_2 = scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/chain.urdf",
-            merge_fixed_links=True,
+            pos=POS,
+            euler=EULER,
             recompute_inertia=True,
+            merge_fixed_links=True,
         ),
         surface=gs.surfaces.Default(
             color=(0, 1, 0, 0.5),
@@ -2704,10 +2854,27 @@ def test_urdf_parsing_merge_fixed_links(show_viewer):
     )
     scene.build()
 
+    assert_allclose(robot_1.get_pos(), POS, tol=tol)
+    assert_allclose(robot_1.get_quat(), gu.euler_to_quat(EULER), tol=tol)
+
+    for _ in range(2):
+        assert_allclose(robot_1.get_pos(), robot_2.get_pos(), tol=tol)
+        assert_allclose(robot_1.get_quat(), robot_2.get_quat(), tol=tol)
+        for link_2 in robot_2.links:
+            link_1 = robot_1.get_link(link_2.name)
+            assert_allclose(link_1.get_pos(), link_2.get_pos(), tol=tol)
+            assert_allclose(link_1.get_quat(), link_2.get_quat(), tol=tol)
+
+        pos0 = np.random.rand(3)
+        quat0 = np.random.rand(4)
+        for robot in (robot_1, robot_2):
+            robot.set_pos(pos0)
+            robot.set_quat(quat0)
+
     com_robot_1, com_robot_2 = scene.rigid_solver.get_links_root_COM(
         links_idx=(robot_1.base_link_idx, robot_2.base_link_idx)
     )
-    assert_allclose(com_robot_1, com_robot_2, tol=gs.EPS)
+    assert_allclose(com_robot_1, com_robot_2, tol=tol)
 
 
 @pytest.mark.required
