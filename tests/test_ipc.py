@@ -2,15 +2,20 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 
-from .utils import get_hf_dataset
+from .utils import assert_allclose, get_hf_dataset
 
 try:
-    from uipc import builtin
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+    import uipc
 except ImportError:
     pytest.skip("IPC Coupler is not supported because 'uipc' module is not available.", allow_module_level=True)
+
+from uipc import builtin
+from uipc.backend import SceneVisitor
+from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
+_ = uipc
 
 
 def _iter_ipc_simplicial_geometries(scene):
@@ -124,11 +129,11 @@ def _get_fem_solver_entity_idx(scene, fem_entity):
     for idx, entity in enumerate(scene.sim.fem_solver._entities):
         if entity is fem_entity:
             return idx
-    raise AssertionError(f"FEM entity {fem_entity} not found in FEM solver entity list.")
+    raise AssertionError
 
 
 def _get_entity_base_z(entity):
-    pos = np.asarray(entity.get_pos().detach().cpu().numpy())
+    pos = np.asarray(tensor_to_array(entity.get_pos()))
     if pos.ndim == 1:
         return float(pos[2])
     return float(pos.reshape(-1, 3)[0, 2])
@@ -231,13 +236,10 @@ def test_ipc_cloth(n_envs, show_viewer):
     cloth_entity_idx = _get_fem_solver_entity_idx(scene, cloth)
     for env_idx in range(scene.sim._B):
         cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)
-        assert len(cloth_matches) == 1, (
-            f"Expected exactly one IPC cloth geometry for entity={cloth_entity_idx}, env={env_idx}, "
-            f"found {len(cloth_matches)}."
-        )
+        assert len(cloth_matches) == 1
 
     x_n = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert x_n is not None, "Could not retrieve cloth vertex positions from IPC."
+    assert x_n is not None
     x_n = x_n[0, 2]
     v_n = 0.0
 
@@ -247,18 +249,18 @@ def test_ipc_cloth(n_envs, show_viewer):
     for step in range(num_validation_steps):
         scene.step()
         x_next = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-        assert x_next is not None, "Could not retrieve cloth vertex positions after stepping."
+        assert x_next is not None
         x_next = x_next[0, 2]
 
         expected_dx = v_n * dt - g * dt * dt
         expected_x_next = x_n + expected_dx
         pos_error = abs(x_next - expected_x_next) / abs(expected_dx) if abs(expected_dx) > 1e-6 else 0.0
-        assert pos_error < tolerance, f"Step {step}: Position error {pos_error * 100:.2f}% exceeds tolerance."
+        assert pos_error < tolerance
 
         v_next = (x_next - x_n) / dt
         expected_v_next = v_n - g * dt
         vel_error = abs(v_next - expected_v_next) / abs(expected_v_next) if abs(expected_v_next) > 1e-6 else 0.0
-        assert vel_error < tolerance, f"Step {step}: Velocity error {vel_error * 100:.2f}% exceeds tolerance."
+        assert vel_error < tolerance
 
         x_n = x_next
         v_n = v_next
@@ -315,10 +317,10 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
 
     moving_link_idx = robot.get_link("moving").idx
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links, "Moving link was not added to IPC rigid geometries."
-    assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing _link_to_abd_slot for moving link."
+    assert moving_link_idx in ipc_links
+    assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
-    initial_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0].copy()
+    initial_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
@@ -336,7 +338,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
         target_qpos = 0.5 * np.sin(omega * t)
         robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
-        current_qpos = float(robot.get_qpos().detach().cpu().numpy().reshape(-1)[-1])
+        current_qpos = float(np.asarray(tensor_to_array(robot.get_qpos())).reshape(-1)[-1])
         qpos_history.append(current_qpos)
         target_history.append(float(target_qpos))
 
@@ -352,37 +354,29 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
                 genesis_transform = abd_data["aim_transform"]
                 ipc_transform = abd_data["transform"]
                 if genesis_transform is not None and ipc_transform is not None:
-                    genesis_pos = genesis_transform[:3, 3]
-                    ipc_pos = ipc_transform[:3, 3]
-                    pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
                     if coupling_type == "external_articulation":
-                        assert pos_diff < 0.005, f"Position difference too large: {pos_diff}"
-
-                    genesis_euler = _rotmat_to_euler(genesis_transform[:3, :3])
-                    ipc_euler = _rotmat_to_euler(ipc_transform[:3, :3])
-                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    if coupling_type == "external_articulation":
-                        assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                        assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
+                        assert_allclose(
+                            _rotmat_to_euler(genesis_transform[:3, :3]),
+                            _rotmat_to_euler(ipc_transform[:3, :3]),
+                            atol=0.1,
+                        )
 
     if coupling_type == "two_way_soft_constraint":
         q_hist = np.asarray(qpos_history)
         tgt_hist = np.asarray(target_history)
         corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
-        assert corr > 0.85, f"Two-way revolute target tracking correlation too low: corr={corr:.6f}."
-        assert np.ptp(q_hist) > 0.7, f"Two-way revolute joint motion amplitude too small: span={np.ptp(q_hist):.6f}."
+        assert corr > 0.85
+        assert np.ptp(q_hist) > 0.7
 
     if not fixed_base:
         if coupling_type == "external_articulation":
             final_base_z = _get_entity_base_z(robot)
-            assert final_base_z <= initial_base_z - 0.03, (
-                f"Free-base revolute robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
-            )
+            assert final_base_z <= initial_base_z - 0.03
         else:
-            final_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0]
-            base_move = np.linalg.norm(final_base_pos - initial_base_pos)
-            assert base_move > 1e-3, (
-                f"Two-way free-base revolute base position did not change enough: dpos={base_move:.6f} m."
-            )
+            final_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0]
+            with pytest.raises(AssertionError):
+                assert_allclose(final_base_pos, initial_base_pos, atol=1e-3)
 
 
 @pytest.mark.required
@@ -436,10 +430,10 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
 
     moving_link_idx = robot.get_link("moving").idx
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links, "Slider link was not added to IPC rigid geometries."
-    assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing _link_to_abd_slot for slider link."
+    assert moving_link_idx in ipc_links
+    assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
-    initial_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0].copy()
+    initial_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
@@ -457,7 +451,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
         target_qpos = 0.15 + 0.1 * np.sin(omega * t)
         robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
-        current_qpos = float(robot.get_qpos().detach().cpu().numpy().reshape(-1)[-1])
+        current_qpos = float(np.asarray(tensor_to_array(robot.get_qpos())).reshape(-1)[-1])
         qpos_history.append(current_qpos)
         target_history.append(float(target_qpos))
 
@@ -473,37 +467,29 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
                 genesis_transform = abd_data["aim_transform"]
                 ipc_transform = abd_data["transform"]
                 if genesis_transform is not None and ipc_transform is not None:
-                    genesis_pos = genesis_transform[:3, 3]
-                    ipc_pos = ipc_transform[:3, 3]
-                    pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
                     if coupling_type == "external_articulation":
-                        assert pos_diff < 0.005, f"Position difference too large: {pos_diff}"
-
-                    genesis_euler = _rotmat_to_euler(genesis_transform[:3, :3])
-                    ipc_euler = _rotmat_to_euler(ipc_transform[:3, :3])
-                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    if coupling_type == "external_articulation":
-                        assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                        assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
+                        assert_allclose(
+                            _rotmat_to_euler(genesis_transform[:3, :3]),
+                            _rotmat_to_euler(ipc_transform[:3, :3]),
+                            atol=0.1,
+                        )
 
     if coupling_type == "two_way_soft_constraint":
         q_hist = np.asarray(qpos_history)
         tgt_hist = np.asarray(target_history)
         corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
-        assert corr > 0.4, f"Two-way prismatic target tracking correlation too low: corr={corr:.6f}."
-        assert np.ptp(q_hist) > 0.12, f"Two-way prismatic joint motion amplitude too small: span={np.ptp(q_hist):.6f}."
+        assert corr > 0.4
+        assert np.ptp(q_hist) > 0.12
 
     if not fixed_base:
         if coupling_type == "external_articulation":
             final_base_z = _get_entity_base_z(robot)
-            assert final_base_z <= initial_base_z - 0.03, (
-                f"Free-base prismatic robot base did not drop enough: dz={initial_base_z - final_base_z:.6f} m."
-            )
+            assert final_base_z <= initial_base_z - 0.03
         else:
-            final_base_pos = np.asarray(robot.get_pos().detach().cpu().numpy()).reshape(-1, 3)[0]
-            base_move = np.linalg.norm(final_base_pos - initial_base_pos)
-            assert base_move > 1e-3, (
-                f"Two-way free-base prismatic base position did not change enough: dpos={base_move:.6f} m."
-            )
+            final_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0]
+            with pytest.raises(AssertionError):
+                assert_allclose(final_base_pos, initial_base_pos, atol=1e-3)
 
 
 @pytest.mark.required
@@ -558,17 +544,17 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
     cloth_entity_idx = _get_fem_solver_entity_idx(scene, cloth)
     cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert len(cloth_matches) == 1, "Cloth entity was not uniquely added to IPC."
+    assert len(cloth_matches) == 1
 
     initial_positions = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert initial_positions is not None, "Could not retrieve initial cloth vertex positions."
+    assert initial_positions is not None
     z_initial = initial_positions[0, 2]
 
     for _ in range(num_steps):
         scene.step()
 
     final_positions = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert final_positions is not None, "Could not retrieve final cloth vertex positions."
+    assert final_positions is not None
     z_final = final_positions[0, 2]
 
     t_total = num_steps * dt
@@ -577,17 +563,12 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     relative_error = abs(actual_displacement - expected_displacement) / expected_displacement
 
     tolerance = 0.01
-    assert relative_error < tolerance, (
-        f"Physics validation failed: {relative_error * 100:.4f}% error (tolerance: {tolerance * 100:.2f}%)."
-    )
+    assert relative_error < tolerance
 
     ipc_centroid = final_positions.mean(axis=0)
-    genesis_positions = cloth.get_state().pos.detach().cpu().numpy()[0]
+    genesis_positions = tensor_to_array(cloth.get_state().pos)[0]
     genesis_centroid = genesis_positions.mean(axis=0)
-    retrieve_error = np.linalg.norm(ipc_centroid - genesis_centroid)
-    assert retrieve_error < 1e-3, (
-        f"IPC->Genesis cloth retrieve mismatch too large: {retrieve_error:.6e} m (tolerance: 1e-3 m)."
-    )
+    assert_allclose(ipc_centroid, genesis_centroid, atol=1e-3)
 
 
 @pytest.mark.required
@@ -623,15 +604,15 @@ def test_ipc_link_filter_strict(show_viewer):
     base_link_idx = robot.get_link("base").idx
     moving_link_idx = robot.get_link("moving").idx
 
-    assert entity_idx in coupler._ipc_link_filters, "Missing link filter registration for entity."
-    assert coupler._ipc_link_filters[entity_idx] == {moving_link_idx}, "Unexpected link filter content."
+    assert entity_idx in coupler._ipc_link_filters
+    assert coupler._ipc_link_filters[entity_idx] == {moving_link_idx}
 
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links, "Filtered moving link was not added to IPC."
-    assert base_link_idx not in ipc_links, "Base link should have been excluded by link filter."
+    assert moving_link_idx in ipc_links
+    assert base_link_idx not in ipc_links
 
-    assert (0, moving_link_idx) in coupler._link_to_abd_slot, "Missing ABD slot mapping for moving link."
-    assert (0, base_link_idx) not in coupler._link_to_abd_slot, "Base link unexpectedly has an ABD slot mapping."
+    assert (0, moving_link_idx) in coupler._link_to_abd_slot
+    assert (0, base_link_idx) not in coupler._link_to_abd_slot
 
 
 @pytest.mark.required
@@ -671,16 +652,14 @@ def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
 
     base_link_idx = cube.base_link_idx
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert base_link_idx in ipc_links, "ipc_only cube base link was not added to IPC rigid geometries."
-    assert (0, base_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing ABD slot mapping for ipc_only cube."
+    assert base_link_idx in ipc_links
+    assert (0, base_link_idx) in scene.sim.coupler._link_to_abd_slot
 
     initial_z = _get_entity_base_z(cube)
     for _ in range(120):
         scene.step()
     final_z = _get_entity_base_z(cube)
-    assert final_z <= initial_z - 0.04, (
-        f"ipc_only cube did not fall enough: dz={initial_z - final_z:.6f} m (expected >= 0.04 m)."
-    )
+    assert final_z <= initial_z - 0.04
 
 
 @pytest.mark.required
@@ -731,36 +710,31 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     fem_entity_idx = _get_fem_solver_entity_idx(scene, fem_box)
 
     fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert len(fem_matches) == 1, "FEM object was not uniquely added to IPC."
+    assert len(fem_matches) == 1
 
     left_finger_idx = franka.get_link("left_finger").idx
     right_finger_idx = franka.get_link("right_finger").idx
     expected_finger_links = {left_finger_idx, right_finger_idx}
 
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert expected_finger_links.issubset(ipc_links), "Required finger links were not added to IPC."
+    assert expected_finger_links.issubset(ipc_links)
     for link_idx in expected_finger_links:
-        assert (0, link_idx) in coupler._link_to_abd_slot, f"Missing ABD slot mapping for finger link {link_idx}."
+        assert (0, link_idx) in coupler._link_to_abd_slot
 
     franka_link_indices = {link.idx for link in franka.links}
     franka_ipc_links = ipc_links.intersection(franka_link_indices)
     if coupling_type == "two_way_soft_constraint":
         entity_idx = franka._idx_in_solver
-        assert coupler._ipc_link_filters.get(entity_idx) == expected_finger_links, "Unexpected franka IPC link filter."
-        assert franka_ipc_links == expected_finger_links, "Franka IPC links should exactly match filter links."
+        assert coupler._ipc_link_filters.get(entity_idx) == expected_finger_links
+        assert franka_ipc_links == expected_finger_links
     else:
-        assert expected_finger_links.issubset(franka_ipc_links), (
-            "external_articulation must include at least required finger links in IPC."
-        )
+        assert expected_finger_links.issubset(franka_ipc_links)
 
     initial_ipc_centroid = _get_ipc_centroid(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert initial_ipc_centroid is not None, "Could not retrieve initial FEM centroid from IPC."
-    initial_genesis_positions = fem_box.get_state().pos.detach().cpu().numpy()[0]
+    assert initial_ipc_centroid is not None
+    initial_genesis_positions = tensor_to_array(fem_box.get_state().pos)[0]
     initial_genesis_centroid = initial_genesis_positions.mean(axis=0)
-    init_retrieve_error = np.linalg.norm(initial_ipc_centroid - initial_genesis_centroid)
-    assert init_retrieve_error < 1e-3, (
-        f"Initial FEM retrieve mismatch too large: {init_retrieve_error:.6e} m (tolerance: 1e-3 m)."
-    )
+    assert_allclose(initial_ipc_centroid, initial_genesis_centroid, atol=1e-3)
     initial_z = initial_genesis_centroid[2]
 
     motors_dof = np.arange(7)
@@ -810,15 +784,14 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     run_stage(qpos, finger_pos=0.0, duration=0.2)
 
     final_ipc_centroid = _get_ipc_centroid(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert final_ipc_centroid is not None, "Could not retrieve final FEM centroid from IPC."
-    final_genesis_positions = fem_box.get_state().pos.detach().cpu().numpy()[0]
+    assert final_ipc_centroid is not None
+    final_genesis_positions = tensor_to_array(fem_box.get_state().pos)[0]
     final_genesis_centroid = final_genesis_positions.mean(axis=0)
 
-    retrieve_error = np.linalg.norm(final_ipc_centroid - final_genesis_centroid)
-    assert retrieve_error < 1e-3, f"Final FEM retrieve mismatch too large: {retrieve_error:.6e} m (tolerance: 1e-3 m)."
+    assert_allclose(final_ipc_centroid, final_genesis_centroid, atol=1e-3)
 
     z_gain = final_genesis_centroid[2] - initial_z
-    assert z_gain >= 0.1, f"FEM lift is too small: dz={z_gain:.6f} m, expected at least 0.1 m."
+    assert z_gain >= 0.1
 
 
 @pytest.mark.required
@@ -852,12 +825,12 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
 
     fem_entity_idx = _get_fem_solver_entity_idx(scene, blob)
     fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert len(fem_matches) == 1, "FEM blob was not uniquely added to IPC."
+    assert len(fem_matches) == 1
 
     rigid_link_idx = rigid_cube.base_link_idx
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert rigid_link_idx in ipc_links, "Rigid cube base link was not added to IPC."
-    assert (0, rigid_link_idx) in scene.sim.coupler._link_to_abd_slot, "Missing ABD slot for rigid cube base link."
+    assert rigid_link_idx in ipc_links
+    assert (0, rigid_link_idx) in scene.sim.coupler._link_to_abd_slot
 
     rigid_cube.set_dofs_velocity((4.0, 0.0, 0.0, 0.0, 0.0, 0.0))
 
@@ -879,9 +852,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     n_steps = int(test_time / dt)
 
     for _ in range(n_steps):
-        rigid_pos = (
-            scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com").detach().cpu().numpy()
-        )
+        rigid_pos = tensor_to_array(scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com"))
         rigid_pos = rigid_pos.flatten()[:3]
         if rigid_prev_pos is None:
             rigid_vel = np.array([4.0, 0.0, 0.0])
@@ -891,7 +862,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         rigid_linear_momentum = rigid_mass * rigid_vel
 
         fem_proc_geo = _get_ipc_processed_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-        assert fem_proc_geo is not None, "Could not retrieve FEM geometry from IPC."
+        assert fem_proc_geo is not None
         fem_vertex_positions = fem_proc_geo.positions().view().reshape(-1, 3)
 
         volume_attr = fem_proc_geo.vertices().find(builtin.volume)
@@ -920,6 +891,4 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     expected_momentum = np.array([4.0 * rigid_mass, 0.0, 0.0])
     final_relative_error = np.linalg.norm(total_p_history[-1] - expected_momentum) / np.linalg.norm(expected_momentum)
 
-    assert final_relative_error <= 0.02, (
-        f"Final momentum relative error too large: {final_relative_error * 100:.4f}% (expected <= 2.0%)."
-    )
+    assert final_relative_error <= 0.02
