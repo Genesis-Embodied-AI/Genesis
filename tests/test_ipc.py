@@ -133,7 +133,7 @@ def _get_fem_solver_entity_idx(scene, fem_entity):
 
 
 def _get_entity_base_z(entity):
-    pos = np.asarray(tensor_to_array(entity.get_pos()))
+    pos = tensor_to_array(entity.get_pos())
     if pos.ndim == 1:
         return float(pos[2])
     return float(pos.reshape(-1, 3)[0, 2])
@@ -320,7 +320,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     assert moving_link_idx in ipc_links
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
-    initial_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0].copy()
+    initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
@@ -338,7 +338,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
         target_qpos = 0.5 * np.sin(omega * t)
         robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
-        current_qpos = float(np.asarray(tensor_to_array(robot.get_qpos())).reshape(-1)[-1])
+        current_qpos = float(tensor_to_array(robot.get_qpos()).reshape(-1)[-1])
         qpos_history.append(current_qpos)
         target_history.append(float(target_qpos))
 
@@ -374,7 +374,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
             final_base_z = _get_entity_base_z(robot)
             assert final_base_z <= initial_base_z - 0.03
         else:
-            final_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0]
+            final_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0]
             with pytest.raises(AssertionError):
                 assert_allclose(final_base_pos, initial_base_pos, atol=1e-3)
 
@@ -433,7 +433,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     assert moving_link_idx in ipc_links
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
-    initial_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0].copy()
+    initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
     omega = 2.0 * np.pi
@@ -451,7 +451,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
         target_qpos = 0.15 + 0.1 * np.sin(omega * t)
         robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
         scene.step()
-        current_qpos = float(np.asarray(tensor_to_array(robot.get_qpos())).reshape(-1)[-1])
+        current_qpos = float(tensor_to_array(robot.get_qpos()).reshape(-1)[-1])
         qpos_history.append(current_qpos)
         target_history.append(float(target_qpos))
 
@@ -487,7 +487,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
             final_base_z = _get_entity_base_z(robot)
             assert final_base_z <= initial_base_z - 0.03
         else:
-            final_base_pos = np.asarray(tensor_to_array(robot.get_pos())).reshape(-1, 3)[0]
+            final_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0]
             with pytest.raises(AssertionError):
                 assert_allclose(final_base_pos, initial_base_pos, atol=1e-3)
 
@@ -838,11 +838,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     blob_rho = blob.material.rho
     fem_total_mass = (4.0 / 3.0) * np.pi * (blob_radius**3) * blob_rho
 
-    mass_field = scene.sim.rigid_solver.links_info.inertial_mass
-    if hasattr(mass_field, "to_numpy"):
-        rigid_mass = float(mass_field.to_numpy()[rigid_link_idx])
-    else:
-        rigid_mass = float(mass_field[rigid_link_idx])
+    rigid_mass = float(scene.sim.rigid_solver.get_links_inertial_mass(links_idx=rigid_link_idx).item())
 
     fem_prev_pos = None
     rigid_prev_pos = None
@@ -852,8 +848,9 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     n_steps = int(test_time / dt)
 
     for _ in range(n_steps):
-        rigid_pos = tensor_to_array(scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com"))
-        rigid_pos = rigid_pos.flatten()[:3]
+        rigid_pos = tensor_to_array(scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com"))[
+            0, 0
+        ]
         if rigid_prev_pos is None:
             rigid_vel = np.array([4.0, 0.0, 0.0])
         else:
@@ -883,7 +880,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
 
         fem_linear_momentum = np.sum(fem_vertex_masses[:, np.newaxis] * fem_vertex_velocities, axis=0)
         total_linear_momentum = rigid_linear_momentum + fem_linear_momentum
-        total_p_history.append(np.asarray(total_linear_momentum).flatten().copy())
+        total_p_history.append(total_linear_momentum)
 
         scene.step()
 
