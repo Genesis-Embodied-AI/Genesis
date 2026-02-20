@@ -20,6 +20,8 @@ from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
 
+from . import profiling
+
 # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
 has_tkinter = False
 try:
@@ -306,11 +308,11 @@ def pytest_xdist_auto_num_workers(config):
             except (FileNotFoundError, subprocess.CalledProcessError):
                 pass
         if devices_vram_memory is not None:
-            assert len(set(devices_vram_memory)) == 1, "Heterogeonous Nvidia GPU devices not supported."
+            assert len(set(devices_vram_memory)) == 1, "Heterogeneous Nvidia GPU devices not supported."
             num_gpus = len(devices_vram_memory)
             vram_memory = sum(devices_vram_memory) / 1024
         else:
-            # FIXME: There is easy way for Intel ARC device. Ignore device visibilty issue for now...
+            # FIXME: There is no easy way for Intel ARC device. Ignore device visibility issue for now...
             import torch
 
             if torch.xpu.is_available():
@@ -401,7 +403,7 @@ def pytest_runtest_setup(item):
                     pass
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--backend", action="store", default=None, help="Default simulation backend.")
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
@@ -416,6 +418,19 @@ def pytest_addoption(parser):
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
+    if os.environ.get("GS_PROFILING", "0") == "1":
+        profiling.parser_add_options(parser)
+
+
+# Note: moving this out of conftest.py, e.g. into profiling.py, does not appear to work.
+@pytest.fixture(scope="session")
+def pytorch_profiler_step(pytestconfig):
+    if os.environ.get("GS_PROFILING", "0") == "1":
+        for res in profiling.pytorch_profiler(pytestconfig):
+            yield res
+    else:
+        noop = lambda: None  # noqa: E731
+        yield noop
 
 
 @pytest.fixture(scope="session")

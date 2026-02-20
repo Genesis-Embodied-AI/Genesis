@@ -170,6 +170,7 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
             # Parse updated URDF file as a string
             data = ET.tostring(root, encoding="utf8")
             mj = mujoco.MjModel.from_xml_string(data)
+
             # Special treatment for URDF
             if is_urdf_file:
                 # Discard placeholder inertias that were used to avoid parsing failure

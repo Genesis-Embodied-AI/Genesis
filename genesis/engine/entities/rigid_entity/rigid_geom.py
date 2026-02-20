@@ -893,7 +893,7 @@ class RigidVisGeom(RBC):
             # Aggressiveness has been tuned to give sub-millimeter accuracy on Franka robot in random configurations
             aabb_mesh = self.vmesh.copy()
             aabb_mesh.convexify()
-            aabb_mesh.decimate(decimate_face_num=NUM_VERTS_VISUAL_GEOM_AABB, decimate_aggressiveness=3, convexify=False)
+            aabb_mesh.decimate(decimate_face_num=NUM_VERTS_VISUAL_GEOM_AABB, decimate_aggressiveness=3)
             self._aabb_verts = torch.from_numpy(aabb_mesh.verts).to(dtype=gs.tc_float, device=gs.device)
 
         pos, quat = gu.transform_pos_quat_by_trans_quat(

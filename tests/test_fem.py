@@ -1,5 +1,4 @@
 import math
-import platform
 
 import igl
 import numpy as np

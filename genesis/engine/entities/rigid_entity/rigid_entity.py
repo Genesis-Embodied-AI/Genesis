@@ -564,7 +564,8 @@ class RigidEntity(Entity):
             # Custom "legacy" URDF parser for loading geometries (visual and collision) and equality constraints.
             # This is necessary because Mujoco cannot parse visual geometries (meshes) reliably for URDF.
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
-            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties.
+
+            # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
             morph_ = copy(morph)
             morph_.visualization = False
             try:
@@ -643,24 +644,43 @@ class RigidEntity(Entity):
                 # Make sure that the inertia matrix is symmetric with positive eigenvalues
                 l_info["inertial_i"] = Q @ np.diag(np.maximum(inertia_diag, 0.0)) @ Q.T
 
+        # Remove any "virtual" root link that was not present in the original file morph.
+        # Mujoco unified parser and our legacy parser have different behaviors.
+        # * Mujoco unified parser always adds a root 'world' link if it does not exist, and fuse all fixed links from
+        #   root to first articulated body.
+        # * Our legacy parser adds a root 'world' link if the root joint is not a fixed joint in file morph.
+        # This check is somewhat fragile, but there is no way to distinguish between virtual and manually added root.
+        base_l_info, base_j_info, base_g_info = l_infos[0], links_j_infos[0], links_g_infos[0]
+        if (
+            len(l_infos) > 1
+            and (np.abs(l_infos[1]["pos"]) < gs.EPS).all()
+            and (np.abs(l_infos[1]["quat"] - (1, 0, 0, 0)) < gs.EPS).all()
+            and (base_l_info["name"] == "world" and base_j_info and base_j_info[0]["name"] == "world")
+            and sum(j_info["n_dofs"] for j_info in base_j_info) == 0
+            and not base_g_info
+        ):
+            del l_infos[0], links_j_infos[0], links_g_infos[0]
+            for l_info in l_infos:
+                l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
+                if "root_idx" in l_info:
+                    l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
+
+        # URDF is a robot description file so all links have same root_idx
+        if isinstance(morph, gs.morphs.URDF) and not morph._enable_mujoco_compatibility:
+            for l_info in l_infos:
+                l_info["root_idx"] = 0
+
+        # Genesis requires links associated with free joints to be attached to the world directly
+        for l_info, link_j_infos in zip(l_infos, links_j_infos):
+            if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
+                l_info["parent_idx"] = -1
+
         # Add free floating joint at root if necessary
         if (
             (isinstance(morph, gs.morphs.Drone) or (isinstance(morph, gs.morphs.URDF) and not morph.fixed))
             and links_j_infos
             and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0
         ):
-            # Select the second joint down the kinematic tree if possible without messing up with fixed links to keep
-            root_idx = 0
-            for idx, (l_info, link_j_infos) in tuple(enumerate(zip(l_infos, links_j_infos)))[:2]:
-                if (
-                    l_info["name"] not in morph.links_to_keep
-                    and l_info["parent_idx"] in (0, -1)
-                    and sum(j_info["n_dofs"] for j_info in link_j_infos) == 0
-                ):
-                    root_idx = idx
-                    continue
-                break
-
             # Define free joint
             j_info = dict()
             j_info["name"] = "root_joint"
@@ -684,42 +704,20 @@ class RigidEntity(Entity):
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
-            links_j_infos[root_idx] = [j_info]
-
-            # Rename root link for clarity if relevant
-            if root_idx == 0:
-                l_infos[root_idx]["name"] = "base"
+            links_j_infos[0] = [j_info]
 
             # Shift root idx for all child links and replace root if no longer fixed wrt world
-            for i_l in range(root_idx, len(l_infos)):
+            for i_l in range(len(l_infos)):
                 l_info = l_infos[i_l]
-                if "root_idx" in l_info and l_info["root_idx"] in (root_idx + 1, i_l):
-                    l_info["root_idx"] = root_idx
+                if "root_idx" in l_info and l_info["root_idx"] in (1, i_l):
+                    l_info["root_idx"] = 0
 
             # Must invalidate invweight for all child links and joints because the root joint was fixed when it was
             # initially computed. Re-initialize it to some strictly negative value to trigger recomputation in solver.
-            for i_l in range(root_idx, len(l_infos)):
+            for i_l in range(len(l_infos)):
                 l_infos[i_l]["invweight"] = np.full((2,), fill_value=-1.0)
                 for j_info in links_j_infos[i_l]:
                     j_info["dofs_invweight"] = np.full((j_info["n_dofs"],), fill_value=-1.0)
-
-        # Remove the world link if deemed "useless", i.e. fixed joint without any geometry attached
-        if not links_g_infos[0] and sum(j_info["n_dofs"] for j_info in links_j_infos[0]) == 0:
-            del l_infos[0], links_j_infos[0], links_g_infos[0]
-            for l_info in l_infos:
-                l_info["parent_idx"] = max(l_info["parent_idx"] - 1, -1)
-                if "root_idx" in l_info:
-                    l_info["root_idx"] = max(l_info["root_idx"] - 1, -1)
-
-        # URDF is a robot description file so all links have same root_idx
-        if isinstance(morph, gs.morphs.URDF) and not morph._enable_mujoco_compatibility:
-            for l_info in l_infos:
-                l_info["root_idx"] = 0
-
-        # Genesis requires links associated with free joints to be attached to the world directly
-        for l_info, link_j_infos in zip(l_infos, links_j_infos):
-            if all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in link_j_infos):
-                l_info["parent_idx"] = -1
 
         # Force recomputing inertial information based on geometry if ill-defined for some reason
         is_inertia_invalid = False
