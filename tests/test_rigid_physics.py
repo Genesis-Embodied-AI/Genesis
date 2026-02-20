@@ -1593,6 +1593,149 @@ def test_multilink_inverse_kinematics(show_viewer):
     assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_inverse_kinematics_local_point(n_envs, show_viewer):
+    """Test IK with local_point parameter - positions an offset point at the target instead of link origin."""
+
+    TOL = 2e-3  # 2mm tolerance for final position check
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+    )
+    scene.build(n_envs=n_envs)
+
+    end_effector = robot.get_link("hand")
+
+    # Define a local offset point in the end-effector frame (e.g., 10cm along Z-axis)
+    local_offset = torch.tensor([0.0, 0.0, 0.1], dtype=gs.tc_float, device=gs.device)
+
+    # Create different target positions and quaternions for each environment
+    num_envs = max(n_envs, 1)
+    target_pos_base = torch.tensor(
+        [[0.5, 0.2, 0.4], [0.45, 0.15, 0.35], [0.55, 0.25, 0.45]], dtype=gs.tc_float, device=gs.device
+    )[:num_envs]
+    target_quat_base = torch.tensor(
+        [[0.0, 1.0, 0.0, 0.0], [0.0, 0.9239, 0.3827, 0.0], [0.0, 0.9239, -0.3827, 0.0]],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )[:num_envs]
+
+    # Handle different shapes based on n_envs
+    if n_envs > 0:
+        target_pos = target_pos_base
+        target_quat = target_quat_base
+    else:
+        target_pos = target_pos_base[0]
+        target_quat = target_quat_base[0]
+
+    # Solve IK with local_point (local_offset stays 1D - it gets broadcast internally)
+    qpos, err = robot.inverse_kinematics(
+        link=end_effector,
+        pos=target_pos,
+        quat=target_quat,
+        local_point=local_offset,
+        return_error=True,
+    )
+
+    # Apply the solution
+    robot.set_qpos(qpos)
+    scene.step()
+
+    # Verify the offset point is at the target position
+    link_pos = end_effector.get_pos()
+    link_quat = end_effector.get_quat()
+
+    # Transform local offset to world frame
+    world_offset = gu.transform_by_quat(local_offset, link_quat)
+    actual_point_pos = link_pos + world_offset
+
+    # Check that the offset point reached the target
+    assert_allclose(actual_point_pos, target_pos, tol=TOL)
+
+    # Also verify via forward kinematics
+    links_pos, links_quat = robot.forward_kinematics(qpos)
+
+    # Handle indexing based on n_envs
+    if n_envs > 0:
+        fk_link_pos = links_pos[:, end_effector.idx_local]
+        fk_link_quat = links_quat[:, end_effector.idx_local]
+    else:
+        fk_link_pos = links_pos[end_effector.idx_local]
+        fk_link_quat = links_quat[end_effector.idx_local]
+
+    fk_world_offset = gu.transform_by_quat(local_offset, fk_link_quat)
+    fk_actual_point_pos = fk_link_pos + fk_world_offset
+    assert_allclose(fk_actual_point_pos, target_pos, tol=TOL)
+
+    if show_viewer:
+        scene.visualizer.update()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_inverse_kinematics_multilink_local_points(show_viewer):
+    """Test multi-link IK with local_points parameter."""
+
+    TOL = 2e-3  # 2mm tolerance for final position check
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.5, 0.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(file="urdf/shadow_hand/shadow_hand.urdf"),
+    )
+    scene.build()
+
+    index_finger = robot.get_link("index_finger_distal")
+    middle_finger = robot.get_link("middle_finger_distal")
+
+    # Different local offsets for each finger (e.g., fingertip positions)
+    index_local_offset = torch.tensor([0.0, 0.0, 0.02], dtype=gs.tc_float, device=gs.device)
+    middle_local_offset = torch.tensor([0.0, 0.0, 0.02], dtype=gs.tc_float, device=gs.device)
+
+    # Target positions for the fingertips
+    index_target = torch.tensor([0.6, 0.5, 0.2], dtype=gs.tc_float, device=gs.device)
+    middle_target = torch.tensor([0.63, 0.5, 0.2], dtype=gs.tc_float, device=gs.device)
+
+    # Solve multi-link IK with local_points
+    qpos, err = robot.inverse_kinematics_multilink(
+        links=[index_finger, middle_finger],
+        poss=[index_target, middle_target],
+        local_points=[index_local_offset, middle_local_offset],
+        return_error=True,
+    )
+
+    # Apply solution
+    robot.set_qpos(qpos)
+    scene.step()
+
+    # Verify each offset point is at its target
+    for link, local_offset, target in [
+        (index_finger, index_local_offset, index_target),
+        (middle_finger, middle_local_offset, middle_target),
+    ]:
+        link_pos = link.get_pos()
+        link_quat = link.get_quat()
+        world_offset = gu.transform_by_quat(local_offset, link_quat)
+        actual_point_pos = link_pos + world_offset
+        assert_allclose(actual_point_pos, target, tol=TOL)
+
+    if show_viewer:
+        scene.visualizer.update()
+
+
 @pytest.mark.slow  # ~180s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
