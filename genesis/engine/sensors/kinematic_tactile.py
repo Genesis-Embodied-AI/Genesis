@@ -567,13 +567,29 @@ def _next_pow2(n: int) -> int:
     return p
 
 
-def _precompute_dilate_kernel_fft(
-    dilate_coeff: float, dx: float, dy: float, fft_nx: int, fft_ny: int
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def _precompute_dilate_kernel_fft(dilate_coeff: float, dx: float, dy: float, fft_nx: int, fft_ny: int) -> torch.Tensor:
     """
     Build 2D convolution kernels Kx, Ky for the dilate sum (see _elastomer_displacement_grid_fft_dilate).
-    K_x(Δx, Δy) = Δx*exp(-λ*r²), K_y = Δy*exp(-λ*r²) with r² = Δx²+Δy². Center at (fft_nx//2, fft_ny//2).
-    Returns FFT2 of Kx, Ky as (gx_re, gx_im, gy_re, gy_im) each shape (fft_nx * fft_ny,) real, float32.
+    K_x(Δx, Δy) = Δx*exp(-λ*r²), K_y = Δy*exp(-λ*r²) with r² = Δx²+Δy².
+
+    Parameters
+    ----------
+    dilate_coeff: float
+        Dilate coefficient λ
+    dx: float
+        Grid spacing in x direction
+    dy: float
+        Grid spacing in y direction
+    fft_nx: int
+        FFT size in x direction
+    fft_ny: int
+        FFT size in y direction
+
+    Returns
+    -------
+    kernel_fft: torch.Tensor, shape (4, fft_nx * fft_ny)
+        Packed real/imag FFT channels in order:
+        [Kx_real, Kx_imag, Ky_real, Ky_imag]
     """
     i = torch.arange(fft_nx, dtype=gs.tc_float, device=gs.device)
     j = torch.arange(fft_ny, dtype=gs.tc_float, device=gs.device)
@@ -582,12 +598,12 @@ def _precompute_dilate_kernel_fft(
     g = torch.exp(torch.tensor(-dilate_coeff, dtype=gs.tc_float) * r2)
     kx = xx * g
     ky = yy * g
-    # FFT convolution assumes kernel origin at (0,0); we built it centered at (fft_nx//2, fft_ny//2)
+    # FFT convolution assumes kernel origin at (0,0); we center at (fft_nx//2, fft_ny//2)
     kx = torch.fft.ifftshift(kx)
     ky = torch.fft.ifftshift(ky)
     gx_fft = torch.fft.fft2(kx)
     gy_fft = torch.fft.fft2(ky)
-    return gx_fft.real.ravel(), gx_fft.imag.ravel(), gy_fft.real.ravel(), gy_fft.imag.ravel()
+    return torch.stack((gx_fft.real.ravel(), gx_fft.imag.ravel(), gy_fft.real.ravel(), gy_fft.imag.ravel()), dim=0)
 
 
 @qd.kernel
@@ -652,10 +668,7 @@ def _elastomer_displacement_grid_fft_dilate(
     fft_nx: torch.Tensor,
     fft_ny: torch.Tensor,
     fft_re: torch.Tensor,
-    kernel_fft_gx_re: torch.Tensor,
-    kernel_fft_gx_im: torch.Tensor,
-    kernel_fft_gy_re: torch.Tensor,
-    kernel_fft_gy_im: torch.Tensor,
+    kernel_fft: torch.Tensor,
     output: torch.Tensor,
 ) -> None:
     n_batches = contact_buf.shape[0]
@@ -680,13 +693,13 @@ def _elastomer_displacement_grid_fft_dilate(
         # D_x = real(ifft(fft(H) * fft(K_x))), D_y = real(ifft(fft(H) * fft(K_y)))
         H_fft = torch.fft.fft2(H_buf)
         Kx = torch.complex(
-            kernel_fft_gx_re[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
-            kernel_fft_gx_im[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
+            kernel_fft[0, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # x real
+            kernel_fft[1, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # x imaginary
         )
         disp_x = torch.fft.ifft2(H_fft * Kx).real
         Ky = torch.complex(
-            kernel_fft_gy_re[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
-            kernel_fft_gy_im[i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),
+            kernel_fft[2, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # y real
+            kernel_fft[3, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # y imaginary
         )
         disp_y = torch.fft.ifft2(H_fft * Ky).real
 
@@ -891,6 +904,18 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
                 color=self._options.debug_sphere_color if magnitude <= gs.EPS else self._options.debug_contact_color,
             )
             self._debug_objects.append(sphere_obj)
+
+    @property
+    def probe_local_pos(self) -> torch.Tensor:
+        return self._probe_local_pos
+
+    @property
+    def probe_local_normal(self) -> torch.Tensor:
+        return self._probe_local_normal
+
+    @property
+    def n_probes(self) -> int:
+        return self._n_probes
 
 
 class KinematicContactProbeData(NamedTuple):
@@ -1120,11 +1145,8 @@ class ElastomerDisplacementGridSensorMetadata(
     # FFT dilation
     fft_nx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     fft_ny: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    kernel_fft_gx_re: torch.Tensor = make_tensor_field((0, 0))  # (n_sensors, max_fft_size)
-    kernel_fft_gx_im: torch.Tensor = make_tensor_field((0, 0))
-    kernel_fft_gy_re: torch.Tensor = make_tensor_field((0, 0))
-    kernel_fft_gy_im: torch.Tensor = make_tensor_field((0, 0))
-    _fft_kernel_list: list = field(default_factory=list)  # (gx_re, gx_im, gy_re, gy_im) per sensor
+    kernel_fft: torch.Tensor = make_tensor_field((4, 0, 0))  # (4, n_sensors, max_fft_size): gx_re, gx_im, gy_re, gy_im
+    _fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
     fft_re: torch.Tensor = make_tensor_field((0, 0, 0))  # used as H buffer in torch.fft dilate step
 
 
@@ -1193,13 +1215,11 @@ class ElastomerDisplacementGridSensor(
             dim=0,
         )
 
-        # FFT sizes (power of 2) and precompute kernel FFT for dilation
-        fft_nx = _next_pow2(self._options.probe_grid_size[0])
-        fft_ny = _next_pow2(self._options.probe_grid_size[1])
-        gx_re, gx_im, gy_re, gy_im = _precompute_dilate_kernel_fft(
-            float(self._options.dilate_coefficient), dx, dy, fft_nx, fft_ny
-        )
-        self._shared_metadata._fft_kernel_list.append((gx_re, gx_im, gy_re, gy_im))
+        # Use linear-convolution padding (>= 2*g - 1) to avoid circular wrap across sensor borders.
+        fft_nx = _next_pow2(2 * g_nx - 1)
+        fft_ny = _next_pow2(2 * g_ny - 1)
+        kernel_fft = _precompute_dilate_kernel_fft(float(self._options.dilate_coefficient), dx, dy, fft_nx, fft_ny)
+        self._shared_metadata._fft_kernel_list.append(kernel_fft)
         self._shared_metadata.fft_nx = concat_with_tensor(
             self._shared_metadata.fft_nx,
             torch.tensor([fft_nx], dtype=gs.tc_int, device=gs.device),
@@ -1219,21 +1239,12 @@ class ElastomerDisplacementGridSensor(
         max_fft_nx = int(self._shared_metadata.fft_nx.max().item())
         max_fft_ny = int(self._shared_metadata.fft_ny.max().item())
         max_fft_size = max_fft_nx * max_fft_ny
-        kernel_fft_gx_re = torch.zeros((n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
-        kernel_fft_gx_im = torch.zeros((n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
-        kernel_fft_gy_re = torch.zeros((n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
-        kernel_fft_gy_im = torch.zeros((n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
+        kernel_fft = torch.zeros((4, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
         for s in range(n_sensors):
-            gx_re, gx_im, gy_re, gy_im = kernel_list[s]
-            size = gx_re.shape[0]
-            kernel_fft_gx_re[s, :size] = gx_re.to(device=gs.device, dtype=gs.tc_float)
-            kernel_fft_gx_im[s, :size] = gx_im.to(device=gs.device, dtype=gs.tc_float)
-            kernel_fft_gy_re[s, :size] = gy_re.to(device=gs.device, dtype=gs.tc_float)
-            kernel_fft_gy_im[s, :size] = gy_im.to(device=gs.device, dtype=gs.tc_float)
-        self._shared_metadata.kernel_fft_gx_re = kernel_fft_gx_re
-        self._shared_metadata.kernel_fft_gx_im = kernel_fft_gx_im
-        self._shared_metadata.kernel_fft_gy_re = kernel_fft_gy_re
-        self._shared_metadata.kernel_fft_gy_im = kernel_fft_gy_im
+            kernel_fft_s = kernel_list[s]
+            size = kernel_fft_s.shape[1]
+            kernel_fft[:, s, :size] = kernel_fft_s.to(device=gs.device, dtype=gs.tc_float)
+        self._shared_metadata.kernel_fft = kernel_fft
         self._shared_metadata.fft_re = torch.zeros(
             (self._manager._sim._B, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device
         )
@@ -1277,10 +1288,7 @@ class ElastomerDisplacementGridSensor(
             shared_metadata.fft_nx,
             shared_metadata.fft_ny,
             shared_metadata.fft_re,
-            shared_metadata.kernel_fft_gx_re,
-            shared_metadata.kernel_fft_gx_im,
-            shared_metadata.kernel_fft_gy_re,
-            shared_metadata.kernel_fft_gy_im,
+            shared_metadata.kernel_fft,
             shared_ground_truth_cache,
         )
 

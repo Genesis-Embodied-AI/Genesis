@@ -45,19 +45,6 @@ def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
     return positions.astype(np.float32), normals.astype(np.float32)
 
 
-def _build_grid_probe_positions(bounds: tuple, grid_size: tuple[int, int]) -> np.ndarray:
-    """Probe positions on a 2D grid (row-major iy, ix) for plotting. Same layout as ElastomerDisplacementGridSensor."""
-    lo, hi = np.array(bounds[0]), np.array(bounds[1])
-    nx, ny = grid_size[0], grid_size[1]
-    dx = (hi[0] - lo[0]) / (nx - 1) if nx > 1 else 0.0
-    dy = (hi[1] - lo[1]) / (ny - 1) if ny > 1 else 0.0
-    positions = []
-    for iy in range(ny):
-        for ix in range(nx):
-            positions.append((lo[0] + ix * dx, lo[1] + iy * dy, lo[2]))
-    return np.array(positions, dtype=np.float32)
-
-
 def main():
     parser = argparse.ArgumentParser(description="Interactive ElastomerDisplacementSensor Visualization")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
@@ -70,7 +57,6 @@ def main():
         backend=gs.cpu if args.cpu else gs.gpu,
         precision="32",
         logging_level="info",
-        debug=True,
     )
 
     scene = gs.Scene(
@@ -127,7 +113,7 @@ def main():
     # Controllable pusher: sphere with hemisphere tactile, or box with grid tactile
     if args.grid:
         box_size = np.array((PUSHER_SIZE, PUSHER_SIZE, PUSHER_SIZE / 2), dtype=np.float32)
-        pusher_start = np.array([0.0, 0.0, box_size[2] / 2 + 0.01], dtype=np.float32)
+        pusher_start = np.array([0.0, 0.0, box_size[2] + OBJ_SIZE], dtype=np.float32)
         pusher = scene.add_entity(
             gs.morphs.Box(size=box_size, pos=pusher_start),
             surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
@@ -146,10 +132,11 @@ def main():
                 probe_local_normal=(0.0, 0.0, -1.0),
                 probe_radius=PROBE_RADIUS,
                 draw_debug=args.vis,
+                dilate_coefficient=1e3,
+                shear_coefficient=0.0,
+                twist_coefficient=0.0,
             )
         )
-        probe_positions = _build_grid_probe_positions(grid_bounds, GRID_SIZE)
-        n_probes = len(probe_positions)
     else:
         pusher_start = np.array([0.0, 0.0, PUSHER_SIZE + 0.01], dtype=np.float32)
         pusher = scene.add_entity(
@@ -157,7 +144,6 @@ def main():
             surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
         )
         probe_positions, probe_normals = _build_hemisphere_probes(PUSHER_SIZE, HEMISPHERE_N_THETA, HEMISPHERE_N_PHI)
-        n_probes = len(probe_positions)
         tactile = scene.add_sensor(
             gs.sensors.ElastomerDisplacementSensor(
                 entity_idx=pusher.idx,
@@ -166,22 +152,20 @@ def main():
                 probe_local_normal=probe_normals,
                 probe_radius=PROBE_RADIUS,
                 draw_debug=args.vis,
+                dilate_coefficient=1e2,
+                shear_coefficient=0.0,
+                twist_coefficient=0.0,
             )
         )
 
     if args.vis:
-        scene.viewer.add_plugin(
-            gs.vis.viewer_plugins.MouseInteractionPlugin(
-                use_force=True,
-            )
-        )
         if IS_MATPLOTLIB_AVAILABLE:
             plot_normal = (0.0, 0.0, -1.0) if args.grid else (0.0, 0.0, 1.0)
             scene.start_recording(
                 data_func=lambda: tactile.read(),
                 rec_options=gs.recorders.MPLVectorFieldPlot(
                     title="Tactile Displacement",
-                    positions=probe_positions,
+                    positions=tactile.probe_local_pos,
                     normal=plot_normal,
                     scale_factor=10.0,
                     max_magnitude=1.0e-2,
@@ -209,11 +193,18 @@ def main():
     small_sphere = scene.add_entity(
         gs.morphs.Sphere(
             radius=OBJ_SIZE / 2,
+            pos=(0.0, 0.0, floor_z),
+        ),
+        surface=gs.surfaces.Default(color=(1.0, 0.9, 0.0, 1.0)),
+    )
+    big_sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=OBJ_SIZE,
             pos=(-margin * 0.4, -margin * 0.4, floor_z),
         ),
         surface=gs.surfaces.Default(color=(0.3, 0.3, 1.0, 1.0)),
     )
-    objects = [rect, cylinder, small_sphere]
+    objects = [rect, cylinder, small_sphere, big_sphere]
 
     scene.build()
 
@@ -256,7 +247,7 @@ def main():
 
     # ── Print info ─────────────────────────────────────────────────────
     print("\n=== Interactive ElastomerDisplacementSensor ===")
-    print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher box with {n_probes} probes")
+    print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher box with {tactile.n_probes} probes")
 
     if args.vis:
         if IS_MATPLOTLIB_AVAILABLE:

@@ -44,7 +44,8 @@ class ElastomerDisplacementSensorMixin:
     Parameters
     ----------
     dilate_coefficient: float
-        The coefficient for the effect of displacement caused by dilate motion.
+        The coefficient for the Gaussian decay in distance of the displacement caused by dilate motion.
+        Higher values result in more localized displacement.
     shear_coefficient: float
         The coefficient for the effect of displacement caused by shear motion.
     twist_coefficient: float
