@@ -95,7 +95,7 @@ class Mesh(RBC):
             self.convexify()
 
         if decimate:
-            self.decimate(decimate_face_num, decimate_aggressiveness, convexify)
+            self.decimate(decimate_face_num, decimate_aggressiveness)
 
     def convexify(self):
         """
@@ -106,7 +106,7 @@ class Mesh(RBC):
             self._metadata["convexified"] = True
         self.clear_visuals()
 
-    def decimate(self, decimate_face_num, decimate_aggressiveness, convexify):
+    def decimate(self, decimate_face_num, decimate_aggressiveness):
         """
         Decimate the mesh.
         """
@@ -122,10 +122,6 @@ class Mesh(RBC):
                 ),
             )
             self._metadata["decimated"] = True
-
-            # need to run convexify again after decimation, because sometimes decimating a convex-mesh can make it non-convex...
-            if convexify:
-                self.convexify()
 
         self.clear_visuals()
 
@@ -442,7 +438,7 @@ class Mesh(RBC):
         """
         Whether the mesh is convex.
         """
-        return self._mesh.is_convex
+        return self.metadata.get("convexified", self._mesh.is_convex)
 
     @property
     def metadata(self):

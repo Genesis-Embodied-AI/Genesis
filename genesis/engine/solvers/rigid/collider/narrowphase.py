@@ -593,12 +593,15 @@ def func_convex_convex_contact(
         gb_pos_current = gb_pos_original
         gb_quat_current = gb_quat_original
 
-        # Pre-allocate buffers
+        # Pre-allocate some buffers
+        # Note that the variables post-fixed with _0 are the values of these
+        # variables for contact 0 (used for multi-contact).
         is_col_0 = False
         penetration_0 = gs.qd_float(0.0)
         normal_0 = qd.Vector.zero(gs.qd_float, 3)
         contact_pos_0 = qd.Vector.zero(gs.qd_float, 3)
 
+        # Whether narrowphase detected a contact.
         is_col = False
         penetration = gs.qd_float(0.0)
         normal = qd.Vector.zero(gs.qd_float, 3)
