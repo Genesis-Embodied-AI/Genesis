@@ -234,7 +234,7 @@ def test_ipc_cloth(n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     cloth_entity_idx = _get_fem_solver_entity_idx(scene, cloth)
-    for env_idx in range(scene.sim._B):
+    for env_idx in range(max(scene.n_envs, 1)):
         cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)
         assert len(cloth_matches) == 1
 
@@ -346,8 +346,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
             link_idx = moving_link_idx
             env_idx = 0
             if (
-                hasattr(scene.sim.coupler, "abd_data_by_link")
-                and link_idx in scene.sim.coupler.abd_data_by_link
+                link_idx in scene.sim.coupler.abd_data_by_link
                 and env_idx in scene.sim.coupler.abd_data_by_link[link_idx]
             ):
                 abd_data = scene.sim.coupler.abd_data_by_link[link_idx][env_idx]
@@ -459,8 +458,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
             link_idx = moving_link_idx
             env_idx = 0
             if (
-                hasattr(scene.sim.coupler, "abd_data_by_link")
-                and link_idx in scene.sim.coupler.abd_data_by_link
+                link_idx in scene.sim.coupler.abd_data_by_link
                 and env_idx in scene.sim.coupler.abd_data_by_link[link_idx]
             ):
                 abd_data = scene.sim.coupler.abd_data_by_link[link_idx][env_idx]
@@ -848,9 +846,9 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     n_steps = int(test_time / dt)
 
     for _ in range(n_steps):
-        rigid_pos = tensor_to_array(scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com"))[
-            0, 0
-        ]
+        rigid_pos = tensor_to_array(
+            scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com")
+        ).reshape(-1, 3)[0]
         if rigid_prev_pos is None:
             rigid_vel = np.array([4.0, 0.0, 0.0])
         else:
