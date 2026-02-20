@@ -1,13 +1,36 @@
+import numpy as np
 import pytest
 
 import genesis as gs
+from genesis.utils.geom import R_to_xyz
 
-from .utils import get_hf_dataset
+from .utils import assert_allclose, get_hf_dataset
 
 try:
     import uipc
 except ImportError:
     pytest.skip("IPC Coupler is not supported because 'uipc' module is not available.", allow_module_level=True)
+
+from uipc.backend import SceneVisitor
+from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
+
+
+def get_cloth_vertex_positions(scene):
+    """Extract cloth vertex positions from IPC scene.
+
+    Returns an (N, 3) array of cloth vertex positions, or None if no cloth geometry is found.
+    """
+    visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
+    for geo_slot in visitor.geometries():
+        if isinstance(geo_slot, SimplicialComplexSlot):
+            geo = geo_slot.geometry()
+            if geo.dim() == 2:  # Cloth is 2D shell
+                proc_geo = geo
+                if geo.instances().size() >= 1:
+                    proc_geo = merge(apply_transform(geo))
+                positions = proc_geo.positions().view().reshape(-1, 3)
+                return positions  # Shape: (num_vertices, 3)
+    return None
 
 
 @pytest.mark.required
@@ -21,24 +44,6 @@ def test_ipc_cloth(n_envs, show_viewer):
        - dx_{n+1} = v_n * dt + g * dt^2
        - v_{n+1} = (x_{n+1} - x_n) / dt
     """
-    import numpy as np
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-
-    def get_cloth_vertex_positions(scene):
-        """Extract cloth vertex positions from IPC scene."""
-        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
-        for geo_slot in visitor.geometries():
-            if isinstance(geo_slot, SimplicialComplexSlot):
-                geo = geo_slot.geometry()
-                if geo.dim() == 2:  # Cloth is 2D shell
-                    proc_geo = geo
-                    if geo.instances().size() >= 1:
-                        proc_geo = merge(apply_transform(geo))
-                    positions = proc_geo.positions().view().reshape(-1, 3)
-                    return positions  # Shape: (num_vertices, 3)
-        return None
-
     dt = 2e-3
     g = 9.8
 
@@ -123,7 +128,6 @@ def test_ipc_cloth(n_envs, show_viewer):
 
     # Run simulation and validate kinematic equations at each step
     num_validation_steps = 10
-    tolerance = 0.01  # 1% tolerance for kinematic validation
 
     for step in range(num_validation_steps):
         scene.step()
@@ -135,21 +139,16 @@ def test_ipc_cloth(n_envs, show_viewer):
 
         # Expected displacement: dx = v_n * dt + 0.5 * g * dt^2
         expected_dx = v_n * dt - g * dt * dt  # Negative because gravity is -g
-        expected_x_next = x_n + expected_dx
 
-        # Validate position
-        pos_error = abs(x_next - expected_x_next) / abs(expected_dx) if abs(expected_dx) > 1e-6 else 0
-        assert pos_error < tolerance, f"Step {step}: Position error {pos_error * 100:.2f}% exceeds tolerance"
+        # Validate displacement
+        assert_allclose(x_next - x_n, expected_dx, rtol=0.01)
 
         # Calculate velocity: v_{n+1} = (x_{n+1} - x_n) / dt
         v_next = (x_next - x_n) / dt
 
         # Expected velocity: v_{n+1} = v_n + g * dt
         expected_v_next = v_n - g * dt  # Negative because gravity is -g
-
-        # Validate velocity
-        vel_error = abs(v_next - expected_v_next) / abs(expected_v_next) if abs(expected_v_next) > 1e-6 else 0
-        assert vel_error < tolerance, f"Step {step}: Velocity error {vel_error * 100:.2f}% exceeds tolerance"
+        assert_allclose(v_next, expected_v_next, rtol=0.01)
 
         # Update for next iteration
         x_n = x_next
@@ -166,8 +165,6 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
     - two_way_soft_constraint: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
-    import numpy as np
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -228,34 +225,11 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, show_viewer):
                 ipc_transform = abd_data["transform"]
 
                 if genesis_transform is not None and ipc_transform is not None:
-                    genesis_pos = genesis_transform[:3, 3]
-                    ipc_pos = ipc_transform[:3, 3]
-
                     # Compare positions
-                    pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
+                    assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=1e-3)
 
-                    # Compare rotation (using rotation matrix to euler angles)
-                    def rotmat_to_euler(R):
-                        sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
-                        singular = sy < 1e-6
-                        if not singular:
-                            x = np.arctan2(R[2, 1], R[2, 2])
-                            y = np.arctan2(-R[2, 0], sy)
-                            z = np.arctan2(R[1, 0], R[0, 0])
-                        else:
-                            x = np.arctan2(-R[1, 2], R[1, 1])
-                            y = np.arctan2(-R[2, 0], sy)
-                            z = 0
-                        return np.array([x, y, z])
-
-                    genesis_rot = genesis_transform[:3, :3]
-                    ipc_rot = ipc_transform[:3, :3]
-                    genesis_euler = rotmat_to_euler(genesis_rot)
-                    ipc_euler = rotmat_to_euler(ipc_rot)
-                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    print(f"Step {i}: Rotation difference (rad) = {rot_diff:.6f}")
-                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                    # Compare rotations
+                    assert_allclose(R_to_xyz(genesis_transform[:3, :3]), R_to_xyz(ipc_transform[:3, :3]), atol=0.1)
 
 
 @pytest.mark.required
@@ -268,8 +242,6 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
     - two_way_soft_constraint: Soft constraint coupling for rigid links
     - external_articulation: Joint-level coupling with ExternalArticulationConstraint
     """
-    import numpy as np
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=1e-3,
@@ -330,34 +302,11 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, show_viewer):
                 ipc_transform = abd_data["transform"]
 
                 if genesis_transform is not None and ipc_transform is not None:
-                    genesis_pos = genesis_transform[:3, 3]
-                    ipc_pos = ipc_transform[:3, 3]
+                    # Compare positions
+                    assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=1e-3)
 
-                    # Compare positions (mainly check z-axis for prismatic)
-                    pos_diff = np.linalg.norm(genesis_pos - ipc_pos)
-                    assert pos_diff < 0.001, f"Position difference too large: {pos_diff}"
-
-                    # Compare rotation (using rotation matrix to euler angles)
-                    def rotmat_to_euler(R):
-                        sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
-                        singular = sy < 1e-6
-                        if not singular:
-                            x = np.arctan2(R[2, 1], R[2, 2])
-                            y = np.arctan2(-R[2, 0], sy)
-                            z = np.arctan2(R[1, 0], R[0, 0])
-                        else:
-                            x = np.arctan2(-R[1, 2], R[1, 1])
-                            y = np.arctan2(-R[2, 0], sy)
-                            z = 0
-                        return np.array([x, y, z])
-
-                    genesis_rot = genesis_transform[:3, :3]
-                    ipc_rot = ipc_transform[:3, :3]
-                    genesis_euler = rotmat_to_euler(genesis_rot)
-                    ipc_euler = rotmat_to_euler(ipc_rot)
-                    rot_diff = np.linalg.norm(genesis_euler - ipc_euler)
-                    print(f"Step {i}: Rotation difference (rad) = {rot_diff:.6f}")
-                    assert rot_diff < 0.1, f"Rotation difference too large: {rot_diff}"
+                    # Compare rotations
+                    assert_allclose(R_to_xyz(genesis_transform[:3, :3]), R_to_xyz(ipc_transform[:3, :3]), atol=0.1)
 
 
 @pytest.mark.required
@@ -370,24 +319,6 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
     The test tracks vertex 0 position and validates within 1% tolerance.
     """
-    import numpy as np
-    from uipc.backend import SceneVisitor
-    from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
-
-    def get_cloth_vertex_positions(scene):
-        """Extract cloth vertex positions from IPC scene."""
-        visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
-        for geo_slot in visitor.geometries():
-            if isinstance(geo_slot, SimplicialComplexSlot):
-                geo = geo_slot.geometry()
-                if geo.dim() == 2:  # Cloth is 2D shell
-                    proc_geo = geo
-                    if geo.instances().size() >= 1:
-                        proc_geo = merge(apply_transform(geo))
-                    positions = proc_geo.positions().view().reshape(-1, 3)
-                    return positions  # Shape: (num_vertices, 3)
-        return None
-
     # Physics parameters
     dt = 2e-3  # 2ms timestep
     g = 9.8  # Gravity magnitude (m/s²)
@@ -454,23 +385,14 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     assert final_positions is not None, "Could not retrieve final cloth vertex positions"
     z_final = final_positions[0, 2]
 
-    # Calculate displacement
+    # Validate displacement: 0.5 * g * t * (t + dt)
     t_total = num_steps * dt
     actual_displacement = z_initial - z_final
     expected_displacement = 0.5 * g * t_total * (t_total + dt)
 
-    # Calculate relative error
-    relative_error = abs(actual_displacement - expected_displacement) / expected_displacement
-
-    # Validation with 1% tolerance
-    tolerance = 0.01
-    print("\nFree fall validation:")
-    print("  Initial Z:              {z_initial:.6f} m")
-    print("  Final Z:                {z_final:.6f} m")
-    print("  Actual displacement:    {actual_displacement:.6f} m")
-    print("  Expected displacement:  {expected_displacement:.6f} m")
-    print("  Relative error:         {relative_error * 100:.4f}%")
-
-    assert relative_error < tolerance, (
-        f"Physics validation failed: {relative_error * 100:.4f}% error (tolerance: {tolerance * 100}%)"
+    assert_allclose(
+        actual_displacement,
+        expected_displacement,
+        rtol=0.01,
+        err_msg=f"Free fall validation: z_initial={z_initial:.6f}, z_final={z_final:.6f}",
     )
