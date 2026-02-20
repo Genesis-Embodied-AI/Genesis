@@ -482,7 +482,7 @@ class RigidLink(RBC):
         if mass < gs.EPS:
             gs.raise_exception(f"Attempt to set mass of link '{self.name}' to {mass}. Mass must be strictly positive.")
 
-        ratio = float(mass) / self._inertial_mass
+        ratio = float(mass / self._inertial_mass)
         self._inertial_mass *= ratio
         if self._invweight is not None:
             self._invweight /= ratio
