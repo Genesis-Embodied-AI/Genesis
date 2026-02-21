@@ -134,7 +134,7 @@ def main():
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.4]),
         quat=np.array([0, 1, 0, 0]),
     )
 

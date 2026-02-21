@@ -84,7 +84,7 @@ def main():
     # Add Franka robot
     franka = scene.add_entity(
         gs.morphs.MJCF(
-            file="xml/franka_emika_panda/panda.xml",
+            file="xml/franka_emika_panda/panda_non_overlap.xml",
             pos=(0.0, 0.0, 0.005),
         ),
         vis_mode="collision",
