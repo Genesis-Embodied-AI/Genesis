@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import genesis as gs
+from genesis.utils.geom import R_to_xyz
 from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, get_hf_dataset
@@ -15,8 +16,6 @@ from uipc import builtin
 from uipc.backend import SceneVisitor
 from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
 
-_ = uipc
-
 
 def _iter_ipc_simplicial_geometries(scene):
     visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
@@ -26,10 +25,9 @@ def _iter_ipc_simplicial_geometries(scene):
 
 
 def _get_processed_geo(geo):
-    proc_geo = geo
     if geo.instances().size() >= 1:
-        proc_geo = merge(apply_transform(geo))
-    return proc_geo
+        return merge(apply_transform(geo))
+    return geo
 
 
 def _collect_ipc_geometry_entries(scene):
@@ -123,13 +121,6 @@ def _get_ipc_rigid_links(scene, env_idx=0):
         if entry["solver_type"] == "rigid" and entry["env_idx"] == env_idx:
             links.add(entry["idx"])
     return links
-
-
-def _get_fem_solver_entity_idx(scene, fem_entity):
-    for idx, entity in enumerate(scene.sim.fem_solver._entities):
-        if entity is fem_entity:
-            return idx
-    raise AssertionError
 
 
 def _get_entity_base_z(entity):
@@ -233,35 +224,43 @@ def test_ipc_cloth(n_envs, show_viewer):
 
     scene.build(n_envs=n_envs)
 
-    cloth_entity_idx = _get_fem_solver_entity_idx(scene, cloth)
+    # Verify cloth geometry is present in IPC for each environment
+    cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
     for env_idx in range(max(scene.n_envs, 1)):
         cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)
         assert len(cloth_matches) == 1
 
+    # Get initial state (vertex 0 of cloth)
     x_n = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
     assert x_n is not None
-    x_n = x_n[0, 2]
-    v_n = 0.0
+    x_n = x_n[0, 2]  # Z position of vertex 0
+    v_n = 0.0  # Initial velocity is zero
 
+    # Run simulation and validate kinematic equations at each step
     num_validation_steps = 10
-    tolerance = 0.01
 
     for step in range(num_validation_steps):
         scene.step()
+
+        # Get new position
         x_next = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
         assert x_next is not None
         x_next = x_next[0, 2]
 
+        # Expected displacement: dx = v_n * dt - g * dt^2
         expected_dx = v_n * dt - g * dt * dt
-        expected_x_next = x_n + expected_dx
-        pos_error = abs(x_next - expected_x_next) / abs(expected_dx) if abs(expected_dx) > 1e-6 else 0.0
-        assert pos_error < tolerance
 
+        # Validate displacement
+        assert_allclose(x_next - x_n, expected_dx, rtol=0.01)
+
+        # Calculate velocity: v_{n+1} = (x_{n+1} - x_n) / dt
         v_next = (x_next - x_n) / dt
-        expected_v_next = v_n - g * dt
-        vel_error = abs(v_next - expected_v_next) / abs(expected_v_next) if abs(expected_v_next) > 1e-6 else 0.0
-        assert vel_error < tolerance
 
+        # Expected velocity: v_{n+1} = v_n - g * dt
+        expected_v_next = v_n - g * dt
+        assert_allclose(v_next, expected_v_next, rtol=0.01)
+
+        # Update for next iteration
         x_n = x_next
         v_n = v_next
 
@@ -356,17 +355,15 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
                     if coupling_type == "external_articulation":
                         assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
                         assert_allclose(
-                            _rotmat_to_euler(genesis_transform[:3, :3]),
-                            _rotmat_to_euler(ipc_transform[:3, :3]),
+                            R_to_xyz(genesis_transform[:3, :3], rpy=True),
+                            R_to_xyz(ipc_transform[:3, :3], rpy=True),
                             atol=0.1,
                         )
 
     if coupling_type == "two_way_soft_constraint":
-        q_hist = np.asarray(qpos_history)
-        tgt_hist = np.asarray(target_history)
-        corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
+        corr = np.corrcoef(qpos_history, target_history)[0, 1]
         assert corr > 0.85
-        assert np.ptp(q_hist) > 0.7
+        assert np.ptp(qpos_history) > 0.7
 
     if not fixed_base:
         if coupling_type == "external_articulation":
@@ -468,17 +465,15 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
                     if coupling_type == "external_articulation":
                         assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
                         assert_allclose(
-                            _rotmat_to_euler(genesis_transform[:3, :3]),
-                            _rotmat_to_euler(ipc_transform[:3, :3]),
+                            R_to_xyz(genesis_transform[:3, :3], rpy=True),
+                            R_to_xyz(ipc_transform[:3, :3], rpy=True),
                             atol=0.1,
                         )
 
     if coupling_type == "two_way_soft_constraint":
-        q_hist = np.asarray(qpos_history)
-        tgt_hist = np.asarray(target_history)
-        corr = np.corrcoef(q_hist, tgt_hist)[0, 1]
+        corr = np.corrcoef(qpos_history, target_history)[0, 1]
         assert corr > 0.4
-        assert np.ptp(q_hist) > 0.12
+        assert np.ptp(qpos_history) > 0.12
 
     if not fixed_base:
         if coupling_type == "external_articulation":
@@ -493,7 +488,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
 def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
-    """Test cloth free fall physics validation + IPC->Genesis retrieve consistency."""
+    """Test cloth free fall physics validation + IPC<->Genesis retrieve consistency."""
     dt = 2e-3
     g = 9.8
     z0 = 2.0
@@ -540,7 +535,7 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
     scene.build(n_envs=n_envs)
 
-    cloth_entity_idx = _get_fem_solver_entity_idx(scene, cloth)
+    cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
     cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
     assert len(cloth_matches) == 1
 
@@ -555,14 +550,13 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     assert final_positions is not None
     z_final = final_positions[0, 2]
 
+    # Validate displacement: 0.5 * g * t * (t + dt)
     t_total = num_steps * dt
     actual_displacement = z_initial - z_final
     expected_displacement = 0.5 * g * t_total * (t_total + dt)
-    relative_error = abs(actual_displacement - expected_displacement) / expected_displacement
+    assert_allclose(actual_displacement, expected_displacement, rtol=0.01)
 
-    tolerance = 0.01
-    assert relative_error < tolerance
-
+    # Validate IPC<->Genesis centroid consistency
     ipc_centroid = final_positions.mean(axis=0)
     genesis_positions = tensor_to_array(cloth.get_state().pos)[0]
     genesis_centroid = genesis_positions.mean(axis=0)
@@ -571,7 +565,7 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_ipc_link_filter_strict(show_viewer):
-    """Strictly verify that IPC link filter controls which links are actually added to IPC."""
+    """Verify that IPC link filter controls which links are actually added to IPC."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=1e-3),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -663,29 +657,34 @@ def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
-    """Strict grasp test: verify FEM add/retrieve and that robot lift raises FEM by >= 0.1m."""
+    """Verify FEM add/retrieve and that robot lift raises FEM by >= 0.1m."""
     dt = 1e-2
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, -9.8)),
-        rigid_options=None,
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0.0, 0.0, -9.8),
+        ),
         coupler_options=gs.options.IPCCouplerOptions(
             dt=dt,
             gravity=(0.0, 0.0, -9.8),
             ipc_constraint_strength=(100, 100),
-            disable_ipc_ground_contact=True,
-            disable_ipc_logging=True,
-            IPC_self_contact=False,
             contact_friction_mu=0.8,
-            enable_ipc_gui=False,
             newton_transrate_tol=10,
+            IPC_self_contact=False,
+            disable_ipc_ground_contact=True,
+            disable_ipc_logging=False,
+            enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
     )
 
     scene.add_entity(gs.morphs.Plane())
+
     franka = scene.add_entity(
-        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda_non_overlap.xml",
+        ),
     )
     scene.sim.coupler.set_entity_coupling_type(
         entity=franka,
@@ -693,19 +692,28 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     )
     scene.sim.coupler.set_ipc_coupling_link_filter(
         entity=franka,
-        link_names=["left_finger", "right_finger"],
+        link_names=("left_finger", "right_finger"),
     )
 
     fem_box = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.65, 0.0, 0.03), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.FEM.Elastic(E=5.0e4, nu=0.45, rho=1000.0, model="stable_neohookean"),
-        surface=gs.surfaces.Plastic(color=(0.2, 0.8, 0.2, 0.5)),
+        morph=gs.morphs.Box(
+            pos=(0.65, 0.0, 0.03),
+            size=(0.05, 0.05, 0.05),
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=5.0e4,
+            nu=0.45,
+            rho=1000.0,
+            model="stable_neohookean",
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.2, 0.8, 0.2, 0.5),
+        ),
     )
 
-    scene.build(n_envs=0)
+    scene.build()
 
-    coupler = scene.sim.coupler
-    fem_entity_idx = _get_fem_solver_entity_idx(scene, fem_box)
+    fem_entity_idx = scene.sim.fem_solver.entities.index(fem_box)
 
     fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
     assert len(fem_matches) == 1
@@ -717,13 +725,13 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
     assert expected_finger_links.issubset(ipc_links)
     for link_idx in expected_finger_links:
-        assert (0, link_idx) in coupler._link_to_abd_slot
+        assert (0, link_idx) in scene.sim.coupler._link_to_abd_slot
 
     franka_link_indices = {link.idx for link in franka.links}
     franka_ipc_links = ipc_links.intersection(franka_link_indices)
     if coupling_type == "two_way_soft_constraint":
         entity_idx = franka._idx_in_solver
-        assert coupler._ipc_link_filters.get(entity_idx) == expected_finger_links
+        assert scene.sim.coupler._ipc_link_filters.get(entity_idx) == expected_finger_links
         assert franka_ipc_links == expected_finger_links
     else:
         assert expected_finger_links.issubset(franka_ipc_links)
@@ -741,48 +749,34 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     new_kp = current_kp
     new_kp[fingers_dof] = current_kp[fingers_dof] * 5.0
     franka.set_dofs_kp(new_kp)
-    end_effector = franka.get_link("hand")
+    # end_effector = franka.get_link("hand")
 
     def run_stage(target_qpos, finger_pos, duration):
-        num_steps = max(1, int(duration / dt))
         finger_cmd = np.array([finger_pos, finger_pos], dtype=np.float32)
-        for _ in range(num_steps):
+        for _ in range(max(int(duration / dt), 1)):
             franka.control_dofs_position(target_qpos[:-2], motors_dof)
             franka.control_dofs_position(finger_cmd, fingers_dof)
             scene.step()
 
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.4]),
-        quat=np.array([0.0, 1.0, 0.0, 0.0]),
-    )
+    # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos = [-0.9482, 0.6910, 1.2114, -1.6619, -0.6739, 1.8685, 1.1844, 0.0112, 0.0096]
     run_stage(qpos, finger_pos=0.04, duration=2.0)
 
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.25]),
-        quat=np.array([0.0, 1.0, 0.0, 0.0]),
-    )
+    # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.25], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos = [-0.8757, 0.8824, 1.0523, -1.7619, -0.8831, 2.0903, 1.2924, 0.0400, 0.0400]
     run_stage(qpos, finger_pos=0.04, duration=1.0)
 
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
-        quat=np.array([0.0, 1.0, 0.0, 0.0]),
-    )
+    # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.135], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos = [-0.7711, 1.0502, 0.8850, -1.7182, -1.0210, 2.2350, 1.3489, 0.0400, 0.0400]
     run_stage(qpos, finger_pos=0.04, duration=0.5)
 
     run_stage(qpos, finger_pos=0.0, duration=0.1)
 
-    qpos = franka.inverse_kinematics(
-        link=end_effector,
-        pos=np.array([0.65, 0.0, 0.4]),
-        quat=np.array([0.0, 1.0, 0.0, 0.0]),
-    )
+    # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos = [-0.9488, 0.6916, 1.2123, -1.6627, -0.6750, 1.8683, 1.1855, 0.0301, 0.0319]
     run_stage(qpos, finger_pos=0.0, duration=0.2)
 
     final_ipc_centroid = _get_ipc_centroid(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert final_ipc_centroid is not None
     final_genesis_positions = tensor_to_array(fem_box.get_state().pos)[0]
     final_genesis_centroid = final_genesis_positions.mean(axis=0)
 
@@ -796,6 +790,8 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
 def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     """IPC momentum test: final relative error must be <= 2%."""
     dt = 1e-3
+    initial_velocity = 4.0
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -821,7 +817,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     scene.sim.coupler.set_entity_coupling_type(entity=rigid_cube, coupling_type="two_way_soft_constraint")
     scene.build(n_envs=1)
 
-    fem_entity_idx = _get_fem_solver_entity_idx(scene, blob)
+    fem_entity_idx = scene.sim.fem_solver.entities.index(blob)
     fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
     assert len(fem_matches) == 1
 
@@ -830,7 +826,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     assert rigid_link_idx in ipc_links
     assert (0, rigid_link_idx) in scene.sim.coupler._link_to_abd_slot
 
-    rigid_cube.set_dofs_velocity((4.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    rigid_cube.set_dofs_velocity((initial_velocity, 0.0, 0.0, 0.0, 0.0, 0.0))
 
     blob_radius = blob.morph.radius
     blob_rho = blob.material.rho
@@ -850,7 +846,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
             scene.sim.rigid_solver.get_links_pos(links_idx=rigid_link_idx, ref="link_com")
         ).reshape(-1, 3)[0]
         if rigid_prev_pos is None:
-            rigid_vel = np.array([4.0, 0.0, 0.0])
+            rigid_vel = np.array([initial_velocity, 0.0, 0.0])
         else:
             rigid_vel = (rigid_pos - rigid_prev_pos) / dt
         rigid_prev_pos = rigid_pos.copy()
@@ -883,7 +879,5 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         scene.step()
 
     total_p_history = np.array(total_p_history)
-    expected_momentum = np.array([4.0 * rigid_mass, 0.0, 0.0])
-    final_relative_error = np.linalg.norm(total_p_history[-1] - expected_momentum) / np.linalg.norm(expected_momentum)
-
-    assert final_relative_error <= 0.02
+    expected_momentum = np.array([initial_velocity * rigid_mass, 0.0, 0.0])
+    assert_allclose(total_p_history[-1], expected_momentum, rtol=0.01, atol=0.001)

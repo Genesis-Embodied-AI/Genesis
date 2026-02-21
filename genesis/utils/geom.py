@@ -875,9 +875,8 @@ def R_to_quat(R, *, out=None):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(R)=}")
 
 
-def R_to_xyz(R, degrees=False):
-    """Convert a rotation matrix into intrinsic x-y-z Euler angles."""
-    return quat_to_xyz(R_to_quat(R), degrees=degrees)
+def R_to_xyz(R, rpy=False, degrees=False):
+    return quat_to_xyz(R_to_quat(R), rpy=rpy, degrees=degrees)
 
 
 def trans_R_to_T(trans=None, R=None, *, out=None):
