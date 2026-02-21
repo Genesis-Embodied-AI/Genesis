@@ -520,14 +520,10 @@ def test_robot_fem_grasp_retrieve_lift(coupling_type, show_viewer):
     assert (gs_positions_f[..., 2] - finger_aabb[..., 0, 2] > 0).any()
 
 
-# ---------------------------------------------------------------------------------------
-
-
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0])
-def test_motion(n_envs, show_viewer):
-    """IPC momentum test: final relative error must be <= 2%."""
-    DT = 1e-3
+def test_momentum_conversation(n_envs, show_viewer):
+    DT = 0.001
     DURATION = 0.30
     VELOCITY = np.array([4.0, 0.0, 0.0], dtype=gs.np_float)
 
@@ -597,14 +593,17 @@ def test_motion(n_envs, show_viewer):
     cube_mass = rigid_cube.get_mass()
 
     total_p_history = []
-    fem_positions_prev = 0.0  # FEM initial velocity is zero
+    fem_positions_prev = None  # FEM initial velocity is zero
     for _ in range(int(DURATION / DT)):
         rigid_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
         rigid_linear_momentum = cube_mass * rigid_vel
 
         fem_proc_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
         fem_positions = fem_proc_geo.positions().view().squeeze(axis=-1)
-        fem_velocities = (fem_positions - fem_positions_prev) / DT
+        if fem_positions_prev is not None:
+            fem_velocities = (fem_positions - fem_positions_prev) / DT
+        else:
+            fem_velocities = 0.0
         fem_positions_prev = fem_positions
 
         volume_attr = fem_proc_geo.vertices().find(builtin.volume)
@@ -624,6 +623,7 @@ def test_motion(n_envs, show_viewer):
 
         scene.step()
 
-    # FIXME: No check for intermediary values ?!
+    # FIXME: Why momentum conservation is not satisfied more accurately ?!
     momentum_0 = VELOCITY * cube_mass
+    assert_allclose(total_p_history, momentum_0, tol=0.03)
     assert_allclose(total_p_history[-1], momentum_0, rtol=0.01, atol=0.001)
