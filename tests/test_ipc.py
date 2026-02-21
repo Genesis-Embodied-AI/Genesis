@@ -17,7 +17,7 @@ from uipc.backend import SceneVisitor
 from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
 
 
-def _collect_ipc_geometry_entries(scene):
+def collect_ipc_geometry_entries(scene):
     visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
     for geom_slot in visitor.geometries():
         if not isinstance(geom_slot, SimplicialComplexSlot):
@@ -43,40 +43,35 @@ def _collect_ipc_geometry_entries(scene):
         yield (solver_type, env_idx, idx, geom)
 
 
-def _find_ipc_geometries(scene, *, solver_type, idx=None, env_idx=None):
+def find_ipc_geometries(scene, *, solver_type, idx=None, env_idx=None):
     geoms = []
-    for solver_type_, env_idx_, idx_, geom in _collect_ipc_geometry_entries(scene):
+    for solver_type_, env_idx_, idx_, geom in collect_ipc_geometry_entries(scene):
         if solver_type == solver_type_ and (idx is None or idx == idx_) and (env_idx is None or env_idx == env_idx_):
             geoms.append(geom)
     return geoms
 
 
-def _get_ipc_merged_geometry(scene, *, solver_type, idx, env_idx):
-    (geom,) = _find_ipc_geometries(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
+def get_ipc_merged_geometry(scene, *, solver_type, idx, env_idx):
+    (geom,) = find_ipc_geometries(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
     if geom.instances().size() >= 1:
         geom = merge(apply_transform(geom))
     return geom
 
 
-def _get_ipc_positions(scene, *, solver_type, idx, env_idx):
-    merged_geo = _get_ipc_merged_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
+def get_ipc_positions(scene, *, solver_type, idx, env_idx):
+    merged_geo = get_ipc_merged_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
     return merged_geo.positions().view().squeeze(axis=-1)
 
 
-def _get_ipc_centroid(scene, *, solver_type, idx, env_idx):
-    positions = _get_ipc_positions(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
-    return positions.mean(axis=0)
-
-
-def _get_ipc_rigid_links_idx(scene, env_idx):
+def get_ipc_rigid_links_idx(scene, env_idx):
     links_idx = []
-    for solver_type_, env_idx_, idx_, _geom in _collect_ipc_geometry_entries(scene):
+    for solver_type_, env_idx_, idx_, _geom in collect_ipc_geometry_entries(scene):
         if solver_type_ == "rigid" and env_idx_ == env_idx:
             links_idx.append(idx_)
     return links_idx
 
 
-def _get_entity_base_z(entity):
+def get_entity_base_z(entity):
     pos = tensor_to_array(entity.get_pos())
     if pos.ndim == 1:
         return float(pos[2])
@@ -166,11 +161,10 @@ def test_ipc_cloth(n_envs, show_viewer):
     # Verify cloth geometry is present in IPC for each environment
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
     for env_idx in range(max(scene.n_envs, 1)):
-        cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)
-        assert len(cloth_matches) == 1
+        assert len(find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)) == 1
 
     # Get initial state (vertex 0 of cloth)
-    x_n = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
+    x_n = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
     assert x_n is not None
     x_n = x_n[0, 2]  # Z position of vertex 0
     v_n = 0.0  # Initial velocity is zero
@@ -182,7 +176,7 @@ def test_ipc_cloth(n_envs, show_viewer):
         scene.step()
 
         # Get new position
-        x_next = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
+        x_next = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
         assert x_next is not None
         x_next = x_next[0, 2]
 
@@ -254,10 +248,10 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     scene.build(n_envs=n_envs)
 
     moving_link_idx = robot.get_link("moving").idx
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link_idx in ipc_links_idx
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
-    initial_base_z = _get_entity_base_z(robot)
+    initial_base_z = get_entity_base_z(robot)
     initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
@@ -288,13 +282,13 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
                 and env_idx in scene.sim.coupler.abd_data_by_link[link_idx]
             ):
                 abd_data = scene.sim.coupler.abd_data_by_link[link_idx][env_idx]
-                genesis_transform = abd_data["aim_transform"]
+                gs_transform = abd_data["aim_transform"]
                 ipc_transform = abd_data["transform"]
-                if genesis_transform is not None and ipc_transform is not None:
+                if gs_transform is not None and ipc_transform is not None:
                     if coupling_type == "external_articulation":
-                        assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
+                        assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
                         assert_allclose(
-                            R_to_xyz(genesis_transform[:3, :3], rpy=True),
+                            R_to_xyz(gs_transform[:3, :3], rpy=True),
                             R_to_xyz(ipc_transform[:3, :3], rpy=True),
                             atol=0.1,
                         )
@@ -306,7 +300,7 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
 
     if not fixed_base:
         if coupling_type == "external_articulation":
-            final_base_z = _get_entity_base_z(robot)
+            final_base_z = get_entity_base_z(robot)
             assert final_base_z <= initial_base_z - 0.03
         else:
             final_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0]
@@ -364,10 +358,10 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     scene.build(n_envs=n_envs)
 
     moving_link_idx = robot.get_link("moving").idx
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link_idx in ipc_links_idx
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
-    initial_base_z = _get_entity_base_z(robot)
+    initial_base_z = get_entity_base_z(robot)
     initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
 
     max_steps = 100
@@ -398,13 +392,13 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
                 and env_idx in scene.sim.coupler.abd_data_by_link[link_idx]
             ):
                 abd_data = scene.sim.coupler.abd_data_by_link[link_idx][env_idx]
-                genesis_transform = abd_data["aim_transform"]
+                gs_transform = abd_data["aim_transform"]
                 ipc_transform = abd_data["transform"]
-                if genesis_transform is not None and ipc_transform is not None:
+                if gs_transform is not None and ipc_transform is not None:
                     if coupling_type == "external_articulation":
-                        assert_allclose(genesis_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
+                        assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
                         assert_allclose(
-                            R_to_xyz(genesis_transform[:3, :3], rpy=True),
+                            R_to_xyz(gs_transform[:3, :3], rpy=True),
                             R_to_xyz(ipc_transform[:3, :3], rpy=True),
                             atol=0.1,
                         )
@@ -416,7 +410,7 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
 
     if not fixed_base:
         if coupling_type == "external_articulation":
-            final_base_z = _get_entity_base_z(robot)
+            final_base_z = get_entity_base_z(robot)
             assert final_base_z <= initial_base_z - 0.03
         else:
             final_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0]
@@ -475,17 +469,16 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     scene.build(n_envs=n_envs)
 
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
-    cloth_matches = _find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert len(cloth_matches) == 1
+    assert len(find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)) == 1
 
-    initial_positions = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
+    initial_positions = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
     assert initial_positions is not None
     z_initial = initial_positions[0, 2]
 
     for _ in range(num_steps):
         scene.step()
 
-    final_positions = _get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
+    final_positions = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
     assert final_positions is not None
     z_final = final_positions[0, 2]
 
@@ -497,9 +490,9 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
 
     # Validate IPC<->Genesis centroid consistency
     ipc_centroid = final_positions.mean(axis=0)
-    genesis_positions = tensor_to_array(cloth.get_state().pos)[0]
-    genesis_centroid = genesis_positions.mean(axis=0)
-    assert_allclose(ipc_centroid, genesis_centroid, atol=1e-3)
+    gs_positions = tensor_to_array(cloth.get_state().pos)[0]
+    gs_centroid = gs_positions.mean(axis=0)
+    assert_allclose(ipc_centroid, gs_centroid, atol=1e-3)
 
 
 @pytest.mark.required
@@ -538,7 +531,7 @@ def test_ipc_link_filter_strict(show_viewer):
     assert entity_idx in coupler._ipc_link_filters
     assert coupler._ipc_link_filters[entity_idx] == {moving_link_idx}
 
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link_idx in ipc_links_idx
     assert base_link_idx not in ipc_links_idx
 
@@ -582,14 +575,14 @@ def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
     scene.build(n_envs=0)
 
     base_link_idx = cube.base_link_idx
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert base_link_idx in ipc_links_idx
     assert (0, base_link_idx) in scene.sim.coupler._link_to_abd_slot
 
-    initial_z = _get_entity_base_z(cube)
+    initial_z = get_entity_base_z(cube)
     for _ in range(120):
         scene.step()
-    final_z = _get_entity_base_z(cube)
+    final_z = get_entity_base_z(cube)
     assert final_z <= initial_z - 0.04
 
 
@@ -653,34 +646,28 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     scene.build()
 
     fem_entity_idx = scene.sim.fem_solver.entities.index(fem_box)
+    assert len(find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)) == 1
 
-    fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert len(fem_matches) == 1
-
-    left_finger_idx = franka.get_link("left_finger").idx
-    right_finger_idx = franka.get_link("right_finger").idx
-    expected_finger_links = {left_finger_idx, right_finger_idx}
-
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
-    assert expected_finger_links.issubset(ipc_links_idx)
-    for link_idx in expected_finger_links:
+    franka_finger_links_idx = {franka.get_link(name).idx for name in ("left_finger", "right_finger")}
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert franka_finger_links_idx.issubset(ipc_links_idx)
+    for link_idx in franka_finger_links_idx:
         assert (0, link_idx) in scene.sim.coupler._link_to_abd_slot
 
-    franka_link_indices = {link.idx for link in franka.links}
-    franka_ipc_links = ipc_links_idx.intersection(franka_link_indices)
+    franka_links_idx = {link.idx for link in franka.links}
+    franka_ipc_links_idx = franka_links_idx.intersection(ipc_links_idx)
     if coupling_type == "two_way_soft_constraint":
-        entity_idx = franka._idx_in_solver
-        assert scene.sim.coupler._ipc_link_filters.get(entity_idx) == expected_finger_links
-        assert franka_ipc_links == expected_finger_links
+        entity_idx = scene.sim.rigid_solver.entities.index(franka)
+        assert scene.sim.coupler._ipc_link_filters.get(entity_idx) == franka_finger_links_idx
+        assert franka_ipc_links_idx == franka_finger_links_idx
     else:
-        assert expected_finger_links.issubset(franka_ipc_links)
+        assert franka_finger_links_idx.issubset(franka_ipc_links_idx)
 
-    initial_ipc_centroid = _get_ipc_centroid(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert initial_ipc_centroid is not None
-    initial_genesis_positions = tensor_to_array(fem_box.get_state().pos)[0]
-    initial_genesis_centroid = initial_genesis_positions.mean(axis=0)
-    assert_allclose(initial_ipc_centroid, initial_genesis_centroid, atol=1e-3)
-    initial_z = initial_genesis_centroid[2]
+    initial_ipc_centroid = get_ipc_positions(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0).mean(axis=0)
+    initial_gs_positions = tensor_to_array(fem_box.get_state().pos)[0]
+    initial_gs_centroid = initial_gs_positions.mean(axis=0)
+    assert_allclose(initial_ipc_centroid, initial_gs_centroid, atol=1e-3)
+    initial_z = initial_gs_centroid[2]
 
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
@@ -715,13 +702,13 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     qpos = [-0.9488, 0.6916, 1.2123, -1.6627, -0.6750, 1.8683, 1.1855, 0.0301, 0.0319]
     run_stage(qpos, finger_pos=0.0, duration=0.2)
 
-    final_ipc_centroid = _get_ipc_centroid(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    final_genesis_positions = tensor_to_array(fem_box.get_state().pos)[0]
-    final_genesis_centroid = final_genesis_positions.mean(axis=0)
+    final_ipc_centroid = get_ipc_positions(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0).mean(axis=0)
+    final_gs_positions = tensor_to_array(fem_box.get_state().pos)[0]
+    final_gs_centroid = final_gs_positions.mean(axis=0)
 
-    assert_allclose(final_ipc_centroid, final_genesis_centroid, atol=1e-3)
+    assert_allclose(final_ipc_centroid, final_gs_centroid, atol=1e-3)
 
-    z_gain = final_genesis_centroid[2] - initial_z
+    z_gain = final_gs_centroid[2] - initial_z
     assert z_gain >= 0.1
 
 
@@ -757,11 +744,10 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     scene.build(n_envs=1)
 
     fem_entity_idx = scene.sim.fem_solver.entities.index(blob)
-    fem_matches = _find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
-    assert len(fem_matches) == 1
+    assert len(find_ipc_geometries(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)) == 1
 
     rigid_link_idx = rigid_cube.base_link_idx
-    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert rigid_link_idx in ipc_links_idx
     assert (0, rigid_link_idx) in scene.sim.coupler._link_to_abd_slot
 
@@ -791,7 +777,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         rigid_prev_pos = rigid_pos.copy()
         rigid_linear_momentum = rigid_mass * rigid_vel
 
-        fem_proc_geo = _get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
+        fem_proc_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
         assert fem_proc_geo is not None
         fem_vertex_positions = fem_proc_geo.positions().view().reshape(-1, 3)
 
