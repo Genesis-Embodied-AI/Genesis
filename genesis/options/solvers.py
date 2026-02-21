@@ -290,7 +290,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     """
 
     # contact
-    contact_d_hat: float = 0.001
+    contact_d_hat: Optional[float] = None
     contact_resistance: float = 1e9
     contact_enable: Optional[bool] = None
     contact_friction_enable: Optional[bool] = None
@@ -298,7 +298,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     contact_constitution: Optional[str] = None
 
     # newton solver
-    newton_tolerance: float = 0.001
+    newton_tolerance: Optional[float] = None
     newton_max_iterations: Optional[int] = None
     newton_min_iterations: Optional[int] = None
     newton_ccd_tolerance: Optional[float] = None
@@ -308,11 +308,11 @@ class IPCCouplerOptions(BaseCouplerOptions):
     newton_semi_implicit_beta_tolerance: Optional[float] = None
 
     # line search
-    n_linesearch_iterations: int = 30
+    n_linesearch_iterations: Optional[int] = None
     linesearch_report_energy: Optional[bool] = None
 
     # linear system
-    linear_system_tolerance: float = 1e-4
+    linear_system_tolerance: Optional[float] = None
     linear_system_solver: Optional[str] = None
 
     # collision detection
@@ -370,10 +370,8 @@ class RigidOptions(Options):
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     gravity : tuple, optional
         Gravity force in N/kg. If none, it will inherit from `SimOptions`. Defaults to None.
-    enable_collision : bool or None, optional
-        Whether to enable collision detection. Defaults to None, which resolves to True.
-        Must not be set to True when using IPCCouplerOptions, as IPC handles contact and Genesis
-        rigid collision is automatically disabled; setting True explicitly raises an exception.
+    enable_collision : bool, optional
+        Whether to enable collision detection. Defaults to True.
     enable_joint_limit : bool, optional
         Whether to enable joint limit. Defaults to True.
     enable_self_collision : bool, optional
@@ -446,7 +444,7 @@ class RigidOptions(Options):
 
     dt: Optional[float] = None
     gravity: Optional[tuple] = None
-    enable_collision: Optional[bool] = None
+    enable_collision: bool = True
     enable_joint_limit: bool = True
     enable_self_collision: bool = True
     enable_neutral_collision: bool = False

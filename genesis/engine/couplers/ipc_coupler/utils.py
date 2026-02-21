@@ -164,7 +164,8 @@ def build_ipc_scene_config(options, sim_options):
     config["gravity"] = [[g[0]], [g[1]], [g[2]]]
 
     # contact
-    config["contact"]["d_hat"] = options.contact_d_hat
+    if options.contact_d_hat is not None:
+        config["contact"]["d_hat"] = options.contact_d_hat
     if options.contact_enable is not None:
         config["contact"]["enable"] = options.contact_enable
     if options.contact_friction_enable is not None:
@@ -175,7 +176,8 @@ def build_ipc_scene_config(options, sim_options):
         config["contact"]["constitution"] = options.contact_constitution
 
     # newton solver
-    config["newton"]["velocity_tol"] = options.newton_tolerance
+    if options.newton_tolerance is not None:
+        config["newton"]["velocity_tol"] = options.newton_tolerance
     if options.newton_max_iterations is not None:
         config["newton"]["max_iter"] = options.newton_max_iterations
     if options.newton_min_iterations is not None:
@@ -192,12 +194,14 @@ def build_ipc_scene_config(options, sim_options):
         config["newton"]["semi_implicit"]["beta_tol"] = options.newton_semi_implicit_beta_tolerance
 
     # line search
-    config["line_search"]["max_iter"] = options.n_linesearch_iterations
+    if options.n_linesearch_iterations is not None:
+        config["line_search"]["max_iter"] = options.n_linesearch_iterations
     if options.linesearch_report_energy is not None:
         config["line_search"]["report_energy"] = options.linesearch_report_energy
 
     # linear system
-    config["linear_system"]["tol_rate"] = options.linear_system_tolerance
+    if options.linear_system_tolerance is not None:
+        config["linear_system"]["tol_rate"] = options.linear_system_tolerance
     if options.linear_system_solver is not None:
         config["linear_system"]["solver"] = options.linear_system_solver
 

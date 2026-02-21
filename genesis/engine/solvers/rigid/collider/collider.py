@@ -217,6 +217,19 @@ class Collider:
 
         self.reset()
 
+    def _get_collision_excluded_entity_ids(self) -> set[int]:
+        """Return entity IDs whose contact is handled by an external solver.
+
+        Entities whose material specifies a ``coupling_mode`` (e.g. IPC-coupled
+        rigid bodies) have their contact managed externally and must be excluded
+        from the Genesis rigid collision pipeline.
+        """
+        excluded: set[int] = set()
+        for entity in self._solver._entities:
+            if entity.material.coupling_mode is not None:
+                excluded.add(entity._idx_in_solver)
+        return excluded
+
     def _compute_collision_pair_idx(self):
         """
         Compute flat indices of all valid collision pairs.
@@ -236,6 +249,9 @@ class Collider:
         # Track pairs that are colliding in neutral configuration for warning
         self_colliding_pairs: list[tuple[int, int]] = []
 
+        # Entities whose contact is handled externally (e.g. by IPC)
+        excluded = self._get_collision_excluded_entity_ids()
+
         n_possible_pairs = 0
         collision_pair_idx = np.full((self._solver.n_geoms, self._solver.n_geoms), fill_value=-1, dtype=gs.np_int)
         for i_ga in range(self._solver.n_geoms):
@@ -246,6 +262,10 @@ class Collider:
                 geom_b = self._solver.geoms[i_gb]
                 link_b = geom_b.link
                 e_b = geom_b.entity
+
+                # Skip pairs where at least one entity is handled by an external solver
+                if excluded and (e_a._idx_in_solver in excluded or e_b._idx_in_solver in excluded):
+                    continue
 
                 # geoms in the same link
                 if link_a is link_b:
