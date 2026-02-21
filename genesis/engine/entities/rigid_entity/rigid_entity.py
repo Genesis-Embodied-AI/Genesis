@@ -2088,6 +2088,8 @@ class RigidEntity(Entity):
                 idx_local.step or 1,
             )
         elif isinstance(idx_local, (int, np.integer)):
+            if idx_local < 0:
+                idx_local = idx_local_max + idx_local
             idx_global = (idx_local + idx_global_start,)
         elif isinstance(idx_local, (list, tuple)):
             try:

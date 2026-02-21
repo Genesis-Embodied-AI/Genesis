@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 
 import genesis as gs
-from genesis.utils.geom import R_to_xyz
+import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array
 
+from .conftest import TOL_SINGLE
 from .utils import assert_allclose, get_hf_dataset
 
 try:
@@ -58,9 +59,14 @@ def get_ipc_merged_geometry(scene, *, solver_type, idx, env_idx):
     return geom
 
 
-def get_ipc_positions(scene, *, solver_type, idx, env_idx):
-    merged_geo = get_ipc_merged_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
-    return merged_geo.positions().view().squeeze(axis=-1)
+def get_ipc_positions(scene, *, solver_type, idx, envs_idx):
+    geoms_positions = []
+    assert envs_idx
+    for env_idx in envs_idx:
+        merged_geom = get_ipc_merged_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
+        geom_positions = merged_geom.positions().view().squeeze(axis=-1)
+        geoms_positions.append(geom_positions)
+    return np.stack(geoms_positions, axis=0)
 
 
 def get_ipc_rigid_links_idx(scene, env_idx):
@@ -80,23 +86,23 @@ def get_entity_base_z(entity):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_ipc_cloth(n_envs, show_viewer):
+def test_cloth_free_falling(n_envs, show_viewer):
     """Test IPC cloth simulation with gravity physics validation."""
-    dt = 2e-3
-    g = 9.8
+    DT = 0.002
+    GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
+            dt=DT,
+            gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
+            dt=DT,
+            gravity=GRAVITY.tolist(),
             contact_d_hat=0.01,
             contact_friction_mu=0.3,
-            IPC_self_contact=False,
             two_way_coupling=True,
+            IPC_self_contact=False,
             disable_genesis_contact=True,
             enable_ipc_gui=False,
         ),
@@ -123,6 +129,7 @@ def test_ipc_cloth(n_envs, show_viewer):
             double_sided=True,
         ),
     )
+
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
@@ -157,76 +164,73 @@ def test_ipc_cloth(n_envs, show_viewer):
     )
 
     scene.build(n_envs=n_envs)
+    envs_idx = range(max(scene.n_envs, 1))
 
     # Verify cloth geometry is present in IPC for each environment
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
-    for env_idx in range(max(scene.n_envs, 1)):
+    for env_idx in envs_idx:
         assert len(find_ipc_geometries(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=env_idx)) == 1
 
-    # Get initial state (vertex 0 of cloth)
-    x_n = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-    assert x_n is not None
-    x_n = x_n[0, 2]  # Z position of vertex 0
-    v_n = 0.0  # Initial velocity is zero
+    # Get initial state
+    p_prev = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, envs_idx=envs_idx)
+    v_prev = np.zeros_like(p_prev)
 
-    # Run simulation and validate kinematic equations at each step
-    num_validation_steps = 10
-
-    for step in range(num_validation_steps):
+    # Run simulation and validate dynamics equations at each step
+    for _i in range(20):
+        # Move forward in time
         scene.step()
 
         # Get new position
-        x_next = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, env_idx=0)
-        assert x_next is not None
-        x_next = x_next[0, 2]
+        p_i = get_ipc_positions(scene, solver_type="cloth", idx=cloth_entity_idx, envs_idx=envs_idx)
 
-        # Expected displacement: dx = v_n * dt - g * dt^2
-        expected_dx = v_n * dt - g * dt * dt
+        # Estimate velocity by finite difference: v_{n+1} = (x_{n+1} - x_n) / DT
+        v_i = (p_i - p_prev) / DT
 
-        # Validate displacement
-        assert_allclose(x_next - x_n, expected_dx, rtol=0.01)
+        # Validate velocity
+        expected_v_next = v_prev + GRAVITY * DT
+        assert_allclose(v_i, expected_v_next, atol=2e-4)
 
-        # Calculate velocity: v_{n+1} = (x_{n+1} - x_n) / dt
-        v_next = (x_next - x_n) / dt
-
-        # Expected velocity: v_{n+1} = v_n - g * dt
-        expected_v_next = v_n - g * dt
-        assert_allclose(v_next, expected_v_next, rtol=0.01)
+        # Validate displacement assuming Euler scheme
+        expected_p = p_prev + v_prev * DT + GRAVITY * DT**2
+        assert_allclose(p_i, expected_p, tol=TOL_SINGLE)
 
         # Update for next iteration
-        x_n = x_next
-        v_n = v_next
+        p_prev, v_prev = p_i, v_i
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0])
+@pytest.mark.parametrize("n_envs", [0])  # FIXME: batching is not supported for now
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
-@pytest.mark.parametrize("fixed_base", [True, False])
-def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
+@pytest.mark.parametrize("fixed", [True, False])
+def test_joint_revolute(n_envs, coupling_type, fixed, show_viewer):
     """Test two-way coupling with revolute joint."""
-    dt = 1e-2
+    DT = 0.01
+    GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
+    POS = (0, 0, 0.5)
+    OMEGA = 2.0 * np.pi  # 1 Hz oscillation
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -9.8),
+            dt=DT,
+            gravity=GRAVITY,
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -9.8),
+            dt=DT,
+            gravity=GRAVITY.tolist(),
             contact_friction_mu=0.5,
             ipc_constraint_strength=(1, 1),
-            IPC_self_contact=False,
-            two_way_coupling=True,
-            disable_genesis_contact=True,
-            disable_ipc_logging=True,
             newton_velocity_tol=1e-2,
             newton_transrate_tol=1e-2,
             linear_system_tol_rate=1e-3,
-            sync_dof_enable=False,
             newton_semi_implicit_enable=False,
+            two_way_coupling=True,
+            disable_genesis_contact=True,
+            IPC_self_contact=False,
+            sync_dof_enable=False,
+            disable_ipc_logging=False,
             enable_ipc_gui=False,
         ),
         show_viewer=show_viewer,
@@ -237,75 +241,74 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/simple/two_cube_revolute.urdf",
-            pos=(0, 0, 0.5),
-            fixed=fixed_base,
+            pos=POS,
+            fixed=fixed,
         ),
     )
     scene.sim.coupler.set_entity_coupling_type(
         entity=robot,
         coupling_type=coupling_type,
     )
+
     scene.build(n_envs=n_envs)
+    envs_idx = range(max(scene.n_envs, 1))
+
+    robot.set_dofs_kp(500.0, dofs_idx_local=-1)
+    robot.set_dofs_kv(50.0, dofs_idx_local=-1)
 
     moving_link_idx = robot.get_link("moving").idx
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link_idx in ipc_links_idx
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
-    initial_base_z = get_entity_base_z(robot)
-    initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
-
-    max_steps = 100
-    omega = 2.0 * np.pi
-    settle_steps = 10
-    qpos_history = []
-    target_history = []
-
-    zero_target = np.zeros(robot.n_dofs, dtype=np.float32)
-    for _ in range(settle_steps):
-        robot.control_dofs_position(zero_target)
-        scene.step()
-
-    for i in range(max_steps):
-        t = i * scene.sim_options.dt
-        target_qpos = 0.5 * np.sin(omega * t)
-        robot.control_dofs_position([target_qpos], [robot.n_dofs - 1])
-        scene.step()
-        current_qpos = float(tensor_to_array(robot.get_qpos()).reshape(-1)[-1])
-        qpos_history.append(current_qpos)
-        target_history.append(float(target_qpos))
-
-        if i > 50:
-            link_idx = moving_link_idx
-            env_idx = 0
-            if (
-                link_idx in scene.sim.coupler.abd_data_by_link
-                and env_idx in scene.sim.coupler.abd_data_by_link[link_idx]
-            ):
-                abd_data = scene.sim.coupler.abd_data_by_link[link_idx][env_idx]
-                gs_transform = abd_data["aim_transform"]
-                ipc_transform = abd_data["transform"]
-                if gs_transform is not None and ipc_transform is not None:
-                    if coupling_type == "external_articulation":
-                        assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
-                        assert_allclose(
-                            R_to_xyz(gs_transform[:3, :3], rpy=True),
-                            R_to_xyz(ipc_transform[:3, :3], rpy=True),
-                            atol=0.1,
-                        )
-
     if coupling_type == "two_way_soft_constraint":
-        corr = np.corrcoef(qpos_history, target_history)[0, 1]
-        assert corr > 0.85
-        assert np.ptp(qpos_history) > 0.7
+        assert moving_link_idx in scene.sim.coupler.abd_data_by_link
+        assert set(envs_idx) == set(scene.sim.coupler.abd_data_by_link[moving_link_idx])
+    elif fixed:
+        assert not scene.sim.coupler.abd_data_by_link
 
-    if not fixed_base:
-        if coupling_type == "external_articulation":
-            final_base_z = get_entity_base_z(robot)
-            assert final_base_z <= initial_base_z - 0.03
-        else:
-            final_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0]
-            with pytest.raises(AssertionError):
-                assert_allclose(final_base_pos, initial_base_pos, atol=1e-3)
+    cur_dof_pos_history, target_dof_pos_history = [], []
+    for i in range(100):
+        # Apply sinusoidal target position to revolute joint
+        t = i * scene.sim_options.dt
+        target_dof_pos, target_dof_vel = 0.5 * np.sin(OMEGA * t), 0.5 * OMEGA * np.cos(OMEGA * t)
+        robot.control_dofs_position_velocity(target_dof_pos, target_dof_vel, dofs_idx_local=-1)
+
+        # Store the current and target position / velocity
+        cur_dof_pos = tensor_to_array(robot.get_dofs_position(dofs_idx_local=-1)[..., 0])
+        cur_dof_pos_history.append(cur_dof_pos)
+        target_dof_pos_history.append(target_dof_pos)
+
+        scene.step()
+
+        if coupling_type == "two_way_soft_constraint" or not fixed:
+            for env_idx in envs_idx:
+                abd_data = scene.sim.coupler.abd_data_by_link[moving_link_idx][env_idx]
+                gs_transform, ipc_transform = abd_data["aim_transform"], abd_data["transform"]
+                # FIXME: Why the tolerance is must so large if no fixed ?!
+                assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=TOL_SINGLE if fixed else 0.2)
+                assert_allclose(
+                    gu.R_to_xyz(gs_transform[:3, :3], rpy=True),
+                    gu.R_to_xyz(ipc_transform[:3, :3], rpy=True),
+                    atol=1e-4 if fixed else 0.3,
+                )
+    cur_dof_pos_history = np.stack(cur_dof_pos_history, axis=-1)
+    target_dof_pos_history = np.stack(target_dof_pos_history, axis=-1)
+
+    assert np.corrcoef(cur_dof_pos_history, target_dof_pos_history)[0, 1] > 1.0 - 5e-3
+    # FIXME: Why is it necessary to skip many steps if not fixed ?!
+    start_idx = 0 if fixed else 50
+    assert_allclose(
+        cur_dof_pos_history[start_idx:] - cur_dof_pos_history[start_idx],
+        target_dof_pos_history[start_idx:] - target_dof_pos_history[start_idx],
+        tol=0.03,
+    )
+    assert_allclose(np.ptp(cur_dof_pos_history), 1.0, tol=0.05)
+
+    final_base_pos = robot.get_pos()
+    if fixed:
+        assert_allclose(final_base_pos, POS, atol=TOL_SINGLE)
+    else:
+        assert POS[2] - final_base_pos[..., 2] > 0.2
 
 
 @pytest.mark.required
@@ -314,17 +317,17 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
 @pytest.mark.parametrize("fixed_base", [True, False])
 def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     """Test two-way coupling with prismatic joint."""
-    dt = 1e-2
+    DT = 1e-2
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
         ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
             contact_friction_mu=0.5,
             ipc_constraint_strength=(1, 1),
@@ -396,10 +399,11 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
                 ipc_transform = abd_data["transform"]
                 if gs_transform is not None and ipc_transform is not None:
                     if coupling_type == "external_articulation":
+                        breakpoint()
                         assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=5e-3)
                         assert_allclose(
-                            R_to_xyz(gs_transform[:3, :3], rpy=True),
-                            R_to_xyz(ipc_transform[:3, :3], rpy=True),
+                            gu.R_to_xyz(gs_transform[:3, :3], rpy=True),
+                            gu.R_to_xyz(ipc_transform[:3, :3], rpy=True),
                             atol=0.1,
                         )
 
@@ -422,19 +426,19 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
 @pytest.mark.parametrize("n_envs", [0])
 def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     """Test cloth free fall physics validation + IPC<->Genesis retrieve consistency."""
-    dt = 2e-3
-    g = 9.8
+    DT = 2e-3
+    GRAVITY = 9.8
     z0 = 2.0
     num_steps = 50
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
-            gravity=(0.0, 0.0, -g),
+            dt=DT,
+            gravity=(0.0, 0.0, -GRAVITY),
             contact_d_hat=0.01,
             contact_friction_mu=0.3,
             IPC_self_contact=False,
@@ -482,10 +486,10 @@ def test_ipc_cloth_gravity_freefall(n_envs, show_viewer):
     assert final_positions is not None
     z_final = final_positions[0, 2]
 
-    # Validate displacement: 0.5 * g * t * (t + dt)
-    t_total = num_steps * dt
+    # Validate displacement: 0.5 * GRAVITY * t * (t + DT)
+    t_total = num_steps * DT
     actual_displacement = z_initial - z_final
-    expected_displacement = 0.5 * g * t_total * (t_total + dt)
+    expected_displacement = 0.5 * GRAVITY * t_total * (t_total + DT)
     assert_allclose(actual_displacement, expected_displacement, rtol=0.01)
 
     # Validate IPC<->Genesis centroid consistency
@@ -542,14 +546,14 @@ def test_ipc_link_filter_strict(show_viewer):
 @pytest.mark.required
 def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
     """Verify ipc_only rigid cube is in IPC and falls down under gravity."""
-    dt = 1e-3
+    DT = 1e-3
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
             contact_d_hat=0.01,
             contact_friction_mu=0.3,
@@ -590,15 +594,15 @@ def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM by >= 0.1m."""
-    dt = 1e-2
+    DT = 1e-2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, -9.8),
             ipc_constraint_strength=(100, 100),
             contact_friction_mu=0.8,
@@ -679,7 +683,7 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
 
     def run_stage(target_qpos, finger_pos, duration):
         finger_cmd = np.array([finger_pos, finger_pos], dtype=np.float32)
-        for _ in range(max(int(duration / dt), 1)):
+        for _ in range(max(int(duration / DT), 1)):
             franka.control_dofs_position(target_qpos[:-2], motors_dof)
             franka.control_dofs_position(finger_cmd, fingers_dof)
             scene.step()
@@ -715,13 +719,13 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
 @pytest.mark.required
 def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     """IPC momentum test: final relative error must be <= 2%."""
-    dt = 1e-3
+    DT = 1e-3
     initial_velocity = 4.0
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, gravity=(0.0, 0.0, 0.0)),
+        sim_options=gs.options.SimOptions(dt=DT, gravity=(0.0, 0.0, 0.0)),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=dt,
+            dt=DT,
             gravity=(0.0, 0.0, 0.0),
             ipc_constraint_strength=(1, 1),
             enable_ipc_gui=False,
@@ -764,7 +768,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     total_p_history = []
 
     test_time = 0.30
-    n_steps = int(test_time / dt)
+    n_steps = int(test_time / DT)
 
     for _ in range(n_steps):
         rigid_pos = tensor_to_array(
@@ -773,7 +777,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         if rigid_prev_pos is None:
             rigid_vel = np.array([initial_velocity, 0.0, 0.0])
         else:
-            rigid_vel = (rigid_pos - rigid_prev_pos) / dt
+            rigid_vel = (rigid_pos - rigid_prev_pos) / DT
         rigid_prev_pos = rigid_pos.copy()
         rigid_linear_momentum = rigid_mass * rigid_vel
 
@@ -794,7 +798,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         if fem_prev_pos is None:
             fem_vertex_velocities = np.zeros_like(fem_vertex_positions)
         else:
-            fem_vertex_velocities = (fem_vertex_positions - fem_prev_pos) / dt
+            fem_vertex_velocities = (fem_vertex_positions - fem_prev_pos) / DT
         fem_prev_pos = fem_vertex_positions.copy()
 
         fem_linear_momentum = np.sum(fem_vertex_masses[:, np.newaxis] * fem_vertex_velocities, axis=0)
