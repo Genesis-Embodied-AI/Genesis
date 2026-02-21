@@ -17,110 +17,63 @@ from uipc.backend import SceneVisitor
 from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
 
 
-def _iter_ipc_simplicial_geometries(scene):
-    visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
-    for geo_slot in visitor.geometries():
-        if isinstance(geo_slot, SimplicialComplexSlot):
-            yield geo_slot.geometry()
-
-
-def _get_processed_geo(geo):
-    if geo.instances().size() >= 1:
-        return merge(apply_transform(geo))
-    return geo
-
-
 def _collect_ipc_geometry_entries(scene):
-    entries = []
-    for geo in _iter_ipc_simplicial_geometries(scene):
-        meta = _read_ipc_geometry_metadata(geo)
-        if meta is None:
+    visitor = SceneVisitor(scene.sim.coupler._ipc_scene)
+    for geom_slot in visitor.geometries():
+        if not isinstance(geom_slot, SimplicialComplexSlot):
             continue
-        solver_type, env_idx, idx = meta
-        entries.append(
-            {
-                "solver_type": solver_type,
-                "env_idx": env_idx,
-                "idx": idx,
-                "geo": geo,
-            }
-        )
-    return entries
-
-
-def _read_ipc_geometry_metadata(geo):
-    """Read (solver_type, env_idx, idx) from IPC geometry metadata."""
-    try:
-        meta_attrs = geo.meta()
+        geom = geom_slot.geometry()
+        meta_attrs = geom.meta()
 
         solver_type_attr = meta_attrs.find("solver_type")
-        if not solver_type_attr or solver_type_attr.name() != "solver_type":
-            return None
-        solver_type_view = solver_type_attr.view()
-        if len(solver_type_view) == 0:
-            return None
-        solver_type = str(solver_type_view[0])
+        if solver_type_attr is None:
+            continue
+        (solver_type,) = solver_type_attr.view()
+        assert solver_type in ("rigid", "fem", "cloth")
 
         env_idx_attr = meta_attrs.find("env_idx")
-        if not env_idx_attr:
-            return None
-        env_idx = int(str(env_idx_attr.view()[0]))
+        (env_idx,) = map(int, env_idx_attr.view())
 
         if solver_type == "rigid":
             idx_attr = meta_attrs.find("link_idx")
-        elif solver_type in ("fem", "cloth"):
+        else:  # solver_type in ("fem", "cloth")
             idx_attr = meta_attrs.find("entity_idx")
-        else:
-            return None
+        (idx,) = map(int, idx_attr.view())
 
-        if not idx_attr:
-            return None
-        idx = int(str(idx_attr.view()[0]))
-        return (solver_type, env_idx, idx)
-    except Exception:
-        return None
+        yield (solver_type, env_idx, idx, geom)
 
 
-def _find_ipc_geometries(scene, *, solver_type, idx, env_idx=None):
-    matches = []
-    for entry in _collect_ipc_geometry_entries(scene):
-        if entry["solver_type"] != solver_type:
-            continue
-        if entry["idx"] != idx:
-            continue
-        if env_idx is not None and entry["env_idx"] != env_idx:
-            continue
-        matches.append(entry["geo"])
-    return matches
+def _find_ipc_geometries(scene, *, solver_type, idx=None, env_idx=None):
+    geoms = []
+    for solver_type_, env_idx_, idx_, geom in _collect_ipc_geometry_entries(scene):
+        if solver_type == solver_type_ and (idx is None or idx == idx_) and (env_idx is None or env_idx == env_idx_):
+            geoms.append(geom)
+    return geoms
 
 
-def _get_ipc_processed_geometry(scene, *, solver_type, idx, env_idx):
-    matches = _find_ipc_geometries(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
-    if not matches:
-        return None
-    return _get_processed_geo(matches[0])
+def _get_ipc_merged_geometry(scene, *, solver_type, idx, env_idx):
+    (geom,) = _find_ipc_geometries(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
+    if geom.instances().size() >= 1:
+        geom = merge(apply_transform(geom))
+    return geom
 
 
 def _get_ipc_positions(scene, *, solver_type, idx, env_idx):
-    proc_geo = _get_ipc_processed_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
-    if proc_geo is None:
-        return None
-    return proc_geo.positions().view().reshape(-1, 3)
+    merged_geo = _get_ipc_merged_geometry(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
+    return merged_geo.positions().view().squeeze(axis=-1)
 
 
 def _get_ipc_centroid(scene, *, solver_type, idx, env_idx):
     positions = _get_ipc_positions(scene, solver_type=solver_type, idx=idx, env_idx=env_idx)
-    if positions is None or len(positions) == 0:
-        return None
     return positions.mean(axis=0)
 
 
-def _get_ipc_rigid_links(scene, env_idx=0):
-    links = set()
-    for entry in _collect_ipc_geometry_entries(scene):
-        if entry["solver_type"] == "rigid" and entry["env_idx"] == env_idx:
-            links.add(entry["idx"])
-    return links
+def _get_ipc_rigid_links_idx(scene, env_idx):
+    links_idx = []
+    for solver_type_, env_idx_, idx_, _geom in _collect_ipc_geometry_entries(scene):
+        if solver_type_ == "rigid" and env_idx_ == env_idx:
+            links_idx.append(idx_)
+    return links_idx
 
 
 def _get_entity_base_z(entity):
@@ -128,20 +81,6 @@ def _get_entity_base_z(entity):
     if pos.ndim == 1:
         return float(pos[2])
     return float(pos.reshape(-1, 3)[0, 2])
-
-
-def _rotmat_to_euler(rot_mat):
-    sy = np.sqrt(rot_mat[0, 0] ** 2 + rot_mat[1, 0] ** 2)
-    singular = sy < 1e-6
-    if not singular:
-        x = np.arctan2(rot_mat[2, 1], rot_mat[2, 2])
-        y = np.arctan2(-rot_mat[2, 0], sy)
-        z = np.arctan2(rot_mat[1, 0], rot_mat[0, 0])
-    else:
-        x = np.arctan2(-rot_mat[1, 2], rot_mat[1, 1])
-        y = np.arctan2(-rot_mat[2, 0], sy)
-        z = 0.0
-    return np.array([x, y, z])
 
 
 @pytest.mark.required
@@ -315,8 +254,8 @@ def test_ipc_two_way_revolute(n_envs, coupling_type, fixed_base, show_viewer):
     scene.build(n_envs=n_envs)
 
     moving_link_idx = robot.get_link("moving").idx
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert moving_link_idx in ipc_links_idx
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
     initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
@@ -425,8 +364,8 @@ def test_ipc_two_way_prismatic(n_envs, coupling_type, fixed_base, show_viewer):
     scene.build(n_envs=n_envs)
 
     moving_link_idx = robot.get_link("moving").idx
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert moving_link_idx in ipc_links_idx
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     initial_base_z = _get_entity_base_z(robot)
     initial_base_pos = tensor_to_array(robot.get_pos()).reshape(-1, 3)[0].copy()
@@ -599,9 +538,9 @@ def test_ipc_link_filter_strict(show_viewer):
     assert entity_idx in coupler._ipc_link_filters
     assert coupler._ipc_link_filters[entity_idx] == {moving_link_idx}
 
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert moving_link_idx in ipc_links
-    assert base_link_idx not in ipc_links
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert moving_link_idx in ipc_links_idx
+    assert base_link_idx not in ipc_links_idx
 
     assert (0, moving_link_idx) in coupler._link_to_abd_slot
     assert (0, base_link_idx) not in coupler._link_to_abd_slot
@@ -643,8 +582,8 @@ def test_ipc_ipc_only_cube_freefall_height_drop(show_viewer):
     scene.build(n_envs=0)
 
     base_link_idx = cube.base_link_idx
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert base_link_idx in ipc_links
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert base_link_idx in ipc_links_idx
     assert (0, base_link_idx) in scene.sim.coupler._link_to_abd_slot
 
     initial_z = _get_entity_base_z(cube)
@@ -722,13 +661,13 @@ def test_ipc_robot_fem_grasp_retrieve_lift_strict(coupling_type, show_viewer):
     right_finger_idx = franka.get_link("right_finger").idx
     expected_finger_links = {left_finger_idx, right_finger_idx}
 
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert expected_finger_links.issubset(ipc_links)
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert expected_finger_links.issubset(ipc_links_idx)
     for link_idx in expected_finger_links:
         assert (0, link_idx) in scene.sim.coupler._link_to_abd_slot
 
     franka_link_indices = {link.idx for link in franka.links}
-    franka_ipc_links = ipc_links.intersection(franka_link_indices)
+    franka_ipc_links = ipc_links_idx.intersection(franka_link_indices)
     if coupling_type == "two_way_soft_constraint":
         entity_idx = franka._idx_in_solver
         assert scene.sim.coupler._ipc_link_filters.get(entity_idx) == expected_finger_links
@@ -822,8 +761,8 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
     assert len(fem_matches) == 1
 
     rigid_link_idx = rigid_cube.base_link_idx
-    ipc_links = _get_ipc_rigid_links(scene, env_idx=0)
-    assert rigid_link_idx in ipc_links
+    ipc_links_idx = _get_ipc_rigid_links_idx(scene, env_idx=0)
+    assert rigid_link_idx in ipc_links_idx
     assert (0, rigid_link_idx) in scene.sim.coupler._link_to_abd_slot
 
     rigid_cube.set_dofs_velocity((initial_velocity, 0.0, 0.0, 0.0, 0.0, 0.0))
@@ -852,7 +791,7 @@ def test_ipc_motion_final_relative_error_below_2pct(show_viewer):
         rigid_prev_pos = rigid_pos.copy()
         rigid_linear_momentum = rigid_mass * rigid_vel
 
-        fem_proc_geo = _get_ipc_processed_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
+        fem_proc_geo = _get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
         assert fem_proc_geo is not None
         fem_vertex_positions = fem_proc_geo.positions().view().reshape(-1, 3)
 
