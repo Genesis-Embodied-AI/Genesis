@@ -17,6 +17,7 @@ KEY_DPOS = 0.01
 # Pusher (sphere with tactile on bottom hemisphere, or box with grid sensor on bottom face)
 PUSHER_SIZE = 0.1
 PROBE_RADIUS = 0.01
+COEFFICIENTS = (1e1, 1e-2, 1e-2)
 HEMISPHERE_N_THETA = 4
 HEMISPHERE_N_PHI = 12
 GRID_SIZE = (6, 8)  # (nx, ny) for --grid
@@ -111,6 +112,15 @@ def main():
     )
 
     # Controllable pusher: sphere with hemisphere tactile, or box with grid tactile
+    sensor_kwargs = dict(
+        link_idx_local=0,
+        probe_local_normal=(0.0, 0.0, -1.0),
+        probe_radius=PROBE_RADIUS,
+        draw_debug=args.vis,
+        dilate_coefficient=COEFFICIENTS[0],
+        shear_coefficient=COEFFICIENTS[1],
+        twist_coefficient=COEFFICIENTS[2],
+    )
     if args.grid:
         box_size = np.array((PUSHER_SIZE, PUSHER_SIZE, PUSHER_SIZE / 2), dtype=np.float32)
         pusher_start = np.array([0.0, 0.0, box_size[2] + OBJ_SIZE], dtype=np.float32)
@@ -126,15 +136,9 @@ def main():
         tactile = scene.add_sensor(
             gs.sensors.ElastomerDisplacementGridSensor(
                 entity_idx=pusher.idx,
-                link_idx_local=0,
                 probe_local_pos_grid_bounds=grid_bounds,
                 probe_grid_size=GRID_SIZE,
-                probe_local_normal=(0.0, 0.0, -1.0),
-                probe_radius=PROBE_RADIUS,
-                draw_debug=args.vis,
-                dilate_coefficient=1e3,
-                shear_coefficient=0.0,
-                twist_coefficient=0.0,
+                **sensor_kwargs,
             )
         )
     else:
@@ -147,14 +151,8 @@ def main():
         tactile = scene.add_sensor(
             gs.sensors.ElastomerDisplacementSensor(
                 entity_idx=pusher.idx,
-                link_idx_local=0,
                 probe_local_pos=probe_positions,
-                probe_local_normal=probe_normals,
-                probe_radius=PROBE_RADIUS,
-                draw_debug=args.vis,
-                dilate_coefficient=1e2,
-                shear_coefficient=0.0,
-                twist_coefficient=0.0,
+                **sensor_kwargs,
             )
         )
 
@@ -166,8 +164,8 @@ def main():
                     title="Tactile Displacement",
                     positions=tactile.probe_local_pos,
                     normal=plot_normal,
-                    scale_factor=10.0,
-                    max_magnitude=1.0e-2,
+                    scale_factor=4.0,
+                    max_magnitude=1.0e-1,
                 ),
             )
 
@@ -270,6 +268,8 @@ def main():
             if args.vis:
                 pusher.set_pos(target_pos)
                 pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+            else:
+                print(tactile.read())
 
             scene.step()
 

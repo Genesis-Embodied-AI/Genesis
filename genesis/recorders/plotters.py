@@ -719,6 +719,17 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
         self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
         self._show_fig()
 
+        self.fig.canvas.mpl_connect("resize_event", self.on_resize)
+
+    def on_resize(self, event):
+        self._lock.acquire()
+        try:
+            if self.fig is not None and self.ax is not None:
+                self.fig.canvas.draw()
+                self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        finally:
+            self._lock.release()
+
     def process(self, data, cur_time):
         """Process new vector data and update the quiver plot."""
         if isinstance(data, torch.Tensor):
@@ -731,18 +742,19 @@ class MPLVectorFieldPlotter(BaseMPLPlotter):
             return
         xy, uv, magnitudes = _project_to_plane(self._positions, vectors, self._normal)
         scale = self._scale_factor
-        self._lock.acquire()
-        self._scatter.set_offsets(xy)
-        self._scatter.set_array(magnitudes)
-        self._quiver.set_offsets(xy)
-        self._quiver.set_UVC(uv[:, 0] * scale, uv[:, 1] * scale)
-        self._quiver.set_array(magnitudes)
-        self.fig.canvas.restore_region(self._background)
-        self.ax.draw_artist(self._scatter)
-        self.ax.draw_artist(self._quiver)
-        self.fig.canvas.blit(self.ax.bbox)
-        self.fig.canvas.flush_events()
-        self._lock.release()
+        if self._background is not None:
+            self._lock.acquire()
+            self._scatter.set_offsets(xy)
+            self._scatter.set_array(magnitudes)
+            self._quiver.set_offsets(xy)
+            self._quiver.set_UVC(uv[:, 0] * scale, uv[:, 1] * scale)
+            self._quiver.set_array(magnitudes)
+            self.fig.canvas.restore_region(self._background)
+            self.ax.draw_artist(self._scatter)
+            self.ax.draw_artist(self._quiver)
+            self.fig.canvas.blit(self.ax.bbox)
+            self.fig.canvas.flush_events()
+            self._lock.release()
 
     def cleanup(self):
         super().cleanup()

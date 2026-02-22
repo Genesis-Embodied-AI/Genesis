@@ -329,5 +329,5 @@ class MPLVectorFieldPlot(BasePlotterOptions):
 
     positions: Vec3FArrayType
     normal: Vec3FType = (0.0, 0.0, 1.0)
-    scale_factor: float = 0.1
+    scale_factor: float = 1.0
     max_magnitude: float = 1.0

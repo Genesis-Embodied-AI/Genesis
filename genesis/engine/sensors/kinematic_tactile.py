@@ -1341,7 +1341,9 @@ class ElastomerDisplacementGridSensor(
             (self._manager._sim._B, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device
         )
         self._shared_metadata.dilate_displacement_buffer = torch.zeros(
-            (self._manager._sim._B, self._n_probes * 3), dtype=gs.tc_float, device=gs.device
+            (self._manager._sim._B, self._shared_metadata.total_n_probes * 3),
+            dtype=gs.tc_float,
+            device=gs.device,
         )
 
     @classmethod

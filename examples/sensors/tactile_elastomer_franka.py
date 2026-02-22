@@ -13,7 +13,7 @@ OBJ_SIZE = 0.04
 CUBE_INIT_POS = (0.6, 0.2, OBJ_SIZE / 2)
 SPHERE_INIT_POS = (0.4, -0.2, OBJ_SIZE / 2)
 
-ROBOT_INIT_POS = (SPHERE_INIT_POS[0], SPHERE_INIT_POS[1], 0.2)
+ROBOT_INIT_POS = (SPHERE_INIT_POS[0], SPHERE_INIT_POS[1], 0.15)
 ROBOT_INIT_QUAT = gu.xyz_to_quat(np.array([0, np.pi, 0]))
 
 # Control parameters
@@ -87,9 +87,9 @@ if __name__ == "__main__":
         probe_local_normal=probe_normal,
         probe_radius=0.002,
         draw_debug=True,
-        dilate_coefficient=1e4,
-        shear_coefficient=0.0,
-        twist_coefficient=0.0,
+        dilate_coefficient=1e1,
+        shear_coefficient=1e-2,
+        twist_coefficient=1e-2,
     )
 
     left_finger_tactile_sensor = scene.add_sensor(
@@ -110,8 +110,8 @@ if __name__ == "__main__":
     if IS_MATPLOTLIB_AVAILABLE:
         rec_kwargs = dict(
             normal=probe_normal,
-            scale_factor=10.0,
-            max_magnitude=1.0e-4,
+            scale_factor=1.0,
+            max_magnitude=1.0e-2,
         )
         left_finger_tactile_sensor.start_recording(
             rec_options=gs.recorders.MPLVectorFieldPlot(
