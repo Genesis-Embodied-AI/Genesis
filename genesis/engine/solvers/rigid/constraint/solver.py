@@ -90,7 +90,6 @@ class ConstraintSolver:
         self.mv = cs.mv
         self.jv = cs.jv
         self.quad_gauss = cs.quad_gauss
-
         self.candidates = cs.candidates
         self.ls_it = cs.ls_it
         self.ls_result = cs.ls_result
@@ -188,6 +187,7 @@ class ConstraintSolver:
 
         func_solve_body(
             self._solver.entities_info,
+            self._solver.dofs_info,
             self._solver.dofs_state,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -2263,6 +2263,12 @@ def update_bracket_no_eval_local(
 
 
 @qd.func
+def _log_scale(min_value: gs.qd_float, max_value: gs.qd_float, num_values: qd.i32, i: qd.i32) -> gs.qd_float:
+    step = (qd.log(max_value) - qd.log(min_value)) / qd.max(1.0, gs.qd_float(num_values - 1))
+    return qd.exp(qd.log(min_value) + gs.qd_float(i) * step)
+
+
+@qd.func
 def func_linesearch_and_apply_alpha(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2801,8 +2807,22 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.perf_dispatch(
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=1.0
+)
 def func_solve_init(
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> None: ...
+
+
+@func_solve_init.register(is_compatible=lambda *args, **kwargs: True)
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_solve_init_monolith(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -3013,6 +3033,7 @@ def func_solve_iter(
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
