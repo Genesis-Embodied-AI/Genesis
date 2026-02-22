@@ -2,7 +2,7 @@ import numpy as np
 from pydantic import conlist
 
 import genesis as gs
-from genesis.constants import FArrayType, Vec3FArrayType, Vec3FType, Vec4FType
+from genesis.constants import FArrayType, MaybeVec3FArrayType, Vec3FArrayType, Vec3FType, Vec4FType
 
 from .options import NoisySensorOptionsMixin, RigidSensorOptionsMixin, SensorOptions
 
@@ -32,6 +32,28 @@ class KinematicTactileSensorMixin:
             gs.raise_exception("Probe locals array must have at least one entry")
         return array
 
+    def _validate_probe_pos_and_norm(self):
+        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
+        np_probe_normal = np.array(self.probe_local_normal)
+
+        norms = np.linalg.norm(np_probe_normal, axis=-1)
+        if np.any(norms < gs.EPS):
+            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {self.probe_local_normal}")
+
+        if np_probe_normal.ndim > 1:
+            np_probe_normal = self._validate_probe_arrays(np_probe_normal)
+
+            if len(probe_local_pos) != len(np_probe_normal):
+                gs.raise_exception(
+                    "probe_local_pos and probe_local_normal must have the same length. "
+                    f"Got {len(probe_local_pos)} positions and {len(np_probe_normal)} normals."
+                )
+        if not isinstance(self.probe_radius, float) and len(self.probe_radius) != len(probe_local_pos):
+            gs.raise_exception(
+                "If radius is array-like, it must have the same length as probe_local_pos. "
+                f"Got {len(self.probe_radius)} radii and {len(probe_local_pos)} probe positions."
+            )
+
     def model_post_init(self, _):
         super().model_post_init(_)
 
@@ -41,26 +63,52 @@ class KinematicTactileSensorMixin:
 
 class ElastomerDisplacementSensorMixin:
     """
+    Note
+    ----
+    The equations for the displacement are as follows (from FOTS paper https://arxiv.org/pdf/2404.19217):
+    dilate_displacement = Σ_i min(dilate_max_delta, penetration_depth) * (M - C_i) * exp(-λd ||M - C_i||²)
+    shear_displacement = min(shear_max_delta, shear_velocity * dt) * exp(-λs ||M - G||²)
+    twist_displacement = min(twist_max_delta, twist_angle) * (M - G) * exp(-λt ||M - G||²)
+
     Parameters
     ----------
     dilate_coefficient: float
-        The coefficient for the Gaussian decay in distance of the displacement caused by dilate motion.
-        Higher values result in more localized displacement.
+        The coefficient of the exponential function that can affect the displacement caused by dilate motion.
     shear_coefficient: float
-        The coefficient for the effect of displacement caused by shear motion.
+        The coefficient of the exponential function that can affect the displacement caused by shear motion.
     twist_coefficient: float
-        The coefficient for the effect of displacement caused by twist motion.
+        The coefficient of the exponential function that can affect the displacement caused by twist motion.
+    dilate_max_delta: float
+        The maximum dilate depth in meters.
     shear_max_delta: float
-        Maximum shear magnitude in meters.
+        The maximum shear magnitude in meters.
     twist_max_delta: float
-        Maximum twist angle in degrees.
+        The maximum twist angle in degrees.
     """
 
-    dilate_coefficient: float = 1.25e-3
-    shear_coefficient: float = 2.10e-4
-    twist_coefficient: float = 3.80e-4
+    dilate_coefficient: float = 1e-2
+    shear_coefficient: float = 1e-2
+    twist_coefficient: float = 1e-2
+    dilate_max_delta: float = 0.1
     shear_max_delta: float = 0.1
     twist_max_delta: float = 50.0
+
+    def model_post_init(self, _):
+        super().model_post_init(_)
+        if np.any(
+            np.array(
+                (
+                    self.dilate_coefficient,
+                    self.shear_coefficient,
+                    self.twist_coefficient,
+                    self.dilate_max_delta,
+                    self.shear_max_delta,
+                    self.twist_max_delta,
+                )
+            )
+            < 0
+        ):
+            gs.raise_exception("Elastomer displacement coefficients and max_deltas should be non-negative.")
 
 
 class KinematicContactProbe(
@@ -89,31 +137,14 @@ class KinematicContactProbe(
     """
 
     probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
+    probe_local_normal: MaybeVec3FArrayType = (0.0, 0.0, 1.0)
     stiffness: float = 1000.0
 
     def model_post_init(self, _):
         super().model_post_init(_)
-
+        self._validate_probe_pos_and_norm()
         if self.stiffness < 0:
             gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
-
-        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
-        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
-        norms = np.linalg.norm(probe_local_normal, axis=1)
-        if np.any(norms < gs.EPS):
-            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {probe_local_normal}")
-
-        if len(probe_local_pos) != len(probe_local_normal):
-            gs.raise_exception(
-                "probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
-            )
-        if not isinstance(self.probe_radius, float) and len(self.probe_radius) != len(probe_local_pos):
-            gs.raise_exception(
-                "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.probe_radius)} radii and {len(probe_local_pos)} probe positions."
-            )
 
 
 class ElastomerDisplacementSensor(
@@ -133,27 +164,11 @@ class ElastomerDisplacementSensor(
     """
 
     probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
+    probe_local_normal: MaybeVec3FArrayType = (0.0, 0.0, 1.0)
 
     def model_post_init(self, _):
         super().model_post_init(_)
-
-        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
-        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
-        norms = np.linalg.norm(probe_local_normal, axis=1)
-        if np.any(norms < gs.EPS):
-            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {probe_local_normal}")
-
-        if len(probe_local_pos) != len(probe_local_normal):
-            gs.raise_exception(
-                "probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
-            )
-        if not isinstance(self.probe_radius, float) and len(self.probe_radius) != len(probe_local_pos):
-            gs.raise_exception(
-                "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.probe_radius)} radii and {len(probe_local_pos)} probe positions."
-            )
+        self._validate_probe_pos_and_norm()
 
 
 class ElastomerDisplacementGridSensor(
@@ -190,6 +205,5 @@ class ElastomerDisplacementGridSensor(
         if np.linalg.norm(self.probe_local_normal) < gs.EPS:
             gs.raise_exception(f"probe_local_normal must be non-zero, got: {self.probe_local_normal}")
 
-        nx, ny = self.probe_grid_size[0], self.probe_grid_size[1]
-        if nx < 1 or ny < 1:
+        if self.probe_grid_size[0] < 1 or self.probe_grid_size[1] < 1:
             gs.raise_exception(f"probe_grid_size must be at least (1, 1), got: {self.probe_grid_size}")

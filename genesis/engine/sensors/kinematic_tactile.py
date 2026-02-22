@@ -240,7 +240,7 @@ def _func_shear_twist_displacement(
     mg_dist_sq = M_minus_G[0] * M_minus_G[0] + M_minus_G[1] * M_minus_G[1] + M_minus_G[2] * M_minus_G[2]
 
     # shear_displacement = min(shear_max_delta, shear_velocity * dt) * exp(-λs ||M - G||²)
-    if shear_coeff > 0.0:
+    if shear_max_delta > 0.0:
         delta_s_world = rel_vel * dt
         delta_s_local = gu.qd_inv_transform_by_quat(delta_s_world, link_quat)
 
@@ -258,7 +258,7 @@ def _func_shear_twist_displacement(
         displacement_world += gu.qd_transform_by_quat(shear_local, link_quat)
 
     # twist_displacement = min(twist_max_delta, twist_angle) * (M - G) * exp(-λt ||M - G||²)
-    if twist_coeff > 0.0:
+    if twist_max_delta > 0.0:
         rel_ang = links_state.cd_ang[contact_link, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
         delta_theta = (
             rel_ang[0] * sensor_normal_world[0]
@@ -438,9 +438,10 @@ def _kernel_elastomer_displacement(
     dilate_coefficients: qd.types.ndarray(),
     shear_coefficients: qd.types.ndarray(),
     twist_coefficients: qd.types.ndarray(),
-    sensor_normals: qd.types.ndarray(),
+    dilate_max_delta: qd.types.ndarray(),
     shear_max_delta: qd.types.ndarray(),
     twist_max_delta: qd.types.ndarray(),
+    sensor_normals: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
@@ -494,42 +495,43 @@ def _kernel_elastomer_displacement(
     # Phase 2: for each marker M (probe), dilate = Σ over all contacts in same sensor; shear/twist from own contact.
     for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
+        dilate_max_delta_s = dilate_max_delta[i_s]
+        contact_depth = contact_buf[i_b, i_p, 3]
+        displacement = qd.Vector.zero(gs.qd_float, 3)
 
         probe_pos_local = qd.Vector(
             [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
         )
-
         sensor_link_idx = links_idx[i_s]
         link_pos = links_state.pos[sensor_link_idx, i_b]
         link_quat = links_state.quat[sensor_link_idx, i_b]
-
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
 
-        # dilate_displacement = Σ_i Δh_i * (M - C_i) * exp(-λd ||M - C_i||²)
-        displacement = qd.Vector.zero(gs.qd_float, 3)
         probe_start = sensor_probe_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
-        for j in range(n_probes):
-            j_p = probe_start + j
-            delta_h = contact_buf[i_b, j_p, 3]
-            if delta_h > gs.qd_float(0.0):
-                C_j = qd.Vector(
-                    [contact_buf[i_b, j_p, 0], contact_buf[i_b, j_p, 1], contact_buf[i_b, j_p, 2]], dt=gs.qd_float
-                )
-                M_minus_C = probe_pos - C_j
-                dist_sq = M_minus_C[0] * M_minus_C[0] + M_minus_C[1] * M_minus_C[1] + M_minus_C[2] * M_minus_C[2]
-                scale = delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
-                displacement += M_minus_C * scale
+
+        if dilate_max_delta_s > 0.0:
+            # dilate_displacement = Σ_i min(dilate_max_delta, Δh_i) * (M - C_i) * exp(-λd ||M - C_i||²)
+            for j in range(n_probes):
+                j_p = probe_start + j
+                delta_h = qd.min(dilate_max_delta_s, contact_buf[i_b, j_p, 3])
+                if delta_h > gs.qd_float(0.0):
+                    C_j = qd.Vector(
+                        [contact_buf[i_b, j_p, 0], contact_buf[i_b, j_p, 1], -contact_buf[i_b, j_p, 2]], dt=gs.qd_float
+                    )
+                    M_minus_C = probe_pos - C_j
+                    dist_sq = M_minus_C[0] * M_minus_C[0] + M_minus_C[1] * M_minus_C[1] + M_minus_C[2] * M_minus_C[2]
+                    scale = delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
+                    displacement += M_minus_C * scale
 
         contact_link = contact_link_buf[i_b, i_p]
-        contact_depth = contact_buf[i_b, i_p, 3]
         sensor_normal_local = qd.Vector(
             [sensor_normals[i_s, 0], sensor_normals[i_s, 1], sensor_normals[i_s, 2]], dt=gs.qd_float
         )
 
-        shear_coeff = shear_coefficients[i_s]
-        twist_coeff = twist_coefficients[i_s]
-        if contact_depth > gs.qd_float(0.0) and contact_link >= 0 and shear_coeff > 0.0 and twist_coeff > 0.0:
+        shear_max_delta_s = shear_max_delta[i_s]
+        twist_max_delta_s = twist_max_delta[i_s]
+        if contact_depth > eps and contact_link >= 0 and (shear_max_delta_s > 0.0 or twist_max_delta_s > 0.0):
             displacement += _func_shear_twist_displacement(
                 probe_pos,
                 link_pos,
@@ -539,14 +541,13 @@ def _kernel_elastomer_displacement(
                 sensor_link_idx,
                 i_b,
                 sensor_normal_local,
-                shear_coeff,
-                twist_coeff,
-                shear_max_delta[i_s],
-                twist_max_delta[i_s],
+                shear_coefficients[i_s],
+                twist_coefficients[i_s],
+                shear_max_delta_s,
+                twist_max_delta_s,
                 dt,
                 eps,
             )
-
         displacement_local = gu.qd_inv_transform_by_quat(displacement, link_quat)
 
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
@@ -554,7 +555,7 @@ def _kernel_elastomer_displacement(
 
         output[i_b, cache_start + probe_idx_in_sensor * 3 + 0] = displacement_local[0]
         output[i_b, cache_start + probe_idx_in_sensor * 3 + 1] = displacement_local[1]
-        output[i_b, cache_start + probe_idx_in_sensor * 3 + 2] = displacement_local[2]
+        output[i_b, cache_start + probe_idx_in_sensor * 3 + 2] = qd.min(dilate_max_delta_s, contact_depth)
 
 
 def _next_pow2(n: int) -> int:
@@ -565,6 +566,95 @@ def _next_pow2(n: int) -> int:
     while p < n:
         p *= 2
     return p
+
+
+def _compute_plane_grid_and_spacing(
+    lo: torch.Tensor, hi: torch.Tensor, normal: torch.Tensor, nx: int, ny: int
+) -> tuple[torch.Tensor, float, float]:
+    """
+    Build an nx-by-ny grid on the plane defined by bounds and normal.
+
+    Parameters
+    ----------
+    lo: torch.Tensor, shape (3,)
+        Lower bound of the plane
+    hi: torch.Tensor, shape (3,)
+        Upper bound of the plane
+    normal: torch.Tensor, shape (3,)
+        Normal of the plane
+    nx: int
+        Number of grid points in x direction
+    ny: int
+        Number of grid points in y direction
+
+    Returns
+    -------
+    grid: torch.Tensor, shape (nx * ny, 3)
+        Grid points on the plane
+    dx: float
+        Grid spacing in x direction
+    dy: float
+        Grid spacing in y direction
+    """
+    n_norm = normal.norm().item()
+    if n_norm < gs.EPS:
+        gs.raise_exception(f"probe_local_normal must be non-zero, got: {normal}")
+    n = normal / n_norm
+
+    # First tangent axis: projection of canonical axes onto the plane.
+    ex = torch.tensor([1.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
+    ey = torch.tensor([0.0, 1.0, 0.0], dtype=gs.tc_float, device=gs.device)
+    ez = torch.tensor([0.0, 0.0, 1.0], dtype=gs.tc_float, device=gs.device)
+    t0 = ex - n * torch.dot(n, ex)
+    t0_norm = t0.norm().item()
+    if t0_norm < gs.EPS:
+        t0 = ey - n * torch.dot(n, ey)
+        t0_norm = t0.norm().item()
+        if t0_norm < gs.EPS:
+            t0 = ez - n * torch.dot(n, ez)
+            t0_norm = t0.norm().item()
+            if t0_norm < gs.EPS:
+                gs.raise_exception(f"failed to build tangent basis from normal: {normal}")
+    t0 /= t0_norm
+
+    t1 = torch.cross(n, t0, dim=0)
+    t1_norm = t1.norm().item()
+    if t1_norm < gs.EPS:
+        gs.raise_exception(f"failed to build orthogonal tangent axis from normal: {normal}")
+    t1 /= t1_norm
+
+    lo_u = torch.dot(lo, t0).item()
+    lo_v = torch.dot(lo, t1).item()
+    lo_w = torch.dot(lo, n).item()
+    hi_u = torch.dot(hi, t0).item()
+    hi_v = torch.dot(hi, t1).item()
+    hi_w = torch.dot(hi, n).item()
+
+    if abs(hi_w - lo_w) > 1e-6:
+        gs.raise_exception(
+            "probe_local_pos_grid_bounds must lie on a single plane orthogonal to probe_local_normal; "
+            f"normal-axis mismatch={abs(hi_w - lo_w):.6e}"
+        )
+    plane_w = 0.5 * (lo_w + hi_w)
+
+    du = (hi_u - lo_u) / (nx - 1) if nx > 1 else 0.0
+    dv = (hi_v - lo_v) / (ny - 1) if ny > 1 else 0.0
+
+    u_vals = (
+        torch.tensor([lo_u], dtype=gs.tc_float, device=gs.device)
+        if nx == 1
+        else torch.linspace(lo_u, hi_u, steps=nx, dtype=gs.tc_float, device=gs.device)
+    )
+    v_vals = (
+        torch.tensor([lo_v], dtype=gs.tc_float, device=gs.device)
+        if ny == 1
+        else torch.linspace(lo_v, hi_v, steps=ny, dtype=gs.tc_float, device=gs.device)
+    )
+    uu, vv = torch.meshgrid(u_vals, v_vals, indexing="ij")  # (nx, ny), first dim=x, second dim=y
+    grid_xy = t0.view(1, 1, 3) * uu.unsqueeze(-1) + t1.view(1, 1, 3) * vv.unsqueeze(-1) + n.view(1, 1, 3) * plane_w
+    grid = grid_xy.permute(1, 0, 2).reshape(nx * ny, 3)  # flatten with ix + iy*nx
+
+    return grid.contiguous(), abs(du), abs(dv)
 
 
 def _precompute_dilate_kernel_fft(dilate_coeff: float, dx: float, dy: float, fft_nx: int, fft_ny: int) -> torch.Tensor:
@@ -663,32 +753,39 @@ def _elastomer_displacement_grid_fft_dilate(
     contact_buf: torch.Tensor,
     sensor_probe_start: torch.Tensor,
     sensor_cache_start: torch.Tensor,
-    grid_nx: torch.Tensor,
-    grid_ny: torch.Tensor,
-    fft_nx: torch.Tensor,
-    fft_ny: torch.Tensor,
-    fft_re: torch.Tensor,
+    grid_n: torch.Tensor,
+    fft_n: torch.Tensor,
+    fft_depth_buffer: torch.Tensor,
     kernel_fft: torch.Tensor,
+    dilate_coefficient: torch.Tensor,
+    dilate_max_delta: torch.Tensor,
     output: torch.Tensor,
 ) -> None:
+    """
+    Grid dilate via 2D FFT. Uses in-plane distance only in the kernel; scale by exp(-λ*H²)
+    so magnitude matches non-grid formulation which uses full 3D distance (r²_2D + Δz²).
+    """
     n_batches = contact_buf.shape[0]
-    n_sensors = grid_nx.shape[0]
+    n_sensors = grid_n.shape[0]
 
     for i_s in range(n_sensors):
-        g_nx = int(grid_nx[i_s].item())
-        g_ny = int(grid_ny[i_s].item())
-        fft_nx_s = int(fft_nx[i_s].item())
-        fft_ny_s = int(fft_ny[i_s].item())
+        g_nx = int(grid_n[i_s, 0].item())
+        g_ny = int(grid_n[i_s, 1].item())
+        fft_nx_s = int(fft_n[i_s, 0].item())
+        fft_ny_s = int(fft_n[i_s, 1].item())
         probe_start = int(sensor_probe_start[i_s].item())
         cache_start = int(sensor_cache_start[i_s].item())
         fft_size_s = fft_nx_s * fft_ny_s
+        lam = float(dilate_coefficient[i_s].item())
+        max_h = float(dilate_max_delta[i_s].item())
 
         # H = contact depth grid (ix, iy) with first dim = x, second = y; zero-pad to fft size.
         # Probes are stored flat as ix + iy*g_nx (iy slow, ix fast) -> view (g_ny, g_nx) then transpose to (g_nx, g_ny).
-        H_buf = fft_re[:, i_s, :fft_size_s].view(n_batches, fft_nx_s, fft_ny_s)
+        H_buf = fft_depth_buffer[:, i_s, :fft_size_s].view(n_batches, fft_nx_s, fft_ny_s)
         H_buf.zero_()
         contact_slice = contact_buf[:, probe_start : probe_start + g_nx * g_ny, 3]
         H_buf[:, :g_nx, :g_ny].copy_(contact_slice.view(n_batches, g_ny, g_nx).transpose(1, 2))
+        H_buf[:, :g_nx, :g_ny].clamp_(max=max_h)
 
         # D_x = real(ifft(fft(H) * fft(K_x))), D_y = real(ifft(fft(H) * fft(K_y)))
         H_fft = torch.fft.fft2(H_buf)
@@ -696,18 +793,24 @@ def _elastomer_displacement_grid_fft_dilate(
             kernel_fft[0, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # x real
             kernel_fft[1, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # x imaginary
         )
-        disp_x = torch.fft.ifft2(H_fft * Kx).real
+        disp_x = torch.fft.ifft2(H_fft * Kx).real[:, :g_nx, :g_ny]
         Ky = torch.complex(
             kernel_fft[2, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # y real
             kernel_fft[3, i_s, :fft_size_s].view(fft_nx_s, fft_ny_s),  # y imaginary
         )
-        disp_y = torch.fft.ifft2(H_fft * Ky).real
+        disp_y = torch.fft.ifft2(H_fft * Ky).real[:, :g_nx, :g_ny]
 
-        # Cache order is probe flat index ix + iy*g_nx; reshape(..., -1) gives ix*g_ny+iy, so transpose first
+        # Match non-grid magnitude: non-grid uses exp(-λ*(r²_2D + Δz²)); 2D kernel only has r²_2D.
+        H_cell = H_buf[:, :g_nx, :g_ny]
+        scale = torch.exp(-lam * H_cell * H_cell)
+        disp_x = disp_x * scale
+        disp_y = disp_y * scale
+
+        # Cache order is probe flat index ix + iy*g_nx; reshape(..., -1) gives ix*g_ny+iy, so transpose first.
         out_flat = output[:, cache_start : cache_start + g_nx * g_ny * 3].view(n_batches, g_nx * g_ny, 3)
-        out_flat[:, :, 0] = disp_x[:, :g_nx, :g_ny].transpose(1, 2).reshape(n_batches, -1)
-        out_flat[:, :, 1] = disp_y[:, :g_nx, :g_ny].transpose(1, 2).reshape(n_batches, -1)
-        out_flat[:, :, 2] = 0
+        out_flat[:, :, 0] = disp_x.transpose(1, 2).reshape(n_batches, -1)
+        out_flat[:, :, 1] = disp_y.transpose(1, 2).reshape(n_batches, -1)
+        out_flat[:, :, 2] = torch.clamp(contact_slice, max=max_h)
 
 
 @qd.kernel
@@ -752,7 +855,11 @@ def _kernel_elastomer_displacement_grid_shear_twist(
         shear_coeff = shear_coefficients[i_s]
         twist_coeff = twist_coefficients[i_s]
 
-        if contact_depth > gs.qd_float(0.0) and contact_link >= 0 and shear_coeff > 0.0 and twist_coeff > 0.0:
+        if (
+            contact_depth > gs.qd_float(0.0)
+            and contact_link >= 0
+            and (shear_max_delta[i_s] > 0.0 or twist_max_delta[i_s] > 0.0)
+        ):
             shear_twist = _func_shear_twist_displacement(
                 probe_pos,
                 link_pos,
@@ -798,8 +905,13 @@ KinematicTactileSensorMetadataMixinT = TypeVar(
 class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        self._debug_objects: list["Mesh | None"] = []
         self._probe_local_pos: torch.Tensor = torch.tensor([], dtype=gs.tc_float, device=gs.device)
-        self._probe_local_normal: torch.Tensor = torch.tensor([], dtype=gs.tc_float, device=gs.device)
+        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
+        self._probe_local_normal /= self._probe_local_normal.norm().clamp(min=gs.EPS).clone()
+        if self._probe_local_normal.ndim == 1:
+            self._probe_local_normal = self._probe_local_normal.expand(self._n_probes, 3).contiguous()
 
     def build(self):
         super().build()
@@ -963,11 +1075,7 @@ class KinematicContactProbe(
 
         super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
 
-        self._debug_objects: list["Mesh | None"] = []
-
         self._probe_local_pos = torch.tensor(self._options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
-        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        self._probe_local_normal /= self._probe_local_normal.norm(dim=1, keepdim=True).clamp(min=gs.EPS)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._n_probes,), (self._n_probes, 3)
@@ -1020,8 +1128,11 @@ class ElastomerDisplacementSensorMetadataMixin:
     dilate_coefficient: torch.Tensor = make_tensor_field((0,))
     shear_coefficient: torch.Tensor = make_tensor_field((0,))
     twist_coefficient: torch.Tensor = make_tensor_field((0,))
+
+    dilate_max_delta: torch.Tensor = make_tensor_field((0,))
     shear_max_delta: torch.Tensor = make_tensor_field((0,))
     twist_max_delta: torch.Tensor = make_tensor_field((0,))
+
     sensor_normal: torch.Tensor = make_tensor_field((0, 3))
 
 
@@ -1040,25 +1151,22 @@ class ElastomerDisplacementMixin(Generic[ElastomerDisplacementSensorMetadataMixi
         self._shared_metadata.contact_link_buf = torch.empty((B, total_n_probes), dtype=gs.tc_int, device=gs.device)
 
         self._shared_metadata.dilate_coefficient = concat_with_tensor(
-            self._shared_metadata.dilate_coefficient, self._options.dilate_coefficient, expand=(1,), dim=0
+            self._shared_metadata.dilate_coefficient, self._options.dilate_coefficient
         )
         self._shared_metadata.shear_coefficient = concat_with_tensor(
-            self._shared_metadata.shear_coefficient, self._options.shear_coefficient, expand=(1,), dim=0
+            self._shared_metadata.shear_coefficient, self._options.shear_coefficient
         )
         self._shared_metadata.twist_coefficient = concat_with_tensor(
-            self._shared_metadata.twist_coefficient, self._options.twist_coefficient, expand=(1,), dim=0
+            self._shared_metadata.twist_coefficient, self._options.twist_coefficient
+        )
+        self._shared_metadata.dilate_max_delta = concat_with_tensor(
+            self._shared_metadata.dilate_max_delta, self._options.dilate_max_delta
         )
         self._shared_metadata.shear_max_delta = concat_with_tensor(
-            self._shared_metadata.shear_max_delta,
-            torch.tensor([self._options.shear_max_delta], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.shear_max_delta, self._options.shear_max_delta
         )
         self._shared_metadata.twist_max_delta = concat_with_tensor(
-            self._shared_metadata.twist_max_delta,
-            torch.tensor([math.radians(self._options.twist_max_delta)], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.twist_max_delta, math.radians(self._options.twist_max_delta)
         )
         self._shared_metadata.sensor_normal = concat_with_tensor(
             self._shared_metadata.sensor_normal, self._probe_local_normal.mean(dim=0), expand=(1, 3), dim=0
@@ -1094,6 +1202,7 @@ class ElastomerDisplacementSensor(
     ):
         shared_ground_truth_cache.zero_()
         solver = shared_metadata.solver
+        output = shared_ground_truth_cache.contiguous()
         _kernel_elastomer_displacement(
             shared_metadata.probe_positions,
             shared_metadata.probe_normals,
@@ -1103,9 +1212,10 @@ class ElastomerDisplacementSensor(
             shared_metadata.dilate_coefficient,
             shared_metadata.shear_coefficient,
             shared_metadata.twist_coefficient,
-            shared_metadata.sensor_normal,
+            shared_metadata.dilate_max_delta,
             shared_metadata.shear_max_delta,
             shared_metadata.twist_max_delta,
+            shared_metadata.sensor_normal,
             shared_metadata.links_idx,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
@@ -1123,8 +1233,10 @@ class ElastomerDisplacementSensor(
             solver.faces_info,
             solver._sim.dt,
             gs.EPS,
-            shared_ground_truth_cache,
+            output,
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache.copy_(output)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         self._draw_debug_probes(context, lambda data, i: torch.linalg.norm(data[i]))
@@ -1138,16 +1250,15 @@ class ElastomerDisplacementGridSensorMetadata(
     NoisySensorMetadataMixin,
     SharedSensorMetadata,
 ):
-    grid_nx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    grid_ny: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    grid_n: torch.Tensor = make_tensor_field((0, 2), dtype=gs.tc_int)  # (nx, ny) per sensor
     grid_spacing: torch.Tensor = make_tensor_field((0, 2))  # (dx, dy) per sensor
 
     # FFT dilation
-    fft_nx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    fft_ny: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    dilate_displacement_buffer: torch.Tensor = make_tensor_field((0, 0))
+    fft_n: torch.Tensor = make_tensor_field((0, 2), dtype=gs.tc_int)  # (nx, ny) per sensor
     kernel_fft: torch.Tensor = make_tensor_field((4, 0, 0))  # (4, n_sensors, max_fft_size): gx_re, gx_im, gy_re, gy_im
     _fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
-    fft_re: torch.Tensor = make_tensor_field((0, 0, 0))  # used as H buffer in torch.fft dilate step
+    fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0))  # used as H buffer in torch.fft dilate step
 
 
 @register_sensor(ElastomerDisplacementGridSensorOptions, ElastomerDisplacementGridSensorMetadata, tuple)
@@ -1166,25 +1277,17 @@ class ElastomerDisplacementGridSensor(
         data_cls: Type[tuple],
         sensor_manager: "SensorManager",
     ):
-        lo = np.array(sensor_options.probe_local_pos_grid_bounds[0])
-        hi = np.array(sensor_options.probe_local_pos_grid_bounds[1])
+        lo = torch.tensor(sensor_options.probe_local_pos_grid_bounds[0], dtype=gs.tc_float, device=gs.device)
+        hi = torch.tensor(sensor_options.probe_local_pos_grid_bounds[1], dtype=gs.tc_float, device=gs.device)
+        normal = torch.tensor(sensor_options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
         nx, ny = int(sensor_options.probe_grid_size[0]), int(sensor_options.probe_grid_size[1])
-        dx = (float(hi[0] - lo[0]) / (nx - 1)) if nx > 1 else 0.0
-        dy = (float(hi[1] - lo[1]) / (ny - 1)) if ny > 1 else 0.0
 
         self._n_probes = nx * ny
 
         super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
 
-        self._debug_objects: list["Mesh | None"] = []
-        self._probe_local_pos = torch.tensor(
-            [(lo[0] + ix * dx, lo[1] + iy * dy, float(lo[2])) for iy in range(ny) for ix in range(nx)],
-            dtype=gs.tc_float,
-            device=gs.device,
-        )
-        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        self._probe_local_normal /= self._probe_local_normal.norm().clamp(min=gs.EPS).clone()
-        self._probe_local_normal = self._probe_local_normal.expand(self._n_probes, 3).contiguous()
+        probe_local_pos, _, _ = _compute_plane_grid_and_spacing(lo, hi, normal, nx, ny)
+        self._probe_local_pos = probe_local_pos
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._n_probes, 3)
@@ -1192,22 +1295,17 @@ class ElastomerDisplacementGridSensor(
     def build(self):
         super().build()
 
-        self._shared_metadata.grid_nx = concat_with_tensor(
-            self._shared_metadata.grid_nx,
-            torch.tensor([self._options.probe_grid_size[0]], dtype=gs.tc_int, device=gs.device),
-            expand=(1,),
+        self._shared_metadata.grid_n = concat_with_tensor(
+            self._shared_metadata.grid_n,
+            torch.tensor([self._options.probe_grid_size], dtype=gs.tc_int, device=gs.device),
+            expand=(1, 2),
             dim=0,
         )
-        self._shared_metadata.grid_ny = concat_with_tensor(
-            self._shared_metadata.grid_ny,
-            torch.tensor([self._options.probe_grid_size[1]], dtype=gs.tc_int, device=gs.device),
-            expand=(1,),
-            dim=0,
-        )
-        lo, hi = self._options.probe_local_pos_grid_bounds[0], self._options.probe_local_pos_grid_bounds[1]
+        lo = torch.tensor(self._options.probe_local_pos_grid_bounds[0], dtype=gs.tc_float, device=gs.device)
+        hi = torch.tensor(self._options.probe_local_pos_grid_bounds[1], dtype=gs.tc_float, device=gs.device)
+        normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
         g_nx, g_ny = self._options.probe_grid_size[0], self._options.probe_grid_size[1]
-        dx = (float(hi[0]) - float(lo[0])) / (g_nx - 1) if g_nx > 1 else 0.0
-        dy = (float(hi[1]) - float(lo[1])) / (g_ny - 1) if g_ny > 1 else 0.0
+        _, dx, dy = _compute_plane_grid_and_spacing(lo, hi, normal, g_nx, g_ny)
         self._shared_metadata.grid_spacing = concat_with_tensor(
             self._shared_metadata.grid_spacing,
             torch.tensor([dx, dy], dtype=gs.tc_float, device=gs.device),
@@ -1218,26 +1316,20 @@ class ElastomerDisplacementGridSensor(
         # Use linear-convolution padding (>= 2*g - 1) to avoid circular wrap across sensor borders.
         fft_nx = _next_pow2(2 * g_nx - 1)
         fft_ny = _next_pow2(2 * g_ny - 1)
-        kernel_fft = _precompute_dilate_kernel_fft(float(self._options.dilate_coefficient), dx, dy, fft_nx, fft_ny)
+        kernel_fft = _precompute_dilate_kernel_fft(self._options.dilate_coefficient, dx, dy, fft_nx, fft_ny)
         self._shared_metadata._fft_kernel_list.append(kernel_fft)
-        self._shared_metadata.fft_nx = concat_with_tensor(
-            self._shared_metadata.fft_nx,
-            torch.tensor([fft_nx], dtype=gs.tc_int, device=gs.device),
-            expand=(1,),
-            dim=0,
-        )
-        self._shared_metadata.fft_ny = concat_with_tensor(
-            self._shared_metadata.fft_ny,
-            torch.tensor([fft_ny], dtype=gs.tc_int, device=gs.device),
-            expand=(1,),
+        self._shared_metadata.fft_n = concat_with_tensor(
+            self._shared_metadata.fft_n,
+            torch.tensor([[fft_nx, fft_ny]], dtype=gs.tc_int, device=gs.device),
+            expand=(1, 2),
             dim=0,
         )
 
         # Assemble padded kernel FFT tensors from per-sensor list
         kernel_list = self._shared_metadata._fft_kernel_list
         n_sensors = len(kernel_list)
-        max_fft_nx = int(self._shared_metadata.fft_nx.max().item())
-        max_fft_ny = int(self._shared_metadata.fft_ny.max().item())
+        max_fft_nx = int(self._shared_metadata.fft_n[:, 0].max().item())
+        max_fft_ny = int(self._shared_metadata.fft_n[:, 1].max().item())
         max_fft_size = max_fft_nx * max_fft_ny
         kernel_fft = torch.zeros((4, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device)
         for s in range(n_sensors):
@@ -1245,8 +1337,11 @@ class ElastomerDisplacementGridSensor(
             size = kernel_fft_s.shape[1]
             kernel_fft[:, s, :size] = kernel_fft_s.to(device=gs.device, dtype=gs.tc_float)
         self._shared_metadata.kernel_fft = kernel_fft
-        self._shared_metadata.fft_re = torch.zeros(
+        self._shared_metadata.fft_depth_buffer = torch.zeros(
             (self._manager._sim._B, n_sensors, max_fft_size), dtype=gs.tc_float, device=gs.device
+        )
+        self._shared_metadata.dilate_displacement_buffer = torch.zeros(
+            (self._manager._sim._B, self._n_probes * 3), dtype=gs.tc_float, device=gs.device
         )
 
     @classmethod
@@ -1256,7 +1351,6 @@ class ElastomerDisplacementGridSensor(
         shared_ground_truth_cache: torch.Tensor,
     ):
         solver = shared_metadata.solver
-        shared_ground_truth_cache.zero_()
 
         _kernel_elastomer_displacement_grid_contact(
             shared_metadata.probe_positions,
@@ -1283,14 +1377,17 @@ class ElastomerDisplacementGridSensor(
             shared_metadata.contact_buf,
             shared_metadata.sensor_probe_start,
             shared_metadata.sensor_cache_start,
-            shared_metadata.grid_nx,
-            shared_metadata.grid_ny,
-            shared_metadata.fft_nx,
-            shared_metadata.fft_ny,
-            shared_metadata.fft_re,
+            shared_metadata.grid_n,
+            shared_metadata.fft_n,
+            shared_metadata.fft_depth_buffer,
             shared_metadata.kernel_fft,
-            shared_ground_truth_cache,
+            shared_metadata.dilate_coefficient,
+            shared_metadata.dilate_max_delta,
+            shared_metadata.dilate_displacement_buffer,
         )
+
+        shared_ground_truth_cache.copy_(shared_metadata.dilate_displacement_buffer)
+        output = shared_ground_truth_cache.contiguous()
 
         _kernel_elastomer_displacement_grid_shear_twist(
             shared_metadata.probe_positions,
@@ -1308,8 +1405,10 @@ class ElastomerDisplacementGridSensor(
             solver.links_state,
             solver._sim.dt,
             gs.EPS,
-            shared_ground_truth_cache,
+            output,
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache.copy_(output)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         self._draw_debug_probes(context, lambda data, i: torch.linalg.norm(data[i]))

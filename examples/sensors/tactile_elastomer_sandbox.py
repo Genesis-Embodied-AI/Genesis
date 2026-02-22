@@ -161,8 +161,7 @@ def main():
     if args.vis:
         if IS_MATPLOTLIB_AVAILABLE:
             plot_normal = (0.0, 0.0, -1.0) if args.grid else (0.0, 0.0, 1.0)
-            scene.start_recording(
-                data_func=lambda: tactile.read(),
+            tactile.start_recording(
                 rec_options=gs.recorders.MPLVectorFieldPlot(
                     title="Tactile Displacement",
                     positions=tactile.probe_local_pos,

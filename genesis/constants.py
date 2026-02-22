@@ -16,6 +16,7 @@ FArrayType = conlist(float, min_length=1)
 Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
 MaybeNumArrayType = NumericType | conlist(NumericType, min_length=1)
 MaybeVec3FType = float | Vec3FType
+MaybeVec3FArrayType = Vec3FType | conlist(Vec3FType, min_length=1)
 MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 
