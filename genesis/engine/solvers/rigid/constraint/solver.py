@@ -3045,6 +3045,7 @@ def func_solve_body(
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
