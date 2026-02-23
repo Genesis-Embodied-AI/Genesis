@@ -81,9 +81,16 @@ if __name__ == "__main__":
     )
 
     probe_normal = (0.0, -1.0, 0.0)
+    probe_local_pos = gu.generate_grid_points_on_plane(
+        lo=(-0.006, 0.0, 0.04),
+        hi=(0.008, 0.0, 0.05),
+        normal=probe_normal,
+        nx=8,
+        ny=8,
+    )
     tactile_sensor_kwargs = dict(
         entity_idx=robot.idx,
-        probe_grid_size=(8, 8),
+        probe_local_pos=probe_local_pos,
         probe_local_normal=probe_normal,
         probe_radius=0.002,
         draw_debug=True,
@@ -93,16 +100,15 @@ if __name__ == "__main__":
     )
 
     left_finger_tactile_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementGridSensor(
+        gs.sensors.ElastomerDisplacement(
             link_idx_local=robot.get_link("left_finger").idx_local,
-            probe_local_pos_grid_bounds=((-0.006, 0.0, 0.04), (0.008, 0.0, 0.05)),
             **tactile_sensor_kwargs,
         )
     )
     right_finger_tactile_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementGridSensor(
+        gs.sensors.ElastomerDisplacement(
             link_idx_local=robot.get_link("right_finger").idx_local,
-            probe_local_pos_grid_bounds=((-0.006, 0.0, 0.04), (0.008, 0.0, 0.05)),
+            probe_local_pos=probe_local_pos,
             **tactile_sensor_kwargs,
         )
     )

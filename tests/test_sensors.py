@@ -858,7 +858,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
         twist_coefficient=1e-2,
     )
     dilate_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
+        gs.sensors.ElastomerDisplacement(
             dilate_max_delta=MAX_DELTAS[0],
             shear_max_delta=0.0,
             twist_max_delta=0.0,
@@ -866,7 +866,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
         )
     )
     shear_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
+        gs.sensors.ElastomerDisplacement(
             dilate_max_delta=0.0,
             shear_max_delta=MAX_DELTAS[1],
             twist_max_delta=0.0,
@@ -874,7 +874,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
         )
     )
     twist_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
+        gs.sensors.ElastomerDisplacement(
             dilate_max_delta=0.0,
             shear_max_delta=0.0,
             twist_max_delta=MAX_DELTAS[2],
@@ -882,7 +882,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
         )
     )
     sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
+        gs.sensors.ElastomerDisplacement(
             dilate_max_delta=MAX_DELTAS[0],
             shear_max_delta=MAX_DELTAS[1],
             twist_max_delta=MAX_DELTAS[2],
@@ -971,7 +971,7 @@ def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
-    """Test ElastomerDisplacementGridSensor with probes on a box resting on a sphere."""
+    """Test ElastomerDisplacementSensor with probes on a box resting on a sphere."""
     SPHERE_RADIUS = 0.1
     PROBE_RADIUS = 0.02
     PENETRATION = 0.01
@@ -1008,24 +1008,26 @@ def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
         twist_coefficient=1e-2,
         draw_debug=show_viewer,
     )
-
+    probe_local_pos = gu.generate_grid_points_on_plane(
+        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
+        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
+        normal=(0.0, 0.0, -1.0),
+        nx=GRID_SIZE[0],
+        ny=GRID_SIZE[1],
+    )
     elastomer_grid_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementGridSensor(
-            probe_local_pos_grid_bounds=(
-                (-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
-                (BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
-            ),
-            probe_grid_size=GRID_SIZE,
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos,
             **sensor_kwargs,
         )
     )
     elastomer_sensor = scene.add_sensor(
-        gs.sensors.ElastomerDisplacementSensor(
-            probe_local_pos=elastomer_grid_sensor.probe_local_pos,
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
             **sensor_kwargs,
         )
     )
-
+    assert elastomer_grid_sensor._is_grid and not elastomer_sensor._is_grid
     assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
 
     scene.build(n_envs=n_envs)

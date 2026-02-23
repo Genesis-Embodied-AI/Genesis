@@ -8,6 +8,7 @@ import os
 import numpy as np
 
 import genesis as gs
+import genesis.utils.geom as gu
 from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
@@ -51,7 +52,7 @@ def main():
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
-    parser.add_argument("--grid", action="store_true", help="Use box pusher with ElastomerDisplacementGridSensor")
+    parser.add_argument("--grid", action="store_true", help="Use grid of probes instead of hemisphere probes")
     args = parser.parse_args()
 
     gs.init(
@@ -129,15 +130,16 @@ def main():
             surface=gs.surfaces.Default(color=(0.15, 0.55, 0.95, 1.0)),
         )
         half_xy = box_size[:2] / 2
-        grid_bounds = [
-            [-float(half_xy[0]), -float(half_xy[1]), -float(box_size[2]) / 2],
-            [float(half_xy[0]), float(half_xy[1]), -float(box_size[2]) / 2],
-        ]
         tactile = scene.add_sensor(
-            gs.sensors.ElastomerDisplacementGridSensor(
+            gs.sensors.ElastomerDisplacement(
                 entity_idx=pusher.idx,
-                probe_local_pos_grid_bounds=grid_bounds,
-                probe_grid_size=GRID_SIZE,
+                probe_local_pos=gu.generate_grid_points_on_plane(
+                    lo=[-float(half_xy[0]), -float(half_xy[1]), -float(box_size[2]) / 2],
+                    hi=[float(half_xy[0]), float(half_xy[1]), -float(box_size[2]) / 2],
+                    normal=(0.0, 0.0, -1.0),
+                    nx=GRID_SIZE[0],
+                    ny=GRID_SIZE[1],
+                ),
                 **sensor_kwargs,
             )
         )
@@ -149,7 +151,7 @@ def main():
         )
         probe_positions, probe_normals = _build_hemisphere_probes(PUSHER_SIZE, HEMISPHERE_N_THETA, HEMISPHERE_N_PHI)
         tactile = scene.add_sensor(
-            gs.sensors.ElastomerDisplacementSensor(
+            gs.sensors.ElastomerDisplacement(
                 entity_idx=pusher.idx,
                 probe_local_pos=probe_positions,
                 **sensor_kwargs,
