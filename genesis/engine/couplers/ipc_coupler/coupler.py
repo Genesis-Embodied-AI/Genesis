@@ -1953,10 +1953,12 @@ class IPCCoupler(RBC):
             # Note: For non-fixed base robots, qpos_new already preserves base DOFs from ref_dof_prev
             # (only joint DOFs were updated by _compute_qpos_new_kernel)
             # The base link transform will be overwritten later using IPC data
-            if self.sim._B > 1:
-                entity.set_qpos(qpos_new_np, envs_idx=env_idx, zero_velocity=False)
-            else:
-                entity.set_qpos(qpos_new_np, zero_velocity=False)
+            self.rigid_solver.set_qpos(
+                qpos_new_np,
+                qs_idx=slice(entity.q_start, entity.q_end),
+                envs_idx=env_idx if self.sim._B > 1 else None,
+                skip_forward=False,
+            )
 
             # For non-fixed base robots, apply base link transform and velocity from IPC
             has_non_fixed_base = art_data.get("has_non_fixed_base", False)
@@ -2084,10 +2086,12 @@ class IPCCoupler(RBC):
             qpos_new[:3] = pos
             qpos_new[3:7] = quat_wxyz
 
-            if is_parallelized:
-                entity.set_qpos(qpos_new, envs_idx=env_idx, zero_velocity=True, skip_forward=True)
-            else:
-                entity.set_qpos(qpos_new, envs_idx=None, zero_velocity=True, skip_forward=True)
+            self.rigid_solver.set_qpos(
+                qpos_new,
+                qs_idx=slice(entity.q_start, entity.q_end),
+                envs_idx=env_idx if is_parallelized else None,
+                skip_forward=True,
+            )
 
             updated_entities.append(entity_idx)
 

@@ -775,7 +775,7 @@ class RigidEntity(Entity):
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
             gs.raise_exception(
-                "`RigidMaterial.coupling_mode='ipc_only'`  only supported by rigid non-articulated objects."
+                "`RigidMaterial.coupling_mode='ipc_only'` only supported by rigid non-articulated objects."
             )
 
         # Add (link, joints, geoms) tuples sequentially
@@ -2584,7 +2584,7 @@ class RigidEntity(Entity):
             The vertices of the entity.
         """
         if self._enable_heterogeneous:
-            gs.raise_exception("This method is not supported for heterogeneous entities.")
+            gs.raise_exception("This method is not supported by heterogeneous entities.")
 
         self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
 
@@ -2614,12 +2614,19 @@ class RigidEntity(Entity):
         qpos : array_like
             The qpos to set.
         qs_idx_local : None | array_like, optional
-            The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+            The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
@@ -2750,12 +2757,19 @@ class RigidEntity(Entity):
         position : array_like
             The position to set.
         dofs_idx_local : None | array_like, optional
-            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a sudden change in entity pose.
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)

@@ -36,7 +36,7 @@ def main():
     parser.add_argument(
         "--coupling_type",
         type=str,
-        default="external_articulation",
+        default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
     )
     args = parser.parse_args()
@@ -167,13 +167,12 @@ def main():
 
     scene.build()
 
-    # FIXME: Setting initial configuration is not working...
-    # qpos = franka.inverse_kinematics(
-    #     link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx
-    # )
-    # qpos = (2.2116, -1.5328, -0.7347, -1.7235, -1.3377, 0.7519, -1.4410, 0.04, 0.04)
-    # franka.set_qpos(qpos)
-    # franka.control_dofs_position(qpos)
+    # Setting initial configuration is not supported by coupling mode "external_articulation"
+    if args.coupling_type != "external_articulation":
+        # qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
+        qpos = (2.2116, -1.5328, -0.7347, -1.7235, -1.3377, 0.7519, -1.4410, 0.04, 0.04)
+        franka.set_qpos(qpos)
+        franka.control_dofs_position(qpos)
 
     target_ik = scene.draw_debug_frame(
         T=gu.trans_quat_to_T(target_pos, target_quat),

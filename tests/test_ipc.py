@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import numpy as np
 import pytest
 
@@ -514,7 +516,7 @@ def test_objects_colliding(n_envs, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coupling_type, show_viewer):
-    """Verify FEM add/retrieve and that robot lift raises FEM more than 10cm."""
+    """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
     BOX_POS = (0.65, 0.0, 0.03)
@@ -609,12 +611,14 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
         for _ in range(int(duration / DT)):
             scene.step()
 
-    # FIXME: Setting initial configuration is not working with IPC...
+    # Setting initial configuration is not supported by coupling mode "external_articulation"
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.9482, 0.6910, 1.2114, -1.6619, -0.6739, 1.8685, 1.1844, 0.0112, 0.0096]
-    qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
-    # franka.set_dofs_position(qpos)
-    run_stage(qpos, finger_pos=0.04, duration=2.0)
+    with pytest.raises(gs.GenesisException) if coupling_type == "external_articulation" else nullcontext():
+        franka.set_dofs_position(qpos)
+        franka.control_dofs_position(qpos)
+    if coupling_type == "external_articulation":
+        run_stage(qpos, finger_pos=0.04, duration=2.0)
 
     # Lower the grapper half way to grasping position
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.25], quat=[0.0, 1.0, 0.0, 0.0])
@@ -632,12 +636,12 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     # Lift the cube
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.9488, 0.6916, 1.2123, -1.6627, -0.6750, 1.8683, 1.1855, 0.0301, 0.0319]
-    run_stage(qpos, finger_pos=0.0, duration=0.2)
+    run_stage(qpos, finger_pos=0.0, duration=0.5)
 
     ipc_positions_f = get_ipc_positions(scene, solver_type="fem", idx=box_entity_idx, envs_idx=envs_idx)
     gs_positions_f = tensor_to_array(box.get_state().pos)
     assert_allclose(ipc_positions_f, gs_positions_f, atol=TOL_SINGLE)
-    assert (gs_positions_f[..., 2] - gs_positions_0[..., 2] >= 0.1).all()
+    assert (gs_positions_f[..., 2] - gs_positions_0[..., 2] >= 0.2).all()
     finger_aabb = tensor_to_array(franka.get_link("right_finger").get_AABB())
     assert (gs_positions_f[..., 2] - finger_aabb[..., 0, 2] > 0).any()
 

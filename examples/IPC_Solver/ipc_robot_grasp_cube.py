@@ -15,7 +15,7 @@ def main():
     parser.add_argument(
         "--coupling_type",
         type=str,
-        default="external_articulation",
+        default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
     )
     args = parser.parse_args()
@@ -82,9 +82,8 @@ def main():
 
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
 
-    # FIXME: Setting initial configuration is not working with IPC...
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
-    if not args.no_ipc:
+    if not args.no_ipc or args.coupling_type == "external_articulation":
         franka.control_dofs_position(qpos[motors_dof], dofs_idx_local=motors_dof)
         franka.control_dofs_position(0.04, dofs_idx_local=fingers_dof)
         for _ in range(200 if "PYTEST_VERSION" not in os.environ else 1):
@@ -111,9 +110,9 @@ def main():
         scene.step()
 
     # Lift the cube
-    qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.3], quat=[0.0, 1.0, 0.0, 0.0])
     franka.control_dofs_position(qpos[motors_dof], dofs_idx_local=motors_dof)
-    for _ in range(20 if "PYTEST_VERSION" not in os.environ else 1):
+    for _ in range(50 if "PYTEST_VERSION" not in os.environ else 1):
         scene.step()
 
 

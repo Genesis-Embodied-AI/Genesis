@@ -24,7 +24,7 @@ Beware only Linux/Windows x86 CPU & Nvidia GPU is supported for now.
 
 1. **Interactive cloth manipulation:**
    ```bash
-   python examples/IPC_Solver/ipc_robot_cloth_telop.py
+   python examples/IPC_Solver/ipc_robot_cloth_teleop.py
    ```
     Expected: Interactive Franka Panda robot manipulation and manipulates two pieces of cloths
 
