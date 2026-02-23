@@ -794,38 +794,49 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
     )
 
     if coupling_mode == "two_way_soft_constraint":
-        robot = scene.add_entity(
+        entity = scene.add_entity(
             gs.morphs.MJCF(
                 file="xml/franka_emika_panda/panda_non_overlap.xml",
             ),
             material=gs.materials.Rigid(
-                coupling_mode=coupling_mode,
+                coupling_mode="two_way_soft_constraint",
                 coupling_link_filter=("left_finger", "right_finger"),
             ),
         )
 
         ipc_excluded_geoms = {
-            geom.idx for name in ("left_finger", "right_finger") for geom in robot.get_link(name).geoms
+            geom.idx for name in entity.material.coupling_link_filter for geom in entity.get_link(name).geoms
         }
     else:
-        robot = scene.add_entity(
-            gs.morphs.URDF(
-                file="urdf/go2/urdf/go2.urdf",
-                pos=(0.0, 0.0, 1.0),
+        with pytest.raises(gs.GenesisException):
+            entity = scene.add_entity(
+                gs.morphs.URDF(
+                    file="urdf/go2/urdf/go2.urdf",
+                    pos=(0.0, 0.0, 1.0),
+                ),
+                material=gs.materials.Rigid(
+                    coupling_mode="ipc_only",
+                ),
+            )
+
+        entity = scene.add_entity(
+            morph=gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.0, 0.0, 0.6),
             ),
             material=gs.materials.Rigid(
-                coupling_mode=coupling_mode,
+                coupling_mode="ipc_only",
             ),
         )
 
-        ipc_excluded_geoms = {geom.idx for geom in robot.geoms}
+        ipc_excluded_geoms = {geom.idx for geom in entity.geoms}
 
     scene.build()
 
     pair_idx = scene.sim.rigid_solver.collider._collision_pair_idx
 
     # Collect geom indices for entities that should retain rigid solver pairs
-    rigid_kept_geoms = {geom.idx for geom in robot.geoms} - ipc_excluded_geoms
+    rigid_kept_geoms = {geom.idx for geom in entity.geoms} - ipc_excluded_geoms
     ground_geoms = {plane.geoms[0].idx}
     box_geoms = {box.geoms[0].idx}
 
@@ -837,7 +848,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
         for i_gb in range(pair_idx.shape[0]):
             assert pair_idx[(i_ga, i_gb) if i_ga < i_gb else (i_gb, i_ga)] == -1
 
-    # Non-excluded articulated robot geoms (if any) keep rigid solver ground and self-collision pairs
+    # Non-excluded rigid geoms (if any) keep rigid solver ground and self-collision pairs
     if rigid_kept_geoms:
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)

@@ -40,8 +40,8 @@ class Rigid(Material):
               - 'two_way_soft_constraint': Two-way soft coupling.
               - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
                 the DOF level.
-              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only allowed for single free
-                base-link entities (so-called "object").
+              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only supported by rigid
+                non-articulated objects.
             Default is None.
         coupling_link_filter : tuple of str or None, optional
             Tuple of link names to include in IPC coupling. Only supported with coupling_mode='two_way_soft_constraint'.

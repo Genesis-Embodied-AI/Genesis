@@ -1220,24 +1220,20 @@ class IPCCoupler(RBC):
 
                         external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
                         if external_kinetic_attr is not None:
-                            external_kinetic_view = view(external_kinetic_attr)
                             # Don't set external_kinetic for IPC-driven free base and IPC-only entities:
                             # they are kinematic targets, not dynamic bodies in IPC
-                            if not is_free_base_ipc_driven and not is_ipc_only:
-                                external_kinetic_view[:] = 1
-                            else:
-                                external_kinetic_view[:] = 0
+                            external_kinetic_view = view(external_kinetic_attr)
+                            external_kinetic_view[:] = int(not is_free_base_ipc_driven and not is_ipc_only)
 
                         # Set is_fixed attribute for base link (when link.is_fixed=True)
                         # This fixes the base link in IPC, matching test_external_articulation_constraint.py
                         link = rigid_solver.links[link_idx]
-                        is_link_fixed = link.is_fixed
 
                         is_fixed_attr = merged_mesh.instances().find(builtin.is_fixed)
                         if is_fixed_attr is not None:
                             is_fixed_view = view(is_fixed_attr)
                             # Fix link if it's fixed in Genesis
-                            is_fixed_view[0] = 1 if is_link_fixed else 0
+                            is_fixed_view[0] = int(link.is_fixed)
 
                         # For external_articulation mode, create ref_dof_prev attribute
                         if entity_coupling_type == "external_articulation" and self.options.enable_rigid_dofs_sync:

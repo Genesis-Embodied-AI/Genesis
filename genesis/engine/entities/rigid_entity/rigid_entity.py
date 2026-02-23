@@ -553,6 +553,8 @@ class RigidEntity(Entity):
         )
 
     def _load_scene(self, morph, surface):
+        from genesis.engine.couplers import IPCCoupler
+
         # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
         # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
@@ -765,6 +767,16 @@ class RigidEntity(Entity):
                 l_info["is_robot"] = np.array(True, dtype=np.bool_)
                 if l_info["parent_idx"] >= 0:
                     l_infos[l_info["parent_idx"]]["is_robot"][()] = True
+
+        # Make sure that the entity is not object
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self.material.coupling_mode == "ipc_only"
+            and any(l_info["is_robot"] for l_info in l_infos)
+        ):
+            gs.raise_exception(
+                "`RigidMaterial.coupling_mode='ipc_only'`  only supported by rigid non-articulated objects."
+            )
 
         # Add (link, joints, geoms) tuples sequentially
         for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
