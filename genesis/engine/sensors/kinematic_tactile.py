@@ -558,6 +558,7 @@ def _elastomer_displacement_grid_fft_dilate(
     fft_kernel_list: list[torch.Tensor],
     dilate_coefficient: torch.Tensor,
     dilate_max_delta: torch.Tensor,
+    grid_dilate_out_buffer: torch.Tensor,
     output: torch.Tensor,
 ) -> None:
     """
@@ -603,10 +604,13 @@ def _elastomer_displacement_grid_fft_dilate(
         disp_y = disp_y * scale
 
         # Cache order is probe flat index iy*nx+ix; (g_nx, g_ny) transpose(1,2).reshape gives (g_ny, g_nx) -> iy*nx+ix.
-        out_flat = output[:, cache_start : cache_start + g_nx * g_ny * 3].view(n_batches, g_nx * g_ny, 3)
-        out_flat[:, :, 0] = disp_x.transpose(1, 2).reshape(n_batches, -1)
-        out_flat[:, :, 1] = disp_y.transpose(1, 2).reshape(n_batches, -1)
-        out_flat[:, :, 2] = torch.clamp(contact_slice, max=max_h)
+        # Write to pre-allocated contiguous block then copy back to avoid illegal memory access on GPU.
+        grid_size = g_nx * g_ny * 3
+        out_block = grid_dilate_out_buffer[:, :grid_size]
+        out_block[:, 0:grid_size:3] = disp_x.transpose(1, 2).reshape(n_batches, -1)
+        out_block[:, 1:grid_size:3] = disp_y.transpose(1, 2).reshape(n_batches, -1)
+        out_block[:, 2:grid_size:3] = torch.clamp(contact_slice, max=max_h)
+        output[:, cache_start : cache_start + grid_size].copy_(out_block)
 
 
 @qd.kernel
@@ -943,6 +947,7 @@ class ElastomerDisplacementSensorMetadata(
     grid_spacing: torch.Tensor = make_tensor_field((0, 2))  # (dx, dy) per sensor
     fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
     fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0, 0))  # used as H buffer in torch.fft dilate step
+    grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))  # reusable (B, max_grid_size) for FFT dilate copy
 
 
 @register_sensor(ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata, tuple)
@@ -1021,6 +1026,13 @@ class ElastomerDisplacementSensor(
                 dtype=gs.tc_float,
                 device=gs.device,
             )
+            grid_size = nx * ny * 3
+            out_buf = self._shared_metadata.grid_dilate_out_buffer
+            if out_buf.numel() == 0 or out_buf.shape[1] < grid_size:
+                new_size = max(out_buf.shape[1] if out_buf.numel() > 0 else 0, grid_size)
+                self._shared_metadata.grid_dilate_out_buffer = torch.empty(
+                    (B, new_size), dtype=gs.tc_float, device=gs.device
+                )
 
         self._shared_metadata.grid_n = concat_with_tensor(self._shared_metadata.grid_n, grid_n, expand=(1, 2), dim=0)
         self._shared_metadata.grid_spacing = concat_with_tensor(
@@ -1082,6 +1094,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.fft_kernel_list,
             shared_metadata.dilate_coefficient,
             shared_metadata.dilate_max_delta,
+            shared_metadata.grid_dilate_out_buffer,
             shared_ground_truth_cache,
         )
 
