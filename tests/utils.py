@@ -204,7 +204,6 @@ def get_hf_dataset(
                 revision=revision,
                 allow_patterns=pattern,
                 max_workers=1,
-                local_dir=local_dir,
             )
 
             # Make sure that download was successful
