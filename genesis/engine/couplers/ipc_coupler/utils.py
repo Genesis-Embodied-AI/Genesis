@@ -193,41 +193,16 @@ def extract_articulated_joints(entity):
     }
 
 
-def categorize_entities_by_coupling_type(entity_coupling_types):
+def build_ipc_scene_config(options, sim_options):
     """
-    Categorize entities by their coupling type.
-
-    Parameters
-    ----------
-    entity_coupling_types : dict
-        Maps entity_idx -> coupling_type string
-
-    Returns
-    -------
-    dict
-        Maps coupling_type -> list of entity_idx
-    """
-    result = {
-        "two_way_soft_constraint": [],
-        "external_articulation": [],
-        "ipc_only": [],
-    }
-
-    for entity_idx, coupling_type in entity_coupling_types.items():
-        if coupling_type in result:
-            result[coupling_type].append(entity_idx)
-
-    return result
-
-
-def build_ipc_scene_config(options):
-    """
-    Build IPC Scene config dict from IPCCouplerOptions.
+    Build IPC Scene config dict from IPCCouplerOptions and SimOptions.
 
     Parameters
     ----------
     options : IPCCouplerOptions
         The coupler options
+    sim_options : SimOptions
+        The simulation options (provides dt, gravity, requires_grad)
 
     Returns
     -------
@@ -238,27 +213,28 @@ def build_ipc_scene_config(options):
 
     config = Scene.default_config()
 
-    # Basic simulation parameters (always set)
-    config["dt"] = options.dt
-    config["gravity"] = [[options.gravity[0]], [options.gravity[1]], [options.gravity[2]]]
+    # Basic simulation parameters (derived from SimOptions)
+    config["dt"] = sim_options.dt
+    gravity = sim_options.gravity
+    config["gravity"] = [[float(e)] for e in gravity]
 
     # Newton solver options (only set if specified)
-    _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iter)
-    _set_if_not_none(config, ["newton", "min_iter"], options.newton_min_iter)
-    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_velocity_tol)
-    _set_if_not_none(config, ["newton", "ccd_tol"], options.newton_ccd_tol)
-    _set_if_not_none(config, ["newton", "use_adaptive_tol"], options.newton_use_adaptive_tol)
-    _set_if_not_none(config, ["newton", "transrate_tol"], options.newton_transrate_tol)
+    _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iterations)
+    _set_if_not_none(config, ["newton", "min_iter"], options.newton_min_iterations)
+    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_tolerance)
+    _set_if_not_none(config, ["newton", "ccd_tol"], options.newton_ccd_tolerance)
+    _set_if_not_none(config, ["newton", "use_adaptive_tol"], options.newton_use_adaptive_tolerance)
+    _set_if_not_none(config, ["newton", "transrate_tol"], options.newton_translation_tolerance)
     _set_if_not_none(config, ["newton", "semi_implicit", "enable"], options.newton_semi_implicit_enable)
-    _set_if_not_none(config, ["newton", "semi_implicit", "beta_tol"], options.newton_semi_implicit_beta_tol)
+    _set_if_not_none(config, ["newton", "semi_implicit", "beta_tol"], options.newton_semi_implicit_beta_tolerance)
 
     # Line search options
-    _set_if_not_none(config, ["line_search", "max_iter"], options.line_search_max_iter)
-    _set_if_not_none(config, ["line_search", "report_energy"], options.line_search_report_energy)
+    _set_if_not_none(config, ["line_search", "max_iter"], options.n_linesearch_iterations)
+    _set_if_not_none(config, ["line_search", "report_energy"], options.linesearch_report_energy)
 
     # Linear system options
     _set_if_not_none(config, ["linear_system", "solver"], options.linear_system_solver)
-    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tol_rate)
+    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tolerance)
 
     # Contact options
     _set_if_not_none(config, ["contact", "enable"], options.contact_enable)
@@ -276,8 +252,8 @@ def build_ipc_scene_config(options):
     # Sanity check options
     _set_if_not_none(config, ["sanity_check", "enable"], options.sanity_check_enable)
 
-    # Differential simulation options
-    _set_if_not_none(config, ["diff_sim", "enable"], options.diff_sim_enable)
+    # Differential simulation options (derived from SimOptions)
+    _set_if_not_none(config, ["diff_sim", "enable"], sim_options.requires_grad)
 
     return config
 
@@ -286,6 +262,14 @@ def _set_if_not_none(config, keys, value):
     """Set a nested config value only if it's not None."""
     if value is None:
         return
+    # Cast to native Python types — UIPC pybind11 rejects numpy scalars and Python bool.
+    # bool check must come before int since bool is a subclass of int.
+    if isinstance(value, (bool, np.bool_)):
+        value = int(value)
+    elif isinstance(value, (int, np.integer)):
+        value = int(value)
+    elif isinstance(value, (float, np.floating)):
+        value = float(value)
     d = config
     for key in keys[:-1]:
         d = d[key]

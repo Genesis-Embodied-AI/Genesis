@@ -1624,16 +1624,10 @@ class RigidSolver(Solver):
                 errno=self._errno,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase
+            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
+            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
             if self.sim.coupler.has_any_rigid_coupling():
-                # Temporarily disable ground collision if requested
-                if self.sim.coupler.options.disable_genesis_contact:
-                    original_enable_collision = self._enable_collision
-                    self._enable_collision = False
-                    self.substep(f)
-                    self._enable_collision = original_enable_collision
-                else:
-                    self.substep(f)
+                self.substep(f)
 
     def substep_post_coupling_grad(self, f):
         pass

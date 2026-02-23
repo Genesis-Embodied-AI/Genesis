@@ -12,19 +12,19 @@ Beware only Linux/Windows x86 CPU & Nvidia GPU is supported for now.
 
 1. **Basic cloth simulation:**
    ```bash
-   python examples/IPC_Solver/ipc_cloth_falling.py -v
+   python examples/IPC_Solver/ipc_objects_falling.py -v
    ```
   Expected: A cloth falls under gravity and collides with the ground plane clustered with objects
 
 1. **Robotic grasping of deformables:**
    ```bash
-   python examples/IPC_Solver/ipc_robot_cloth_grasp.py -v --ipc
+   python examples/IPC_Solver/ipc_robot_grasp_cube.py -v
    ```
- Expected: Franka Panda robot grasps and manipulates a deformable object with IPC contact resolution
+ Expected: Franka Panda robot grasps and manipulates a deformable cube with IPC contact resolution
 
 1. **Interactive cloth manipulation:**
    ```bash
-   python examples/IPC_Solver/ipc_robot_cloth_telop.py -v --ipc
+   python examples/IPC_Solver/ipc_robot_cloth_telop.py
    ```
     Expected: Interactive Franka Panda robot manipulation and manipulates two pieces of cloths
 

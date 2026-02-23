@@ -1,9 +1,13 @@
+import logging
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
 
 import genesis as gs
+from genesis.engine.materials.rigid import Rigid
 from genesis.options.solvers import IPCCouplerOptions
 from genesis.repr_base import RBC
 from .data import IPCTransformData, IPCCouplingData, ArticulationData
@@ -12,7 +16,6 @@ from .utils import (
     compute_link_to_link_transform,
     compute_link_init_world_rotation,
     is_robot_entity,
-    categorize_entities_by_coupling_type,
     build_ipc_scene_config,
     extract_articulated_joints,
     read_ipc_geometry_metadata,
@@ -641,15 +644,14 @@ class IPCCoupler(RBC):
 
     def build(self) -> None:
         """Build IPC system"""
-        # Initialize IPC system
+        self._collect_coupling_config_from_materials()
         self._init_ipc()
         self._add_objects_to_ipc()
         self._finalize_ipc()
-        if self.options.enable_ipc_gui:
-            self._init_ipc_gui()
 
     def _init_ipc(self):
         """Initialize IPC system components"""
+        from uipc import Logger as UIPCLogger, Timer as UIPCTimer
         from uipc.core import Engine, World, Scene
         from uipc.constitution import (
             AffineBodyConstitution,
@@ -660,16 +662,10 @@ class IPCCoupler(RBC):
             DiscreteShellBending,
         )
 
-        # Disable IPC logging if requested
-        if self.options.disable_ipc_logging:
-            from uipc import Logger, Timer
-
-            Logger.set_level(Logger.Level.Error)
-            Timer.disable_all()
-
-        # Create IPC engine and world
-        import os
-        import tempfile
+        # Derive IPC logging level from Genesis logger
+        if gs.logger.level > logging.DEBUG:
+            UIPCLogger.set_level(UIPCLogger.Level.Error)
+            UIPCTimer.disable_all()
 
         # Create workspace directory for IPC output.
         # Use process ID to avoid collisions under pytest-xdist.
@@ -682,7 +678,7 @@ class IPCCoupler(RBC):
         self._ipc_world = World(self._ipc_engine)
 
         # Create IPC scene with configuration
-        config = build_ipc_scene_config(self.options)
+        config = build_ipc_scene_config(self.options, self.sim.options)
         self._ipc_scene = Scene(config)
 
         # Create constitutions
@@ -726,13 +722,13 @@ class IPCCoupler(RBC):
             self.options.contact_resistance,
             True,
         )
-        # ABD-ABD: controlled by IPC_self_contact option
+        # ABD-ABD: controlled by enable_rigid_rigid_contact option
         self._ipc_scene.contact_tabular().insert(
             self._ipc_abd_contact,
             self._ipc_abd_contact,
             self.options.contact_friction_mu,
             self.options.contact_resistance,
-            self.options.IPC_self_contact,
+            self.options.enable_rigid_rigid_contact,
         )
         # Cloth-Cloth: always enabled for cloth self-collision (necessary to prevent self-penetration)
         self._ipc_scene.contact_tabular().insert(
@@ -760,13 +756,13 @@ class IPCCoupler(RBC):
         )
 
         # Ground contact interactions
-        # Ground-ABD (rigid bodies): controlled by disable_ipc_ground_contact option
+        # Ground-ABD (rigid bodies): controlled by enable_rigid_ground_contact option
         self._ipc_scene.contact_tabular().insert(
             self._ipc_ground_contact,
             self._ipc_abd_contact,
             self.options.contact_friction_mu,
             self.options.contact_resistance,
-            not self.options.disable_ipc_ground_contact,
+            self.options.enable_rigid_ground_contact,
         )
         # Ground-FEM: always enabled
         self._ipc_scene.contact_tabular().insert(
@@ -1244,7 +1240,7 @@ class IPCCoupler(RBC):
                             is_fixed_view[0] = 1 if is_link_fixed else 0
 
                         # For external_articulation mode, create ref_dof_prev attribute
-                        if entity_coupling_type == "external_articulation" and self.options.sync_dof_enable:
+                        if entity_coupling_type == "external_articulation" and self.options.enable_rigid_dofs_sync:
                             from uipc.geometry import affine_body
                             from uipc import Vector12
 
@@ -1268,12 +1264,12 @@ class IPCCoupler(RBC):
                                 self._ipc_stc = SoftTransformConstraint()
                                 scene.constitution_tabular().insert(self._ipc_stc)
 
-                            strength_tuple = self.options.ipc_constraint_strength
                             constraint_strength = np.array(
                                 [
-                                    strength_tuple[0],  # translation strength
-                                    strength_tuple[1],  # rotation strength
-                                ]
+                                    self.options.constraint_strength_translation,
+                                    self.options.constraint_strength_rotation,
+                                ],
+                                dtype=np.float64,
                             )
                             self._ipc_stc.apply_to(merged_mesh, constraint_strength)
 
@@ -1410,7 +1406,6 @@ class IPCCoupler(RBC):
         try:
             from uipc.core import AffineBodyStateAccessorFeature
             from uipc import builtin
-            import numpy as np
 
             # Try to get the feature from IPC world
             self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
@@ -1483,125 +1478,30 @@ class IPCCoupler(RBC):
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
 
-    def set_entity_coupling_type(self, entity, coupling_type: str):
-        """
-        Set IPC coupling type for an entire entity.
+    def _collect_coupling_config_from_materials(self):
+        """Read coupling_mode and coupling_link_filter from entity materials."""
 
-        Parameters
-        ----------
-        entity : RigidEntity
-            The rigid entity to configure
-        coupling_type : str or None
-            Type of coupling:
-            - None: Entity not processed by IPC (default)
-            - 'two_way_soft_constraint': Two-way coupling using SoftTransformConstraint
-            - 'external_articulation': Joint-level coupling using ExternalArticulationConstraint
-            - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way)
-                         Only allowed for single base-link entities (free rigid bodies)
+        for entity in self.rigid_solver.entities:
+            if not isinstance(entity.material, Rigid):
+                continue
+            coupling_mode = entity.material.coupling_mode
+            if coupling_mode is None:
+                continue
 
-        Notes
-        -----
-        - None: Entity is completely ignored by IPC coupler
-        - 'two_way_soft_constraint': Uses SoftTransformConstraint for bidirectional coupling,
-          can use set_ipc_coupling_link_filter to select specific links
-        - 'external_articulation': Uses ExternalArticulationConstraint for articulated bodies,
-          joint positions are coupled at the DOF level
-        - 'ipc_only': Entity only simulated in IPC, transforms directly set to Genesis.
-          Only allowed for entities with a single base link (no joints).
+            entity_idx = entity._idx_in_solver
 
-        This must be called before scene.build().
-        """
-        # Use solver-level index for consistency with rigid_solver.links_info.entity_idx
-        entity_idx = entity._idx_in_solver
+            self._entity_coupling_types[entity_idx] = coupling_mode
+            gs.logger.info(f"Rigid entity (solver idx={entity_idx}): coupling mode '{coupling_mode}'")
 
-        # Validate coupling type
-        valid_types = [None, "two_way_soft_constraint", "external_articulation", "ipc_only"]
-        if coupling_type not in valid_types:
-            raise ValueError(f"Invalid coupling_type '{coupling_type}'. Must be one of {valid_types}.")
-
-        # For ipc_only, validate that entity has only base link (single rigid body)
-        if coupling_type == "ipc_only":
-            if entity.n_links != 1:
-                raise ValueError(
-                    f"'ipc_only' coupling type only allowed for single base-link entities. "
-                    f"Entity {entity_idx} has {entity.n_links} links."
-                )
-
-        # Store coupling type
-        if coupling_type is None:
-            # Remove from dict if present
-            if entity_idx in self._entity_coupling_types:
-                del self._entity_coupling_types[entity_idx]
-            # Also remove from link filters
-            if entity_idx in self._ipc_link_filters:
-                del self._ipc_link_filters[entity_idx]
-        else:
-            self._entity_coupling_types[entity_idx] = coupling_type
-
-        gs.logger.info(f"Rigid entity (solver idx={entity_idx}): coupling type set to '{coupling_type}'")
-
-    def set_ipc_coupling_link_filter(self, entity, link_names=None, link_indices=None):
-        """
-        Set which links of an entity participate in IPC coupling.
-
-        This is only applicable for entities with 'two_way_soft_constraint' coupling type.
-        By default, all links participate. Use this to filter to specific links.
-
-        Parameters
-        ----------
-        entity : RigidEntity
-            The rigid entity to configure
-        link_names : list of str, optional
-            Names of links to include in IPC coupling.
-        link_indices : list of int, optional
-            Local indices of links to include in IPC coupling.
-
-        Notes
-        -----
-        - If both link_names and link_indices are None, all links participate (removes filter)
-        - Links not in the filter will not be simulated in IPC
-        - This must be called before scene.build()
-        - Only valid for 'two_way_soft_constraint' entities
-        """
-        # Use solver-level index for consistency with rigid_solver.links_info.entity_idx
-        entity_idx = entity._idx_in_solver
-
-        # Check that entity has appropriate coupling type
-        coupling_type = self._entity_coupling_types.get(entity_idx)
-        if coupling_type != "two_way_soft_constraint":
-            gs.logger.warning(
-                f"set_ipc_coupling_link_filter only applies to 'two_way_soft_constraint' entities. "
-                f"Entity {entity_idx} has coupling type '{coupling_type}'. Ignoring."
-            )
-            return
-
-        # Determine which links to include
-        if link_names is None and link_indices is None:
-            # Remove filter - all links participate
-            if entity_idx in self._ipc_link_filters:
-                del self._ipc_link_filters[entity_idx]
-            gs.logger.info(f"Entity {entity_idx}: IPC link filter removed (all links participate)")
-            return
-
-        # Build set of links to include
-        target_links = set()
-
-        if link_names is not None:
-            for name in link_names:
-                try:
+            # Resolve link filter from material
+            link_filter_names = entity.material.coupling_link_filter
+            if link_filter_names is not None:
+                target_links = set()
+                for name in link_filter_names:
                     link = entity.get_link(name=name)
                     target_links.add(link.idx)
-                except Exception as e:
-                    gs.logger.warning(f"Link name '{name}' not found in entity")
-
-        if link_indices is not None:
-            for local_idx in link_indices:
-                solver_link_idx = local_idx + entity._link_start
-                target_links.add(solver_link_idx)
-
-        # Store filter
-        self._ipc_link_filters[entity_idx] = target_links
-        gs.logger.info(f"Entity {entity_idx}: IPC link filter set to {len(target_links)} link(s)")
+                self._ipc_link_filters[entity_idx] = target_links
+                gs.logger.info(f"Entity {entity_idx}: IPC link filter set to {len(target_links)} link(s)")
 
     def has_coupling_type(self, coupling_type: str) -> bool:
         """
@@ -1813,7 +1713,11 @@ class IPCCoupler(RBC):
         if hasattr(self, "_entities_by_coupling_type"):
             return  # Already categorized
 
-        self._entities_by_coupling_type = categorize_entities_by_coupling_type(self._entity_coupling_types)
+        result = {"two_way_soft_constraint": [], "external_articulation": [], "ipc_only": []}
+        for entity_idx, coupling_type in self._entity_coupling_types.items():
+            if coupling_type in result:
+                result[coupling_type].append(entity_idx)
+        self._entities_by_coupling_type = result
 
     def couple(self, f):
         """
@@ -1874,7 +1778,7 @@ class IPCCoupler(RBC):
         if two_way_entities:
             if self.options.two_way_coupling:
                 self._apply_abd_coupling_forces(set(two_way_entities))
-            if self.options.use_contact_proxy:
+            if self.options.enable_contact_proxy:
                 self._record_ipc_contact_forces()
                 self._apply_ipc_contact_forces()
 
@@ -1967,7 +1871,7 @@ class IPCCoupler(RBC):
 
                 abd_geo = abd_geo_slot.geometry()
 
-                if abd_geo is not None and self.options.sync_dof_enable:
+                if abd_geo is not None and self.options.enable_rigid_dofs_sync:
                     ref_dof_prev_attr = abd_geo.instances().find("ref_dof_prev")
                     if ref_dof_prev_attr is not None:
                         ref_dof_prev_view = view(ref_dof_prev_attr)
@@ -2551,8 +2455,6 @@ class IPCCoupler(RBC):
         entity_set : set, optional
             Set of entity indices to process. If None, process all two_way_soft_constraint entities.
         """
-        import numpy as np
-
         cd = self.coupling_data
         n_items = cd.n_items
 
@@ -2560,9 +2462,8 @@ class IPCCoupler(RBC):
             return  # No links to process
 
         # Get coupling parameters
-        strength_tuple = self.options.ipc_constraint_strength
-        translation_strength = float(strength_tuple[0])
-        rotation_strength = float(strength_tuple[1])
+        translation_strength = float(self.options.constraint_strength_translation)
+        rotation_strength = float(self.options.constraint_strength_rotation)
         dt = self.sim._dt
         dt2 = dt * dt
 
@@ -2650,49 +2551,6 @@ class IPCCoupler(RBC):
         gs.logger.info("Resetting IPC coupler state")
         self._ipc_world.recover(0)
         self._ipc_world.retrieve()
-
-    # ============================================================
-    # Section 9: GUI
-    # ============================================================
-
-    def _init_ipc_gui(self):
-        """Initialize IPC GUI for debugging"""
-        try:
-            import polyscope as ps
-            from uipc.gui import SceneGUI
-
-            self.ps = ps
-
-            # Initialize SceneGUI for IPC scene
-            self._ipc_scene_gui = SceneGUI(self._ipc_scene, "split")
-
-            # Initialize polyscope if not already done
-            if not ps.is_initialized():
-                ps.init()
-
-            # Register IPC GUI with polyscope
-            self._ipc_scene_gui.register()
-            self._ipc_scene_gui.set_edge_width(1)
-
-            # Set up ground plane display in polyscope to match Genesis z=0
-            ps.set_up_dir("z_up")
-            ps.set_ground_plane_height(0.0)  # Set at z=0 to match Genesis
-
-            # Show polyscope window for first frame to initialize properly
-            ps.show(forFrames=1)
-            # Flag to control GUI updates
-            self.sim._scene._ipc_gui_enabled = True
-
-            gs.logger.info("IPC GUI initialized successfully")
-
-        except Exception as e:
-            gs.logger.warning(f"Failed to initialize IPC GUI: {e}")
-            self.sim._scene._ipc_gui_enabled = False
-
-    def update_ipc_gui(self):
-        """Update IPC GUI"""
-        self.ps.frame_tick()  # Non-blocking frame update
-        self._ipc_scene_gui.update()
 
     # ============================================================
     # Section 10: Contact Forces
@@ -2843,7 +2701,7 @@ class IPCCoupler(RBC):
 
         # Accumulate contact gradients (forces) for all vertices
         # NOTE: IPC gradients are actually force * dt^2, so we need to divide by dt^2
-        dt = self.options.dt
+        dt = self.sim._dt
         dt2 = dt * dt
         total_force_dict = {}  # {vertex_index: force_vector}
 

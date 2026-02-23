@@ -85,19 +85,14 @@ def get_entity_base_z(entity):
 
 
 @pytest.mark.required
-def test_link_filter_strict(show_viewer):
+def test_link_filter_strict():
     """Verify that IPC link filter controls which links are actually added to IPC."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
-            contact_d_hat=0.01,
-            contact_friction_mu=0.3,
+            enable_rigid_rigid_contact=False,
             two_way_coupling=True,
-            IPC_self_contact=False,
-            disable_genesis_contact=True,
-            disable_ipc_logging=False,
-            enable_ipc_gui=False,
         ),
-        show_viewer=show_viewer,
+        show_viewer=False,
     )
 
     robot = scene.add_entity(
@@ -106,14 +101,10 @@ def test_link_filter_strict(show_viewer):
             pos=(0, 0, 0.2),
             fixed=True,
         ),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=robot,
-        coupling_type="two_way_soft_constraint",
-    )
-    scene.sim.coupler.set_ipc_coupling_link_filter(
-        entity=robot,
-        link_names=("moving",),
+        material=gs.materials.Rigid(
+            coupling_mode="two_way_soft_constraint",
+            coupling_link_filter=("moving",),
+        ),
     )
 
     scene.build(n_envs=0)
@@ -156,20 +147,19 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
             enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=DT,
-            gravity=GRAVITY.tolist(),
             contact_friction_mu=0.5,
-            ipc_constraint_strength=(1, 1),
-            newton_velocity_tol=1e-2,
-            newton_transrate_tol=1e-2,
-            linear_system_tol_rate=1e-3,
+            constraint_strength_translation=1,
+            constraint_strength_rotation=1,
+            enable_rigid_rigid_contact=False,
+            newton_tolerance=1e-2,
+            newton_translation_tolerance=1e-2,
+            linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
             two_way_coupling=True,
-            disable_genesis_contact=True,
-            IPC_self_contact=False,
-            sync_dof_enable=False,
-            disable_ipc_logging=False,
-            enable_ipc_gui=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, 1.0, 0.8),
+            camera_lookat=(0.0, 0.0, 0.3),
         ),
         show_viewer=show_viewer,
     )
@@ -182,10 +172,10 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
             pos=POS,
             fixed=fixed,
         ),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=robot,
-        coupling_type=coupling_type,
+        material=gs.materials.Rigid(
+            friction=0.5,
+            coupling_mode=coupling_type,
+        ),
     )
 
     scene.build(n_envs=n_envs)
@@ -255,7 +245,6 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_objects_freefall(n_envs, show_viewer):
     DT = 0.002
-    HEIGHT = 2.0
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
     NUM_STEPS = 30
 
@@ -265,15 +254,14 @@ def test_objects_freefall(n_envs, show_viewer):
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=DT,
-            gravity=GRAVITY.tolist(),
             contact_d_hat=0.01,
             contact_friction_mu=0.3,
+            enable_rigid_rigid_contact=False,
             two_way_coupling=True,
-            IPC_self_contact=False,
-            disable_genesis_contact=True,
-            disable_ipc_logging=False,
-            enable_ipc_gui=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.2, 3.2, 1.5),
+            camera_lookat=(0.0, 0.0, 1.1),
         ),
         show_viewer=show_viewer,
     )
@@ -282,12 +270,12 @@ def test_objects_freefall(n_envs, show_viewer):
     cloth = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/IPC/grid20x20.obj",
-            scale=2.0,
-            pos=(0.0, 0.0, HEIGHT),
+            scale=1.5,
+            pos=(0.0, 0.0, 1.5),
             euler=(0, 0, 0),
         ),
         material=gs.materials.FEM.Cloth(
-            E=1e6,
+            E=1e5,
             nu=0.499,
             rho=200,
             thickness=0.001,
@@ -295,26 +283,22 @@ def test_objects_freefall(n_envs, show_viewer):
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.5, 0.8, 1.0),
-            double_sided=True,
         ),
     )
 
     box = scene.add_entity(
         morph=gs.morphs.Box(
-            size=(0.05, 0.05, 0.05),
-            pos=(0.0, 0.0, 0.4),
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.6),
         ),
         material=gs.materials.Rigid(
             rho=500.0,
             friction=0.3,
+            coupling_mode="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
         ),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=box,
-        coupling_type="ipc_only",
     )
 
     sphere = scene.add_entity(
@@ -323,7 +307,7 @@ def test_objects_freefall(n_envs, show_viewer):
             pos=(0.5, 0.0, 0.1),
         ),
         material=gs.materials.FEM.Elastic(
-            E=1.0e3,
+            E=1.0e5,
             nu=0.3,
             rho=1000.0,
             model="stable_neohookean",
@@ -356,9 +340,6 @@ def test_objects_freefall(n_envs, show_viewer):
         for env_idx in envs_idx:
             assert len(find_ipc_geometries(scene, **obj_kwargs, env_idx=env_idx)) == 1
 
-    # FIXME: This test does not pass for sphere entity...
-    del objs_kwargs[sphere]
-
     # Get initial state
     p_0 = {obj: get_ipc_positions(scene, **obj_kwargs, envs_idx=envs_idx) for obj, obj_kwargs in objs_kwargs.items()}
     v_0 = {obj: np.zeros_like(p_0[obj]) for obj in objs_kwargs.keys()}
@@ -376,31 +357,163 @@ def test_objects_freefall(n_envs, show_viewer):
             # Estimate velocity by finite difference: v_{n+1} = (x_{n+1} - x_n) / DT
             v_i = (p_i - p_prev[obj]) / DT
 
-            # Validate velocity
-            expected_v_next = v_prev[obj] + GRAVITY * DT
-            assert_allclose(v_i, expected_v_next, atol=1e-3)
-
-            # Validate displacement assuming Euler scheme
-            expected_p = p_prev[obj] + v_prev[obj] * DT + GRAVITY * DT**2
-            assert_allclose(p_i, expected_p, tol=TOL_SINGLE)
+            # Compute estimated position and velocity
+            expected_v = v_prev[obj] + GRAVITY * DT
+            expected_p = p_prev[obj] + expected_v * DT
 
             # Update for next iteration
             p_prev[obj], v_prev[obj] = p_i, v_i
 
-    for obj in objs_kwargs.keys():
-        # Validate total displacement: 0.5 * GRAVITY * t * (t + DT)
-        expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
-        assert_allclose(p_prev[obj] - p_0[obj], expected_displacement, tol=TOL_SINGLE)
+            # FIXME: This test does not pass for sphere entity...
+            if obj is sphere:
+                continue
 
+            # Validate displacement and velocity assuming Euler scheme
+            assert_allclose(v_i, expected_v, atol=1e-3)
+            assert_allclose(p_i, expected_p, tol=TOL_SINGLE)
+
+    for obj in objs_kwargs.keys():
         # Validate centroid consistency
         ipc_centroid = p_prev[obj].mean(axis=-2)
         gs_centroid = obj.get_state().pos.mean(axis=-2)
         assert_allclose(ipc_centroid, gs_centroid, atol=TOL_SINGLE)
 
+        # Validate centroidal total displacement: 0.5 * GRAVITY * t * (t + DT)
+        p_delta = p_prev[obj] - p_0[obj]
+        expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
+        assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=5e-4)
+
+        # FIXME: This test does not pass for sphere entity...
+        if obj is sphere:
+            continue
+
+        # Validate vertex-based total displacement
+        assert_allclose(p_delta, expected_displacement, tol=TOL_SINGLE)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0])  # FIXME: batching is not supported for now
+def test_objects_colliding(n_envs, show_viewer):
+    DT = 0.02
+    CONTACT_MARGIN = 0.01
+    GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
+    NUM_STEPS = 90
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=GRAVITY,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            contact_d_hat=CONTACT_MARGIN,
+            enable_rigid_rigid_contact=False,
+            two_way_coupling=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 0.1),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/IPC/grid20x20.obj",
+            scale=1.5,
+            pos=(0.0, 0.0, 0.2),
+            euler=(90, 0, 0),
+        ),
+        material=gs.materials.FEM.Cloth(
+            E=1e5,
+            nu=0.499,
+            rho=200,
+            thickness=0.001,
+            bending_stiffness=50.0,
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.3, 0.5, 0.8, 1.0),
+        ),
+    )
+
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(-0.25, 0.0, 0.1),
+        ),
+        material=gs.materials.Rigid(
+            rho=500.0,
+            friction=0.3,
+            coupling_mode="ipc_only",
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.8, 0.3, 0.2, 0.8),
+        ),
+    )
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.08,
+            pos=(0.25, 0.0, 0.1),
+        ),
+        material=gs.materials.FEM.Elastic(
+            E=1.0e3,
+            nu=0.3,
+            rho=1000.0,
+            model="stable_neohookean",
+        ),
+        surface=gs.surfaces.Plastic(
+            color=(0.2, 0.8, 0.3, 0.8),
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+    envs_idx = range(max(scene.n_envs, 1))
+
+    # Run simulation and validate dynamics equations at each step
+    objs_kwargs = {
+        obj: dict(solver_type=solver_type, idx=idx)
+        for obj, solver_type, idx in (
+            (cloth, "cloth", scene.sim.fem_solver.entities.index(cloth)),
+            (box, "rigid", scene.sim.rigid_solver.entities.index(box)),
+            (sphere, "fem", scene.sim.fem_solver.entities.index(sphere)),
+        )
+    }
+    p_history = {obj: [] for obj in objs_kwargs.keys()}
+    for _i in range(NUM_STEPS):
+        scene.step()
+
+        for obj, obj_kwargs in objs_kwargs.items():
+            p_i = get_ipc_positions(scene, **obj_kwargs, envs_idx=envs_idx)
+            p_history[obj].append(p_i)
+
+    cloth_p_history = np.stack(p_history[cloth], axis=-3)
+    for obj in objs_kwargs.keys():
+        obj_p_history = np.stack(p_history[obj], axis=-3)
+
+        # Make sure that all vertices are laying on the ground
+        assert (obj_p_history[..., 2] > 0.0).all()
+        assert (obj_p_history[..., 2] < 1.5 * CONTACT_MARGIN).any()
+
+        # Check that the objects did not fly away (5cm)
+        obj_delta_history = np.linalg.norm((obj_p_history - obj_p_history[..., [0], :, :])[..., :2], axis=-1)
+        assert_allclose(obj_delta_history, 0.0, atol=0.05)
+
+        # Make sure that all objects reached steady state
+        obj_disp_history = np.linalg.norm(np.diff(obj_p_history[..., -10:, :, :], axis=-3), axis=-1)
+        assert_allclose(obj_disp_history, 0.0, tol=2e-3)
+
+        # Make sure that the cloth is laying on all objects (at least one vertex above the others)
+        if obj is cloth:
+            continue
+        assert (obj_p_history[..., 2].max(axis=-1) < cloth_p_history[..., 2].max(axis=-1)).all()
+
 
 @pytest.mark.required
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
-def test_robot_fem_grasp_retrieve_lift(coupling_type, show_viewer):
+def test_robot_grasp_fem(coupling_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 10cm."""
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -412,34 +525,34 @@ def test_robot_fem_grasp_retrieve_lift(coupling_type, show_viewer):
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=DT,
-            gravity=GRAVITY.tolist(),
-            ipc_constraint_strength=(100, 100),
             contact_friction_mu=0.8,
-            newton_transrate_tol=10,
-            IPC_self_contact=False,
-            disable_ipc_ground_contact=True,
-            disable_ipc_logging=True,
-            enable_ipc_gui=False,
+            constraint_strength_translation=100,
+            constraint_strength_rotation=100,
+            newton_translation_tolerance=10,
+            enable_rigid_rigid_contact=False,
+            enable_rigid_ground_contact=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 1.0, 1.0),
+            camera_lookat=(0.3, 0.0, 0.5),
         ),
         show_viewer=show_viewer,
     )
 
     scene.add_entity(gs.morphs.Plane())
 
+    material_kwargs = dict(
+        friction=0.8,
+        coupling_mode=coupling_type,
+    )
+    if coupling_type == "two_way_soft_constraint":
+        material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda_non_overlap.xml",
         ),
-    )
-    # end_effector = franka.get_link("hand")
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=franka,
-        coupling_type=coupling_type,
-    )
-    scene.sim.coupler.set_ipc_coupling_link_filter(
-        entity=franka,
-        link_names=("left_finger", "right_finger"),
+        material=gs.materials.Rigid(**material_kwargs),
     )
 
     box = scene.add_entity(
@@ -459,9 +572,11 @@ def test_robot_fem_grasp_retrieve_lift(coupling_type, show_viewer):
     )
 
     scene.build()
-    envs_idx = range(max(scene.n_envs, 1))
 
+    envs_idx = range(max(scene.n_envs, 1))
     motors_dof, fingers_dof = slice(0, 7), slice(7, 9)
+    end_effector = franka.get_link("hand")
+
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
 
     box_entity_idx = scene.sim.fem_solver.entities.index(box)
@@ -494,20 +609,27 @@ def test_robot_fem_grasp_retrieve_lift(coupling_type, show_viewer):
         for _ in range(int(duration / DT)):
             scene.step()
 
+    # FIXME: Setting initial configuration is not working with IPC...
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.9482, 0.6910, 1.2114, -1.6619, -0.6739, 1.8685, 1.1844, 0.0112, 0.0096]
+    qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
+    # franka.set_dofs_position(qpos)
     run_stage(qpos, finger_pos=0.04, duration=2.0)
 
+    # Lower the grapper half way to grasping position
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.25], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.8757, 0.8824, 1.0523, -1.7619, -0.8831, 2.0903, 1.2924, 0.0400, 0.0400]
     run_stage(qpos, finger_pos=0.04, duration=1.0)
 
+    # Reach grasping position
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.135], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.7711, 1.0502, 0.8850, -1.7182, -1.0210, 2.2350, 1.3489, 0.0400, 0.0400]
     run_stage(qpos, finger_pos=0.04, duration=0.5)
 
+    # Grasp the cube
     run_stage(qpos, finger_pos=0.0, duration=0.1)
 
+    # Lift the cube
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.9488, 0.6916, 1.2123, -1.6627, -0.6750, 1.8683, 1.1855, 0.0301, 0.0319]
     run_stage(qpos, finger_pos=0.0, duration=0.2)
@@ -533,16 +655,15 @@ def test_momentum_conversation(n_envs, show_viewer):
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            dt=DT,
-            gravity=(0.0, 0.0, 0.0),
-            ipc_constraint_strength=(1, 1),
-            disable_ipc_logging=True,
-            enable_ipc_gui=False,
+            constraint_strength_translation=1,
+            constraint_strength_rotation=1,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.5, 1.3, 0.6),
+            camera_lookat=(0.2, 0.0, 0.3),
         ),
         show_viewer=show_viewer,
     )
-
-    scene.add_entity(gs.morphs.Plane())
 
     blob = scene.add_entity(
         morph=gs.morphs.Sphere(
@@ -566,14 +687,11 @@ def test_momentum_conversation(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=1000,
             friction=0.3,
+            coupling_mode="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),
         ),
-    )
-    scene.sim.coupler.set_entity_coupling_type(
-        entity=rigid_cube,
-        coupling_type="two_way_soft_constraint",
     )
     scene.build(n_envs=n_envs)
 
@@ -593,18 +711,27 @@ def test_momentum_conversation(n_envs, show_viewer):
     cube_mass = rigid_cube.get_mass()
 
     total_p_history = []
+    dist_min = float("inf")
     fem_positions_prev = None  # FEM initial velocity is zero
     for _ in range(int(DURATION / DT)):
-        rigid_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
-        rigid_linear_momentum = cube_mass * rigid_vel
+        cube_vel = tensor_to_array(rigid_cube.get_links_vel(links_idx_local=0, ref="link_com")[..., 0, :])
+        rigid_linear_momentum = cube_mass * cube_vel
 
         fem_proc_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
         fem_positions = fem_proc_geo.positions().view().squeeze(axis=-1)
         if fem_positions_prev is not None:
             fem_velocities = (fem_positions - fem_positions_prev) / DT
         else:
-            fem_velocities = 0.0
+            fem_velocities = np.zeros_like(fem_positions)
         fem_positions_prev = fem_positions
+
+        # Make sure that rigid and fem are not penetrating each other
+        fem_aabb_min, fem_aabb_max = fem_positions.min(axis=-2), fem_positions.max(axis=-2)
+        rigid_aabb_min, rigid_aabb_max = tensor_to_array(rigid_cube.get_AABB())
+        delta = np.maximum(0, np.maximum(rigid_aabb_min - fem_aabb_max, fem_aabb_min - rigid_aabb_max))
+        overlap = np.minimum(fem_aabb_max, rigid_aabb_max) - np.maximum(rigid_aabb_min, fem_aabb_min)
+        dist_min = min(dist_min, -overlap.min(axis=-1))
+        assert dist_min > 0.0
 
         volume_attr = fem_proc_geo.vertices().find(builtin.volume)
         mass_density_attr = fem_proc_geo.vertices().find(builtin.mass_density)
@@ -616,6 +743,7 @@ def test_momentum_conversation(n_envs, show_viewer):
         else:
             n_vertices = len(fem_positions)
             fem_vertex_masses = np.full(n_vertices, fill_value=(blob_mass / n_vertices))
+        assert_allclose(np.sum(fem_vertex_masses), blob_mass, tol=TOL_SINGLE)
         fem_linear_momentum = np.sum(fem_vertex_masses[:, np.newaxis] * fem_velocities, axis=0)
 
         total_linear_momentum = rigid_linear_momentum + fem_linear_momentum
@@ -623,7 +751,93 @@ def test_momentum_conversation(n_envs, show_viewer):
 
         scene.step()
 
+    # Make sure the objects bounced on each other
+    assert dist_min < 0.01
+    fem_centroid = fem_positions.mean(axis=-2)
+    rigid_centroid = rigid_cube.get_pos()
+    # FIXME: The velocity post-impact does not match expectation ?!
+    expected_cube_vel = (cube_mass - blob_mass) / (cube_mass + blob_mass) * VELOCITY
+    expected_blob_vel = 2 * cube_mass / (cube_mass + blob_mass) * VELOCITY
+    assert_allclose(cube_vel, expected_cube_vel, tol=0.5)
+    assert_allclose(fem_velocities.mean(axis=-2), expected_blob_vel, tol=0.5)
+
     # FIXME: Why momentum conservation is not satisfied more accurately ?!
     momentum_0 = VELOCITY * cube_mass
     assert_allclose(total_p_history, momentum_0, tol=0.03)
     assert_allclose(total_p_history[-1], momentum_0, rtol=0.01, atol=0.001)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
+@pytest.mark.parametrize("coupling_mode", ["ipc_only", "two_way_soft_constraint"])
+def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_contact):
+    """Verify collision pair delegation between IPC and rigid solver based on coupling_mode and ground contact."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            enable_self_collision=True,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            enable_rigid_ground_contact=enable_rigid_ground_contact,
+        ),
+        show_viewer=False,
+    )
+
+    plane = scene.add_entity(gs.morphs.Plane())
+
+    # Non-IPC box — always handled by rigid solver
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(1.0, 0.0, 0.2),
+        ),
+        material=gs.materials.Rigid(),
+    )
+
+    if coupling_mode == "two_way_soft_constraint":
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda_non_overlap.xml",
+            ),
+            material=gs.materials.Rigid(
+                coupling_mode=coupling_mode,
+                coupling_link_filter=("left_finger", "right_finger"),
+            ),
+        )
+
+        ipc_excluded_geoms = {
+            geom.idx for name in ("left_finger", "right_finger") for geom in robot.get_link(name).geoms
+        }
+    else:
+        robot = scene.add_entity(
+            gs.morphs.URDF(
+                file="urdf/go2/urdf/go2.urdf",
+                pos=(0.0, 0.0, 1.0),
+            ),
+            material=gs.materials.Rigid(
+                coupling_mode=coupling_mode,
+            ),
+        )
+
+        ipc_excluded_geoms = {geom.idx for geom in robot.geoms}
+
+    scene.build()
+
+    pair_idx = scene.sim.rigid_solver.collider._collision_pair_idx
+
+    # Collect geom indices for entities that should retain rigid solver pairs
+    rigid_kept_geoms = {geom.idx for geom in robot.geoms} - ipc_excluded_geoms
+    ground_geoms = {plane.geoms[0].idx}
+    box_geoms = {box.geoms[0].idx}
+
+    # Non-IPC box always has rigid solver ground pairs
+    assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in box_geoms for b in ground_geoms)
+
+    # IPC-excluded geoms must have no rigid solver pairs at all
+    for i_ga in ipc_excluded_geoms:
+        for i_gb in range(pair_idx.shape[0]):
+            assert pair_idx[(i_ga, i_gb) if i_ga < i_gb else (i_gb, i_ga)] == -1
+
+    # Non-excluded articulated robot geoms (if any) keep rigid solver ground and self-collision pairs
+    if rigid_kept_geoms:
+        assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
+        assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
