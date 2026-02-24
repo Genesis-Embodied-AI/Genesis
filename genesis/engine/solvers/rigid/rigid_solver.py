@@ -1418,7 +1418,7 @@ class RigidSolver(Solver):
             if isinstance(self.sim.coupler, IPCCoupler):
                 # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
                 # The rigid simulation will be done in post-coupling phase instead
-                if self.sim.coupler.has_any_rigid_coupling():
+                if self.sim.coupler.has_any_rigid_coupling:
                     return
 
             # Run Genesis rigid simulation step for non-IPC couplers
@@ -1626,7 +1626,7 @@ class RigidSolver(Solver):
         elif isinstance(self.sim.coupler, IPCCoupler):
             # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
             # Collision exclusion for IPC-coupled links is handled in the collider at build time.
-            if self.sim.coupler.has_any_rigid_coupling():
+            if self.sim.coupler.has_any_rigid_coupling:
                 self.substep(f)
 
     def substep_post_coupling_grad(self, f):
