@@ -102,14 +102,14 @@ def main():
             specific_heat=1.0,
             emissivity=0.85,
         ),
-        platform.links[0].idx: TemperatureProperties(
+        platform.base_link_idx: TemperatureProperties(
             base_temperature=22.0,
             conductivity=100.0,
             density=1000.0,
             specific_heat=1.0,
             emissivity=0.9,
         ),
-        pusher.links[0].idx: TemperatureProperties(
+        pusher.base_link_idx: TemperatureProperties(
             base_temperature=80.0,
             conductivity=600.0,
             density=2000.0,
@@ -196,7 +196,10 @@ def main():
                 grid = grid.detach().cpu().numpy()
             t_min, t_max = float(np.min(grid)), float(np.max(grid))
             if step % 100 == 0:
-                print(f"Step {step}: Temperature range [{t_min:.1f}, {t_max:.1f}] °C")
+                print(
+                    f"step={step}, time={step * scene.sim_options.dt:.2f}s:"
+                    f"Temperature range [{t_min:.1f}, {t_max:.1f}] °C"
+                )
 
             step += 1
             if "PYTEST_VERSION" in os.environ:
