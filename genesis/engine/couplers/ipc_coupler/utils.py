@@ -104,7 +104,7 @@ def is_robot_entity(entity):
     """Heuristic: treat URDF/MJCF/Drone morphs as robots."""
     try:
         return isinstance(entity.morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone))
-    except Exception:
+    except AttributeError:
         return False
 
 

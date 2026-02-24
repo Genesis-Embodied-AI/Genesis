@@ -46,6 +46,11 @@ class Rigid(Material):
         coupling_link_filter : tuple of str or None, optional
             Tuple of link names to include in IPC coupling. Only supported with coupling_mode='two_way_soft_constraint'.
             If None, all links participate. Use this to filter to specific links. Default is None.
+        coupling_collision_enabled : bool, optional
+            Whether IPC collision is enabled for this entity's links. Default is True.
+        coupling_collision_links : tuple of str or None, optional
+            If set, only these links are affected by ``coupling_collision_enabled``.
+            If None, the setting applies to ALL coupled links of this entity. Default is None.
     """
 
     def __init__(
@@ -62,6 +67,8 @@ class Rigid(Material):
         gravity_compensation=0,
         coupling_mode=None,
         coupling_link_filter=None,
+        coupling_collision_enabled=True,
+        coupling_collision_links=None,
     ):
         super().__init__()
 
@@ -108,6 +115,8 @@ class Rigid(Material):
         self._gravity_compensation = float(gravity_compensation)
         self._coupling_mode = coupling_mode
         self._coupling_link_filter = tuple(coupling_link_filter) if coupling_link_filter is not None else None
+        self._coupling_collision_enabled = bool(coupling_collision_enabled)
+        self._coupling_collision_links = tuple(coupling_collision_links) if coupling_collision_links is not None else None
 
     @property
     def gravity_compensation(self) -> float:
@@ -168,3 +177,13 @@ class Rigid(Material):
     def coupling_link_filter(self) -> tuple[str, ...] | None:
         """Tuple of link names to include in IPC coupling."""
         return self._coupling_link_filter
+
+    @property
+    def coupling_collision_enabled(self) -> bool:
+        """Whether IPC collision is enabled for this entity's links."""
+        return self._coupling_collision_enabled
+
+    @property
+    def coupling_collision_links(self) -> tuple[str, ...] | None:
+        """Tuple of link names affected by coupling_collision_enabled."""
+        return self._coupling_collision_links

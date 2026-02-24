@@ -579,6 +579,15 @@ class IPCCoupler(RBC):
         # Cached categorization (built on first couple() call)
         self._entities_by_coupling_type = None
 
+        # Per-solver IPC object/mesh tracking (initialized in _add_*_to_ipc)
+        self._rigid_env_objs = None
+        self._rigid_env_meshes = None
+        self._rigid_mesh_handles = None
+        self._rigid_abd_transforms = None
+        self._fem_env_objs = None
+        self._fem_env_meshes = None
+        self._fem_mesh_handles = None
+
         # Articulation metadata initialization flag
         self._articulation_metadata_initialized = False
 
@@ -925,19 +934,19 @@ class IPCCoupler(RBC):
         dsb = self._ipc_dsb  # DiscreteShellBending for cloth
         scene_subscenes = self._ipc_scene_subscenes
 
-        fem_solver._mesh_handles = {}
-        fem_solver.list_env_obj = []
-        fem_solver.list_env_mesh = []
+        self._fem_mesh_handles = {}
+        self._fem_env_objs = []
+        self._fem_env_meshes = []
 
         for i_b in range(self.sim._B):
-            fem_solver.list_env_obj.append([])
-            fem_solver.list_env_mesh.append([])
+            self._fem_env_objs.append([])
+            self._fem_env_meshes.append([])
             for i_e, entity in enumerate(fem_solver._entities):
                 is_cloth = isinstance(entity.material, ClothMaterial)
 
                 # Create object in IPC
                 obj_name = f"cloth_{i_b}_{i_e}" if is_cloth else f"fem_{i_b}_{i_e}"
-                fem_solver.list_env_obj[i_b].append(scene.objects().create(obj_name))
+                self._fem_env_objs[i_b].append(scene.objects().create(obj_name))
 
                 # Create mesh: trimesh for cloth (2D shell), tetmesh for volumetric FEM (3D)
                 if is_cloth:
@@ -949,7 +958,7 @@ class IPCCoupler(RBC):
                     # Volumetric FEM: use tetrahedral mesh
                     mesh = tetmesh(tensor_to_array(entity.init_positions), entity.elems)
 
-                fem_solver.list_env_mesh[i_b].append(mesh)
+                self._fem_env_meshes[i_b].append(mesh)
 
                 # Add to contact subscene (only for multi-environment)
                 if self._use_subscenes:
@@ -985,8 +994,8 @@ class IPCCoupler(RBC):
                 meta_attrs.create("entity_idx", str(i_e))
 
                 # Create geometry in IPC scene
-                fem_solver.list_env_obj[i_b][i_e].geometries().create(mesh)
-                fem_solver._mesh_handles[f"gs_ipc_{i_b}_{i_e}"] = mesh
+                self._fem_env_objs[i_b][i_e].geometries().create(mesh)
+                self._fem_mesh_handles[f"gs_ipc_{i_b}_{i_e}"] = mesh
 
                 # Update global vertex offset (FEM vertices occupy index space but aren't in mapping)
                 self._global_vertex_offset += mesh.vertices().size()
@@ -1005,17 +1014,17 @@ class IPCCoupler(RBC):
             scene.constitution_tabular().insert(self._ipc_ext_force)
 
         # Initialize lists following FEM solver pattern
-        rigid_solver.list_env_obj = []
-        rigid_solver.list_env_mesh = []
-        rigid_solver._mesh_handles = {}
-        rigid_solver._abd_transforms = {}
+        self._rigid_env_objs = []
+        self._rigid_env_meshes = []
+        self._rigid_mesh_handles = {}
+        self._rigid_abd_transforms = {}
 
         # Debug: print all registered entity coupling types
         gs.logger.info(f"Registered entity coupling types: {self._entity_coupling_types}")
 
         for i_b in range(self.sim._B):
-            rigid_solver.list_env_obj.append([])
-            rigid_solver.list_env_mesh.append([])
+            self._rigid_env_objs.append([])
+            self._rigid_env_meshes.append([])
 
             # ========== First, handle planes (independent of coupling type) ==========
             # Planes are static collision geometry, they don't need any coupling
@@ -1033,8 +1042,8 @@ class IPCCoupler(RBC):
             # Create plane objects in IPC scene
             for geom_idx, plane_geom in plane_geoms:
                 plane_obj = scene.objects().create(f"rigid_plane_{i_b}_{geom_idx}")
-                rigid_solver.list_env_obj[i_b].append(plane_obj)
-                rigid_solver.list_env_mesh[i_b].append(None)  # Planes are ImplicitGeometry
+                self._rigid_env_objs[i_b].append(plane_obj)
+                self._rigid_env_meshes[i_b].append(None)  # Planes are ImplicitGeometry
 
                 # Apply ground contact element to plane
                 self._ipc_ground_contact.apply_to(plane_geom)
@@ -1044,7 +1053,7 @@ class IPCCoupler(RBC):
                     scene_subscenes[i_b].apply_to(plane_geom)
 
                 plane_obj.geometries().create(plane_geom)
-                rigid_solver._mesh_handles[f"rigid_plane_{i_b}_{geom_idx}"] = plane_geom
+                self._rigid_mesh_handles[f"rigid_plane_{i_b}_{geom_idx}"] = plane_geom
 
             # ========== Then, handle non-plane geoms (requires coupling type) ==========
             # Group geoms by link_idx for merging
@@ -1151,9 +1160,8 @@ class IPCCoupler(RBC):
                         # Store uipc mesh (SimplicialComplex) for merging
                         link_geoms[target_link_idx]["meshes"].append((i_g, rigid_mesh))
 
-                    except Exception as e:
-                        gs.logger.warning(f"Failed to convert trimesh to tetmesh for geom {i_g}: {e}")
-                        continue
+                    except (ValueError, RuntimeError) as e:
+                        gs.raise_exception(f"Failed to create IPC surface mesh for geom {i_g}: {e}")
 
                     # Store target link transform info (same for all geoms merged into this target)
                     if link_geoms[target_link_idx]["link_world_pos"] is None:
@@ -1164,9 +1172,8 @@ class IPCCoupler(RBC):
                             rigid_solver.get_links_quat(links_idx=target_link_idx, envs_idx=i_b)
                         ).flatten()
 
-                except Exception as e:
-                    gs.logger.warning(f"Failed to process geom {i_g}: {e}")
-                    continue
+                except (ValueError, RuntimeError, KeyError) as e:
+                    gs.raise_exception(f"Failed to process geom {i_g} for IPC: {e}")
 
             # Second pass: merge geoms per link and create IPC objects
             link_obj_counter = 0
@@ -1200,8 +1207,8 @@ class IPCCoupler(RBC):
 
                         # Create rigid object
                         rigid_obj = scene.objects().create(f"rigid_link_{i_b}_{link_idx}")
-                        rigid_solver.list_env_obj[i_b].append(rigid_obj)
-                        rigid_solver.list_env_mesh[i_b].append(merged_mesh)
+                        self._rigid_env_objs[i_b].append(rigid_obj)
+                        self._rigid_env_meshes[i_b].append(merged_mesh)
 
                         # Add to contact subscene and apply contact element based on collision settings
                         if self._use_subscenes:
@@ -1337,7 +1344,7 @@ class IPCCoupler(RBC):
                             animate_func = self._make_animate_callback(i_b, link_idx)
                             self._ipc_animator.insert(rigid_obj, animate_func)
 
-                        rigid_solver._mesh_handles[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
+                        self._rigid_mesh_handles[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
 
                         # Store ABD geometry and slot mapping for articulation constraint
                         # Store for target link
@@ -1360,9 +1367,8 @@ class IPCCoupler(RBC):
 
                         link_obj_counter += 1
 
-                except Exception as e:
-                    gs.logger.warning(f"Failed to create IPC object for link {link_idx}: {e}")
-                    continue
+                except (ValueError, RuntimeError, KeyError) as e:
+                    gs.raise_exception(f"Failed to create IPC object for link {link_idx}: {e}")
 
         # NOTE: Mass scaling removed - now using external_kinetic=1 instead
         # All mass is handled by IPC, Genesis uses external_kinetic for kinematic coupling
@@ -1383,69 +1389,56 @@ class IPCCoupler(RBC):
         This feature allows O(num_rigid_bodies) retrieval instead of O(total_geometries).
         Creates index mapping from ABD body index to (env_idx, link_idx, entity_idx) for
         fast lookups during runtime.
+
+        Raises
+        ------
+        RuntimeError
+            If AffineBodyStateAccessorFeature is not available in the libuipc version.
         """
-        try:
-            # Try to get the feature from IPC world
-            self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
-            if self._abd_state_feature is None:
-                gs.logger.warning(
-                    "AffineBodyStateAccessorFeature not available. "
-                    "Using legacy SceneVisitor method for ABD state retrieval (slower)."
-                )
-                return
-
-            body_count = self._abd_state_feature.body_count()
-            gs.logger.info(f"AffineBodyStateAccessorFeature initialized with {body_count} ABD bodies")
-
-            if body_count == 0:
-                # No ABD bodies, feature not needed
-                self._abd_state_feature = None
-                return
-
-            # Create state geometry for batch data transfer
-            self._abd_state_geo = self._abd_state_feature.create_geometry()
-            identity_matrix = np.eye(4, dtype=np.float64)
-            self._abd_state_geo.instances().create(builtin.transform, identity_matrix)
-            self._abd_state_geo.instances().create(builtin.velocity, identity_matrix)
-
-            # Build index mapping: ABD body index -> (env_idx, link_idx, entity_idx)
-            # The order matches the order ABD bodies were added to IPC scene
-            # IMPORTANT: Only iterate over primary ABD bodies (not merged link aliases)
-            self._abd_body_idx_to_link = {}
-            abd_body_idx = 0
-
-            # Only iterate over primary ABD bodies (excludes merged link aliases)
-            for env_idx, link_idx in self._primary_abd_links:
-                entity_idx = self.rigid_solver.links_info.entity_idx[link_idx]
-                self._abd_body_idx_to_link[abd_body_idx] = (env_idx, link_idx, entity_idx)
-                abd_body_idx += 1
-
-            # Verify the count matches IPC's ABD body count
-            if abd_body_idx != body_count:
-                gs.logger.warning(
-                    f"ABD body count mismatch: expected {body_count}, got {abd_body_idx}. "
-                    f"This may cause indexing errors in AffineBodyStateAccessorFeature."
-                )
-            else:
-                gs.logger.info(
-                    f"ABD body index mapping created: {len(self._abd_body_idx_to_link)} entries. "
-                    f"Optimized state retrieval enabled (O(N) instead of O(M), N={body_count})."
-                )
-
-        except ImportError:
-            gs.logger.warning(
-                "AffineBodyStateAccessorFeature not available in this libuipc version. "
-                "Using legacy SceneVisitor method for ABD state retrieval (slower)."
+        self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
+        if self._abd_state_feature is None:
+            raise RuntimeError(
+                "AffineBodyStateAccessorFeature not available. "
+                "Please update libuipc to a version that supports this feature."
             )
+
+        body_count = self._abd_state_feature.body_count()
+        gs.logger.info(f"AffineBodyStateAccessorFeature initialized with {body_count} ABD bodies")
+
+        if body_count == 0:
+            # No ABD bodies, feature not needed
             self._abd_state_feature = None
-            self._abd_state_geo = None
-        except Exception as e:
+            return
+
+        # Create state geometry for batch data transfer
+        self._abd_state_geo = self._abd_state_feature.create_geometry()
+        identity_matrix = np.eye(4, dtype=np.float64)
+        self._abd_state_geo.instances().create(builtin.transform, identity_matrix)
+        self._abd_state_geo.instances().create(builtin.velocity, identity_matrix)
+
+        # Build index mapping: ABD body index -> (env_idx, link_idx, entity_idx)
+        # The order matches the order ABD bodies were added to IPC scene
+        # IMPORTANT: Only iterate over primary ABD bodies (not merged link aliases)
+        self._abd_body_idx_to_link = {}
+        abd_body_idx = 0
+
+        # Only iterate over primary ABD bodies (excludes merged link aliases)
+        for env_idx, link_idx in self._primary_abd_links:
+            entity_idx = self.rigid_solver.links_info.entity_idx[link_idx]
+            self._abd_body_idx_to_link[abd_body_idx] = (env_idx, link_idx, entity_idx)
+            abd_body_idx += 1
+
+        # Verify the count matches IPC's ABD body count
+        if abd_body_idx != body_count:
             gs.logger.warning(
-                f"Failed to initialize AffineBodyStateAccessorFeature: {e}. "
-                f"Falling back to legacy SceneVisitor method (slower)."
+                f"ABD body count mismatch: expected {body_count}, got {abd_body_idx}. "
+                f"This may cause indexing errors in AffineBodyStateAccessorFeature."
             )
-            self._abd_state_feature = None
-            self._abd_state_geo = None
+        else:
+            gs.logger.info(
+                f"ABD body index mapping created: {len(self._abd_body_idx_to_link)} entries. "
+                f"Optimized state retrieval enabled (O(N) instead of O(M), N={body_count})."
+            )
 
     # ============================================================
     # Section 3: Configuration API
@@ -1457,7 +1450,7 @@ class IPCCoupler(RBC):
         return self._ipc_world is not None
 
     def _collect_coupling_config_from_materials(self):
-        """Read coupling_mode and coupling_link_filter from entity materials."""
+        """Read coupling_mode, coupling_link_filter, and collision settings from entity materials."""
 
         for entity in self.rigid_solver.entities:
             if not isinstance(entity.material, Rigid):
@@ -1480,6 +1473,24 @@ class IPCCoupler(RBC):
                     target_links.add(link.idx)
                 self._ipc_link_filters[entity_idx] = target_links
                 gs.logger.info(f"Entity {entity_idx}: IPC link filter set to {len(target_links)} link(s)")
+
+            # Resolve collision settings from material
+            if not entity.material.coupling_collision_enabled:
+                collision_link_names = entity.material.coupling_collision_links
+                if collision_link_names is not None:
+                    # Disable collision only for specified links
+                    for name in collision_link_names:
+                        link = entity.get_link(name=name)
+                        self._link_collision_settings.setdefault(entity_idx, {})[link.idx] = False
+                else:
+                    # Disable collision for all links
+                    for local_idx in range(entity.n_links):
+                        solver_link_idx = local_idx + entity._link_start
+                        self._link_collision_settings.setdefault(entity_idx, {})[solver_link_idx] = False
+                gs.logger.info(
+                    f"Entity {entity_idx}: IPC collision disabled for "
+                    f"{len(self._link_collision_settings.get(entity_idx, {}))} link(s)"
+                )
 
     def _make_animate_callback(self, env_idx, link_idx):
         """Create an animator callback for a soft-constraint coupled rigid link."""
@@ -1523,8 +1534,8 @@ class IPCCoupler(RBC):
                         if force_attr is not None:
                             view(force_attr)[:] = np.zeros((12, 1), dtype=np.float64)
 
-            except Exception as e:
-                gs.logger.warning(f"Error setting IPC animation target: {e}")
+            except (ValueError, RuntimeError, KeyError) as e:
+                gs.raise_exception(f"Error setting IPC animation target for link {link_idx}, env {env_idx}: {e}")
 
         return animate_rigid_link
 
@@ -1541,76 +1552,7 @@ class IPCCoupler(RBC):
         """
         return len(self._entity_coupling_types) > 0
 
-    def set_link_ipc_collision(self, entity, enabled: bool, link_names=None, link_indices=None):
-        """
-        Enable or disable IPC collision for specific links of an entity.
 
-        This method allows fine-grained control over which links participate in IPC collision detection.
-        Links with collision disabled will still be simulated in IPC (if entity has a coupling type set),
-        but will not generate contact forces with other objects.
-
-        Parameters
-        ----------
-        entity : RigidEntity
-            The rigid entity to configure
-        enabled : bool
-            Whether to enable (True) or disable (False) collision for the specified links
-        link_names : list of str, optional
-            Names of links to configure. If None and link_indices is None, applies to all links.
-        link_indices : list of int, optional
-            Local indices of links to configure. If None and link_names is None, applies to all links.
-
-        Notes
-        -----
-        - This setting only affects IPC collision detection, not Genesis collision
-        - Entity must have a coupling type set (via set_entity_coupling_type) for this to have effect
-        - Disabled collision links will have their own contact element with no interactions enabled
-        - This must be called before scene.build()
-
-        Examples
-        --------
-        # Disable collision for robot fingers
-        coupler.set_link_ipc_collision(robot, enabled=False, link_names=['finger1', 'finger2'])
-
-        # Enable collision for all links (default behavior)
-        coupler.set_link_ipc_collision(robot, enabled=True)
-        """
-        # Use solver-level index for consistency with rigid_solver.links_info.entity_idx
-        entity_idx = entity._idx_in_solver
-
-        # Determine which links to configure
-        if link_names is None and link_indices is None:
-            # Apply to all links
-            target_links = set()
-            for local_idx in range(entity.n_links):
-                solver_link_idx = local_idx + entity._link_start
-                target_links.add(solver_link_idx)
-        else:
-            # Apply to specified links
-            target_links = set()
-
-            if link_names is not None:
-                for name in link_names:
-                    try:
-                        link = entity.get_link(name=name)
-                        target_links.add(link.idx)
-                    except Exception as e:
-                        gs.logger.warning(f"Link name '{name}' not found in entity")
-
-            if link_indices is not None:
-                for local_idx in link_indices:
-                    solver_link_idx = local_idx + entity._link_start
-                    target_links.add(solver_link_idx)
-
-        # Store collision settings
-        if entity_idx not in self._link_collision_settings:
-            self._link_collision_settings[entity_idx] = {}
-
-        for link_idx in target_links:
-            self._link_collision_settings[entity_idx][link_idx] = enabled
-
-        status = "enabled" if enabled else "disabled"
-        gs.logger.info(f"Entity {entity_idx}: {len(target_links)} link(s) set to collision {status}")
 
     # ============================================================
     # Section 4: Main Coupling Loop & Shared Helpers
@@ -1688,8 +1630,8 @@ class IPCCoupler(RBC):
 
             # Also convert to transform matrices and store in _genesis_stored_states (for two_way_soft_constraint)
             # Only store for links that have mesh handles (are in the IPC scene)
-            if hasattr(rigid_solver, "_mesh_handles"):
-                for handle_key in rigid_solver._mesh_handles.keys():
+            if self._rigid_mesh_handles is not None:
+                for handle_key in self._rigid_mesh_handles.keys():
                     if handle_key.startswith("rigid_link_"):
                         # Parse: "rigid_link_{env_idx}_{link_idx}"
                         parts = handle_key.split("_")
@@ -2213,8 +2155,8 @@ class IPCCoupler(RBC):
                             proc_geo = merge(apply_transform(geo))
                         pos = proc_geo.positions().view().reshape(-1, 3)
                         fem_geo_by_entity[entity_idx][env_idx] = pos
-                    except Exception:
-                        continue
+                    except (ValueError, RuntimeError) as e:
+                        gs.raise_exception(f"Failed to process FEM geometry for entity {entity_idx}, env {env_idx}: {e}")
 
         # Update FEM entities using filtered geometries
         for entity_idx, env_positions in fem_geo_by_entity.items():
@@ -2237,8 +2179,7 @@ class IPCCoupler(RBC):
         """
         Handle rigid body IPC: Retrieve ABD transforms/affine matrices after IPC step.
 
-        Uses AffineBodyStateAccessorFeature for optimized batch retrieval if available,
-        otherwise falls back to legacy SceneVisitor method.
+        Uses AffineBodyStateAccessorFeature for batch retrieval.
 
         Parameters
         ----------
@@ -2250,20 +2191,10 @@ class IPCCoupler(RBC):
         if self._ipc_scene is None:
             return
 
-        # Try optimized path first
-        if self._abd_state_feature is not None and self._abd_state_geo is not None:
-            try:
-                abd_data_by_link = self._retrieve_rigid_states_optimized(entity_set)
-                self.abd_data_by_link = abd_data_by_link
-                return
-            except Exception as e:
-                gs.logger.warning(
-                    f"AffineBodyStateAccessorFeature failed: {e}. Falling back to legacy SceneVisitor method."
-                )
-                # Fall through to legacy method
+        if self._abd_state_feature is None or self._abd_state_geo is None:
+            return
 
-        # Use legacy method
-        abd_data_by_link = self._retrieve_rigid_states_legacy(entity_set)
+        abd_data_by_link = self._retrieve_rigid_states_optimized(entity_set)
         self.abd_data_by_link = abd_data_by_link
 
     def _retrieve_rigid_states_optimized(self, entity_set=None):
@@ -2357,71 +2288,6 @@ class IPCCoupler(RBC):
 
         return abd_data_by_link
 
-    def _retrieve_rigid_states_legacy(self, entity_set=None):
-        """
-        Legacy ABD state retrieval using SceneVisitor.
-
-        Performance: O(total_geometries) - iterates all IPC geometries.
-
-        Parameters
-        ----------
-        entity_set : set, optional
-            Set of entity indices to process. If None, process all.
-
-        Returns
-        -------
-        dict
-            abd_data_by_link: link_idx -> {env_idx: {transform, aim_transform}}
-        """
-        rigid_solver = self.rigid_solver
-        visitor = SceneVisitor(self._ipc_scene)
-
-        # Collect ABD geometries and their constraint data using metadata
-        abd_data_by_link = {}  # link_idx -> {env_idx: {transform, aim_transform}}
-
-        for geo_slot in visitor.geometries():
-            if isinstance(geo_slot, SimplicialComplexSlot):
-                geo = geo_slot.geometry()
-                if geo.dim() in [2, 3]:
-                    meta = read_ipc_geometry_metadata(geo)
-                    if meta is None:
-                        continue
-                    solver_type, env_idx, link_idx = meta
-                    if solver_type != "rigid":
-                        continue
-
-                    try:
-                        # Filter by entity_set if specified
-                        if entity_set is not None:
-                            entity_idx = rigid_solver.links_info.entity_idx[link_idx]
-                            if entity_idx not in entity_set:
-                                continue
-
-                        if link_idx not in abd_data_by_link:
-                            abd_data_by_link[link_idx] = {}
-
-                        # Get current transform matrix from ABD object (after IPC solve)
-                        transforms = geo.transforms()
-                        transform_matrix = None
-                        if transforms.size() > 0:
-                            transform_matrix = view(transforms)[0].copy()
-
-                        # Get aim transform (q_genesis^n stored before advance)
-                        aim_transform = None
-                        if link_idx in self._genesis_stored_states and env_idx in self._genesis_stored_states[link_idx]:
-                            aim_transform = self._genesis_stored_states[link_idx][env_idx]
-
-                        abd_data_by_link[link_idx][env_idx] = {
-                            "transform": transform_matrix,
-                            "aim_transform": aim_transform,
-                        }
-
-                    except Exception as e:
-                        gs.logger.warning(f"Failed to retrieve ABD geometry data: {e}")
-                        continue
-
-        return abd_data_by_link
-
     def _apply_abd_coupling_forces(self, entity_set=None):
         """
         Apply coupling forces from IPC ABD constraint to Genesis rigid bodies using Quadrants kernel.
@@ -2495,15 +2361,14 @@ class IPCCoupler(RBC):
                     force_input = force.reshape(1, 1, 3) if is_batched else force.reshape(1, 3)
                     torque_input = torque.reshape(1, 1, 3) if is_batched else torque.reshape(1, 3)
                     if np.isnan(force_input).any() or np.isnan(torque_input).any():
-                        gs.logger.warning(
-                            f"NaN detected in ABD coupling force/torque for link {link_idx}, env {env_idx}. Skipping."
+                        gs.raise_exception(
+                            f"NaN detected in IPC coupling force/torque for link {link_idx}, env {env_idx}. "
+                            "This indicates numerical instability — consider decreasing the simulation timestep.",
                         )
-                        continue
                     rigid_solver.apply_links_external_force(force=force_input, links_idx=link_idx, envs_idx=envs_idx)
                     rigid_solver.apply_links_external_torque(torque=torque_input, links_idx=link_idx, envs_idx=envs_idx)
-                except Exception as e:
-                    gs.logger.warning(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
-                    continue
+                except (ValueError, RuntimeError) as e:
+                    gs.raise_exception(f"Failed to apply ABD coupling force for link {link_idx}, env {env_idx}: {e}")
 
     def couple_grad(self, f):
         """Gradient computation for coupling"""
@@ -2740,8 +2605,8 @@ class IPCCoupler(RBC):
                                             world_pos = (transform_matrix @ local_pos_homogeneous)[:3]
                                             link_vertex_positions[(link_idx, env_idx)].append(world_pos)
 
-                    except Exception as e:
-                        gs.logger.warning(f"Failed to process geometry for contact forces: {e}")
+                    except (ValueError, RuntimeError, KeyError) as e:
+                        gs.raise_exception(f"Failed to process geometry for contact forces: {e}")
                     finally:
                         global_vertex_offset += n_verts
 
@@ -3037,7 +2902,7 @@ class IPCCoupler(RBC):
                 if self._use_subscenes:
                     try:
                         scene_subscenes[i_b].apply_to(articulation_geo)
-                    except Exception:
+                    except (TypeError, RuntimeError):
                         # Some uipc builds may not expose subscene binding for articulation geometry types.
                         pass
 
