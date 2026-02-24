@@ -33,8 +33,7 @@ if TYPE_CHECKING:
 STEFAN_BOLTZMANN = 5.670374419e-8  # W / (m²·K⁴)
 KELVIN_OFFSET = 273.15
 
-TEMP_MIN_CLAMP = -50.0
-TEMP_MAX_CLAMP = 500.0
+PROP_IDX_MAP = {name: i for i, name in enumerate(TemperatureProperties._fields)}
 
 
 def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float) -> torch.Tensor:
@@ -46,8 +45,7 @@ def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float
     K2 = (two_pi * kx).reshape(-1, 1, 1) ** 2
     K2 = K2 + (two_pi * ky).reshape(1, -1, 1) ** 2
     K2 = K2 + (two_pi * kz).reshape(1, 1, -1) ** 2
-    # Avoid division by zero at DC (rfftn DC is at [0,0,0])
-    K2[0, 0, 0] = max(K2[0, 0, 0].item(), 1e-12)
+    K2[0, 0, 0] = max(K2[0, 0, 0].item(), gs.EPS)
     return K2
 
 
@@ -68,14 +66,14 @@ def _compute_surface_mask(nx: int, ny: int, nz: int) -> torch.Tensor:
 def _apply_diffusion_and_heat_generation(
     sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
-    sensor_grid_size: torch.Tensor,
-    sensor_rho_cp: torch.Tensor,
-    sensor_heat_generation: list[torch.Tensor | None],
-    sensor_voxel_size: torch.Tensor,
-    expanded_links_idx: torch.Tensor,
+    grid_size: torch.Tensor,
+    rho_cp: torch.Tensor,
+    heat_generation: list[torch.Tensor | None],
+    voxel_size: torch.Tensor,
+    links_idx: torch.Tensor,
     link_to_material_idx: torch.Tensor,
-    link_material_properties: torch.Tensor,
-    sensor_K2: list[torch.Tensor],
+    link_conductivity: torch.Tensor,
+    K2_spectral: list[torch.Tensor],
     dt: float,
     output: torch.Tensor,
 ) -> None:
@@ -84,10 +82,10 @@ def _apply_diffusion_and_heat_generation(
     for i_s in range(n_sensors):
         start = sensor_cache_start[i_s].item()
         size = cache_sizes[i_s]
-        nx, ny, nz = sensor_grid_size[i_s].tolist()
-        rho_cp = sensor_rho_cp[i_s].item()
-        mat_idx = link_to_material_idx[expanded_links_idx[i_s].item()].item()
-        k = link_material_properties[mat_idx, 1].item()
+        nx, ny, nz = grid_size[i_s].tolist()
+        rho_cp = rho_cp[i_s].item()
+        mat_idx = link_to_material_idx[links_idx[i_s].item()].item()
+        k = link_conductivity[mat_idx].item()
         alpha = k / rho_cp
         T = output[:, start : start + size].reshape(-1, nx, ny, nz)
         # Mirror-pad to (2*nx, 2*ny, 2*nz) for zero-flux (Neumann) boundaries; avoids FFT wrap-around.
@@ -95,15 +93,15 @@ def _apply_diffusion_and_heat_generation(
         T_xy = torch.cat([T_x, torch.flip(T_x, dims=(2,))], dim=2)
         T_pad = torch.cat([T_xy, torch.flip(T_xy, dims=(3,))], dim=3)
         T_hat = torch.fft.rfftn(T_pad, dim=(-3, -2, -1))
-        T_hat = T_hat / (1.0 + dt * alpha * sensor_K2[i_s])
+        T_hat = T_hat / (1.0 + dt * alpha * K2_spectral[i_s])
         T_pad = torch.fft.irfftn(T_hat, s=(2 * nx, 2 * ny, 2 * nz), dim=(-3, -2, -1)).real
         T = T_pad[:, :nx, :ny, :nz]
         output[:, start : start + size] = T.reshape(output.shape[0], -1)
 
         # Add internal heat generation (W/m² -> Q_vol = Q_surface / dz).
-        q = sensor_heat_generation[i_s]
+        q = heat_generation[i_s]
         if q is not None:
-            dz = max(sensor_voxel_size[i_s, 2].item(), gs.EPS)
+            dz = max(voxel_size[i_s, 2].item(), gs.EPS)
             Q_vol = q.reshape(-1) / dz
             delta_T = dt * Q_vol / rho_cp
             output[:, start : start + size] += delta_T.unsqueeze(0).expand(output.shape[0], -1)
@@ -113,28 +111,29 @@ def _apply_diffusion_and_heat_generation(
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
-    sensor_links_idx: qd.types.ndarray(),
-    sensor_aabb_min: qd.types.ndarray(),
-    sensor_voxel_size: qd.types.ndarray(),
-    sensor_grid_size: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    aabb_min: qd.types.ndarray(),
+    grid_size: qd.types.ndarray(),
+    voxel_size: qd.types.ndarray(),
     voxel_volume: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
     rho_cp: qd.types.ndarray(),
     depth_weight: qd.types.ndarray(),
     link_to_material_idx: qd.types.ndarray(),
-    link_material_properties: qd.types.ndarray(),
+    link_conductivity: qd.types.ndarray(),
+    link_base_temperature: qd.types.ndarray(),
     dt: gs.qd_float,
     eps: gs.qd_float,
     output: qd.types.ndarray(),
 ):
     n_batches = output.shape[0]
-    n_sensors = sensor_links_idx.shape[0]
+    n_sensors = links_idx.shape[0]
     for i_b, i_s in qd.ndrange(n_batches, n_sensors):
-        sensor_link_idx = sensor_links_idx[i_s]
+        sensor_link_idx = links_idx[i_s]
         start = sensor_cache_start[i_s]
-        nx = sensor_grid_size[i_s, 0]
-        ny = sensor_grid_size[i_s, 1]
-        nz = sensor_grid_size[i_s, 2]
+        nx = grid_size[i_s, 0]
+        ny = grid_size[i_s, 1]
+        nz = grid_size[i_s, 2]
         vol = voxel_volume[i_s] + eps
         rcp = rho_cp[i_s] + eps
         dw = depth_weight[i_s]
@@ -142,12 +141,12 @@ def _kernel_contact_heat(
         if mat_idx_sensor < 0:
             continue
 
-        k_sensor = link_material_properties[mat_idx_sensor, 1]
-        amin = qd.math.vec3(sensor_aabb_min[i_s, 0], sensor_aabb_min[i_s, 1], sensor_aabb_min[i_s, 2])
+        k_sensor = link_conductivity[mat_idx_sensor]
+        amin = qd.math.vec3(aabb_min[i_s, 0], aabb_min[i_s, 1], aabb_min[i_s, 2])
         vs = qd.math.vec3(
-            sensor_voxel_size[i_s, 0] + eps,
-            sensor_voxel_size[i_s, 1] + eps,
-            sensor_voxel_size[i_s, 2] + eps,
+            voxel_size[i_s, 0] + eps,
+            voxel_size[i_s, 1] + eps,
+            voxel_size[i_s, 2] + eps,
         )
         n_c = collider_state.n_contacts[i_b]
         for i_c in range(n_c):
@@ -157,43 +156,42 @@ def _kernel_contact_heat(
                 continue
             other_link = lb if la == sensor_link_idx else la
             mat_other = link_to_material_idx[other_link]
-            if mat_other < 0:
-                mat_other = 0
-            T_other = link_material_properties[mat_other, 0]
-            k_other = link_material_properties[mat_other, 1]
-            k_eff = gs.qd_float(2.0) * k_sensor * k_other / (k_sensor + k_other + eps)
-            depth = collider_state.contact_data.penetration[i_c, i_b]
-            depth_factor = gs.qd_float(1.0) + dw * depth
-            p_world = collider_state.contact_data.pos[i_c, i_b]
-            link_pos = links_state.pos[sensor_link_idx, i_b]
-            link_quat = links_state.quat[sensor_link_idx, i_b]
-            p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
-            u_x = (p_local.x - amin.x) / vs.x
-            u_y = (p_local.y - amin.y) / vs.y
-            u_z = (p_local.z - amin.z) / vs.z
-            ix = min(max(0, int(u_x)), nx - 1)
-            iy = min(max(0, int(u_y)), ny - 1)
-            iz = min(max(0, int(u_z)), nz - 1)
-            cell_idx = ix * (ny * nz) + iy * nz + iz
-            T_cell = output[i_b, start + cell_idx]
-            area = max(depth * depth, eps)
-            flux = k_eff * depth_factor * (T_other - T_cell)
-            Q_vol = flux * area / vol
-            delta_T = dt * Q_vol / rcp
-            output[i_b, start + cell_idx] = T_cell + delta_T
+            if mat_other >= 0:
+                T_other = link_base_temperature[mat_other]
+                k_other = link_conductivity[mat_other]
+                k_eff = gs.qd_float(2.0) * k_sensor * k_other / (k_sensor + k_other + eps)
+                depth = collider_state.contact_data.penetration[i_c, i_b]
+                depth_factor = gs.qd_float(1.0) + dw * depth
+                p_world = collider_state.contact_data.pos[i_c, i_b]
+                link_pos = links_state.pos[sensor_link_idx, i_b]
+                link_quat = links_state.quat[sensor_link_idx, i_b]
+                p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
+                u_x = (p_local.x - amin.x) / vs.x
+                u_y = (p_local.y - amin.y) / vs.y
+                u_z = (p_local.z - amin.z) / vs.z
+                ix = min(max(0, int(u_x)), nx - 1)
+                iy = min(max(0, int(u_y)), ny - 1)
+                iz = min(max(0, int(u_z)), nz - 1)
+                cell_idx = ix * (ny * nz) + iy * nz + iz
+                T_cell = output[i_b, start + cell_idx]
+                area = max(depth * depth, eps)
+                flux = k_eff * depth_factor * (T_other - T_cell)
+                Q_vol = flux * area / vol
+                delta_T = dt * Q_vol / rcp
+                output[i_b, start + cell_idx] = T_cell + delta_T
 
 
 def _apply_radiation_convection(
     sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
     sensor_surface_mask: list[torch.Tensor],
-    sensor_rho_cp: torch.Tensor,
-    sensor_voxel_volume: torch.Tensor,
-    sensor_ambient_temperature: torch.Tensor,
-    sensor_convection_coefficient: torch.Tensor,
-    expanded_links_idx: torch.Tensor,
+    rho_cp: torch.Tensor,
+    voxel_volume: torch.Tensor,
+    convection_coeff: torch.Tensor,
+    links_idx: torch.Tensor,
     link_to_material_idx: torch.Tensor,
-    link_material_properties: torch.Tensor,
+    link_emissivity: torch.Tensor,
+    ambient_temp: float,
     dt: float,
     output: torch.Tensor,
 ) -> None:
@@ -202,35 +200,34 @@ def _apply_radiation_convection(
         start = sensor_cache_start[i_s].item()
         size = cache_sizes[i_s]
         mask = sensor_surface_mask[i_s].reshape(-1)
-        rho_cp = sensor_rho_cp[i_s].item()
-        vol = max(sensor_voxel_volume[i_s].item(), gs.EPS)
-        ambient = sensor_ambient_temperature[i_s].item()
-        mat_idx = link_to_material_idx[expanded_links_idx[i_s].item()].item()
-        emiss = link_material_properties[mat_idx, 4].item()
-        h = sensor_convection_coefficient[i_s].item()
-        T_amb_K = ambient + KELVIN_OFFSET
+        rho_cp = rho_cp[i_s].item()
+        vol = max(voxel_volume[i_s].item(), gs.EPS)
+        mat_idx = link_to_material_idx[links_idx[i_s]]
+        emiss = link_emissivity[mat_idx].item()
+        h = convection_coeff[i_s].item()
+        T_amb_K = ambient_temp + KELVIN_OFFSET
         denom = rho_cp * vol
         T_flat = output[:, start : start + size]
         T_K = T_flat + KELVIN_OFFSET
         q_rad = emiss * STEFAN_BOLTZMANN * (T_K**4 - T_amb_K**4)
-        q_conv = h * (T_flat - ambient)
+        q_conv = h * (T_flat - ambient_temp)
         output[:, start : start + size] -= dt * (q_rad + q_conv) / denom * mask
 
 
 def _apply_T_measured_filter(
     sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
-    sensor_tau: torch.Tensor,
-    T_measured: torch.Tensor,
+    sensor_time_const: torch.Tensor,
     dt: float,
-    output: torch.Tensor,
+    T_actual: torch.Tensor,
+    T_measured: torch.Tensor,
 ) -> None:
     """T_measured += (dt/tau)*(T - T_measured); if tau<=0 then T_measured = T. Batched over envs."""
     for i_s in range(sensor_cache_start.shape[0]):
         start = sensor_cache_start[i_s].item()
         size = cache_sizes[i_s]
-        tau = sensor_tau[i_s].item()
-        T_slice = output[:, start : start + size]
+        tau = sensor_time_const[i_s].item()
+        T_slice = T_actual[:, start : start + size]
         T_meas_slice = T_measured[:, start : start + size]
         if tau > 0:
             alpha = dt / tau
@@ -243,27 +240,25 @@ def _apply_T_measured_filter(
 class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all temperature grid sensors."""
 
-    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_aabb_min: torch.Tensor = make_tensor_field((0, 3))
-    sensor_aabb_extent: torch.Tensor = make_tensor_field((0, 3))
-    sensor_grid_size: torch.Tensor = make_tensor_field((0, 3), dtype=gs.tc_int)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_base_temperature: torch.Tensor = make_tensor_field((0,))
-    sensor_voxel_size: torch.Tensor = make_tensor_field((0, 3))
-    sensor_voxel_volume: torch.Tensor = make_tensor_field((0,))
-    sensor_rho_cp: torch.Tensor = make_tensor_field((0,))
-    sensor_ambient_temperature: torch.Tensor = make_tensor_field((0,))
-    sensor_convection_coefficient: torch.Tensor = make_tensor_field((0,))
-    sensor_tau: torch.Tensor = make_tensor_field((0,))
-    sensor_contact_depth_weight: torch.Tensor = make_tensor_field((0,))
-    sensor_T_measured: torch.Tensor = make_tensor_field((0, 0))
-    sensor_K2: list[torch.Tensor] = field(default_factory=list)
-    sensor_surface_mask: list[torch.Tensor] = field(default_factory=list)
-    sensor_heat_generation: list[torch.Tensor | None] = field(default_factory=list)
-
+    ambient_temp: float = 21.0
     link_to_material_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     link_material_properties: torch.Tensor = make_tensor_field((0, 5), dtype=gs.tc_float)
     properties_dict: dict[int, TemperatureProperties] = field(default_factory=dict)
+
+    aabb_min: torch.Tensor = make_tensor_field((0, 3))
+    aabb_extent: torch.Tensor = make_tensor_field((0, 3))
+    grid_size: torch.Tensor = make_tensor_field((0, 3), dtype=gs.tc_int)
+    voxel_size: torch.Tensor = make_tensor_field((0, 3))
+    voxel_volume: torch.Tensor = make_tensor_field((0,))
+    rho_cp: torch.Tensor = make_tensor_field((0,))
+    convection_coeff: torch.Tensor = make_tensor_field((0,))
+    sensor_time_const: torch.Tensor = make_tensor_field((0,))
+    contact_depth_weight: torch.Tensor = make_tensor_field((0,))
+    K2_spectral: list[torch.Tensor] = field(default_factory=list)
+    sensor_surface_mask: list[torch.Tensor] = field(default_factory=list)
+    heat_generation: list[torch.Tensor | None] = field(default_factory=list)
+
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
 
 
 @register_sensor(TemperatureGridOptions, TemperatureGridSensorMetadata, tuple)
@@ -301,20 +296,16 @@ class TemperatureGridSensor(
         link_idx_global = self._options.link_idx_local + entity.link_start
         self._link = entity.links[self._options.link_idx_local]
 
-        # Expanded links idx (one per sensor) for compatibility
-        self._shared_metadata.expanded_links_idx = concat_with_tensor(
-            self._shared_metadata.expanded_links_idx, link_idx_global, expand=(1,), dim=0
-        )
-
+        # Same for all sensors
+        self._shared_metadata.ambient_temperature = self._options.ambient_temperature
         if self._shared_metadata.link_to_material_idx.shape[0] == 0:
             self._shared_metadata.link_to_material_idx = torch.full(
                 (solver.n_links,), -1, dtype=gs.tc_int, device=gs.device
             )
-
         self._shared_metadata.properties_dict.update(self._options.properties_dict)
         if len(self._shared_metadata.properties_dict) > self._shared_metadata.link_material_properties.shape[0]:
             self._shared_metadata.link_material_properties = torch.empty(
-                (len(self._shared_metadata.properties_dict), 5), dtype=gs.tc_float, device=gs.device
+                (len(PROP_IDX_MAP), len(self._shared_metadata.properties_dict)), dtype=gs.tc_float, device=gs.device
             )
             # -1 in link_to_material_idx means invalid, 0 uses the default properties
             self._shared_metadata.link_to_material_idx[:] = 0 if -1 in self._shared_metadata.properties_dict else -1
@@ -322,13 +313,13 @@ class TemperatureGridSensor(
             for i, (prop_idx, props) in enumerate(
                 sorted(self._shared_metadata.properties_dict.items(), key=lambda x: x[0])
             ):
-                self._shared_metadata.link_material_properties[i] = torch.tensor(
+                self._shared_metadata.link_material_properties[:, i] = torch.tensor(
                     props, dtype=gs.tc_float, device=gs.device
                 )
                 if prop_idx >= 0:
                     self._shared_metadata.link_to_material_idx[prop_idx] = i
 
-        # Per-sensor: AABB in link-local frame, grid size, base temp, cache start
+        # Per-sensor
         aabb_world = self._link.get_AABB()
         aabb_min_w = aabb_world[..., 0, :]  # (3,) or (n_envs, 3)
         aabb_max_w = aabb_world[..., 1, :]
@@ -345,114 +336,63 @@ class TemperatureGridSensor(
         aabb_max_local = gu.inv_transform_by_trans_quat(aabb_max_w[0], link_pos[0], link_quat[0])
         aabb_extent = aabb_max_local - aabb_min_local
 
-        self._shared_metadata.sensor_aabb_min = concat_with_tensor(
-            self._shared_metadata.sensor_aabb_min,
+        self._shared_metadata.aabb_min = concat_with_tensor(
+            self._shared_metadata.aabb_min,
             torch.tensor(aabb_min_local, dtype=gs.tc_float, device=gs.device),
             expand=(1, 3),
             dim=0,
         )
-        self._shared_metadata.sensor_aabb_extent = concat_with_tensor(
-            self._shared_metadata.sensor_aabb_extent,
+        self._shared_metadata.aabb_extent = concat_with_tensor(
+            self._shared_metadata.aabb_extent,
             torch.tensor(aabb_extent, dtype=gs.tc_float, device=gs.device),
             expand=(1, 3),
             dim=0,
         )
-
-        self._shared_metadata.sensor_grid_size = concat_with_tensor(
-            self._shared_metadata.sensor_grid_size,
+        self._shared_metadata.grid_size = concat_with_tensor(
+            self._shared_metadata.grid_size,
             torch.tensor(self._options.grid_size, dtype=gs.tc_int, device=gs.device),
             expand=(1, 3),
             dim=0,
         )
 
-        props = self._options.properties_dict.get(link_idx_global) or self._options.properties_dict.get(-1)
-        self._shared_metadata.sensor_base_temperature = concat_with_tensor(
-            self._shared_metadata.sensor_base_temperature,
-            torch.tensor([props.base_temperature], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
-        )
-
         nx, ny, nz = self._options.grid_size
         voxel_size = aabb_extent / torch.tensor([nx, ny, nz], dtype=gs.tc_float, device=gs.device)
-        voxel_volume = voxel_size.prod()
-        rho_cp = props.density * props.specific_heat
-        self._shared_metadata.sensor_voxel_size = concat_with_tensor(
-            self._shared_metadata.sensor_voxel_size,
-            torch.tensor(voxel_size, dtype=gs.tc_float, device=gs.device),
-            expand=(1, 3),
-            dim=0,
+        self._shared_metadata.voxel_size = concat_with_tensor(
+            self._shared_metadata.voxel_size, voxel_size, expand=(1, 3), dim=0
         )
-        self._shared_metadata.sensor_voxel_volume = concat_with_tensor(
-            self._shared_metadata.sensor_voxel_volume,
-            torch.tensor([voxel_volume], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+        self._shared_metadata.voxel_volume = concat_with_tensor(
+            self._shared_metadata.voxel_volume, voxel_size.prod(), expand=(1,), dim=0
         )
-        self._shared_metadata.sensor_rho_cp = concat_with_tensor(
-            self._shared_metadata.sensor_rho_cp,
-            torch.tensor([rho_cp], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+        self._shared_metadata.rho_cp = concat_with_tensor(
+            self._shared_metadata.rho_cp, props.density * props.specific_heat, expand=(1,), dim=0
         )
-        self._shared_metadata.sensor_ambient_temperature = concat_with_tensor(
-            self._shared_metadata.sensor_ambient_temperature,
-            torch.tensor([self._options.ambient_temperature], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+        self._shared_metadata.convection_coeff = concat_with_tensor(
+            self._shared_metadata.convection_coeff, self._options.convection_coefficient, expand=(1,), dim=0
         )
-        self._shared_metadata.sensor_convection_coefficient = concat_with_tensor(
-            self._shared_metadata.sensor_convection_coefficient,
-            torch.tensor([self._options.convection_coefficient], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+        self._shared_metadata.sensor_time_const = concat_with_tensor(
+            self._shared_metadata.sensor_time_const, self._options.sensor_time_constant, expand=(1,), dim=0
         )
-        self._shared_metadata.sensor_tau = concat_with_tensor(
-            self._shared_metadata.sensor_tau,
-            torch.tensor([self._options.sensor_time_constant], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
-        )
-        self._shared_metadata.sensor_contact_depth_weight = concat_with_tensor(
-            self._shared_metadata.sensor_contact_depth_weight,
-            torch.tensor([self._options.contact_depth_weight], dtype=gs.tc_float, device=gs.device),
-            expand=(1,),
-            dim=0,
+        self._shared_metadata.contact_depth_weight = concat_with_tensor(
+            self._shared_metadata.contact_depth_weight, self._options.contact_depth_weight, expand=(1,), dim=0
         )
 
         dx, dy, dz = float(voxel_size[0]), float(voxel_size[1]), float(voxel_size[2])
         K2_padded = _compute_K2_rfft3(2 * nx, 2 * ny, 2 * nz, dx, dy, dz)
-        self._shared_metadata.sensor_K2.append(K2_padded)
+        self._shared_metadata.K2_spectral.append(K2_padded)
+
         surface_mask = _compute_surface_mask(nx, ny, nz)
         self._shared_metadata.sensor_surface_mask.append(surface_mask)
 
-        if self._options.heat_generation is not None:
-            arr = np.asarray(self._options.heat_generation, dtype=np.float64).squeeze()
-            if arr.ndim == 3:
-                self._shared_metadata.sensor_heat_generation.append(
-                    torch.tensor(arr, dtype=gs.tc_float, device=gs.device)
-                )
-            else:
-                self._shared_metadata.sensor_heat_generation.append(None)
-        else:
-            self._shared_metadata.sensor_heat_generation.append(None)
+        self._shared_metadata.heat_generation.append(
+            torch.tensor(self._options.heat_generation, dtype=gs.tc_float, device=gs.device)
+            if self._options.heat_generation is not None
+            else None
+        )
 
         current_cache_start = sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0
         self._shared_metadata.sensor_cache_start = concat_with_tensor(
-            self._shared_metadata.sensor_cache_start,
-            torch.tensor([current_cache_start], dtype=gs.tc_int, device=gs.device),
-            expand=(1,),
-            dim=0,
+            self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
         )
-
-        total_cache = sum(self._shared_metadata.cache_sizes)
-        if (
-            self._shared_metadata.sensor_T_measured.shape[0] != self._manager._sim._B
-            or self._shared_metadata.sensor_T_measured.shape[1] != total_cache
-        ):
-            self._shared_metadata.sensor_T_measured = torch.zeros(
-                (self._manager._sim._B, total_cache), dtype=gs.tc_float, device=gs.device
-            )
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._options.grid_size,)
@@ -465,14 +405,11 @@ class TemperatureGridSensor(
     def reset(cls, shared_metadata: TemperatureGridSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         for i_s in range(shared_metadata.sensor_cache_start.shape[0]):
-            base_T = shared_metadata.sensor_base_temperature[i_s].item()
-            sl = slice(
-                shared_metadata.sensor_cache_start[i_s].item(),
-                shared_metadata.sensor_cache_start[i_s].item() + shared_metadata.cache_sizes[i_s],
-            )
-            shared_ground_truth_cache[envs_idx, sl] = base_T
-            if shared_metadata.sensor_T_measured.shape[1] > 0:
-                shared_metadata.sensor_T_measured[envs_idx, sl] = base_T
+            link_idx = shared_metadata.links_idx[i_s].item()
+            mat_idx = shared_metadata.link_to_material_idx[link_idx].item()
+            base_T = shared_metadata.link_material_properties[PROP_IDX_MAP["base_temperature"]][mat_idx].item()
+            start = shared_metadata.sensor_cache_start[i_s].item()
+            shared_ground_truth_cache[envs_idx, start : start + shared_metadata.cache_sizes[i_s]] = base_T
 
     @classmethod
     def _update_shared_ground_truth_cache(
@@ -482,18 +419,18 @@ class TemperatureGridSensor(
         solver = shared_metadata.solver
         dt = solver._sim.dt
 
-        # 1) Batched FFT semi-implicit diffusion + 2) heat generation
+        # 1) Batched FFT semi-implicit diffusion + 2) Heat generation
         _apply_diffusion_and_heat_generation(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
-            shared_metadata.sensor_grid_size,
-            shared_metadata.sensor_rho_cp,
-            shared_metadata.sensor_heat_generation,
-            shared_metadata.sensor_voxel_size,
-            shared_metadata.expanded_links_idx,
+            shared_metadata.grid_size,
+            shared_metadata.rho_cp,
+            shared_metadata.heat_generation,
+            shared_metadata.voxel_size,
+            shared_metadata.links_idx,
             shared_metadata.link_to_material_idx,
-            shared_metadata.link_material_properties,
-            shared_metadata.sensor_K2,
+            shared_metadata.link_material_properties[PROP_IDX_MAP["conductivity"]],
+            shared_metadata.K2_spectral,
             dt,
             shared_ground_truth_cache,
         )
@@ -504,16 +441,17 @@ class TemperatureGridSensor(
             _kernel_contact_heat(
                 solver.links_state,
                 collider_state,
-                shared_metadata.expanded_links_idx,
-                shared_metadata.sensor_aabb_min,
-                shared_metadata.sensor_voxel_size,
-                shared_metadata.sensor_grid_size,
+                shared_metadata.links_idx,
+                shared_metadata.aabb_min,
+                shared_metadata.grid_size,
+                shared_metadata.voxel_size,
+                shared_metadata.voxel_volume,
                 shared_metadata.sensor_cache_start,
-                shared_metadata.sensor_voxel_volume,
-                shared_metadata.sensor_rho_cp,
-                shared_metadata.sensor_contact_depth_weight,
+                shared_metadata.rho_cp,
+                shared_metadata.contact_depth_weight,
                 shared_metadata.link_to_material_idx,
-                shared_metadata.link_material_properties,
+                shared_metadata.link_material_properties[PROP_IDX_MAP["conductivity"]],
+                shared_metadata.link_material_properties[PROP_IDX_MAP["base_temperature"]],
                 dt,
                 gs.EPS,
                 output,
@@ -525,24 +463,13 @@ class TemperatureGridSensor(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_surface_mask,
-            shared_metadata.sensor_rho_cp,
-            shared_metadata.sensor_voxel_volume,
-            shared_metadata.sensor_ambient_temperature,
-            shared_metadata.sensor_convection_coefficient,
-            shared_metadata.expanded_links_idx,
+            shared_metadata.rho_cp,
+            shared_metadata.voxel_volume,
+            shared_metadata.convection_coeff,
+            shared_metadata.links_idx,
             shared_metadata.link_to_material_idx,
-            shared_metadata.link_material_properties,
-            dt,
-            shared_ground_truth_cache,
-        )
-        # 5) Clamp for stability
-        shared_ground_truth_cache.clamp_(min=TEMP_MIN_CLAMP, max=TEMP_MAX_CLAMP)
-        # 6) Sensor time-constant filter -> T_measured
-        _apply_T_measured_filter(
-            shared_metadata.sensor_cache_start,
-            shared_metadata.cache_sizes,
-            shared_metadata.sensor_tau,
-            shared_metadata.sensor_T_measured,
+            shared_metadata.link_material_properties[PROP_IDX_MAP["emissivity"]],
+            shared_metadata.ambient_temperature,
             dt,
             shared_ground_truth_cache,
         )
@@ -555,8 +482,16 @@ class TemperatureGridSensor(
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        # Buffer and delay T_measured (filtered output), then apply noise
-        buffered_data.set(shared_metadata.sensor_T_measured)
+        dt = shared_metadata.solver._sim.dt
+        buffered_data.set(shared_ground_truth_cache)
+        _apply_T_measured_filter(
+            shared_metadata.sensor_cache_start,
+            shared_metadata.cache_sizes,
+            shared_metadata.sensor_time_const,
+            dt,
+            shared_ground_truth_cache,
+            buffered_data.at(0),
+        )
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
@@ -582,8 +517,8 @@ class TemperatureGridSensor(
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
 
         i_s = self._idx
-        aabb_min = tensor_to_array(self._shared_metadata.sensor_aabb_min[i_s]).reshape(3)
-        aabb_extent = tensor_to_array(self._shared_metadata.sensor_aabb_extent[i_s]).reshape(3)
+        aabb_min = tensor_to_array(self._shared_metadata.aabb_min[i_s]).reshape(3)
+        aabb_extent = tensor_to_array(self._shared_metadata.aabb_extent[i_s]).reshape(3)
         grid_cell_size = aabb_extent / np.array([self._debug_nx, self._debug_ny, self._debug_nz], dtype=np.float64)
 
         # All cell centers in link frame (nx*ny*nz, 3); cell_offsets precomputed in __init__
