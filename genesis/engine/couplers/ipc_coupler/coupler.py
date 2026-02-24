@@ -64,7 +64,7 @@ if UIPC_AVAILABLE:
     )
     from uipc.backend import SceneVisitor
     from uipc.unit import MPa
-    
+
 from .data import ABDLinkEntry, ArticulatedEntityData, ContactForceEntry, ForceBatch, IPCCouplingData, ArticulationData
 from .utils import (
     find_target_link_for_fixed_merge,

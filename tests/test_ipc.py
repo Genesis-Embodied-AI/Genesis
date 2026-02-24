@@ -192,8 +192,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     if coupling_type == "two_way_soft_constraint":
         assert moving_link_idx in scene.sim.coupler.abd_data_by_link
-        envs_data = scene.sim.coupler.abd_data_by_link[moving_link_idx]
-        assert all(envs_data[i] is not None for i in envs_idx)
+        assert not any(env_data is None for env_data in scene.sim.coupler.abd_data_by_link[moving_link_idx])
     elif coupling_type == "external_articulation":
         entity_idx = scene.sim.rigid_solver.entities.index(robot)
         art_data = scene.sim.coupler._articulated_entities[entity_idx]
