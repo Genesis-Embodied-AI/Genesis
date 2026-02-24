@@ -238,7 +238,7 @@ class TemperatureGrid(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOp
     grid_size: tuple[int, int, int] = (1, 1, 1)
     heat_generation: F3DGridType | None = None
     sensor_time_constant: float = 0.01
-    contact_depth_weight: float = 1e6
+    contact_depth_weight: float = 1.0
     convection_coefficient: float = 0.0
 
     debug_temperature_range: tuple[float, float] = (0.0, 100.0)
