@@ -4,11 +4,18 @@ Utility functions for IPC coupler.
 Stateless helper functions extracted from IPCCoupler for clarity.
 """
 
+import numba as nb
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
 import genesis.utils.geom as gu
+
+try:
+    from uipc.core import Scene as _UIPCScene
+
+    _UIPC_AVAILABLE = True
+except ImportError:
+    _UIPC_AVAILABLE = False
 
 
 def find_target_link_for_fixed_merge(rigid_solver, link_idx):
@@ -101,11 +108,8 @@ def compute_link_to_link_transform(rigid_solver, from_link_idx, to_link_idx):
 
 
 def is_robot_entity(entity):
-    """Heuristic: treat URDF/MJCF/Drone morphs as robots."""
-    try:
-        return isinstance(entity.morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone))
-    except Exception:
-        return False
+    """Check if entity is a robot (has non-fixed, non-free joints)."""
+    return any(j.type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j in entity.joints)
 
 
 def compute_link_init_world_rotation(rigid_solver, link_idx):
@@ -193,72 +197,46 @@ def extract_articulated_joints(entity):
     }
 
 
-def categorize_entities_by_coupling_type(entity_coupling_types):
+def build_ipc_scene_config(options, sim_options):
     """
-    Categorize entities by their coupling type.
-
-    Parameters
-    ----------
-    entity_coupling_types : dict
-        Maps entity_idx -> coupling_type string
-
-    Returns
-    -------
-    dict
-        Maps coupling_type -> list of entity_idx
-    """
-    result = {
-        "two_way_soft_constraint": [],
-        "external_articulation": [],
-        "ipc_only": [],
-    }
-
-    for entity_idx, coupling_type in entity_coupling_types.items():
-        if coupling_type in result:
-            result[coupling_type].append(entity_idx)
-
-    return result
-
-
-def build_ipc_scene_config(options):
-    """
-    Build IPC Scene config dict from IPCCouplerOptions.
+    Build IPC Scene config dict from IPCCouplerOptions and SimOptions.
 
     Parameters
     ----------
     options : IPCCouplerOptions
         The coupler options
+    sim_options : SimOptions
+        The simulation options (provides dt, gravity, requires_grad)
 
     Returns
     -------
     dict
         Scene config dict ready to pass to Scene(config)
     """
-    from uipc import Scene
+    config = _UIPCScene.default_config()
 
-    config = Scene.default_config()
-
-    # Basic simulation parameters (always set)
-    config["dt"] = options.dt
-    config["gravity"] = [[options.gravity[0]], [options.gravity[1]], [options.gravity[2]]]
+    # Basic simulation parameters (derived from SimOptions)
+    config["dt"] = sim_options.dt
+    gravity = sim_options.gravity
+    config["gravity"] = [[float(e)] for e in gravity]
 
     # Newton solver options (only set if specified)
-    _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iter)
-    _set_if_not_none(config, ["newton", "min_iter"], options.newton_min_iter)
-    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_velocity_tol)
-    _set_if_not_none(config, ["newton", "ccd_tol"], options.newton_ccd_tol)
-    _set_if_not_none(config, ["newton", "use_adaptive_tol"], options.newton_use_adaptive_tol)
-    _set_if_not_none(config, ["newton", "transrate_tol"], options.newton_transrate_tol)
+    _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iterations)
+    _set_if_not_none(config, ["newton", "min_iter"], options.newton_min_iterations)
+    _set_if_not_none(config, ["newton", "velocity_tol"], options.newton_tolerance)
+    _set_if_not_none(config, ["newton", "ccd_tol"], options.newton_ccd_tolerance)
+    _set_if_not_none(config, ["newton", "use_adaptive_tol"], options.newton_use_adaptive_tolerance)
+    _set_if_not_none(config, ["newton", "transrate_tol"], options.newton_translation_tolerance)
     _set_if_not_none(config, ["newton", "semi_implicit", "enable"], options.newton_semi_implicit_enable)
-    _set_if_not_none(config, ["newton", "semi_implicit", "beta_tol"], options.newton_semi_implicit_beta_tol)
+    _set_if_not_none(config, ["newton", "semi_implicit", "beta_tol"], options.newton_semi_implicit_beta_tolerance)
 
     # Line search options
-    _set_if_not_none(config, ["line_search", "max_iter"], options.line_search_max_iter)
-    _set_if_not_none(config, ["line_search", "report_energy"], options.line_search_report_energy)
+    _set_if_not_none(config, ["line_search", "max_iter"], options.n_linesearch_iterations)
+    _set_if_not_none(config, ["line_search", "report_energy"], options.linesearch_report_energy)
 
     # Linear system options
     _set_if_not_none(config, ["linear_system", "solver"], options.linear_system_solver)
-    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tol_rate)
+    _set_if_not_none(config, ["linear_system", "tol_rate"], options.linear_system_tolerance)
 
     # Contact options
     _set_if_not_none(config, ["contact", "enable"], options.contact_enable)
@@ -276,8 +254,8 @@ def build_ipc_scene_config(options):
     # Sanity check options
     _set_if_not_none(config, ["sanity_check", "enable"], options.sanity_check_enable)
 
-    # Differential simulation options
-    _set_if_not_none(config, ["diff_sim", "enable"], options.diff_sim_enable)
+    # Differential simulation options (derived from SimOptions)
+    _set_if_not_none(config, ["diff_sim", "enable"], sim_options.requires_grad)
 
     return config
 
@@ -286,6 +264,14 @@ def _set_if_not_none(config, keys, value):
     """Set a nested config value only if it's not None."""
     if value is None:
         return
+    # Cast to native Python types — UIPC pybind11 rejects numpy scalars and Python bool.
+    # bool check must come before int since bool is a subclass of int.
+    if isinstance(value, (bool, np.bool_)):
+        value = int(value)
+    elif isinstance(value, (int, np.integer)):
+        value = int(value)
+    elif isinstance(value, (float, np.floating)):
+        value = float(value)
     d = config
     for key in keys[:-1]:
         d = d[key]
@@ -342,48 +328,172 @@ def read_ipc_geometry_metadata(geo):
         return None
 
 
-def decompose_transform_matrix(transform_4x4):
+# ============================================================
+# Numpy computation functions (replacing Quadrants kernels)
+# ============================================================
+
+
+@nb.jit(nopython=True, cache=True)
+def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
     """
-    Decompose a 4x4 transformation matrix into position and quaternion (wxyz).
+    Compute 12D external force from contact forces and torques.
+
+    force_12d = [force (3), M_affine (9)]
+    where M_affine = skew(torque) @ A, A is the rotation part of ABD transform.
 
     Parameters
     ----------
-    transform_4x4 : np.ndarray
-        4x4 homogeneous transformation matrix
+    contact_forces : np.ndarray, shape (n, 3)
+    contact_torques : np.ndarray, shape (n, 3)
+    abd_transforms : np.ndarray, shape (n, 4, 4)
 
     Returns
     -------
-    tuple
-        (pos, quat_wxyz) where pos is (3,) and quat_wxyz is (4,)
+    np.ndarray, shape (n, 12)
     """
-    pos = transform_4x4[:3, 3]
-    rot_mat = transform_4x4[:3, :3]
-    quat_xyzw = R.from_matrix(rot_mat).as_quat()
-    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-    return pos, quat_wxyz
+    n = contact_forces.shape[0]
+    out = np.zeros((n, 12), dtype=contact_forces.dtype)
+
+    for i in range(n):
+        fx = -0.5 * contact_forces[i, 0]
+        fy = -0.5 * contact_forces[i, 1]
+        fz = -0.5 * contact_forces[i, 2]
+        out[i, 0] = fx
+        out[i, 1] = fy
+        out[i, 2] = fz
+
+        tx = -0.5 * contact_torques[i, 0]
+        ty = -0.5 * contact_torques[i, 1]
+        tz = -0.5 * contact_torques[i, 2]
+
+        # S = skew(torque), A = abd_transforms[i, :3, :3]
+        # M = S @ A, then flatten to 9 elements
+        A = abd_transforms[i, :3, :3]
+        for j in range(3):
+            # S @ A column j = [(-tz*A[1,j] + ty*A[2,j]),
+            #                   ( tz*A[0,j] - tx*A[2,j]),
+            #                   (-ty*A[0,j] + tx*A[1,j])]
+            out[i, 3 + 0 * 3 + j] = -tz * A[1, j] + ty * A[2, j]
+            out[i, 3 + 1 * 3 + j] = tz * A[0, j] - tx * A[2, j]
+            out[i, 3 + 2 * 3 + j] = -ty * A[0, j] + tx * A[1, j]
+
+    return out
 
 
-def build_link_transform_matrix(pos_3, quat_4):
+@nb.jit(nopython=True, cache=True)
+def compute_coupling_forces(
+    ipc_transforms,
+    aim_transforms,
+    link_masses,
+    inertia_tensors,
+    translation_strength,
+    rotation_strength,
+    dt2,
+):
     """
-    Build a 4x4 transformation matrix from position and quaternion.
-    Uses uipc Transform for consistency with IPC.
+    Compute coupling forces and torques for all links.
 
     Parameters
     ----------
-    pos_3 : array-like
-        Position (3,)
-    quat_4 : array-like
-        Quaternion in wxyz order (4,)
+    ipc_transforms : np.ndarray, shape (n, 4, 4)
+    aim_transforms : np.ndarray, shape (n, 4, 4)
+    link_masses : np.ndarray, shape (n,)
+    inertia_tensors : np.ndarray, shape (n, 3, 3)
+    translation_strength : float
+    rotation_strength : float
+    dt2 : float
 
     Returns
     -------
-    np.ndarray
-        4x4 transformation matrix
+    tuple of (forces, torques), each shape (n, 3)
     """
-    from uipc import Transform, Vector3, Quaternion
+    n = ipc_transforms.shape[0]
+    out_forces = np.zeros((n, 3), dtype=ipc_transforms.dtype)
+    out_torques = np.zeros((n, 3), dtype=ipc_transforms.dtype)
 
-    t = Transform.Identity()
-    t.translate(Vector3.Values((float(pos_3[0]), float(pos_3[1]), float(pos_3[2]))))
-    uipc_quat = Quaternion(quat_4)
-    t.rotate(uipc_quat)
-    return t.matrix().copy()
+    for i in range(n):
+        pos_current = ipc_transforms[i, :3, 3]
+        pos_aim = aim_transforms[i, :3, 3]
+
+        R_current = ipc_transforms[i, :3, :3]
+        R_aim = aim_transforms[i, :3, :3]
+
+        # Linear force: F = strength * mass * delta_pos / dt^2
+        mass = link_masses[i]
+        for k in range(3):
+            out_forces[i, k] = translation_strength * mass * (pos_current[k] - pos_aim[k]) / dt2
+
+        # Relative rotation: R_rel = R_current @ R_aim^T
+        R_rel = R_current @ R_aim.T
+
+        # Rodrigues: extract rotation vector
+        trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
+        cos_val = (trace - 1.0) / 2.0
+        cos_val = max(-1.0, min(1.0, cos_val))
+        theta = np.arccos(cos_val)
+
+        rotvec = np.zeros(3, dtype=ipc_transforms.dtype)
+        if theta > 1e-6:
+            ax0 = R_rel[2, 1] - R_rel[1, 2]
+            ax1 = R_rel[0, 2] - R_rel[2, 0]
+            ax2 = R_rel[1, 0] - R_rel[0, 1]
+            norm = np.sqrt(ax0 * ax0 + ax1 * ax1 + ax2 * ax2)
+            if norm > 1e-8:
+                s = theta / norm
+                rotvec[0] = s * ax0
+                rotvec[1] = s * ax1
+                rotvec[2] = s * ax2
+
+        # Transform inertia to world frame: I_world = R @ I @ R^T
+        I_world = R_current @ inertia_tensors[i] @ R_current.T
+
+        # Torque = (rotation_strength / dt^2) * I_world @ rotvec
+        scale = rotation_strength / dt2
+        for k in range(3):
+            val = 0.0
+            for m in range(3):
+                val += I_world[k, m] * rotvec[m]
+            out_torques[i, k] = scale * val
+
+    return out_forces, out_torques
+
+
+def compute_link_contact_forces(
+    force_gradients,
+    link_indices,
+    env_indices,
+    vert_positions,
+    link_centers,
+    max_links,
+    max_envs,
+):
+    """
+    Compute contact forces and torques for rigid links from vertex gradients.
+    Uses np.add.at for accumulation (equivalent to atomic add).
+
+    Parameters
+    ----------
+    force_gradients : np.ndarray, shape (n, 3)
+    link_indices : np.ndarray, shape (n,), int
+    env_indices : np.ndarray, shape (n,), int
+    vert_positions : np.ndarray, shape (n, 3)
+    link_centers : np.ndarray, shape (n, 3)
+    max_links : int
+    max_envs : int
+
+    Returns
+    -------
+    tuple of (out_forces, out_torques), each shape (max_links, max_envs, 3)
+    """
+    out_forces = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
+    out_torques = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
+
+    forces = -force_gradients  # (n, 3)
+    r = vert_positions - link_centers  # (n, 3)
+    torques = np.cross(r, forces)  # (n, 3)
+
+    # Accumulate using np.add.at (unbuffered, like atomic add)
+    np.add.at(out_forces, (link_indices, env_indices), forces)
+    np.add.at(out_torques, (link_indices, env_indices), torques)
+
+    return out_forces, out_torques

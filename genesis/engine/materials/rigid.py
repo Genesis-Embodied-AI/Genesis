@@ -34,6 +34,25 @@ class Rigid(Material):
             Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
+        coupling_mode : str or None, optional
+            IPC coupling mode for this entity. Valid values:
+              - None: Entity not processed by IPC. Entity is completely ignored by IPC coupler.
+              - 'two_way_soft_constraint': Two-way soft coupling.
+              - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
+                the DOF level.
+              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only supported by rigid
+                non-articulated objects.
+            Default is None.
+        coupling_link_filter : tuple of str or None, optional
+            Tuple of link names to include in IPC coupling. Only supported with coupling_mode='two_way_soft_constraint'.
+            If None, all links participate. Use this to filter to specific links. Default is None.
+        enable_coupling_collision : bool, optional
+            Whether IPC collision is enabled for this entity's links. Only used by the IPC coupler.
+            Unlike ``coupling_mode=None`` (which removes the entity from IPC entirely), setting this to
+            False keeps the entity in IPC for coupling forces but disables contact response. Default is True.
+        coupling_collision_links : tuple of str or None, optional
+            If set, only these links are affected by ``enable_coupling_collision``. Only used by the IPC coupler.
+            If None, the setting applies to ALL coupled links of this entity. Default is None.
     """
 
     def __init__(
@@ -48,8 +67,21 @@ class Rigid(Material):
         sdf_min_res=32,
         sdf_max_res=128,
         gravity_compensation=0,
+        coupling_mode=None,
+        coupling_link_filter=None,
+        enable_coupling_collision=True,
+        coupling_collision_links=None,
     ):
         super().__init__()
+
+        if coupling_mode not in (None, "two_way_soft_constraint", "external_articulation", "ipc_only"):
+            gs.raise_exception(
+                f"`coupling_mode` must be one of None, 'two_way_soft_constraint', "
+                f"'external_articulation', or 'ipc_only', got '{coupling_mode}'."
+            )
+
+        if coupling_link_filter is not None and coupling_mode != "two_way_soft_constraint":
+            gs.raise_exception("`coupling_link_filter` is only supported with coupling_mode='two_way_soft_constraint'.")
 
         if friction is not None:
             if friction < 1e-2 or friction > 5.0:
@@ -83,6 +115,12 @@ class Rigid(Material):
         self._sdf_max_res = int(sdf_max_res)
         self._rho = float(rho)
         self._gravity_compensation = float(gravity_compensation)
+        self._coupling_mode = coupling_mode
+        self._coupling_link_filter = tuple(coupling_link_filter) if coupling_link_filter is not None else None
+        self._enable_coupling_collision = bool(enable_coupling_collision)
+        self._coupling_collision_links = (
+            tuple(coupling_collision_links) if coupling_collision_links is not None else None
+        )
 
     @property
     def gravity_compensation(self) -> float:
@@ -133,3 +171,23 @@ class Rigid(Material):
     def rho(self) -> float:
         """Density of the rigid material."""
         return self._rho
+
+    @property
+    def coupling_mode(self) -> str | None:
+        """IPC coupling mode for this entity."""
+        return self._coupling_mode
+
+    @property
+    def coupling_link_filter(self) -> tuple[str, ...] | None:
+        """Tuple of link names to include in IPC coupling."""
+        return self._coupling_link_filter
+
+    @property
+    def enable_coupling_collision(self) -> bool:
+        """Whether IPC collision is enabled for this entity's links."""
+        return self._enable_coupling_collision
+
+    @property
+    def coupling_collision_links(self) -> tuple[str, ...] | None:
+        """Tuple of link names affected by enable_coupling_collision."""
+        return self._coupling_collision_links

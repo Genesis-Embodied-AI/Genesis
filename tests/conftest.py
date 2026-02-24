@@ -308,11 +308,11 @@ def pytest_xdist_auto_num_workers(config):
             except (FileNotFoundError, subprocess.CalledProcessError):
                 pass
         if devices_vram_memory is not None:
-            assert len(set(devices_vram_memory)) == 1, "Heterogeonous Nvidia GPU devices not supported."
+            assert len(set(devices_vram_memory)) == 1, "Heterogeneous Nvidia GPU devices not supported."
             num_gpus = len(devices_vram_memory)
             vram_memory = sum(devices_vram_memory) / 1024
         else:
-            # FIXME: There is easy way for Intel ARC device. Ignore device visibilty issue for now...
+            # FIXME: There is no easy way for Intel ARC device. Ignore device visibility issue for now...
             import torch
 
             if torch.xpu.is_available():
@@ -650,7 +650,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         yield
     finally:
         gs.destroy()
-        # Double garbage collection is over-zealous since Quadrants 2.2.1 but let's do it anyway
+        # Double garbage collection is over-zealous since gstaichi 2.2.1 but let's do it anyway
         gc.collect()
         gc.collect()
 
