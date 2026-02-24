@@ -16,9 +16,20 @@ from genesis.utils.misc import tensor_to_array, qd_to_numpy
 if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
 
+from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
+from genesis.engine.materials.rigid import Rigid
+from genesis.options.solvers import IPCCouplerOptions
+
 # Check if libuipc is available
 try:
     import uipc
+
+    UIPC_AVAILABLE = True
+except ImportError:
+    UIPC_AVAILABLE = False
+    uipc = None
+
+if UIPC_AVAILABLE:
     from uipc import Logger as UIPCLogger, Timer as UIPCTimer, Transform, Vector3, Quaternion, Vector12
     from uipc import builtin, view
     from uipc.core import Engine, World, Scene
@@ -53,16 +64,7 @@ try:
     )
     from uipc.backend import SceneVisitor
     from uipc.unit import MPa
-
-    UIPC_AVAILABLE = True
-except ImportError:
-    UIPC_AVAILABLE = False
-    uipc = None
-
-# Imports below uipc guard to avoid false positives from transitive uipc imports
-from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
-from genesis.engine.materials.rigid import Rigid
-from genesis.options.solvers import IPCCouplerOptions
+    
 from .data import ABDLinkEntry, ArticulatedEntityData, ContactForceEntry, ForceBatch, IPCCouplingData, ArticulationData
 from .utils import (
     find_target_link_for_fixed_merge,
@@ -272,6 +274,18 @@ class IPCCoupler(RBC):
 
     def build(self) -> None:
         """Build IPC system"""
+        # IPC coupler builds a single IPC scene shared across all envs, so it requires
+        # identical geometry topology (links, joints, geoms) across environments.
+        # Batched info options allow per-env topology which is incompatible.
+        if self.rigid_solver.is_active:
+            opts = self.rigid_solver._options
+            if opts.batch_links_info or opts.batch_dofs_info or opts.batch_joints_info:
+                gs.raise_exception(
+                    "IPC coupler does not support batched rigid info "
+                    "(batch_links_info, batch_dofs_info, batch_joints_info). "
+                    "Please disable these options when using IPC coupling."
+                )
+
         self._collect_coupling_config_from_materials()
         self._init_ipc()
         self._add_objects_to_ipc()
@@ -484,20 +498,24 @@ class IPCCoupler(RBC):
         # Debug: print all registered entity coupling types
         gs.logger.info(f"Registered entity coupling types: {self._entity_coupling_types}")
 
-        # Pre-fetch numpy arrays once (avoid repeated qd_to_numpy in loops)
-        # Note: geoms_info may be batched (n_geoms, n_envs, dim) depending on rigid options.
-        # We use env 0 since these are initial/reference poses (same across envs at build time).
+        # Pre-fetch info arrays once (avoid repeated qd_to_numpy in loops).
+        # Not batched: batch_*_info is rejected in build().
         geoms_pos = qd_to_numpy(self.rigid_solver.geoms_info.pos)
         geoms_quat = qd_to_numpy(self.rigid_solver.geoms_info.quat)
-        if geoms_pos.ndim == 3:
-            geoms_pos = geoms_pos[:, 0, :]
-            geoms_quat = geoms_quat[:, 0, :]
+        geoms_type = qd_to_numpy(self.rigid_solver.geoms_info.type)
+        geoms_link_idx = qd_to_numpy(self.rigid_solver.geoms_info.link_idx)
+        geoms_vert_num = qd_to_numpy(self.rigid_solver.geoms_info.vert_num)
+        geoms_vert_start = qd_to_numpy(self.rigid_solver.geoms_info.vert_start)
+        geoms_vert_end = qd_to_numpy(self.rigid_solver.geoms_info.vert_end)
+        geoms_face_start = qd_to_numpy(self.rigid_solver.geoms_info.face_start)
+        geoms_face_end = qd_to_numpy(self.rigid_solver.geoms_info.face_end)
         verts_init_pos = qd_to_numpy(self.rigid_solver.verts_info.init_pos)
         faces_verts_idx = qd_to_numpy(self.rigid_solver.faces_info.verts_idx)
+        links_entity_idx = qd_to_numpy(self.rigid_solver.links_info.entity_idx)
 
-        # Pre-fetch all link pos/quat at once (avoid per-link getter calls in inner loop)
-        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos)  # (n_links, 3) or (n_links, n_envs, 3)
-        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat)  # (n_links, 4) or (n_links, n_envs, 4)
+        # Pre-fetch link state (varies per env, batched when n_envs > 0)
+        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos)
+        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat)
 
         for i_b in range(self.sim._B):
             self._rigid_env_objs.append([])
@@ -507,8 +525,7 @@ class IPCCoupler(RBC):
             # Planes are static collision geometry, they don't need any coupling
             plane_geoms = []  # list of (geom_idx, plane_geom)
             for i_g in range(self.rigid_solver.n_geoms_):
-                geom_type = self.rigid_solver.geoms_info.type[i_g]
-                if geom_type == gs.GEOM_TYPE.PLANE:
+                if geoms_type[i_g] == gs.GEOM_TYPE.PLANE:
                     # Handle planes as static IPC geometry (no coupling needed)
                     pos = geoms_pos[i_g]
                     normal = np.array([0.0, 0.0, 1.0])  # Z-up
@@ -541,14 +558,12 @@ class IPCCoupler(RBC):
 
             # First pass: collect and group geoms by target_link_idx (merging fixed joints)
             for i_g in range(self.rigid_solver.n_geoms_):
-                geom_type = self.rigid_solver.geoms_info.type[i_g]
-
                 # Skip planes (already handled above)
-                if geom_type == gs.GEOM_TYPE.PLANE:
+                if geoms_type[i_g] == gs.GEOM_TYPE.PLANE:
                     continue
 
-                link_idx = self.rigid_solver.geoms_info.link_idx[i_g]
-                entity_idx = self.rigid_solver.links_info.entity_idx[link_idx]
+                link_idx = int(geoms_link_idx[i_g])
+                entity_idx = int(links_entity_idx[link_idx])
                 entity = self.rigid_solver._entities[entity_idx]  # Get entity once and reuse
 
                 # Check if this entity has a coupling type (None means skip entirely)
@@ -599,15 +614,14 @@ class IPCCoupler(RBC):
 
                 try:
                     # For all non-plane geoms, create trimesh
-                    vert_num = self.rigid_solver.geoms_info.vert_num[i_g]
-                    if vert_num == 0:
+                    if geoms_vert_num[i_g] == 0:
                         continue  # Skip geoms without vertices
 
                     # Extract vertex and face data
-                    vert_start = self.rigid_solver.geoms_info.vert_start[i_g]
-                    vert_end = self.rigid_solver.geoms_info.vert_end[i_g]
-                    face_start = self.rigid_solver.geoms_info.face_start[i_g]
-                    face_end = self.rigid_solver.geoms_info.face_end[i_g]
+                    vert_start = int(geoms_vert_start[i_g])
+                    vert_end = int(geoms_vert_end[i_g])
+                    face_start = int(geoms_face_start[i_g])
+                    face_end = int(geoms_face_end[i_g])
 
                     # Get vertices and faces
                     geom_verts = verts_init_pos[vert_start:vert_end]
@@ -644,7 +658,7 @@ class IPCCoupler(RBC):
 
                     # Store target link transform info (same for all geoms merged into this target)
                     if link_geoms[target_link_idx]["link_world_pos"] is None:
-                        if links_pos.ndim == 3:
+                        if self.sim.n_envs > 0:
                             link_geoms[target_link_idx]["link_world_pos"] = links_pos[target_link_idx, i_b]
                             link_geoms[target_link_idx]["link_world_quat"] = links_quat[target_link_idx, i_b]
                         else:
@@ -1034,7 +1048,7 @@ class IPCCoupler(RBC):
 
         # Store qpos for all entities (used by external_articulation coupling)
         entities_qpos = qd_to_numpy(self.rigid_solver.qpos, copy=True)  # (n_total_qs, n_envs) or (n_total_qs,)
-        if entities_qpos.ndim == 1:
+        if self.sim.n_envs == 0:
             entities_qpos = entities_qpos[:, np.newaxis]
         for entity_idx, entity in enumerate(self.rigid_solver._entities):
             if entity.n_qs > 0:
@@ -1046,7 +1060,7 @@ class IPCCoupler(RBC):
         links_pos = tensor_to_array(self.rigid_solver.get_links_pos())  # (n_envs, n_links, 3) or (n_links, 3)
         links_quat = tensor_to_array(self.rigid_solver.get_links_quat())  # (n_envs, n_links, 4) or (n_links, 4)
         # Ensure 3D: (n_envs, n_links, dim)
-        if links_pos.ndim == 2:
+        if self.sim.n_envs == 0:
             links_pos = links_pos[np.newaxis]
             links_quat = links_quat[np.newaxis]
 
@@ -1282,7 +1296,7 @@ class IPCCoupler(RBC):
 
                 # Extract and transfer mass matrix from Genesis to IPC
                 dof_start = int(ad.entity_dof_start[idx])
-                env_mass_mat = dofs_mass_mat[:, :, env_idx] if dofs_mass_mat.ndim == 3 else dofs_mass_mat
+                env_mass_mat = dofs_mass_mat[:, :, env_idx] if self.sim.n_envs > 0 else dofs_mass_mat
                 s = slice(dof_start, dof_start + n_joints)
                 mass_flat = env_mass_mat[s, s].ravel()
                 ad.mass_matrix[idx, : n_joints * n_joints] = mass_flat
