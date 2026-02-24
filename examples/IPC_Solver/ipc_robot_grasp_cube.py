@@ -64,7 +64,7 @@ def main():
         )
     else:
         cube_material = gs.materials.Rigid()
-    cube = scene.add_entity(
+    scene.add_entity(
         morph=gs.morphs.Box(
             pos=(0.65, 0.0, 0.03),
             size=(0.05, 0.05, 0.05),

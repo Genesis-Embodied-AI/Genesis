@@ -112,7 +112,7 @@ def test_link_filter_strict():
     scene.build(n_envs=0)
 
     coupler = scene.sim.coupler
-    entity_idx = robot._idx_in_solver
+    entity_idx = scene.sim.rigid_solver.entities.index(robot)
     base_link_idx = robot.get_link("base").idx
     moving_link_idx = robot.get_link("moving").idx
 
@@ -731,11 +731,11 @@ def test_momentum_conversation(n_envs, show_viewer):
 
         # Make sure that rigid and fem are not penetrating each other
         fem_aabb_min, fem_aabb_max = fem_positions.min(axis=-2), fem_positions.max(axis=-2)
-        rigid_aabb_min, rigid_aabb_max = tensor_to_array(rigid_cube.get_AABB())
-        delta = np.maximum(0, np.maximum(rigid_aabb_min - fem_aabb_max, fem_aabb_min - rigid_aabb_max))
+        rigid_aabb = tensor_to_array(rigid_cube.get_AABB())
+        rigid_aabb_min, rigid_aabb_max = rigid_aabb[..., 0, :], rigid_aabb[..., 1, :]
         overlap = np.minimum(fem_aabb_max, rigid_aabb_max) - np.maximum(rigid_aabb_min, fem_aabb_min)
-        dist_min = min(dist_min, -overlap.min(axis=-1))
-        assert dist_min > 0.0
+        dist_min = np.minimum(dist_min, -overlap.min(axis=-1))
+        assert (dist_min > 0.0).all()
 
         volume_attr = fem_proc_geo.vertices().find(builtin.volume)
         mass_density_attr = fem_proc_geo.vertices().find(builtin.mass_density)
@@ -756,9 +756,7 @@ def test_momentum_conversation(n_envs, show_viewer):
         scene.step()
 
     # Make sure the objects bounced on each other
-    assert dist_min < 0.01
-    fem_centroid = fem_positions.mean(axis=-2)
-    rigid_centroid = rigid_cube.get_pos()
+    assert (dist_min < 0.01).all()
     # FIXME: The velocity post-impact does not match expectation ?!
     expected_cube_vel = (cube_mass - blob_mass) / (cube_mass + blob_mass) * VELOCITY
     expected_blob_vel = 2 * cube_mass / (cube_mass + blob_mass) * VELOCITY
