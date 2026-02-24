@@ -94,7 +94,11 @@ class SensorManager:
                 self._cloned_cache[key] = torch.tensor([], dtype=dtype, device=gs.device)
 
         for sensor_cls in self._sensors_by_type.keys():
-            sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)
+            dtype = sensor_cls._get_cache_dtype()
+            cache_slice = self._cache_slices_by_type[sensor_cls]
+            sensor_cls.reset(
+                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice], envs_idx
+            )
 
     def step(self):
         for buffered_data in self._buffered_data.values():

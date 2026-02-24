@@ -2,19 +2,19 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.options.sensors.options import SensorOptions
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
+    from genesis.options.sensors.options import SensorOptions
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -128,7 +128,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         self._shared_metadata.cache_sizes.append(self._cache_size)
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadataT, envs_idx):
+    def reset(cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx):
         """
         Reset the sensor.
 
@@ -138,6 +138,8 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         ----------
         shared_metadata : SharedSensorMetadata
             The shared metadata for the sensor class.
+        shared_ground_truth_cache : torch.Tensor
+            The shared ground truth cache for the sensor class.
         envs_idx: array_like
             The indices of the environments to reset. The envs_idx should already be sanitized by SensorManager.
         """
@@ -466,7 +468,8 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
         self._shared_metadata.interpolate.append(self._options.interpolate)
 
     @classmethod
-    def reset(cls, shared_metadata: NoisySensorMetadataMixin, envs_idx):
+    def reset(cls, shared_metadata: NoisySensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         shared_metadata.cur_random_walk[envs_idx, ...].fill_(0.0)
 
     @classmethod
