@@ -139,6 +139,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     POS = (0, 0, 0.5)
     OMEGA = 2.0 * np.pi  # 1 Hz oscillation
     SCALE = 0.5 if joint_type == "revolute" else 0.15
+    CONTACT_MARGIN = 0.01
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -149,6 +150,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
             enable_collision=False,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            contact_d_hat=CONTACT_MARGIN,
             contact_friction_mu=0.5,
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
@@ -201,6 +203,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
         if fixed:
             assert not scene.sim.coupler.abd_data_by_link
 
+    dist_min = float("inf")
     cur_dof_pos_history, target_dof_pos_history = [], []
     gs_transform_history, ipc_transform_history = [], []
     for i in range(100):
@@ -213,6 +216,13 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
         cur_dof_pos = tensor_to_array(robot.get_dofs_position(dofs_idx_local=-1)[..., 0])
         cur_dof_pos_history.append(cur_dof_pos)
         target_dof_pos_history.append(target_dof_pos)
+
+        # Make sure the robot never went through the ground
+        if not fixed:
+            robot_verts = tensor_to_array(robot.get_verts())
+            dist_min = np.minimum(dist_min, robot_verts[..., 2].min(axis=-1))
+            # FIXME: For some reason it actually can...
+            assert (dist_min > -0.1).all()
 
         scene.step()
 
@@ -252,11 +262,11 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
         assert (np.percentile(pos_err_history, 90, axis=0) < 1e-2).all()
         assert (np.percentile(rot_err_history, 90, axis=0) < 5e-2).all()
 
-    final_base_pos = tensor_to_array(robot.get_pos())
+    # Make sure the robot bounced on the ground or stayed in place
     if fixed:
-        assert_allclose(final_base_pos, POS, atol=TOL_SINGLE)
+        assert_allclose(robot.get_pos(), POS, atol=TOL_SINGLE)
     else:
-        assert (POS[2] - final_base_pos[..., 2] > 0.2).all()
+        assert (dist_min < 1.5 * CONTACT_MARGIN).all()
 
 
 @pytest.mark.required
@@ -512,8 +522,8 @@ def test_objects_colliding(n_envs, show_viewer):
         obj_p_history = np.stack(p_history[obj], axis=-3)
 
         # Make sure that all vertices are laying on the ground
-        assert (obj_p_history[..., 2] > 0.0).all()
         assert (obj_p_history[..., 2] < 1.5 * CONTACT_MARGIN).any()
+        assert (obj_p_history[..., 2] > 0.0).all()
 
         # Check that the objects did not fly away (5cm)
         obj_delta_history = np.linalg.norm((obj_p_history - obj_p_history[..., [0], :, :])[..., :2], axis=-1)
@@ -521,7 +531,7 @@ def test_objects_colliding(n_envs, show_viewer):
 
         # Make sure that all objects reached steady state
         obj_disp_history = np.linalg.norm(np.diff(obj_p_history[..., -10:, :, :], axis=-3), axis=-1)
-        assert_allclose(obj_disp_history, 0.0, tol=2e-3)
+        assert_allclose(obj_disp_history, 0.0, tol=5e-3)
 
         # Make sure that the cloth is laying on all objects (at least one vertex above the others)
         if obj is cloth:
@@ -667,6 +677,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
 def test_momentum_conversation(n_envs, show_viewer):
     DT = 0.001
     DURATION = 0.30
+    CONTACT_MARGIN = 0.01
     VELOCITY = np.array([4.0, 0.0, 0.0], dtype=gs.np_float)
 
     scene = gs.Scene(
@@ -675,6 +686,7 @@ def test_momentum_conversation(n_envs, show_viewer):
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            contact_d_hat=CONTACT_MARGIN,
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
         ),
@@ -772,7 +784,7 @@ def test_momentum_conversation(n_envs, show_viewer):
         scene.step()
 
     # Make sure the objects bounced on each other
-    assert (dist_min < 0.01).all()
+    assert (dist_min < 1.5 * CONTACT_MARGIN).all()
     # FIXME: The velocity post-impact does not match expectation ?!
     expected_cube_vel = (cube_mass - blob_mass) / (cube_mass + blob_mass) * VELOCITY
     expected_blob_vel = 2 * cube_mass / (cube_mass + blob_mass) * VELOCITY

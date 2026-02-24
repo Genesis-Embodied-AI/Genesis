@@ -1261,9 +1261,9 @@ class IPCCoupler(RBC):
                 # Update ref_dof_prev on all ABD instances
                 for joint_idx, joint in enumerate(art_data.revolute_joints + art_data.prismatic_joints):
                     child_link_idx = joint.link.idx
-                    abd_geo_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx)
 
                     # Check if abd_geo_slot is None before accessing it
+                    abd_geo_slot = self._link_to_abd_slot.get((env_idx, child_link_idx), None)
                     if abd_geo_slot is None:
                         continue
 
@@ -2055,14 +2055,15 @@ class IPCCoupler(RBC):
         parent_link_idx_original = joint.link.parent_idx if joint.link.parent_idx >= 0 else 0
         parent_link_idx = find_target_link_for_fixed_merge(self.rigid_solver, parent_link_idx_original)
 
-        parent_abd_slot = self._find_abd_geometry_slot_by_link(parent_link_idx, env_idx=i_b)
-        child_abd_slot = self._find_abd_geometry_slot_by_link(child_link_idx, env_idx=i_b)
-
-        if parent_abd_slot is None or child_abd_slot is None:
-            raise RuntimeError(
+        try:
+            parent_abd_slot = self._link_to_abd_slot[(i_b, parent_link_idx)]
+            child_abd_slot = self._link_to_abd_slot[(i_b, child_link_idx)]
+        except KeyError as e:
+            gs.raise_exception_from(
                 f"Failed to build external_articulation in multi-env mode: "
                 f"entity {entity_idx}, env {i_b}, joint '{joint.name}', "
-                f"missing ABD slot(s) for parent={parent_link_idx}, child={child_link_idx}."
+                f"missing ABD slot(s) for parent={parent_link_idx}, child={child_link_idx}.",
+                e,
             )
 
         joint_axis_local = joint.dofs_motion_ang[0] if jtype == "revolute" else joint.dofs_motion_vel[0]
@@ -2226,22 +2227,3 @@ class IPCCoupler(RBC):
                 self._articulation_with_non_fixed_base.append(entity_idx)
 
             gs.logger.info(f"Successfully added articulated entity {entity_idx} to IPC")
-
-    def _find_abd_geometry_slot_by_link(self, link_idx, env_idx=0):
-        """
-        Find the ABD geometry slot corresponding to a link_idx in the IPC scene.
-
-        Parameters
-        ----------
-        link_idx : int
-            Genesis link index
-        env_idx : int
-            Environment index (default: 0)
-
-        Returns
-        -------
-        GeometrySlot or None
-            The ABD geometry slot if found, None otherwise
-        """
-        # Look up in the mapping created during _add_rigid_geoms_to_ipc
-        return self._link_to_abd_slot.get((env_idx, link_idx), None)

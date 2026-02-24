@@ -7,7 +7,7 @@ import genesis as gs
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level="info")
+    gs.init(backend=gs.cpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-ipc", action="store_true", default=False)

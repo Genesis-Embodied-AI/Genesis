@@ -30,7 +30,7 @@ DELTA_ROT = 0.02
 
 
 def main():
-    gs.init(backend=gs.gpu, logging_level="info")
+    gs.init(backend=gs.cpu, logging_level="info")
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -55,7 +55,7 @@ def main():
             newton_semi_implicit_enable=False,  # Must be false to avoid time stealing artifact
             linear_system_tolerance=1e-3,
             contact_enable=True,
-            enable_rigid_rigid_contact=False,
+            enable_rigid_rigid_contact=True,
             contact_d_hat=0.001,
             contact_friction_mu=0.5,
             fem_fem_friction_mu=0.0,
@@ -167,6 +167,9 @@ def main():
 
     scene.build()
 
+    franka.set_dofs_kp(500.0, dofs_idx_local=finger_dofs_idx)
+    franka.set_dofs_kv(50.0, dofs_idx_local=finger_dofs_idx)
+
     # Setting initial configuration is not supported by coupling mode "external_articulation"
     if args.coupling_type != "external_articulation":
         # qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
@@ -242,9 +245,11 @@ def main():
             franka.control_dofs_position(qpos[motor_dofs_idx], motor_dofs_idx)
 
             if gripper_close[()]:
-                franka.control_dofs_velocity([-0.1, -0.1], dofs_idx_local=finger_dofs_idx)
+                # FIXME: Force control is acting weird...
+                # franka.control_dofs_force(-0.1, dofs_idx_local=finger_dofs_idx)
+                franka.control_dofs_position(-0.03, dofs_idx_local=finger_dofs_idx)
             else:
-                franka.control_dofs_velocity([0.1, 0.1], dofs_idx_local=finger_dofs_idx)
+                franka.control_dofs_position(0.04, dofs_idx_local=finger_dofs_idx)
 
             scene.step()
 
