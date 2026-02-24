@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Annotated, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, NamedTuple, TypeVar
 
 import numpy as np
 from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_validator
@@ -6,6 +6,7 @@ from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_valida
 import genesis as gs
 from genesis.typing import (
     FArrayType,
+    Grid3DFloatType,
     IArrayType,
     LaxVec3FType,
     NonNegativeFloat,
@@ -199,6 +200,83 @@ class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], NoisySensorOpt
         super().model_post_init(context)
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
+
+
+class TemperatureProperties(NamedTuple):
+    """
+    Material properties for temperature sensor.
+
+    Parameters
+    ----------
+    base_temperature: float
+        The base temperature of the material in Celsius.
+    conductivity: float
+        The conductivity of the material in W/(m·K)
+    density: float
+        The density of the material in kilograms per cubic meter.
+    specific_heat: float
+        The specific heat of the material in J/(kg·C).
+    emissivity: float
+        The emissivity of the material, between 0 and 1.
+    """
+
+    base_temperature: float = 21.0
+    conductivity: float = 50.0
+    density: float = 1000.0
+    specific_heat: float = 1.0
+    emissivity: float = 0.9
+
+
+class TemperatureGrid(
+    RigidSensorOptionsMixin["TemperatureGridSensor"], NoisySensorOptionsMixin["TemperatureGridSensor"]
+):
+    """
+    Sensor that returns the temperature in Celsius of the associated RigidLink in its local frame.
+    Temperature is computed based on object contacts and their material properties provided to these options.
+
+    Parameters
+    ----------
+    properties_dict: dict[int, TemperatureProperties]
+        A dictionary which maps link indices to their temperature-related material properties. Key `-1` is
+        used as the default for links not present in the dict; if omitted, unlisted links are ignored in contacts.
+        This parameter is shared across all Temperature sensors (dicts will be merged).
+    ambient_temperature: float
+        The ambient temperature in Celsius. This parameter is shared across all Temperature sensors.
+    grid_size: tuple[int, int, int]
+        The size of the grid in the x, y, and z directions which determines the sensor resolution by spatially
+        discretizing the bounding box of the rigid entity link.
+    heat_generation: Grid3DFloatType | None
+        The heat generation rate in Watts per square meter for each cell in the grid.
+    sensor_time_constant: float
+        The time constant of the sensor in seconds.
+    contact_depth_weight: float
+        The weight of the contact depth in the temperature calculation.
+    convection_coefficient: float
+        Convection coefficient h in W/(m²·K) for surface cooling. Default 10.0.
+    debug_temperature_range: tuple[float, float], optional
+        The range of temperatures to visualize in the debug mode. Defaults to (0.0, 100.0).
+    """
+
+    properties_dict: dict[int, TemperatureProperties]
+    ambient_temperature: float = 21.0
+
+    grid_size: tuple[int, int, int] = (1, 1, 1)
+    heat_generation: Grid3DFloatType | None = None
+    sensor_time_constant: float = 0.01
+    contact_depth_weight: float = 1e6
+    convection_coefficient: float = 0.0
+
+    debug_temperature_range: tuple[float, float] = (0.0, 100.0)
+
+    def validate(self, scene: "Scene"):
+        super().validate(scene)
+        entity = scene.entities[self.entity_idx]
+        global_link_idx = entity.links[self.link_idx_local].idx
+        if global_link_idx not in self.properties_dict and -1 not in self.properties_dict:
+            gs.raise_exception(
+                f"Temperature properties for the attached link index {global_link_idx} should be provided, "
+                "or use key -1 in properties_dict for default."
+            )
 
 
 class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSensor"]):

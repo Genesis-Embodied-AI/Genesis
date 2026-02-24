@@ -10,42 +10,41 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.renderers import BatchRenderer as BatchRendererOptions
 from genesis.options.sensors import (
+    BatchRendererCameraOptions,
     RasterizerCameraOptions,
     RaytracerCameraOptions,
-    BatchRendererCameraOptions,
     SensorOptions,
 )
-
+from genesis.options.vis import VisOptions
 from genesis.utils.geom import (
-    pos_lookat_up_to_T,
-    T_to_trans,
     T_to_quat,
-    trans_to_T,
+    T_to_trans,
+    pos_lookat_up_to_T,
     trans_quat_to_T,
+    trans_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.batch_renderer import BatchRenderer
-from genesis.options.renderers import BatchRenderer as BatchRendererOptions
-from genesis.options.vis import VisOptions
 from genesis.vis.rasterizer import Rasterizer
 from genesis.vis.rasterizer_context import RasterizerContext
+
 from .base_sensor import (
+    RigidSensorMetadataMixin,
+    RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
-    RigidSensorMixin,
-    RigidSensorMetadataMixin,
 )
 from .base_sensor import OptionsT
 
-
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.rasterizer import Rasterizer
     from genesis.vis.rasterizer_context import RasterizerContext
-    from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.raytracer import Raytracer
 
     from .sensor_manager import SensorManager
@@ -356,11 +355,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
         self._ensure_rendered_for_current_state()
         cached_image = self._get_image_cache_entry()
         return _camera_read_from_image_cache(self, cached_image, envs_idx, to_numpy=False)
-
-    @classmethod
-    def reset(cls, shared_metadata, envs_idx):
-        """Reset camera sensor (no state to reset)."""
-        pass
 
 
 # ========================== Camera Sensor Helpers ==========================

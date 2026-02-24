@@ -2,8 +2,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -248,8 +248,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, envs_idx):
-        super().reset(shared_metadata, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
