@@ -645,6 +645,110 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
+def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
+    """After build, grid is at base temp. Hot box on center heats center above corner; cold box cools it. Move away -> near base; reset -> exactly base."""
+    BOX_SIZE = 0.06
+    PLATFORM_SIZE = 0.2
+    FAR_POS = (PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5)
+    GRID_SIZE = (3, 3, 1)
+    GRID_CENTER = (GRID_SIZE[0] // 2, GRID_SIZE[1] // 2, GRID_SIZE[2] // 2)
+    BASE_TEMP = 22.0
+    DIFF_TEMP = 0.5
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    platform = scene.add_entity(
+        gs.morphs.Box(
+            size=(PLATFORM_SIZE, PLATFORM_SIZE, PLATFORM_SIZE),
+            pos=(0.0, 0.0, PLATFORM_SIZE / 2),
+            fixed=True,
+        )
+    )
+    hot_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2),
+        )
+    )
+    cold_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=FAR_POS,
+        ),
+    )
+    TemperatureProperties = gs.sensors.TemperatureProperties
+    sensor = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            entity_idx=platform.idx,
+            grid_size=GRID_SIZE,
+            ambient_temperature=BASE_TEMP,
+            properties_dict={
+                platform.base_link_idx: TemperatureProperties(
+                    base_temperature=BASE_TEMP,
+                    conductivity=400.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.95,
+                ),
+                hot_box.base_link_idx: TemperatureProperties(
+                    base_temperature=BASE_TEMP + 100.0,
+                    conductivity=200.0,
+                    density=3000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+                # default properties; should apply to the cold box
+                -1: TemperatureProperties(
+                    base_temperature=BASE_TEMP - 100.0,
+                    conductivity=150.0,
+                    density=8000.0,
+                    specific_heat=1.0,
+                    emissivity=0.2,
+                ),
+            },
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    # After build, all cells at base temperature
+    assert_allclose(sensor.read_ground_truth(), BASE_TEMP, tol=tol)
+
+    # Hot box on center
+    hot_box.set_pos((0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2))
+    for _ in range(50):
+        scene.step()
+    data = sensor.read()
+    assert (data > BASE_TEMP + DIFF_TEMP).all(), f"Hot box should have heated the grid by at least {DIFF_TEMP}°C"
+    assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] > data[0, 0, 0]).all(), (
+        "Center cell should be hotter than corner"
+    )
+
+    # Reset: exactly base temperature everywhere
+    scene.reset()
+    assert_allclose(sensor.read_ground_truth(), BASE_TEMP, tol=tol)
+
+    # Cold box on center
+    hot_box.set_pos(FAR_POS)
+    cold_box.set_pos((0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2))
+    for _ in range(50):
+        scene.step()
+    data = sensor.read()
+    assert (data < BASE_TEMP - DIFF_TEMP).all(), f"Cold box should have cooled the grid by at least {DIFF_TEMP}°C"
+    assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] < data[0, 0, 0]).all(), (
+        "Center cell should be colder than corner"
+    )
+
+    # Move both away; step until grid returns near base
+    hot_box.set_pos(FAR_POS)
+    cold_box.set_pos((-FAR_POS[0], -FAR_POS[1], FAR_POS[2]))
+    for _ in range(150):
+        scene.step()
+    data = sensor.read()
+    assert_allclose(data, BASE_TEMP, tol=5e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
     """Test KinematicContactProbe for a box resting on the ground and a fixed sphere on top of it."""
     BOX_SIZE = 0.5
