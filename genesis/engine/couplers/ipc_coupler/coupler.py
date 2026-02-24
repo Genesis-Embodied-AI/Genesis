@@ -829,8 +829,7 @@ class IPCCoupler(RBC):
         )
 
         # Set up subscenes for multi-environment (scene grouping)
-        # Only use subscenes when B > 1 to avoid issues with ground collision
-        # (ground's subscene support is incomplete in libuipc)
+        # Only use subscenes when B > 1 to isolate per-environment contacts
         B = self.sim._B
         self._ipc_scene_subscenes = {}
         self._use_subscenes = B > 1
@@ -996,6 +995,10 @@ class IPCCoupler(RBC):
 
                 # Apply ground contact element to plane
                 self._ipc_ground_contact.apply_to(plane_geom)
+
+                # Add to contact subscene (only for multi-environment)
+                if self._use_subscenes:
+                    scene_subscenes[i_b].apply_to(plane_geom)
 
                 plane_obj.geometries().create(plane_geom)
                 rigid_solver._mesh_handles[f"rigid_plane_{i_b}_{geom_idx}"] = plane_geom

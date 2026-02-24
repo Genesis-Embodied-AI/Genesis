@@ -410,7 +410,7 @@ def test_objects_freefall(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0])  # FIXME: batching is not supported for now
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_objects_colliding(n_envs, show_viewer):
     DT = 0.02
     CONTACT_MARGIN = 0.01
