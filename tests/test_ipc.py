@@ -128,7 +128,7 @@ def test_link_filter_strict():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0])  # FIXME: batching is not supported for now
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
 @pytest.mark.parametrize("fixed", [True, False])
@@ -193,10 +193,16 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     if coupling_type == "two_way_soft_constraint":
         assert moving_link_idx in scene.sim.coupler.abd_data_by_link
         assert set(envs_idx) == set(scene.sim.coupler.abd_data_by_link[moving_link_idx])
-    elif fixed:
-        assert not scene.sim.coupler.abd_data_by_link
+    elif coupling_type == "external_articulation":
+        entity_idx = scene.sim.rigid_solver.entities.index(robot)
+        art_data = scene.sim.coupler._articulated_entities[entity_idx]
+        assert art_data is not None
+        assert len(art_data["articulation_slots_by_env"]) == max(scene.n_envs, 1)
+        if fixed:
+            assert not scene.sim.coupler.abd_data_by_link
 
     cur_dof_pos_history, target_dof_pos_history = [], []
+    gs_transform_history, ipc_transform_history = [], []
     for i in range(100):
         # Apply sinusoidal target position
         t = i * scene.sim_options.dt
@@ -221,26 +227,36 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
                     gu.R_to_xyz(ipc_transform[:3, :3], rpy=True),
                     atol=1e-4 if fixed else 0.3,
                 )
+                gs_transform_history.append(gs_transform)
+                ipc_transform_history.append(ipc_transform)
     cur_dof_pos_history = np.stack(cur_dof_pos_history, axis=-1)
     target_dof_pos_history = np.stack(target_dof_pos_history, axis=-1)
 
     for env_idx in envs_idx if scene.n_envs > 0 else (slice(None),):
         corr = np.corrcoef(cur_dof_pos_history[env_idx], target_dof_pos_history)[0, 1]
         assert corr > 1.0 - 5e-3
-    # FIXME: Why is it necessary to skip many steps if not fixed ?!
-    start_idx = 0 if fixed else 50
     assert_allclose(
-        cur_dof_pos_history[..., start_idx:] - cur_dof_pos_history[..., start_idx],
-        target_dof_pos_history[..., start_idx:] - target_dof_pos_history[..., start_idx],
+        cur_dof_pos_history - cur_dof_pos_history[..., [0]],
+        target_dof_pos_history - target_dof_pos_history[..., [0]],
         tol=0.03,
     )
     assert_allclose(np.ptp(cur_dof_pos_history, axis=-1), 2 * SCALE, tol=0.05)
 
-    final_base_pos = robot.get_pos()
+    if gs_transform_history:
+        gs_pos_history, gs_quat_history = gu.T_to_trans_quat(np.stack(gs_transform_history, axis=0))
+        ipc_pos_history, ipc_quat_history = gu.T_to_trans_quat(np.stack(ipc_transform_history, axis=0))
+        pos_err_history = np.linalg.norm(ipc_pos_history - gs_pos_history, axis=-1)
+        rot_err_history = np.linalg.norm(
+            gu.quat_to_rotvec(gu.transform_quat_by_quat(gs.inv_quat(gs_quat_history), ipc_quat_history)), axis=-1
+        )
+        assert (np.percentile(pos_err_history, 90, axis=0) < 1e-2).all()
+        assert (np.percentile(rot_err_history, 90, axis=0) < 5e-2).all()
+
+    final_base_pos = tensor_to_array(robot.get_pos())
     if fixed:
         assert_allclose(final_base_pos, POS, atol=TOL_SINGLE)
     else:
-        assert POS[2] - final_base_pos[..., 2] > 0.2
+        assert (POS[2] - final_base_pos[..., 2] > 0.2).all()
 
 
 @pytest.mark.required
@@ -528,9 +544,9 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_friction_mu=0.8,
-            constraint_strength_translation=100,
-            constraint_strength_rotation=100,
-            newton_translation_tolerance=10,
+            constraint_strength_translation=10.0,
+            constraint_strength_rotation=10.0,
+            newton_translation_tolerance=10.0,
             enable_rigid_rigid_contact=False,
             enable_rigid_ground_contact=False,
         ),
@@ -647,7 +663,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0])
+@pytest.mark.parametrize("n_envs", [0, 2])
 def test_momentum_conversation(n_envs, show_viewer):
     DT = 0.001
     DURATION = 0.30
