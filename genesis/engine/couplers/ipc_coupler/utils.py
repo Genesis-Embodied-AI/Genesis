@@ -371,3 +371,178 @@ def build_link_transform_matrix(pos_3, quat_4):
     uipc_quat = Quaternion(quat_4)
     t.rotate(uipc_quat)
     return t.matrix().copy()
+
+
+# ============================================================
+# Numpy computation functions (replacing Quadrants kernels)
+# ============================================================
+
+
+def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
+    """
+    Compute 12D external force from contact forces and torques.
+
+    force_12d = [force (3), M_affine (9)]
+    where M_affine = skew(torque) @ A, A is the rotation part of ABD transform.
+
+    Parameters
+    ----------
+    contact_forces : np.ndarray, shape (n, 3)
+    contact_torques : np.ndarray, shape (n, 3)
+    abd_transforms : np.ndarray, shape (n, 4, 4)
+
+    Returns
+    -------
+    np.ndarray, shape (n, 12)
+    """
+    n = contact_forces.shape[0]
+    out = np.zeros((n, 12), dtype=contact_forces.dtype)
+
+    forces = -0.5 * contact_forces
+    torques = -0.5 * contact_torques
+    out[:, :3] = forces
+
+    # Build skew-symmetric matrices for all torques at once: (n, 3, 3)
+    S = np.zeros((n, 3, 3), dtype=torques.dtype)
+    S[:, 0, 1] = -torques[:, 2]
+    S[:, 0, 2] = torques[:, 1]
+    S[:, 1, 0] = torques[:, 2]
+    S[:, 1, 2] = -torques[:, 0]
+    S[:, 2, 0] = -torques[:, 1]
+    S[:, 2, 1] = torques[:, 0]
+
+    # M_affine = S @ A (rotation part of transform)
+    A = abd_transforms[:, :3, :3]
+    M = np.einsum("nij,njk->nik", S, A)
+    out[:, 3:] = M.reshape(n, 9)
+
+    return out
+
+
+def compute_coupling_forces(
+    ipc_transforms, aim_transforms, link_masses, inertia_tensors,
+    translation_strength, rotation_strength, dt2,
+):
+    """
+    Compute coupling forces and torques for all links.
+
+    Parameters
+    ----------
+    ipc_transforms : np.ndarray, shape (n, 4, 4)
+    aim_transforms : np.ndarray, shape (n, 4, 4)
+    link_masses : np.ndarray, shape (n,)
+    inertia_tensors : np.ndarray, shape (n, 3, 3)
+    translation_strength : float
+    rotation_strength : float
+    dt2 : float
+
+    Returns
+    -------
+    tuple of (forces, torques), each shape (n, 3)
+    """
+    n = ipc_transforms.shape[0]
+    out_forces = np.zeros((n, 3), dtype=ipc_transforms.dtype)
+    out_torques = np.zeros((n, 3), dtype=ipc_transforms.dtype)
+
+    for i in range(n):
+        pos_current = ipc_transforms[i, :3, 3]
+        pos_aim = aim_transforms[i, :3, 3]
+        delta_pos = pos_current - pos_aim
+
+        R_current = ipc_transforms[i, :3, :3]
+        R_aim = aim_transforms[i, :3, :3]
+
+        # Linear force
+        mass = link_masses[i]
+        out_forces[i] = translation_strength * mass * delta_pos / dt2
+
+        # Relative rotation: R_rel = R_current @ R_aim^T
+        R_rel = R_current @ R_aim.T
+
+        # Rodrigues: extract rotation vector
+        trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
+        theta = np.arccos(np.clip((trace - 1.0) / 2.0, -1.0, 1.0))
+
+        rotvec = np.zeros(3, dtype=ipc_transforms.dtype)
+        if theta > 1e-6:
+            axis = np.array([
+                R_rel[2, 1] - R_rel[1, 2],
+                R_rel[0, 2] - R_rel[2, 0],
+                R_rel[1, 0] - R_rel[0, 1],
+            ], dtype=ipc_transforms.dtype)
+            norm = np.linalg.norm(axis)
+            if norm > 1e-8:
+                rotvec = theta * axis / norm
+
+        # Transform inertia to world frame
+        I_world = R_current @ inertia_tensors[i] @ R_current.T
+
+        out_torques[i] = rotation_strength / dt2 * (I_world @ rotvec)
+
+    return out_forces, out_torques
+
+
+def compute_link_contact_forces(
+    force_gradients, link_indices, env_indices, vert_positions, link_centers,
+    max_links, max_envs,
+):
+    """
+    Compute contact forces and torques for rigid links from vertex gradients.
+    Uses np.add.at for accumulation (equivalent to atomic add).
+
+    Parameters
+    ----------
+    force_gradients : np.ndarray, shape (n, 3)
+    link_indices : np.ndarray, shape (n,), int
+    env_indices : np.ndarray, shape (n,), int
+    vert_positions : np.ndarray, shape (n, 3)
+    link_centers : np.ndarray, shape (n, 3)
+    max_links : int
+    max_envs : int
+
+    Returns
+    -------
+    tuple of (out_forces, out_torques), each shape (max_links, max_envs, 3)
+    """
+    out_forces = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
+    out_torques = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
+
+    forces = -force_gradients  # (n, 3)
+    r = vert_positions - link_centers  # (n, 3)
+    torques = np.cross(r, forces)  # (n, 3)
+
+    # Accumulate using np.add.at (unbuffered, like atomic add)
+    np.add.at(out_forces, (link_indices, env_indices), forces)
+    np.add.at(out_torques, (link_indices, env_indices), torques)
+
+    return out_forces, out_torques
+
+
+def extract_joint_mass_matrix(mass_mat, dof_start, joint_dof_indices, n_joints):
+    """
+    Extract the joint mass matrix submatrix from the full DOF mass matrix.
+
+    Parameters
+    ----------
+    mass_mat : np.ndarray, shape (n_total_dofs, n_total_dofs) or (n_total_dofs, n_total_dofs, n_envs)
+        Full mass matrix from rigid solver
+    dof_start : int
+        DOF start index for this entity
+    joint_dof_indices : array-like of int
+        DOF indices for each joint (local to entity)
+    n_joints : int
+        Number of joints
+
+    Returns
+    -------
+    np.ndarray, shape (n_joints * n_joints,)
+        Mass matrix submatrix in column-major (Fortran) order
+    """
+    # Build absolute DOF indices
+    abs_indices = np.array([dof_start + d for d in joint_dof_indices[:n_joints]], dtype=int)
+
+    # Extract submatrix using fancy indexing
+    sub = mass_mat[np.ix_(abs_indices, abs_indices)]
+
+    # Return flattened in column-major order (Fortran order = transpose then flatten)
+    return sub.T.flatten()
