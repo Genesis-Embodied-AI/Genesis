@@ -192,12 +192,13 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     assert (0, moving_link_idx) in scene.sim.coupler._link_to_abd_slot
     if coupling_type == "two_way_soft_constraint":
         assert moving_link_idx in scene.sim.coupler.abd_data_by_link
-        assert set(envs_idx) == set(scene.sim.coupler.abd_data_by_link[moving_link_idx])
+        envs_data = scene.sim.coupler.abd_data_by_link[moving_link_idx]
+        assert all(envs_data[i] is not None for i in envs_idx)
     elif coupling_type == "external_articulation":
         entity_idx = scene.sim.rigid_solver.entities.index(robot)
         art_data = scene.sim.coupler._articulated_entities[entity_idx]
         assert art_data is not None
-        assert len(art_data["articulation_slots_by_env"]) == max(scene.n_envs, 1)
+        assert len(art_data.articulation_slots_by_env) == max(scene.n_envs, 1)
         if fixed:
             assert not scene.sim.coupler.abd_data_by_link
 
@@ -219,7 +220,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
         if coupling_type == "two_way_soft_constraint" or not fixed:
             for env_idx in envs_idx:
                 abd_data = scene.sim.coupler.abd_data_by_link[moving_link_idx][env_idx]
-                gs_transform, ipc_transform = abd_data["aim_transform"], abd_data["transform"]
+                gs_transform, ipc_transform = abd_data.aim_transform, abd_data.transform
                 # FIXME: Why the tolerance is must so large if no fixed ?!
                 assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=TOL_SINGLE if fixed else 0.2)
                 assert_allclose(

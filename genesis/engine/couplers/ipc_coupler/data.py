@@ -4,17 +4,74 @@ Data classes for IPC coupler.
 Numpy-backed data structures used for IPC coupling computations.
 """
 
+from dataclasses import dataclass, field
+from typing import NamedTuple
+
 import numpy as np
 
 import genesis as gs
+
+
+class ABDLinkEntry(NamedTuple):
+    """Per-link, per-env ABD state retrieved from IPC after advance."""
+
+    transform: np.ndarray  # (4, 4) IPC transform
+    aim_transform: np.ndarray  # (4, 4) Genesis stored transform
+    velocity: np.ndarray | None = None  # (4, 4) velocity matrix, optional
+
+
+class ContactForceEntry(NamedTuple):
+    """Per-link, per-env contact force/torque from IPC."""
+
+    force: np.ndarray  # (3,) force vector
+    torque: np.ndarray  # (3,) torque vector
+
+
+@dataclass
+class ArticulatedEntityData:
+    """Typed container for per-entity articulation coupling data."""
+
+    entity: object  # RigidEntity
+    env_idx: int  # Legacy env0 alias; runtime uses *_by_env containers
+    active_env_indices: list
+    revolute_joints: list
+    prismatic_joints: list
+    joint_geo_slots_by_env: dict
+    articulation_geos_by_env: dict
+    articulation_slots_by_env: dict
+    articulation_objects_by_env: dict
+    joint_geo_slots: list  # env0 alias
+    articulation_geo: object  # env0 alias
+    articulation_slot: object  # env0 alias
+    articulation_object: object  # env0 alias
+    n_joints: int
+    ref_dof_prev: np.ndarray
+    delta_theta_tilde: np.ndarray
+    delta_theta: np.ndarray
+    joint_qpos_indices: list
+    joint_dof_indices: list
+    mass_matrix: np.ndarray
+    has_non_fixed_base: bool
+    base_link_idx: int
+    n_dofs_actual: int = 0
+
+
+@dataclass
+class ForceBatch:
+    """Batched forces/torques for a single environment, to be applied to Genesis rigid links."""
+
+    link_indices: list = field(default_factory=list)
+    forces: list = field(default_factory=list)
+    torques: list = field(default_factory=list)
 
 
 class IPCCouplingData:
     """Pre-allocated numpy arrays for coupling force computation."""
 
     def __init__(self, max_links):
-        self.link_indices = np.empty(max_links, dtype=np.int32)
-        self.env_indices = np.empty(max_links, dtype=np.int32)
+        # Pre-allocated numpy buffers for coupling force computation
+        self.link_indices = np.empty(max_links, dtype=gs.np_int)
+        self.env_indices = np.empty(max_links, dtype=gs.np_int)
         self.ipc_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
         self.aim_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
         self.link_masses = np.empty(max_links, dtype=gs.np_float)
@@ -30,14 +87,14 @@ class ArticulationData:
     def __init__(self, n_entities, max_dofs_per_entity, max_joints_per_entity, n_envs):
         # Entity-level metadata
         self.n_entities = n_entities
-        self.entity_indices = np.zeros(n_entities, dtype=np.int32)
-        self.entity_n_dofs = np.zeros(n_entities, dtype=np.int32)
-        self.entity_n_joints = np.zeros(n_entities, dtype=np.int32)
-        self.entity_dof_start = np.zeros(n_entities, dtype=np.int32)
+        self.entity_indices = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_n_dofs = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_n_joints = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_dof_start = np.zeros(n_entities, dtype=gs.np_int)
 
         # Joint to qpos and DOF mapping (per entity)
-        self.joint_qpos_indices = np.zeros((n_entities, max_joints_per_entity), dtype=np.int32)
-        self.joint_dof_indices = np.zeros((n_entities, max_joints_per_entity), dtype=np.int32)
+        self.joint_qpos_indices = np.zeros((n_entities, max_joints_per_entity), dtype=gs.np_int)
+        self.joint_dof_indices = np.zeros((n_entities, max_joints_per_entity), dtype=gs.np_int)
 
         # DOF data (per entity, per environment)
         self.ref_dof_prev = np.zeros((n_entities, n_envs, max_dofs_per_entity), dtype=gs.np_float)

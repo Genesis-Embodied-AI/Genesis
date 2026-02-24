@@ -4,11 +4,18 @@ Utility functions for IPC coupler.
 Stateless helper functions extracted from IPCCoupler for clarity.
 """
 
+import numba as nb
 import numpy as np
-from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
 import genesis.utils.geom as gu
+
+try:
+    from uipc.core import Scene as _UIPCScene
+
+    _UIPC_AVAILABLE = True
+except ImportError:
+    _UIPC_AVAILABLE = False
 
 
 def find_target_link_for_fixed_merge(rigid_solver, link_idx):
@@ -101,11 +108,8 @@ def compute_link_to_link_transform(rigid_solver, from_link_idx, to_link_idx):
 
 
 def is_robot_entity(entity):
-    """Heuristic: treat URDF/MJCF/Drone morphs as robots."""
-    try:
-        return isinstance(entity.morph, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.Drone))
-    except AttributeError:
-        return False
+    """Check if entity is a robot (has non-fixed, non-free joints)."""
+    return any(j.type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j in entity.joints)
 
 
 def compute_link_init_world_rotation(rigid_solver, link_idx):
@@ -209,9 +213,7 @@ def build_ipc_scene_config(options, sim_options):
     dict
         Scene config dict ready to pass to Scene(config)
     """
-    from uipc import Scene
-
-    config = Scene.default_config()
+    config = _UIPCScene.default_config()
 
     # Basic simulation parameters (derived from SimOptions)
     config["dt"] = sim_options.dt
@@ -326,58 +328,12 @@ def read_ipc_geometry_metadata(geo):
         return None
 
 
-def decompose_transform_matrix(transform_4x4):
-    """
-    Decompose a 4x4 transformation matrix into position and quaternion (wxyz).
-
-    Parameters
-    ----------
-    transform_4x4 : np.ndarray
-        4x4 homogeneous transformation matrix
-
-    Returns
-    -------
-    tuple
-        (pos, quat_wxyz) where pos is (3,) and quat_wxyz is (4,)
-    """
-    pos = transform_4x4[:3, 3]
-    rot_mat = transform_4x4[:3, :3]
-    quat_xyzw = R.from_matrix(rot_mat).as_quat()
-    quat_wxyz = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
-    return pos, quat_wxyz
-
-
-def build_link_transform_matrix(pos_3, quat_4):
-    """
-    Build a 4x4 transformation matrix from position and quaternion.
-    Uses uipc Transform for consistency with IPC.
-
-    Parameters
-    ----------
-    pos_3 : array-like
-        Position (3,)
-    quat_4 : array-like
-        Quaternion in wxyz order (4,)
-
-    Returns
-    -------
-    np.ndarray
-        4x4 transformation matrix
-    """
-    from uipc import Transform, Vector3, Quaternion
-
-    t = Transform.Identity()
-    t.translate(Vector3.Values((float(pos_3[0]), float(pos_3[1]), float(pos_3[2]))))
-    uipc_quat = Quaternion(quat_4)
-    t.rotate(uipc_quat)
-    return t.matrix().copy()
-
-
 # ============================================================
 # Numpy computation functions (replacing Quadrants kernels)
 # ============================================================
 
 
+@nb.jit(nopython=True, cache=True)
 def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
     """
     Compute 12D external force from contact forces and torques.
@@ -398,30 +354,41 @@ def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
     n = contact_forces.shape[0]
     out = np.zeros((n, 12), dtype=contact_forces.dtype)
 
-    forces = -0.5 * contact_forces
-    torques = -0.5 * contact_torques
-    out[:, :3] = forces
+    for i in range(n):
+        fx = -0.5 * contact_forces[i, 0]
+        fy = -0.5 * contact_forces[i, 1]
+        fz = -0.5 * contact_forces[i, 2]
+        out[i, 0] = fx
+        out[i, 1] = fy
+        out[i, 2] = fz
 
-    # Build skew-symmetric matrices for all torques at once: (n, 3, 3)
-    S = np.zeros((n, 3, 3), dtype=torques.dtype)
-    S[:, 0, 1] = -torques[:, 2]
-    S[:, 0, 2] = torques[:, 1]
-    S[:, 1, 0] = torques[:, 2]
-    S[:, 1, 2] = -torques[:, 0]
-    S[:, 2, 0] = -torques[:, 1]
-    S[:, 2, 1] = torques[:, 0]
+        tx = -0.5 * contact_torques[i, 0]
+        ty = -0.5 * contact_torques[i, 1]
+        tz = -0.5 * contact_torques[i, 2]
 
-    # M_affine = S @ A (rotation part of transform)
-    A = abd_transforms[:, :3, :3]
-    M = np.einsum("nij,njk->nik", S, A)
-    out[:, 3:] = M.reshape(n, 9)
+        # S = skew(torque), A = abd_transforms[i, :3, :3]
+        # M = S @ A, then flatten to 9 elements
+        A = abd_transforms[i, :3, :3]
+        for j in range(3):
+            # S @ A column j = [(-tz*A[1,j] + ty*A[2,j]),
+            #                   ( tz*A[0,j] - tx*A[2,j]),
+            #                   (-ty*A[0,j] + tx*A[1,j])]
+            out[i, 3 + 0 * 3 + j] = -tz * A[1, j] + ty * A[2, j]
+            out[i, 3 + 1 * 3 + j] = tz * A[0, j] - tx * A[2, j]
+            out[i, 3 + 2 * 3 + j] = -ty * A[0, j] + tx * A[1, j]
 
     return out
 
 
+@nb.jit(nopython=True, cache=True)
 def compute_coupling_forces(
-    ipc_transforms, aim_transforms, link_masses, inertia_tensors,
-    translation_strength, rotation_strength, dt2,
+    ipc_transforms,
+    aim_transforms,
+    link_masses,
+    inertia_tensors,
+    translation_strength,
+    rotation_strength,
+    dt2,
 ):
     """
     Compute coupling forces and torques for all links.
@@ -447,44 +414,58 @@ def compute_coupling_forces(
     for i in range(n):
         pos_current = ipc_transforms[i, :3, 3]
         pos_aim = aim_transforms[i, :3, 3]
-        delta_pos = pos_current - pos_aim
 
         R_current = ipc_transforms[i, :3, :3]
         R_aim = aim_transforms[i, :3, :3]
 
-        # Linear force
+        # Linear force: F = strength * mass * delta_pos / dt^2
         mass = link_masses[i]
-        out_forces[i] = translation_strength * mass * delta_pos / dt2
+        for k in range(3):
+            out_forces[i, k] = translation_strength * mass * (pos_current[k] - pos_aim[k]) / dt2
 
         # Relative rotation: R_rel = R_current @ R_aim^T
         R_rel = R_current @ R_aim.T
 
         # Rodrigues: extract rotation vector
         trace = R_rel[0, 0] + R_rel[1, 1] + R_rel[2, 2]
-        theta = np.arccos(np.clip((trace - 1.0) / 2.0, -1.0, 1.0))
+        cos_val = (trace - 1.0) / 2.0
+        cos_val = max(-1.0, min(1.0, cos_val))
+        theta = np.arccos(cos_val)
 
         rotvec = np.zeros(3, dtype=ipc_transforms.dtype)
         if theta > 1e-6:
-            axis = np.array([
-                R_rel[2, 1] - R_rel[1, 2],
-                R_rel[0, 2] - R_rel[2, 0],
-                R_rel[1, 0] - R_rel[0, 1],
-            ], dtype=ipc_transforms.dtype)
-            norm = np.linalg.norm(axis)
+            ax0 = R_rel[2, 1] - R_rel[1, 2]
+            ax1 = R_rel[0, 2] - R_rel[2, 0]
+            ax2 = R_rel[1, 0] - R_rel[0, 1]
+            norm = np.sqrt(ax0 * ax0 + ax1 * ax1 + ax2 * ax2)
             if norm > 1e-8:
-                rotvec = theta * axis / norm
+                s = theta / norm
+                rotvec[0] = s * ax0
+                rotvec[1] = s * ax1
+                rotvec[2] = s * ax2
 
-        # Transform inertia to world frame
+        # Transform inertia to world frame: I_world = R @ I @ R^T
         I_world = R_current @ inertia_tensors[i] @ R_current.T
 
-        out_torques[i] = rotation_strength / dt2 * (I_world @ rotvec)
+        # Torque = (rotation_strength / dt^2) * I_world @ rotvec
+        scale = rotation_strength / dt2
+        for k in range(3):
+            val = 0.0
+            for m in range(3):
+                val += I_world[k, m] * rotvec[m]
+            out_torques[i, k] = scale * val
 
     return out_forces, out_torques
 
 
 def compute_link_contact_forces(
-    force_gradients, link_indices, env_indices, vert_positions, link_centers,
-    max_links, max_envs,
+    force_gradients,
+    link_indices,
+    env_indices,
+    vert_positions,
+    link_centers,
+    max_links,
+    max_envs,
 ):
     """
     Compute contact forces and torques for rigid links from vertex gradients.
@@ -516,33 +497,3 @@ def compute_link_contact_forces(
     np.add.at(out_torques, (link_indices, env_indices), torques)
 
     return out_forces, out_torques
-
-
-def extract_joint_mass_matrix(mass_mat, dof_start, joint_dof_indices, n_joints):
-    """
-    Extract the joint mass matrix submatrix from the full DOF mass matrix.
-
-    Parameters
-    ----------
-    mass_mat : np.ndarray, shape (n_total_dofs, n_total_dofs) or (n_total_dofs, n_total_dofs, n_envs)
-        Full mass matrix from rigid solver
-    dof_start : int
-        DOF start index for this entity
-    joint_dof_indices : array-like of int
-        DOF indices for each joint (local to entity)
-    n_joints : int
-        Number of joints
-
-    Returns
-    -------
-    np.ndarray, shape (n_joints * n_joints,)
-        Mass matrix submatrix in column-major (Fortran) order
-    """
-    # Build absolute DOF indices
-    abs_indices = np.array([dof_start + d for d in joint_dof_indices[:n_joints]], dtype=int)
-
-    # Extract submatrix using fancy indexing
-    sub = mass_mat[np.ix_(abs_indices, abs_indices)]
-
-    # Return flattened in column-major order (Fortran order = transpose then flatten)
-    return sub.T.flatten()
