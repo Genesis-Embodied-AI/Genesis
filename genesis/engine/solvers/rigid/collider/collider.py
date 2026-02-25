@@ -15,6 +15,7 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
+from genesis.engine.materials.rigid import Rigid
 from genesis.utils.misc import tensor_to_array, qd_to_torch, qd_to_numpy
 from genesis.utils.sdf import SDF
 
@@ -224,6 +225,28 @@ class Collider:
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
         """
+        # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
+        # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
+        # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
+        # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
+        from genesis.engine.couplers import IPCCoupler
+
+        excluded_links = set()
+        if isinstance(self._solver.sim.coupler, IPCCoupler):
+            for entity in self._solver._entities:
+                if not isinstance(entity.material, Rigid):
+                    continue
+                mode = entity.material.coupling_mode
+                if mode is None:
+                    continue
+                link_filter_names = entity.material.coupling_link_filter
+                if mode == "two_way_soft_constraint" and link_filter_names is not None:
+                    for name in link_filter_names:
+                        excluded_links.add(entity.get_link(name=name))
+                else:
+                    for link in entity.links:
+                        excluded_links.add(link)
+
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
         for geom in self._solver.geoms:
@@ -249,6 +272,10 @@ class Collider:
 
                 # geoms in the same link
                 if link_a is link_b:
+                    continue
+
+                # Skip pairs involving links whose contact is handled by IPC
+                if link_a in excluded_links or link_b in excluded_links:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed

@@ -10,9 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "quadrants==0.4.0",
+    "quadrants==0.4.1",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
+    "frozendict",
     "trimesh",
     "libigl",
     # Cross-platform library to get various kind of CPU information such as model name

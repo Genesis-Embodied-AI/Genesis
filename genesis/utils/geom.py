@@ -875,6 +875,10 @@ def R_to_quat(R, *, out=None):
         gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(R)=}")
 
 
+def R_to_xyz(R, rpy=False, degrees=False):
+    return quat_to_xyz(R_to_quat(R), rpy=rpy, degrees=degrees)
+
+
 def trans_R_to_T(trans=None, R=None, *, out=None):
     is_torch = all(isinstance(e, torch.Tensor) for e in (trans, R) if e is not None)
     is_numpy = not is_torch and all(isinstance(e, np.ndarray) for e in (trans, R) if e is not None)
@@ -1739,21 +1743,22 @@ def quat_to_rotvec(quat: np.ndarray, out: np.ndarray | None = None) -> np.ndarra
                 and returned, which is slower.
     """
     assert quat.ndim >= 1
+    B = quat.shape[:-1]
     if out is None:
-        out_ = np.empty((*quat.shape[:-1], 3), dtype=quat.dtype)
+        out_ = np.empty((*B, 3), dtype=quat.dtype)
     else:
-        assert out.shape == (*quat.shape[:-1], 3)
+        assert out.shape == (*B, 3)
         out_ = out
 
     # Split real (qw,) and imaginary (qx, qy, qz) quaternion parts
-    q_w, q_vec = quat[..., 0], quat[..., 1:]
+    q_w, q_vec = quat[..., :1], np.ascontiguousarray(quat[..., 1:])
 
     # Compute the angle-axis representation of the relative rotation
-    s2 = np.sqrt(np.sum(np.square(q_vec), -1))
+    s2 = np.sqrt(np.sum(np.square(q_vec.reshape((-1, 3))), -1)).reshape((*B, 1))
     angle = 2.0 * np.arctan2(s2, np.abs(q_w))
     # FIXME: Ideally, a taylor expansion should be used to handle angle ~ 0.0
     inv_sinc = angle / np.maximum(s2, gs.EPS)
-    out_[:] = (-1.0 if q_w < 0.0 else 1.0) * inv_sinc * q_vec
+    out_[:] = np.where(q_w < 0.0, -1.0, 1.0) * inv_sinc * q_vec
 
     if out is None:
         return out_

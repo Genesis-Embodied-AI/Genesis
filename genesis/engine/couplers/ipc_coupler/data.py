@@ -1,123 +1,113 @@
 """
-Data-oriented classes for IPC coupler Quadrants fields.
+Data classes for IPC coupler.
 
-These classes manage pre-allocated Quadrants fields used for GPU-accelerated
-IPC coupling computations.
+Numpy-backed data structures used for IPC coupling computations.
 """
 
-import quadrants as qd
+from dataclasses import dataclass, field
+from typing import NamedTuple
+
+import numpy as np
 
 import genesis as gs
 
 
-@qd.data_oriented
-class IPCTransformData:
-    """Data-oriented class for IPC transform processing."""
+class ABDLinkEntry(NamedTuple):
+    """Per-link, per-env ABD state retrieved from IPC after advance."""
 
-    def __init__(self, max_links, max_envs, max_abd_links, max_qpos_size):
-        # Entity mapping: link_idx -> entity_idx, base_link_idx
-        self.link_to_entity_map = qd.field(dtype=qd.i32, shape=max_links)
-        self.entity_base_link_map = qd.field(dtype=qd.i32, shape=max_links)
-        self.entity_n_links_map = qd.field(dtype=qd.i32, shape=max_links)
-        self.entity_link_starts = qd.field(dtype=qd.i32, shape=max_links)
+    transform: np.ndarray  # (4, 4) IPC transform
+    aim_transform: np.ndarray  # (4, 4) Genesis stored transform
+    velocity: np.ndarray | None = None  # (4, 4) velocity matrix, optional
 
-        # Filter flags: for each link, whether it passes ipc_only filter
-        self.ipc_only_flags = qd.field(dtype=qd.i32, shape=max_links)
-        self.ipc_filter_flags = qd.field(dtype=qd.i32, shape=max_links)
 
-        # User modified entity flags
-        self.user_modified_flags = qd.field(dtype=qd.i32, shape=(max_links, max_envs))
+class ContactForceEntry(NamedTuple):
+    """Per-link, per-env contact force/torque from IPC."""
 
-        # Input data for filtering
-        self.input_link_indices = qd.field(dtype=qd.i32, shape=max_abd_links)
-        self.input_transforms = qd.Matrix.field(4, 4, dtype=gs.qd_float, shape=(max_abd_links, max_envs))
-        self.input_env_indices = qd.field(dtype=qd.i32, shape=(max_abd_links, max_envs))
-        self.input_valid = qd.field(dtype=qd.i32, shape=(max_abd_links, max_envs))
+    force: np.ndarray  # (3,) force vector
+    torque: np.ndarray  # (3,) torque vector
 
-        # Batch output arrays per environment (compacted)
-        self.output_count_per_env = qd.field(dtype=qd.i32, shape=max_envs)
-        self.output_link_idx = qd.field(dtype=qd.i32, shape=(max_envs, max_links))
-        self.output_pos = qd.Vector.field(3, dtype=gs.qd_float, shape=(max_envs, max_links))
-        self.output_quat = qd.Vector.field(4, dtype=gs.qd_float, shape=(max_envs, max_links))
-        self.output_entity_idx = qd.field(dtype=qd.i32, shape=(max_envs, max_links))
 
-        # Complex case tracking
-        self.complex_case_flags = qd.field(dtype=qd.i32, shape=(max_links, max_envs))
+@dataclass
+class ArticulatedEntityData:
+    """Typed container for per-entity articulation coupling data."""
 
-        # Reusable buffers for qpos comparison
-        # Note: max_qpos_size is passed from IPCCoupler.MAX_QPOS_SIZE
-        # The large buffer size (2000) is from IPCCoupler.MAX_QPOS_BUFFER_LARGE
-        self.qpos_buffer = qd.field(dtype=gs.qd_float, shape=max_qpos_size)
-        self.qpos_buffer_large = qd.field(dtype=gs.qd_float, shape=max_qpos_size * 4)  # For large entities
-        self.modified_flag = qd.field(dtype=qd.i32, shape=())
-        self.qpos_comparison_result = qd.field(dtype=qd.i32, shape=1)  # For kernel-based comparison
+    entity: object  # RigidEntity
+    env_idx: int  # Legacy env0 alias; runtime uses *_by_env containers
+    active_env_indices: list
+    revolute_joints: list
+    prismatic_joints: list
+    joint_geo_slots_by_env: dict
+    articulation_geos_by_env: dict
+    articulation_slots_by_env: dict
+    articulation_objects_by_env: dict
+    joint_geo_slots: list  # env0 alias
+    articulation_geo: object  # env0 alias
+    articulation_slot: object  # env0 alias
+    articulation_object: object  # env0 alias
+    n_joints: int
+    ref_dof_prev: np.ndarray
+    delta_theta_tilde: np.ndarray
+    delta_theta: np.ndarray
+    joint_qpos_indices: list
+    joint_dof_indices: list
+    mass_matrix: np.ndarray
+    has_non_fixed_base: bool
+    base_link_idx: int
+    n_dofs_actual: int = 0
 
-        # Stored Genesis states (used by all coupling strategies)
-        # Stored link transforms: pos + quat for all links
-        self.stored_link_pos = qd.Vector.field(3, dtype=gs.qd_float, shape=(max_links, max_envs))
-        self.stored_link_quat = qd.Vector.field(4, dtype=gs.qd_float, shape=(max_links, max_envs))
-        self.stored_link_valid = qd.field(dtype=qd.i32, shape=(max_links, max_envs))  # 1 if stored, 0 otherwise
 
-        # Stored qpos for all entities (used by all coupling strategies)
-        # max_links is reused as max entity count (should be sufficient)
-        self.stored_qpos = qd.field(dtype=gs.qd_float, shape=(max_links, max_envs, max_qpos_size))
-        self.stored_qpos_size = qd.field(dtype=qd.i32, shape=max_links)  # Number of dofs per entity
-        self.stored_qpos_start = qd.field(dtype=qd.i32, shape=max_links)  # DOF start index per entity
+@dataclass
+class ForceBatch:
+    """Batched forces/torques for a single environment, to be applied to Genesis rigid links."""
+
+    link_indices: list = field(default_factory=list)
+    forces: list = field(default_factory=list)
+    torques: list = field(default_factory=list)
 
 
 class IPCCouplingData:
-    """Data-oriented class for IPC coupling force computation using numpy arrays."""
+    """Pre-allocated numpy arrays for coupling force computation."""
 
     def __init__(self, max_links):
         # Pre-allocated numpy buffers for coupling force computation
-        # These will be passed directly to Quadrants kernels using qd.types.ndarray()
-        import numpy as np
-
-        self.link_indices = np.empty(max_links, dtype=np.int32)
-        self.env_indices = np.empty(max_links, dtype=np.int32)
+        self.link_indices = np.empty(max_links, dtype=gs.np_int)
+        self.env_indices = np.empty(max_links, dtype=gs.np_int)
         self.ipc_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
         self.aim_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
         self.link_masses = np.empty(max_links, dtype=gs.np_float)
         self.inertia_tensors = np.empty((max_links, 3, 3), dtype=gs.np_float)
         self.out_forces = np.empty((max_links, 3), dtype=gs.np_float)
         self.out_torques = np.empty((max_links, 3), dtype=gs.np_float)
-        self.n_items = 0  # Track actual number of items used
+        self.n_items = 0
 
 
-@qd.data_oriented
 class ArticulationData:
-    """Data-oriented class for joint articulation coupling with Quadrants parallelization."""
+    """Numpy-backed data for joint articulation coupling."""
 
-    def __init__(self, max_entities, max_dofs_per_entity, max_joints_per_entity, max_envs):
+    def __init__(self, n_entities, max_dofs_per_entity, max_joints_per_entity, n_envs):
         # Entity-level metadata
-        self.n_entities = qd.field(dtype=qd.i32, shape=())
-        self.entity_indices = qd.field(dtype=qd.i32, shape=max_entities)
-        self.entity_env_indices = qd.field(dtype=qd.i32, shape=max_entities)
-        self.entity_n_dofs = qd.field(dtype=qd.i32, shape=max_entities)
-        self.entity_n_joints = qd.field(dtype=qd.i32, shape=max_entities)
-        self.entity_dof_start = qd.field(dtype=qd.i32, shape=max_entities)  # DOF start index in rigid solver
+        self.n_entities = n_entities
+        self.entity_indices = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_n_dofs = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_n_joints = np.zeros(n_entities, dtype=gs.np_int)
+        self.entity_dof_start = np.zeros(n_entities, dtype=gs.np_int)
 
         # Joint to qpos and DOF mapping (per entity)
-        # joint_qpos_indices[entity_idx, joint_idx] = local q-space index (for qpos_current, qpos_new access)
-        # joint_dof_indices[entity_idx, joint_idx] = local DOF index (for mass_mat access)
-        self.joint_qpos_indices = qd.field(dtype=qd.i32, shape=(max_entities, max_joints_per_entity))
-        self.joint_dof_indices = qd.field(dtype=qd.i32, shape=(max_entities, max_joints_per_entity))
+        self.joint_qpos_indices = np.zeros((n_entities, max_joints_per_entity), dtype=gs.np_int)
+        self.joint_dof_indices = np.zeros((n_entities, max_joints_per_entity), dtype=gs.np_int)
 
         # DOF data (per entity, per environment)
-        self.ref_dof_prev = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_dofs_per_entity))
-        self.qpos_current = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_dofs_per_entity))
-        self.qvel_genesis = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_dofs_per_entity))
-        self.qpos_new = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_dofs_per_entity))
+        self.ref_dof_prev = np.zeros((n_entities, n_envs, max_dofs_per_entity), dtype=gs.np_float)
+        self.qpos_current = np.zeros((n_entities, n_envs, max_dofs_per_entity), dtype=gs.np_float)
+        self.qpos_new = np.zeros((n_entities, n_envs, max_dofs_per_entity), dtype=gs.np_float)
 
         # Joint data (per entity, per environment)
-        self.delta_theta_tilde = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_joints_per_entity))
-        self.delta_theta_ipc = qd.field(dtype=gs.qd_float, shape=(max_entities, max_envs, max_joints_per_entity))
+        self.delta_theta_tilde = np.zeros((n_entities, n_envs, max_joints_per_entity), dtype=gs.np_float)
+        self.delta_theta_ipc = np.zeros((n_entities, n_envs, max_joints_per_entity), dtype=gs.np_float)
 
         # Mass matrix (per entity, flattened column-major)
-        max_mass_size = max_joints_per_entity * max_joints_per_entity
-        self.mass_matrix = qd.field(dtype=gs.qd_float, shape=(max_entities, max_mass_size))
+        self.mass_matrix = np.zeros((n_entities, max_joints_per_entity * max_joints_per_entity), dtype=gs.np_float)
 
         # Previous timestep link transforms for ref_dof_prev computation
-        # Stores link indices and transform matrices from previous step
-        # Dictionary: {(entity_idx, joint_idx, env_idx): transform_matrix_4x4}
+        # {(entity_idx, joint_idx, env_idx): transform_matrix_4x4}
         self.prev_link_transforms = {}

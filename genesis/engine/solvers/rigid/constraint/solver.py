@@ -1,18 +1,20 @@
+import os
 from typing import TYPE_CHECKING
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
+from frozendict import frozendict
 
 import genesis as gs
-import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch
 
+from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
-from ..collider.contact_island import ContactIsland
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
@@ -183,6 +185,7 @@ class ConstraintSolver:
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
         )
+
         func_solve_body(
             self._solver.entities_info,
             self._solver.dofs_state,
@@ -1377,6 +1380,8 @@ def func_hessian_direct_tiled(
         i_b = i // BLOCK_DIM
         if i_b >= _B:
             continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
 
         jac_row = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
         jac_col = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
@@ -1528,6 +1533,8 @@ def func_cholesky_factor_direct_tiled(
         tid = i % BLOCK_DIM
         i_b = i // BLOCK_DIM
         if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
         # Padding +1 to avoid memory bank conflicts that would cause access serialization
@@ -2244,6 +2251,41 @@ def update_bracket_no_eval_local(
 
 
 @qd.func
+def func_linesearch_and_apply_alpha(
+    i_b,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    alpha = func_linesearch_batch(
+        i_b,
+        entities_info=entities_info,
+        dofs_state=dofs_state,
+        rigid_global_info=rigid_global_info,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+    n_dofs = constraint_state.qacc.shape[0]
+    if qd.abs(alpha) < rigid_global_info.EPS[None]:
+        constraint_state.improved[i_b] = False
+    else:
+        # Update qacc and Ma
+        # we need alpha for this, so stay in same top level for loop
+        # (though we could store alpha in a new tensor of course, if we wanted to split this)
+        for i_d in range(n_dofs):
+            constraint_state.qacc[i_d, i_b] = (
+                constraint_state.qacc[i_d, i_b] + constraint_state.search[i_d, i_b] * alpha
+            )
+            constraint_state.Ma[i_d, i_b] = constraint_state.Ma[i_d, i_b] + constraint_state.mv[i_d, i_b] * alpha
+
+        # Update Jaref
+        for i_c in range(constraint_state.n_constraints[i_b]):
+            constraint_state.Jaref[i_c, i_b] = constraint_state.Jaref[i_c, i_b] + constraint_state.jv[i_c, i_b] * alpha
+
+
+@qd.func
 def func_linesearch_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2423,6 +2465,17 @@ def func_linesearch_batch(
 
 
 # ====================================================== Helpers ======================================================
+
+
+@qd.func
+def func_save_prev_grad(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    n_dofs = constraint_state.qacc.shape[0]
+    for i_d in range(n_dofs):
+        constraint_state.cg_prev_grad[i_d, i_b] = constraint_state.grad[i_d, i_b]
+        constraint_state.cg_prev_Mgrad[i_d, i_b] = constraint_state.Mgrad[i_d, i_b]
 
 
 @qd.func
@@ -2838,6 +2891,10 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in qd.ndrange(_B):
+        constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
+
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_hessian_and_cholesky_factor_direct(
             entities_info=entities_info,
@@ -2938,8 +2995,21 @@ def func_solve_iter(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.perf_dispatch(
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=1.0
+)
 def func_solve_body(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> None: ...
+
+
+@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
