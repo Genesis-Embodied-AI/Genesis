@@ -282,50 +282,28 @@ def read_ipc_geometry_metadata(geo):
     """
     Read solver_type, env_idx, and entity/link index from IPC geometry metadata.
 
-    Parameters
-    ----------
-    geo : Geometry
-        An IPC geometry with meta attributes
-
-    Returns
-    -------
-    tuple or None
-        (solver_type, env_idx, idx) where idx is entity_idx for fem/cloth
-        or link_idx for rigid. Returns None if metadata is missing/invalid.
+    Returns (solver_type, env_idx, idx) where idx is entity_idx for fem/cloth
+    or link_idx for rigid. Returns None if the geometry has no solver_type
+    metadata (i.e. not a Genesis-created geometry).
     """
-    try:
-        meta_attrs = geo.meta()
-        solver_type_attr = meta_attrs.find("solver_type")
-
-        if not solver_type_attr or solver_type_attr.name() != "solver_type":
-            return None
-
-        solver_type_view = solver_type_attr.view()
-        if len(solver_type_view) == 0:
-            return None
-        solver_type = str(solver_type_view[0])
-
-        env_idx_attr = meta_attrs.find("env_idx")
-        if not env_idx_attr:
-            return None
-        env_idx = int(str(env_idx_attr.view()[0]))
-
-        if solver_type == "rigid":
-            link_idx_attr = meta_attrs.find("link_idx")
-            if not link_idx_attr:
-                return None
-            idx = int(str(link_idx_attr.view()[0]))
-        elif solver_type in ("fem", "cloth"):
-            entity_idx_attr = meta_attrs.find("entity_idx")
-            if not entity_idx_attr:
-                return None
-            idx = int(str(entity_idx_attr.view()[0]))
-        else:
-            return None
-
-        return (solver_type, env_idx, idx)
-    except Exception:
+    meta_attrs = geo.meta()
+    solver_type_attr = meta_attrs.find("solver_type")
+    if solver_type_attr is None:
         return None
+
+    (solver_type,) = solver_type_attr.view()
+    solver_type = str(solver_type)
+
+    (env_idx,) = map(int, meta_attrs.find("env_idx").view())
+
+    if solver_type == "rigid":
+        (idx,) = map(int, meta_attrs.find("link_idx").view())
+    elif solver_type in ("fem", "cloth"):
+        (idx,) = map(int, meta_attrs.find("entity_idx").view())
+    else:
+        gs.raise_exception(f"Unknown IPC geometry solver_type: {solver_type!r}")
+
+    return (solver_type, env_idx, idx)
 
 
 # ============================================================
