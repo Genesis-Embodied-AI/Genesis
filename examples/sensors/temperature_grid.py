@@ -16,6 +16,7 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Teleop
 KEY_DPOS = 0.05
+KEY_DPOS_Z = 0.01
 PUSHER_SIZE = 0.1
 
 # Temperature grid
@@ -125,7 +126,7 @@ def main():
             grid_size=GRID_SIZE,
             properties_dict=properties_dict,
             draw_debug=args.vis,
-            debug_temperature_range=(0.0, 100.0),
+            debug_temperature_range=(0.0, 80.0),
             simulate_all_link_temperatures=args.simulate_all_links,
             ambient_temperature=22.0,
             convection_coefficient=0.0,
@@ -147,7 +148,7 @@ def main():
             target_pos[:] = pusher_start
 
         def translate(index: int, is_negative: bool):
-            target_pos[index] += (-1 if is_negative else 1) * KEY_DPOS
+            target_pos[index] += (-1 if is_negative else 1) * (KEY_DPOS if index < 2 else KEY_DPOS_Z)
 
         def drop_object():
             nonlocal next_obj_idx
