@@ -437,13 +437,11 @@ def compute_coupling_forces(
 
 
 def compute_link_contact_forces(
-    force_gradients,
-    link_indices,
-    env_indices,
-    vert_positions,
-    link_centers,
-    max_links,
-    max_envs,
+    forces_grad,
+    links_idx,
+    envs_idx,
+    verts_pos,
+    links_center,
 ):
     """
     Compute contact forces and torques for rigid links from vertex gradients.
@@ -451,27 +449,28 @@ def compute_link_contact_forces(
 
     Parameters
     ----------
-    force_gradients : np.ndarray, shape (n, 3)
-    link_indices : np.ndarray, shape (n,), int
-    env_indices : np.ndarray, shape (n,), int
-    vert_positions : np.ndarray, shape (n, 3)
-    link_centers : np.ndarray, shape (n, 3)
-    max_links : int
-    max_envs : int
+    forces_grad : np.ndarray, shape (n, 3)
+    links_idx : np.ndarray, shape (n,), int
+    envs_idx : np.ndarray, shape (n,), int
+    verts_pos : np.ndarray, shape (n, 3)
+    links_center : np.ndarray, shape (n, 3)
 
     Returns
     -------
     tuple of (out_forces, out_torques), each shape (max_links, max_envs, 3)
     """
-    out_forces = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
-    out_torques = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
+    max_links = int(links_idx.max()) + 1
+    max_envs = int(envs_idx.max()) + 1
 
-    forces = -force_gradients  # (n, 3)
-    r = vert_positions - link_centers  # (n, 3)
+    out_forces = np.zeros((max_links, max_envs, 3), dtype=forces_grad.dtype)
+    out_torques = np.zeros((max_links, max_envs, 3), dtype=forces_grad.dtype)
+
+    forces = -forces_grad  # (n, 3)
+    r = verts_pos - links_center  # (n, 3)
     torques = np.cross(r, forces)  # (n, 3)
 
     # Accumulate using np.add.at (unbuffered, like atomic add)
-    np.add.at(out_forces, (link_indices, env_indices), forces)
-    np.add.at(out_torques, (link_indices, env_indices), torques)
+    np.add.at(out_forces, (links_idx, envs_idx), forces)
+    np.add.at(out_torques, (links_idx, envs_idx), torques)
 
     return out_forces, out_torques

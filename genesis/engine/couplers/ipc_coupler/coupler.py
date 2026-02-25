@@ -316,8 +316,7 @@ class IPCCoupler(RBC):
             UIPCTimer.disable_all()
 
         # Create workspace directory for IPC output, named after scene UID.
-        scene_uid = self.sim.scene.uid.short()
-        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{scene_uid}")
+        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid}")
         os.makedirs(workspace, exist_ok=True)
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
@@ -1301,41 +1300,43 @@ class IPCCoupler(RBC):
                 )
 
                 # For non-fixed base robots, apply base link transform and velocity from IPC
-                if art_data.has_non_fixed_base:
-                    # Get IPC transform and velocity for base link from abd_data_by_link
-                    base_link_idx = art_data.base_link_idx
-                    abd_entry = self.abd_data_by_link[(base_link_idx, env_idx)]
-                    ipc_transform = abd_entry.transform
-                    pos, quat_wxyz = gu.T_to_trans_quat(ipc_transform)
+                if not art_data.has_non_fixed_base:
+                    continue
 
-                    envs_idx = env_idx if self.sim.n_envs > 0 else None
-                    self.rigid_solver.set_base_links_pos(pos, [base_link_idx], envs_idx=envs_idx, relative=False)
-                    self.rigid_solver.set_base_links_quat(quat_wxyz, [base_link_idx], envs_idx=envs_idx, relative=False)
+                # Get IPC transform and velocity for base link from abd_data_by_link
+                base_link_idx = art_data.base_link_idx
+                abd_entry = self.abd_data_by_link[(base_link_idx, env_idx)]
+                ipc_transform = abd_entry.transform
+                pos, quat_wxyz = gu.T_to_trans_quat(ipc_transform)
 
-                    # Set base link velocities from IPC if available
-                    ipc_velocity = abd_entry.velocity
-                    if ipc_velocity is not None:
-                        linear_vel = ipc_velocity[:3, 3]
+                envs_idx = env_idx if self.sim.n_envs > 0 else None
+                self.rigid_solver.set_base_links_pos(pos, [base_link_idx], envs_idx=envs_idx, relative=False)
+                self.rigid_solver.set_base_links_quat(quat_wxyz, [base_link_idx], envs_idx=envs_idx, relative=False)
 
-                        # omega_skew = dR/dt @ R^T
-                        R_current = ipc_transform[:3, :3]
-                        dR_dt = ipc_velocity[:3, :3]
-                        omega_skew = dR_dt @ R_current.T
+                # Set base link velocities from IPC if available
+                ipc_velocity = abd_entry.velocity
+                if ipc_velocity is not None:
+                    linear_vel = ipc_velocity[:3, 3]
 
-                        angular_vel = np.array(
-                            [
-                                (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
-                                (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
-                                (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
-                            ]
-                        )
+                    # omega_skew = dR/dt @ R^T
+                    R_current = ipc_transform[:3, :3]
+                    dR_dt = ipc_velocity[:3, :3]
+                    omega_skew = dR_dt @ R_current.T
 
-                        base_dof_velocity = np.concatenate([linear_vel, angular_vel])
-                        entity.set_dofs_velocity(
-                            base_dof_velocity,
-                            dofs_idx_local=slice(None, 6),
-                            envs_idx=env_idx if self.sim.n_envs > 0 else None,
-                        )
+                    angular_vel = np.array(
+                        [
+                            (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
+                            (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
+                            (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
+                        ]
+                    )
+
+                    base_dof_velocity = np.concatenate([linear_vel, angular_vel])
+                    entity.set_dofs_velocity(
+                        base_dof_velocity,
+                        dofs_idx_local=slice(None, 6),
+                        envs_idx=env_idx if self.sim.n_envs > 0 else None,
+                    )
 
         # Update ref_dof_prev for next timestep
         for idx in range(ad.n_entities):
@@ -1484,13 +1485,13 @@ class IPCCoupler(RBC):
                 continue
 
             geo = geo_slot.geometry()
+            if geo.dim() not in (2, 3):
+                continue
             meta = read_ipc_geometry_metadata(geo)
             if meta is None:
                 continue
             solver_type, env_idx, entity_idx = meta
             if solver_type not in ("fem", "cloth"):
-                continue
-            if geo.dim() not in (2, 3):
                 continue
 
             try:
@@ -1548,13 +1549,11 @@ class IPCCoupler(RBC):
         vel_attr = self._abd_state_geo.instances().find(builtin.velocity)
         velocities = vel_attr.view() if vel_attr is not None else None  # Shape: (num_bodies, 4, 4)
 
-        entity_set = self._rigid_retrieve_entity_set
         links_inertia = qd_to_numpy(self.rigid_solver.links_info.inertial_i)
-        cd = self.coupling_data
-        n = 0
 
+        i_coupling = 0
         for abd_body_idx, (env_idx, link_idx, entity_idx) in self._abd_body_idx_to_link.items():
-            if entity_idx not in entity_set:
+            if entity_idx not in self._rigid_retrieve_entity_set:
                 continue
 
             aim_transform = self._gs_stored_states[link_idx][env_idx]
@@ -1573,13 +1572,13 @@ class IPCCoupler(RBC):
             )
 
             # Write directly to pre-allocated coupling_data buffers
-            cd.link_indices[n] = link_idx
-            cd.env_indices[n] = env_idx
-            cd.ipc_transforms[n] = transform_matrix
-            cd.aim_transforms[n] = aim_transform
-            cd.link_masses[n] = self.rigid_solver.links_info.inertial_mass[link_idx]
-            cd.inertia_tensors[n] = links_inertia[link_idx]
-            n += 1
+            self.coupling_data.link_indices[i_coupling] = link_idx
+            self.coupling_data.env_indices[i_coupling] = env_idx
+            self.coupling_data.ipc_transforms[i_coupling] = transform_matrix
+            self.coupling_data.aim_transforms[i_coupling] = aim_transform
+            self.coupling_data.link_masses[i_coupling] = self.rigid_solver.links_info.inertial_mass[link_idx]
+            self.coupling_data.inertia_tensors[i_coupling] = links_inertia[link_idx]
+            i_coupling += 1
 
     def _apply_abd_coupling_forces(self):
         """
@@ -1603,18 +1602,14 @@ class IPCCoupler(RBC):
         if len(cd.link_indices) == 0:
             return
 
-        translation_strength = float(self.options.constraint_strength_translation)
-        rotation_strength = float(self.options.constraint_strength_rotation)
-        dt2 = self.sim._dt**2
-
         cd.out_forces, cd.out_torques = compute_coupling_forces(
             cd.ipc_transforms,
             cd.aim_transforms,
             cd.link_masses,
             cd.inertia_tensors,
-            translation_strength,
-            rotation_strength,
-            dt2,
+            self.options.constraint_strength_translation,
+            self.options.constraint_strength_rotation,
+            self.sim._dt**2,
         )
 
         if np.isnan(cd.out_forces).any() or np.isnan(cd.out_torques).any():
@@ -1654,10 +1649,6 @@ class IPCCoupler(RBC):
         """
         Compute total contact forces and torques for each rigid link from vertex gradients.
 
-        This function follows the pattern from test_affine_body_contact_force.py, computing
-        the total force and torque acting on each rigid body by accumulating contributions
-        from all contact vertices.
-
         Parameters
         ----------
         total_force_dict : dict
@@ -1687,11 +1678,11 @@ class IPCCoupler(RBC):
             link_centers_dict[(link_idx, env_idx)] = np.mean(verts, axis=0)
 
         # Step 2: Prepare data for kernel - collect all vertex force entries
-        force_grads_list = []
-        links_idx_list = []
-        envs_idx_list = []
-        verts_pos_list = []
-        centers_pos_list = []
+        forces_grad = []
+        links_idx = []
+        envs_idx = []
+        verts_pos = []
+        centers_pos = []
 
         for vert_idx, force_grad in total_force_dict.items():
             if vert_idx not in vertex_to_link:
@@ -1704,30 +1695,24 @@ class IPCCoupler(RBC):
                 contact_pos = link_vertex_positions[(link_idx, env_idx)][local_idx]
                 center_pos = link_centers_dict.get((link_idx, env_idx))
                 if center_pos is not None:
-                    force_grads_list.append(force_grad)
-                    links_idx_list.append(link_idx)
-                    envs_idx_list.append(env_idx)
-                    verts_pos_list.append(contact_pos)
-                    centers_pos_list.append(center_pos)
+                    forces_grad.append(force_grad)
+                    links_idx.append(link_idx)
+                    envs_idx.append(env_idx)
+                    verts_pos.append(contact_pos)
+                    centers_pos.append(center_pos)
 
-        if not force_grads_list:
+        if not links_idx:
             return {}
 
-        force_grads = np.array(force_grads_list, dtype=gs.np_float)
-        link_idxs = np.array(links_idx_list, dtype=np.int32)
-        env_idxs = np.array(envs_idx_list, dtype=np.int32)
-        vert_pos = np.array(verts_pos_list, dtype=gs.np_float)
-        center_pos = np.array(centers_pos_list, dtype=gs.np_float)
+        forces_grad = np.array(forces_grad, dtype=gs.np_float)
+        links_idx = np.array(links_idx, dtype=gs.np_int)
+        envs_idx = np.array(envs_idx, dtype=gs.np_int)
+        verts_pos = np.array(verts_pos, dtype=gs.np_float)
+        centers_pos = np.array(centers_pos, dtype=gs.np_float)
 
-        max_link = int(link_idxs.max()) + 1
-        max_env = int(env_idxs.max()) + 1
-
-        forces_all, torques_all = compute_link_contact_forces(
-            force_grads, link_idxs, env_idxs, vert_pos, center_pos, max_link, max_env
-        )
+        forces_all, torques_all = compute_link_contact_forces(forces_grad, links_idx, envs_idx, verts_pos, centers_pos)
 
         link_forces = {}  # {(link_idx, env_idx): {'force': np.array, 'torque': np.array, 'center': np.array}}
-
         for (link_idx, env_idx), center in link_centers_dict.items():
             # Use numpy slices instead of list comprehension
             force = forces_all[link_idx, env_idx]
@@ -1746,13 +1731,12 @@ class IPCCoupler(RBC):
         This method extracts contact forces and torques from IPC's contact system
         and stores them for later application to Genesis rigid bodies.
         """
-        if not self._entities_by_coupling_type["two_way_soft_constraint"]:
-            return
-
-        if not self.options.enable_contact_proxy:
-            return
-
-        if not self.abd_data_by_link:
+        # Early return if possible
+        if not (
+            self._entities_by_coupling_type["two_way_soft_constraint"]
+            and self.options.enable_contact_proxy
+            and self.abd_data_by_link
+        ):
             return
 
         # Clear previous contact forces
@@ -1771,10 +1755,8 @@ class IPCCoupler(RBC):
 
         # Accumulate contact gradients (forces) for all vertices
         # NOTE: IPC gradients are actually force * dt^2, so we need to divide by dt^2
-        dt = self.sim._dt
-        dt2 = dt * dt
+        dt2 = self.sim._dt**2
         total_force_dict = {}  # {vertex_index: force_vector}
-
         for prim_type in prim_types:
             # Get contact gradient for this primitive type
             vert_grad = Geometry()
@@ -1808,11 +1790,9 @@ class IPCCoupler(RBC):
                         total_force_dict[idx] = np.zeros(3)
                     total_force_dict[idx] += scaled_grads[i]
 
+        # Early return if no contact forces to process
         if not total_force_dict:
-            return  # No contact forces to process
-
-        # Use pre-built vertex-to-link mapping (built once during IPC setup)
-        vertex_to_link = self._vertex_to_link_mapping
+            return
 
         # Get current vertex positions for contact force computation
         visitor = SceneVisitor(self._ipc_scene)
@@ -1825,18 +1805,16 @@ class IPCCoupler(RBC):
                 continue
 
             geo = geo_slot.geometry()
+            if geo.dim() not in (2, 3):
+                continue
             meta = read_ipc_geometry_metadata(geo)
             if meta is None:
                 continue
-            if geo.dim() not in (2, 3):
-                continue
-
-            n_verts = geo.vertices().size()
             solver_type, env_idx, link_idx = meta
 
             if solver_type == "rigid":
                 first_vertex_idx = global_vertex_offset
-                if first_vertex_idx in vertex_to_link:
+                if first_vertex_idx in self._vertex_to_link_mapping:
                     transforms = geo.transforms()
                     if transforms.size() > 0:
                         transform_matrix = view(transforms)[0]
@@ -1845,18 +1823,21 @@ class IPCCoupler(RBC):
                         world_positions = gu.transform_by_T(positions, transform_matrix)
                         link_vertex_positions.setdefault((link_idx, env_idx), []).extend(world_positions)
 
-            global_vertex_offset += n_verts
+            global_vertex_offset += geo.vertices().size()
 
         # Compute contact forces and torques for each link
         link_forces = self._compute_link_contact_forces_and_torques(
-            total_force_dict, vertex_to_link, link_vertex_positions
+            total_force_dict, self._vertex_to_link_mapping, link_vertex_positions
         )
+
+        # Early return if not forces
+        if not link_forces:
+            return
 
         # Store forces in the proper format
         for (link_idx, env_idx), data in link_forces.items():
             if link_idx not in self._ipc_contact_forces:
                 self._ipc_contact_forces[link_idx] = {}
-
             self._ipc_contact_forces[link_idx][env_idx] = data
 
         # Compute 12D external force from contact forces using numpy
@@ -1886,10 +1867,6 @@ class IPCCoupler(RBC):
             for i in range(len(contacts_link_idx)):
                 force_vector = out_forces_12d[i].astype(np.float64, copy=False)
                 self._external_force_data[(contacts_link_idx[i], contacts_env_idx[i])] = force_vector
-
-        # Apply contact forces to Genesis rigid bodies
-        if not self._ipc_contact_forces:
-            return
 
         env_batches = {}
         for link_idx, env_data in self._ipc_contact_forces.items():
