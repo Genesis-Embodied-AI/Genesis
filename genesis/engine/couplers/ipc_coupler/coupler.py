@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 import weakref
 from functools import partial
@@ -55,17 +56,15 @@ if UIPC_AVAILABLE:
         apply_transform,
         ground,
         label_surface,
-        label_triangle_orient,
         linemesh,
         merge,
         tetmesh,
         trimesh as uipc_trimesh,
-        flip_inward_triangles,
     )
     from uipc.backend import SceneVisitor
     from uipc.unit import MPa
 
-from .data import ABDLinkEntry, ArticulatedEntityData, ContactForceEntry, ForceBatch, IPCCouplingData, ArticulationData
+from .data import ABDLinkEntry, ArticulatedEntityData, ForceBatch, IPCCouplingData, ArticulationData
 from .utils import (
     find_target_link_for_fixed_merge,
     compute_link_to_link_transform,
@@ -74,9 +73,7 @@ from .utils import (
     build_ipc_scene_config,
     extract_articulated_joints,
     read_ipc_geometry_metadata,
-    compute_external_force_12d,
     compute_coupling_forces,
-    compute_links_contact_wrench,
 )
 
 
@@ -316,7 +313,9 @@ class IPCCoupler(RBC):
             UIPCTimer.disable_all()
 
         # Create workspace directory for IPC output, named after scene UID.
-        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid}")
+        # The UID contains < and > which are illegal in Windows paths.
+        uid_safe = re.sub(r"[<>]", "", str(self.sim.scene.uid))
+        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{uid_safe}")
         os.makedirs(workspace, exist_ok=True)
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
@@ -921,7 +920,7 @@ class IPCCoupler(RBC):
         )
 
     # ============================================================
-    # Section 3: Configuration API
+    # Section 1: Configuration API
     # ============================================================
 
     @property
@@ -990,7 +989,7 @@ class IPCCoupler(RBC):
         return len(self._entity_coupling_types) > 0
 
     # ============================================================
-    # Section 4: Main Coupling Loop & Shared Helpers
+    # Section 2: Main Coupling Loop & Shared Helpers
     # ============================================================
 
     @staticmethod
@@ -1111,12 +1110,11 @@ class IPCCoupler(RBC):
 
         # Step 5: Post-advance processing (per entity type)
         self._apply_abd_coupling_forces()
-        self._apply_ipc_contact_forces()
         self._post_advance_external_articulation()
         self._post_advance_ipc_only()
 
     # ============================================================
-    # Section 6: External Articulation Coupling
+    # Section 3: External Articulation Coupling
     # ============================================================
 
     def _pre_advance_external_articulation(self):
@@ -1354,7 +1352,7 @@ class IPCCoupler(RBC):
                         ad.prev_link_transforms[key] = self._gs_stored_states[child_link_idx][env_idx].copy()
 
     # ============================================================
-    # Section 7: IPC-Only Coupling
+    # Section 4: IPC-Only Coupling
     # ============================================================
 
     def _apply_ipc_only_robot_qpos(self, entity_indices, env_idx: int):
@@ -1465,7 +1463,7 @@ class IPCCoupler(RBC):
                 self._finalize_ipc_only_robot_fk(updated_robot_entities, env_idx)
 
     # ============================================================
-    # Section 8: FEM State Retrieval
+    # Section 5: FEM State Retrieval
     # ============================================================
 
     def _retrieve_fem_states(self):
@@ -1642,232 +1640,7 @@ class IPCCoupler(RBC):
         self._ipc_world.retrieve()
 
     # ============================================================
-    # Section 10: Contact Forces
-    # ============================================================
-
-    def _compute_links_contact_wrench(self, total_force_dict, links_vertex_position):
-        """
-        Compute total contact forces and torques for each rigid link from vertex gradients.
-
-        Parameters
-        ----------
-        total_force_dict : dict
-            Dictionary mapping vertex indices to contact force gradients {vertex_idx: force_gradient_vector}
-        links_vertex_position : dict
-            Mapping from (link_idx, env_idx) to list of vertex positions in world space
-
-        Returns
-        -------
-        dict
-            Dictionary mapping (link_idx, env_idx) to {'force': np.array, 'torque': np.array, 'center': np.array}
-
-        Notes
-        -----
-        - Force is computed as the negative sum of contact gradients: F = -∑grad
-        - Torque is computed as τ = ∑(r × F) where r is the vector from link center to contact point
-        - Link center is computed as the average of all vertex positions
-        """
-        if not total_force_dict:
-            return {}
-
-        # Step 1: Prepare link centers (compute once per (link_idx, env_idx))
-        link_centers_dict = {}  # {(link_idx, env_idx): center}
-        for (link_idx, env_idx), verts in links_vertex_position.items():
-            link_centers_dict[(link_idx, env_idx)] = np.mean(verts, axis=0)
-
-        # Step 2: Prepare data for kernel - collect all vertex force entries
-        forces_grad = []
-        links_idx = []
-        envs_idx = []
-        verts_pos = []
-        centers_pos = []
-        for vert_idx, force_grad in total_force_dict.items():
-            if vert_idx not in self._vertex_to_link_mapping:
-                continue  # Vertex doesn't belong to a both-coupling link
-
-            link_idx, env_idx, local_idx = self._vertex_to_link_mapping[vert_idx]
-
-            # Get vertex position and link center
-            if (link_idx, env_idx) in links_vertex_position:
-                contact_pos = links_vertex_position[(link_idx, env_idx)][local_idx]
-                center_pos = link_centers_dict.get((link_idx, env_idx))
-                forces_grad.append(force_grad)
-                links_idx.append(link_idx)
-                envs_idx.append(env_idx)
-                verts_pos.append(contact_pos)
-                centers_pos.append(center_pos)
-
-        if not links_idx:
-            return {}
-
-        forces_grad = np.array(forces_grad, dtype=gs.np_float)
-        links_idx = np.array(links_idx, dtype=gs.np_int)
-        envs_idx = np.array(envs_idx, dtype=gs.np_int)
-        verts_pos = np.array(verts_pos, dtype=gs.np_float)
-        centers_pos = np.array(centers_pos, dtype=gs.np_float)
-
-        forces_all, torques_all = compute_links_contact_wrench(forces_grad, links_idx, envs_idx, verts_pos, centers_pos)
-
-        links_wrench = {}  # {(link_idx, env_idx): {'force': np.array, 'torque': np.array, 'center': np.array}}
-        for (link_idx, env_idx), center in link_centers_dict.items():
-            # Use numpy slices instead of list comprehension
-            force = forces_all[link_idx, env_idx]
-            torque = torques_all[link_idx, env_idx]
-
-            # Only include if there's non-zero force/torque
-            if np.any(force != 0.0) or np.any(torque != 0.0):
-                links_wrench[(link_idx, env_idx)] = ContactForceEntry(force=force, torque=torque)
-
-        return links_wrench
-
-    def _apply_ipc_contact_forces(self):
-        """
-        Record contact forces from IPC for two_way_soft_constraint coupling links.
-
-        This method extracts contact forces and torques from IPC's contact system
-        and stores them for later application to Genesis rigid bodies.
-        """
-        # Early return if possible
-        if not (
-            self._entities_by_coupling_type["two_way_soft_constraint"]
-            and self.options.enable_contact_proxy
-            and self.abd_data_by_link
-        ):
-            return
-
-        # Clear previous contact forces
-        self._ipc_contact_forces.clear()
-        self._external_force_data.clear()
-
-        # Get contact feature from IPC world
-        features = self._ipc_world.features()
-        contact_feature = features.find("core/contact_system")
-        if contact_feature is None:
-            gs.raise_exception("IPC contact system not available but enable_contact_proxy is True.")
-
-        # Get available contact primitive types
-        prim_types = contact_feature.contact_primitive_types()
-
-        # Accumulate contact gradients (forces) for all vertices
-        dt2 = self.sim._dt**2
-        total_force_dict = {}  # {vertex_index: force_vector}
-        for prim_type in prim_types:
-            # Get contact gradient for this primitive type
-            vert_grad = Geometry()
-            contact_feature.contact_gradient(prim_type, vert_grad)
-
-            # Extract gradient data from instances
-            instances = vert_grad.instances()
-            i_attr = instances.find("i")  # Vertex indices
-            grad_attr = instances.find("grad")  # Gradient vectors
-
-            if i_attr is not None and grad_attr is not None:
-                # view() returns numpy array directly - no conversion needed
-                indices = view(i_attr)  # shape: (n,)
-                gradients = view(grad_attr)  # shape: (n, 3, 1) or (n, 3, 3)
-
-                # Skip if empty
-                if indices.size == 0 or gradients.size == 0:
-                    continue
-
-                # Handle different gradient shapes - take first row for gradient matrix
-                if gradients.shape[1:] != (3, 1):
-                    breakpoint()
-                gradients = gradients.reshape((len(indices), -1))[:, :3]
-
-                # IPC gradients are actually force * dt^2, so we need to divide by dt^2
-                forces = gradients / dt2
-
-                # Accumulate forces per vertex index
-                for i, idx in enumerate(indices):
-                    if idx not in total_force_dict:
-                        total_force_dict[idx] = np.zeros(3)
-                    total_force_dict[idx] += forces[i]
-
-        # Early return if no contact forces to process
-        if not total_force_dict:
-            return
-
-        # Get current vertex positions for contact force computation
-        global_vertex_offset = 0
-        links_vertex_position = {}  # {(link_idx, env_idx): [vertex_positions]}
-        visitor = SceneVisitor(self._ipc_scene)
-        for geo_slot in visitor.geometries():
-            if not isinstance(geo_slot, SimplicialComplexSlot):
-                continue
-
-            geo = geo_slot.geometry()
-            if geo.dim() not in (2, 3):
-                continue
-            meta = read_ipc_geometry_metadata(geo)
-            if meta is None:
-                continue
-            solver_type, env_idx, link_idx = meta
-
-            if solver_type == "rigid":
-                first_vertex_idx = global_vertex_offset
-                if first_vertex_idx in self._vertex_to_link_mapping:
-                    transforms = geo.transforms()
-                    if transforms.size() > 0:
-                        transform_matrix = view(transforms)[0]
-                        local_positions = view(geo.positions()).squeeze(axis=-1)
-
-                        world_positions = gu.transform_by_T(local_positions, transform_matrix)
-                        links_vertex_position.setdefault((link_idx, env_idx), []).extend(world_positions)
-
-            global_vertex_offset += geo.vertices().size()
-
-        # Compute contact forces and torques for each link
-        links_wrench = self._compute_links_contact_wrench(total_force_dict, links_vertex_position)
-
-        # Early return if not forces.
-        # FIXME: Everything that comes next is dead code because there is never any link wrench.
-        if not links_wrench:
-            return
-
-        # Store forces in the proper format
-        for (link_idx, env_idx), data in links_wrench.items():
-            if link_idx not in self._ipc_contact_forces:
-                self._ipc_contact_forces[link_idx] = {}
-            self._ipc_contact_forces[link_idx][env_idx] = data
-
-        # Compute 12D external force from contact forces using numpy
-        # Collect data into lists then batch-compute
-        contacts_env_idx = []
-        contacts_link_idx = []
-        contacts_force = []
-        contacts_torque = []
-        abds_transform = []
-        for link_idx, env_data in self._ipc_contact_forces.items():
-            for env_idx, force_data in env_data.items():
-                abd_transform = self.abd_data_by_link[(link_idx, env_idx)].transform
-                contacts_env_idx.append(env_idx)
-                contacts_link_idx.append(link_idx)
-                contacts_force.append(force_data.force)
-                contacts_torque.append(force_data.torque)
-                abds_transform.append(abd_transform)
-
-        if contacts_force:
-            contacts_force = np.array(contacts_force, dtype=np.float64)
-            contacts_torque = np.array(contacts_torque, dtype=np.float64)
-            abds_transform = np.array(abds_transform, dtype=np.float64)
-            out_forces_12d = compute_external_force_12d(contacts_force, contacts_torque, abds_transform)
-            for i in range(len(contacts_link_idx)):
-                self._external_force_data[(contacts_link_idx[i], contacts_env_idx[i])] = out_forces_12d[i]
-
-        env_batches = {}
-        for link_idx, env_data in self._ipc_contact_forces.items():
-            for env_idx, force_data in env_data.items():
-                if env_idx not in env_batches:
-                    env_batches[env_idx] = ForceBatch()
-                env_batches[env_idx].link_indices.append(link_idx)
-                env_batches[env_idx].forces.append(force_data.force * 0.5)
-                env_batches[env_idx].torques.append(force_data.torque * 0.5)
-
-        self._apply_forces_to_rigid_links(env_batches)
-
-    # ============================================================
-    # Section 11: Articulation IPC Setup & Geometry Lookup
+    # Section 6: Articulation IPC Setup & Geometry Lookup
     # ============================================================
 
     def _create_joint_geometry(

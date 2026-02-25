@@ -312,53 +312,6 @@ def read_ipc_geometry_metadata(geo):
 
 
 @nb.jit(nopython=True, cache=True)
-def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
-    """
-    Compute 12D external force from contact forces and torques.
-
-    force_12d = [force (3), M_affine (9)]
-    where M_affine = skew(torque) @ A, A is the rotation part of ABD transform.
-
-    Parameters
-    ----------
-    contact_forces : np.ndarray, shape (n, 3)
-    contact_torques : np.ndarray, shape (n, 3)
-    abd_transforms : np.ndarray, shape (n, 4, 4)
-
-    Returns
-    -------
-    np.ndarray, shape (n, 12)
-    """
-    n = contact_forces.shape[0]
-    out = np.zeros((n, 12), dtype=contact_forces.dtype)
-
-    for i in range(n):
-        fx = -0.5 * contact_forces[i, 0]
-        fy = -0.5 * contact_forces[i, 1]
-        fz = -0.5 * contact_forces[i, 2]
-        out[i, 0] = fx
-        out[i, 1] = fy
-        out[i, 2] = fz
-
-        tx = -0.5 * contact_torques[i, 0]
-        ty = -0.5 * contact_torques[i, 1]
-        tz = -0.5 * contact_torques[i, 2]
-
-        # S = skew(torque), A = abd_transforms[i, :3, :3]
-        # M = S @ A, then flatten to 9 elements
-        A = abd_transforms[i, :3, :3]
-        for j in range(3):
-            # S @ A column j = [(-tz*A[1,j] + ty*A[2,j]),
-            #                   ( tz*A[0,j] - tx*A[2,j]),
-            #                   (-ty*A[0,j] + tx*A[1,j])]
-            out[i, 3 + 0 * 3 + j] = -tz * A[1, j] + ty * A[2, j]
-            out[i, 3 + 1 * 3 + j] = tz * A[0, j] - tx * A[2, j]
-            out[i, 3 + 2 * 3 + j] = -ty * A[0, j] + tx * A[1, j]
-
-    return out
-
-
-@nb.jit(nopython=True, cache=True)
 def compute_coupling_forces(
     ipc_transforms,
     aim_transforms,
@@ -432,44 +385,5 @@ def compute_coupling_forces(
             for m in range(3):
                 val += I_world[k, m] * rotvec[m]
             out_torques[i, k] = scale * val
-
-    return out_forces, out_torques
-
-
-def compute_links_contact_wrench(
-    forces_grad,
-    links_idx,
-    envs_idx,
-    verts_pos,
-    links_center,
-):
-    """
-    Compute contact forces and torques for rigid links from vertex gradients.
-
-    Parameters
-    ----------
-    forces_grad : np.ndarray, shape (n, 3)
-    links_idx : np.ndarray, shape (n,), int
-    envs_idx : np.ndarray, shape (n,), int
-    verts_pos : np.ndarray, shape (n, 3)
-    links_center : np.ndarray, shape (n, 3)
-
-    Returns
-    -------
-    tuple of (out_forces, out_torques), each shape (max_links, max_envs, 3)
-    """
-    max_links = int(links_idx.max()) + 1
-    max_envs = int(envs_idx.max()) + 1
-
-    out_forces = np.zeros((max_links, max_envs, 3), dtype=forces_grad.dtype)
-    out_torques = np.zeros((max_links, max_envs, 3), dtype=forces_grad.dtype)
-
-    forces = -forces_grad  # (n, 3)
-    r = verts_pos - links_center  # (n, 3)
-    torques = np.cross(r, forces)  # (n, 3)
-
-    # Accumulate using np.add.at (unbuffered)
-    np.add.at(out_forces, (links_idx, envs_idx), forces)
-    np.add.at(out_torques, (links_idx, envs_idx), torques)
 
     return out_forces, out_torques
