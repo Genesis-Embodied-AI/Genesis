@@ -34,6 +34,8 @@ class Cloth(Base):
     model : str, optional
         FEM material model (not used for cloth, kept for compatibility).
         Default is "stable_neohookean".
+    friction_mu : float, optional
+        Friction coefficient. Default is 0.1.
 
     Notes
     -----
@@ -61,9 +63,10 @@ class Cloth(Base):
         thickness=0.001,  # Shell thickness (m)
         bending_stiffness=None,  # Optional bending stiffness
         model="stable_neohookean",  # FEM model (unused for cloth)
+        friction_mu=0.1,
     ):
         # Call FEM base constructor
-        super().__init__(E=E, nu=nu, rho=rho)
+        super().__init__(E=E, nu=nu, rho=rho, friction_mu=friction_mu)
 
         # Cloth-specific properties
         self._thickness = thickness
