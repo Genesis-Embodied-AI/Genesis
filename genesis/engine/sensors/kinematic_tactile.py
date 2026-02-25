@@ -37,12 +37,12 @@ if TYPE_CHECKING:
 
 @qd.func
 def _func_probe_geom_penetration(
+    i_b: gs.qd_int,
+    i_g: gs.qd_int,
     probe_pos: gs.qd_vec3,
     probe_normal: gs.qd_vec3,
     probe_radius: gs.qd_float,
     max_range: gs.qd_float,
-    i_g: gs.qd_int,
-    i_b: gs.qd_int,
     geoms_info: array_class.GeomsInfo,
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
@@ -184,12 +184,12 @@ def _func_query_contact_depth(
             if c_link == sensor_link_idx and func_point_in_geom_aabb(geoms_state, i_g, i_b, probe_pos, probe_radius):
                 # Raycast + sphere penetration test per geom
                 penetration = _func_probe_geom_penetration(
+                    i_b,
+                    i_g,
                     probe_pos,
                     probe_normal,
                     probe_radius,
                     probe_max_raycast_range,
-                    i_g,
-                    i_b,
                     geoms_info,
                     faces_info,
                     verts_info,
@@ -206,13 +206,13 @@ def _func_query_contact_depth(
 
 @qd.func
 def _func_shear_twist_displacement(
+    i_b: gs.qd_int,
     probe_pos: gs.qd_vec3,
     link_pos: gs.qd_vec3,
     link_quat: gs.qd_vec4,
     contact_link: gs.qd_int,
     links_state: array_class.LinksState,
     sensor_link_idx: gs.qd_int,
-    i_b: gs.qd_int,
     sensor_normal_local: gs.qd_vec3,
     shear_coeff: gs.qd_float,
     twist_coeff: gs.qd_float,
@@ -412,8 +412,7 @@ def _kernel_elastomer_displacement(
                         dist_sq = (
                             M_minus_C[0] * M_minus_C[0] + M_minus_C[1] * M_minus_C[1] + M_minus_C[2] * M_minus_C[2]
                         )
-                        scale = delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
-                        displacement += M_minus_C * scale
+                        displacement += M_minus_C * delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
 
             displacement_local = gu.qd_inv_transform_by_quat(displacement, link_quat)
 
@@ -461,18 +460,10 @@ def _precompute_dilate_kernel_fft(
     i = torch.arange(fft_n[0], dtype=gs.tc_float, device=gs.device)
     j = torch.arange(fft_n[1], dtype=gs.tc_float, device=gs.device)
     xx, yy = torch.meshgrid((i - fft_n[0] // 2) * grid_spacing[0], (j - fft_n[1] // 2) * grid_spacing[1], indexing="ij")
-    r2 = xx * xx + yy * yy
-    g = torch.exp(torch.tensor(-dilate_coeff, dtype=gs.tc_float) * r2)
-    kx = xx * g
-    ky = yy * g
-    # FFT convolution assumes kernel origin at (0,0); we center at (fft_nx//2, fft_ny//2)
-    kx = torch.fft.ifftshift(kx)
-    ky = torch.fft.ifftshift(ky)
-    gx_fft = torch.fft.fft2(kx)
-    gy_fft = torch.fft.fft2(ky)
-    Kx = torch.complex(gx_fft.real, gx_fft.imag)
-    Ky = torch.complex(gy_fft.real, gy_fft.imag)
-    return torch.stack((Kx, Ky), dim=0)
+    g = torch.exp(torch.tensor(-dilate_coeff, dtype=gs.tc_float) * (xx * xx + yy * yy))
+    k = torch.stack((xx * g, yy * g), dim=0)
+    k = torch.fft.ifftshift(k, dim=(-2, -1))
+    return torch.fft.fft2(k)
 
 
 @qd.kernel
@@ -572,13 +563,13 @@ def _elastomer_displacement_grid_fft_dilate(
         if not is_grid[i_s]:
             continue
 
-        g_nx = int(grid_n[i_s, 0].item())
-        g_ny = int(grid_n[i_s, 1].item())
+        g_nx = grid_n[i_s, 0].item()
+        g_ny = grid_n[i_s, 1].item()
 
-        probe_start = int(sensor_probe_start[i_s].item())
-        cache_start = int(sensor_cache_start[i_s].item())
-        lam = float(dilate_coefficient[i_s].item())
-        max_h = float(dilate_max_delta[i_s].item())
+        probe_start = sensor_probe_start[i_s].item()
+        cache_start = sensor_cache_start[i_s].item()
+        lam = dilate_coefficient[i_s].item()
+        max_h = dilate_max_delta[i_s].item()
 
         Kx = fft_kernel_list[i_s][0]
         Ky = fft_kernel_list[i_s][1]
@@ -652,8 +643,6 @@ def _kernel_elastomer_displacement_grid_shear_twist(
         sensor_normal_local = qd.Vector(
             [sensor_normals[i_s, 0], sensor_normals[i_s, 1], sensor_normals[i_s, 2]], dt=gs.qd_float
         )
-        shear_coeff = shear_coefficients[i_s]
-        twist_coeff = twist_coefficients[i_s]
 
         if (
             contact_depth > gs.qd_float(0.0)
@@ -661,16 +650,16 @@ def _kernel_elastomer_displacement_grid_shear_twist(
             and (shear_max_delta[i_s] > 0.0 or twist_max_delta[i_s] > 0.0)
         ):
             shear_twist = _func_shear_twist_displacement(
+                i_b,
                 probe_pos,
                 link_pos,
                 link_quat,
                 contact_link,
                 links_state,
                 sensor_link_idx,
-                i_b,
                 sensor_normal_local,
-                shear_coeff,
-                twist_coeff,
+                shear_coefficients[i_s],
+                twist_coefficients[i_s],
                 shear_max_delta[i_s],
                 twist_max_delta[i_s],
                 dt,
@@ -726,33 +715,30 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
         super().build()
 
         self._shared_metadata.probe_positions = concat_with_tensor(
-            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(self._n_probes, 3), dim=0
+            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(self._n_probes, 3)
         )
 
         self._shared_metadata.probe_normals = concat_with_tensor(
-            self._shared_metadata.probe_normals, self._probe_local_normal, expand=(self._n_probes, 3), dim=0
+            self._shared_metadata.probe_normals, self._probe_local_normal, expand=(self._n_probes, 3)
         )
 
         self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
-            self._shared_metadata.n_probes_per_sensor, self._n_probes, expand=(1,), dim=0
+            self._shared_metadata.n_probes_per_sensor, self._n_probes, expand=(1,)
         )
         self._shared_metadata.sensor_cache_start = concat_with_tensor(
             self._shared_metadata.sensor_cache_start,
             sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0,
             expand=(1,),
-            dim=0,
         )
         self._shared_metadata.sensor_probe_start = concat_with_tensor(
             self._shared_metadata.sensor_probe_start,
             self._shared_metadata.total_n_probes,
             expand=(1,),
-            dim=0,
         )
         self._shared_metadata.probe_sensor_idx = concat_with_tensor(
             self._shared_metadata.probe_sensor_idx,
             torch.full((self._n_probes,), self._idx, dtype=gs.tc_int, device=gs.device),
             expand=(self._n_probes,),
-            dim=0,
         )
 
         if self._shared_metadata.probe_max_raycast_range < gs.EPS:
@@ -769,7 +755,7 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
             probe_radius_tensor = torch.tensor(self._options.probe_radius, dtype=gs.tc_float, device=gs.device)
 
         self._shared_metadata.probe_radius = concat_with_tensor(
-            self._shared_metadata.probe_radius, probe_radius_tensor, expand=(self._n_probes,), dim=0
+            self._shared_metadata.probe_radius, probe_radius_tensor, expand=(self._n_probes,)
         )
 
     @classmethod
@@ -947,7 +933,7 @@ class ElastomerDisplacementSensorMetadata(
     grid_spacing: torch.Tensor = make_tensor_field((0, 2))  # (dx, dy) per sensor
     fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
     fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0, 0))  # used as H buffer in torch.fft dilate step
-    grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))  # reusable (B, max_grid_size) for FFT dilate copy
+    grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))  # buffer (B, max_grid_size) for FFT dilate copy
 
 
 @register_sensor(ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata, tuple)
@@ -1001,7 +987,7 @@ class ElastomerDisplacementSensor(
             self._shared_metadata.twist_max_delta, math.radians(self._options.twist_max_delta)
         )
         self._shared_metadata.sensor_normal = concat_with_tensor(
-            self._shared_metadata.sensor_normal, self._probe_local_normal.mean(dim=0), expand=(1, 3), dim=0
+            self._shared_metadata.sensor_normal, self._probe_local_normal.mean(dim=0), expand=(1, 3)
         )
         self._shared_metadata.is_grid = concat_with_tensor(self._shared_metadata.is_grid, self._is_grid)
 
@@ -1010,14 +996,15 @@ class ElastomerDisplacementSensor(
         kernel_fft = torch.tensor(0, dtype=gs.tc_float, device=gs.device)
         if self._is_grid:
             nx, ny = int(self._shape[1]), int(self._shape[0])
-            grid_n[0], grid_n[1] = nx, ny
-            grid_spacing[0] = (self._probe_local_pos[:, 0].max() - self._probe_local_pos[:, 0].min()) / max(nx - 1, 1)
-            grid_spacing[1] = (self._probe_local_pos[:, 1].max() - self._probe_local_pos[:, 1].min()) / max(ny - 1, 1)
-            # Use linear-convolution padding (>= 2*g - 1) to avoid circular wrap across sensor borders.
-            fft_n = (_next_pow2(2 * nx - 1), _next_pow2(2 * ny - 1))
-            kernel_fft = _precompute_dilate_kernel_fft(
-                self._options.dilate_coefficient, (float(grid_spacing[0].item()), float(grid_spacing[1].item())), fft_n
+            grid_n = torch.tensor((nx, ny), dtype=gs.tc_int, device=gs.device)
+            pos_xy = self._probe_local_pos[:, :2]
+            extent = pos_xy.amax(dim=0) - pos_xy.amin(dim=0)
+            grid_spacing = extent.to(gs.tc_float) / torch.tensor(
+                [max(nx - 1, 1), max(ny - 1, 1)], dtype=gs.tc_float, device=gs.device
             )
+            # Use linear-convolution padding (>= 2*g - 1) to avoid circular wrap across sensor borders.
+            fft_n = tuple(_next_pow2(2 * n - 1) for n in (nx, ny))
+            kernel_fft = _precompute_dilate_kernel_fft(self._options.dilate_coefficient, grid_spacing.tolist(), fft_n)
             n_sensors = len(self._shared_metadata.dilate_coefficient)
             prev = self._shared_metadata.fft_depth_buffer.shape
             max_fft_n = (max(fft_n[0], prev[2]), max(fft_n[1], prev[3]))
@@ -1034,9 +1021,9 @@ class ElastomerDisplacementSensor(
                     (B, new_size), dtype=gs.tc_float, device=gs.device
                 )
 
-        self._shared_metadata.grid_n = concat_with_tensor(self._shared_metadata.grid_n, grid_n, expand=(1, 2), dim=0)
+        self._shared_metadata.grid_n = concat_with_tensor(self._shared_metadata.grid_n, grid_n, expand=(1, 2))
         self._shared_metadata.grid_spacing = concat_with_tensor(
-            self._shared_metadata.grid_spacing, grid_spacing, expand=(1, 2), dim=0
+            self._shared_metadata.grid_spacing, grid_spacing, expand=(1, 2)
         )
         self._shared_metadata.fft_kernel_list.append(kernel_fft)
 
