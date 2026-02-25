@@ -607,7 +607,6 @@ def func_equality_connect(
     dofs_state: array_class.DofsState,
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
-    collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
@@ -821,7 +820,6 @@ def add_equality_constraints(
                     dofs_state=dofs_state,
                     equalities_info=equalities_info,
                     constraint_state=constraint_state,
-                    collider_state=collider_state,
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )

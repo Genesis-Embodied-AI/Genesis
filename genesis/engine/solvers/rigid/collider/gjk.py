@@ -1787,9 +1787,7 @@ def func_safe_gjk_support(
         # First order normalization based on Taylor series is accurate enough
         n_dir *= 2.0 - n_dir.dot(dir)
 
-        num_supports = func_count_support(
-            geoms_info, support_field_info, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, n_dir
-        )
+        num_supports = func_count_support(geoms_info, support_field_info, i_ga, i_gb, quat_a, quat_b, n_dir)
         if i > 0 and num_supports > 1:
             # If this is a perturbed direction and we have more than one support point, we skip this iteration. If
             # it was the original direction, we continue to find the support points to keep it as the baseline.
@@ -1882,9 +1880,7 @@ def func_count_support(
     support_field_info: array_class.SupportFieldInfo,
     i_ga,
     i_gb,
-    pos_a: qd.types.vector(3, dtype=gs.qd_float),
     quat_a: qd.types.vector(4, dtype=gs.qd_float),
-    pos_b: qd.types.vector(3, dtype=gs.qd_float),
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
     dir,
 ):

@@ -44,10 +44,8 @@ def _kernel_cg_only_save_prev_grad(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_constraint(
-    entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
     _B = constraint_state.grad.shape[1]
@@ -67,7 +65,6 @@ def _kernel_update_constraint(
 
 @ti.kernel(fastcache=gs.use_fastcache)
 def _kernel_newton_only_nt_hessian(
-    entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
@@ -161,15 +158,12 @@ def func_solve_decomposed(
                 static_rigid_sim_config,
             )
         _kernel_update_constraint(
-            entities_info,
             dofs_state,
             constraint_state,
-            rigid_global_info,
             static_rigid_sim_config,
         )
         if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
             _kernel_newton_only_nt_hessian(
-                entities_info,
                 constraint_state,
                 rigid_global_info,
                 static_rigid_sim_config,
