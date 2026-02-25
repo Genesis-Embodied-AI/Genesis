@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
+    parser.add_argument("--simulate-all-links", "-l", action="store_true", help="Simulate all link temperatures")
     args = parser.parse_args()
 
     gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
@@ -93,23 +94,22 @@ def main():
 
     # Build properties_dict: one TemperatureProperties per link (required for contact blending).
     # Platform is room temp; pusher is hot; objects are warm; ground plane is cool.
-    TemperatureProperties = gs.sensors.TemperatureProperties
     properties_dict = {
-        -1: TemperatureProperties(
+        -1: gs.sensors.TemperatureProperties(
             base_temperature=-40.0,
             conductivity=200.0,
             density=2000.0,
             specific_heat=1.0,
             emissivity=0.85,
         ),
-        platform.base_link_idx: TemperatureProperties(
+        platform.base_link_idx: gs.sensors.TemperatureProperties(
             base_temperature=22.0,
             conductivity=100.0,
             density=1000.0,
             specific_heat=1.0,
             emissivity=0.9,
         ),
-        pusher.base_link_idx: TemperatureProperties(
+        pusher.base_link_idx: gs.sensors.TemperatureProperties(
             base_temperature=80.0,
             conductivity=600.0,
             density=2000.0,
@@ -126,6 +126,9 @@ def main():
             properties_dict=properties_dict,
             draw_debug=args.vis,
             debug_temperature_range=(0.0, 100.0),
+            simulate_all_link_temperatures=args.simulate_all_links,
+            ambient_temperature=22.0,
+            convection_coefficient=0.0,
         )
     )
 
@@ -191,15 +194,15 @@ def main():
 
             scene.step()
 
-            grid = temperature_sensor.read()
-            if hasattr(grid, "numpy"):
-                grid = grid.detach().cpu().numpy()
-            t_min, t_max = float(np.min(grid)), float(np.max(grid))
+            data = temperature_sensor.read()
+            t_min, t_max = float(data.min()), float(data.max())
             if step % 100 == 0:
                 print(
-                    f"step={step}, time={step * scene.sim_options.dt:.2f}s:"
-                    f"Temperature range [{t_min:.1f}, {t_max:.1f}] °C"
+                    f"step={step}, time={step * scene.sim_options.dt:.2f}s: "
+                    f"Grid temperature range [{t_min:.1f}, {t_max:.1f}] °C"
                 )
+                if args.simulate_all_links:
+                    print(f"Link temperatures: {temperature_sensor.link_temperatures}")
 
             step += 1
             if "PYTEST_VERSION" in os.environ:

@@ -216,7 +216,15 @@ class TemperatureGrid(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOp
         used as the default for links not present in the dict; if omitted, unlisted links are ignored in contacts.
         This parameter is shared across all Temperature sensors (dicts will be merged).
     ambient_temperature: float
-        The ambient temperature in Celsius. This parameter is shared across all Temperature sensors.
+        The ambient temperature in Celsius. Default is 21°C.
+        This parameter is shared across all Temperature sensors (the last one set will be used).
+    convection_coefficient: float
+        Convection coefficient h in W/(m²·K) for surface cooling. Default 1.0.
+        This parameter is shared across all Temperature sensors (the last one set will be used).
+    simulate_all_link_temperatures: bool
+        If True, the temperatures of all links with temperature properties will be simulated.
+        When False, other links are treated as adiabatic (no heat transfer, always at base temperature).
+        This parameter is shared across all Temperature sensors (setting True for one sets it for all).
     grid_size: tuple[int, int, int]
         The size of the grid in the x, y, and z directions which determines the sensor resolution by spatially
         discretizing the bounding box of the rigid entity link.
@@ -226,32 +234,21 @@ class TemperatureGrid(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOp
         The time constant of the sensor in seconds.
     contact_depth_weight: float
         The weight of the contact depth in the temperature calculation.
-    convection_coefficient: float
-        Convection coefficient h in W/(m²·K) for surface cooling. Default 10.0.
     debug_temperature_range: tuple[float, float], optional
         The range of temperatures to visualize in the debug mode. Defaults to (0.0, 100.0).
     """
 
-    properties_dict: dict[int, TemperatureProperties]
-    ambient_temperature: float = 21.0
+    properties_dict: dict[int, TemperatureProperties] = Field(default_factory=dict)
+    ambient_temperature: float | None = None
+    convection_coefficient: float | None = None
+    simulate_all_link_temperatures: bool = False
 
     grid_size: tuple[int, int, int] = (1, 1, 1)
     heat_generation: F3DGridType | None = None
     sensor_time_constant: float = 0.01
     contact_depth_weight: float = 1.0
-    convection_coefficient: float = 0.0
 
     debug_temperature_range: tuple[float, float] = (0.0, 100.0)
-
-    def validate(self, scene: "Scene"):
-        super().validate(scene)
-        entity = scene.entities[self.entity_idx]
-        global_link_idx = entity.links[self.link_idx_local].idx
-        if global_link_idx not in self.properties_dict and -1 not in self.properties_dict:
-            gs.raise_exception(
-                f"Temperature properties for the attached link index {global_link_idx} should be provided, "
-                "or use key -1 in properties_dict for default."
-            )
 
 
 class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):

@@ -679,9 +679,11 @@ def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
     TemperatureProperties = gs.sensors.TemperatureProperties
     sensor = scene.add_sensor(
         gs.sensors.TemperatureGrid(
+            ambient_temperature=BASE_TEMP,
+            convection_coefficient=0.0,
+            simulate_all_link_temperatures=False,
             entity_idx=platform.idx,
             grid_size=GRID_SIZE,
-            ambient_temperature=BASE_TEMP,
             properties_dict={
                 platform.base_link_idx: TemperatureProperties(
                     base_temperature=BASE_TEMP,
@@ -745,6 +747,74 @@ def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
         scene.step()
     data = sensor.read()
     assert_allclose(data, BASE_TEMP, tol=5e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
+    """With simulate_all_link_temperatures=True, two boxes in contact exchange heat."""
+    BOX_SIZE = 0.06
+    BASE_TEMP = 22.0
+    HOT_BASE = BASE_TEMP + 80.0
+    COLD_BASE = BASE_TEMP - 80.0
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    hot_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE),
+        )
+    )
+    cold_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE * 2 + 0.001),
+        )
+    )
+    sensor1 = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            entity_idx=hot_box.idx,
+            grid_size=(1, 1, 1),
+            ambient_temperature=BASE_TEMP,
+            properties_dict={
+                -1: gs.sensors.TemperatureProperties(
+                    base_temperature=HOT_BASE,
+                    conductivity=200.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+            },
+            simulate_all_link_temperatures=True,
+        )
+    )
+    sensor2 = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            entity_idx=cold_box.idx,
+            grid_size=(1, 1, 1),
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    hot_link_idx = hot_box.base_link_idx
+    cold_link_idx = cold_box.base_link_idx
+    link_temps = sensor1.link_temperatures  # (n_envs, n_links)
+
+    assert_equal(link_temps[..., hot_link_idx], HOT_BASE)
+    assert_equal(link_temps[..., cold_link_idx], COLD_BASE)
+
+    cold_box.set_pos((0.0, 0.0, BOX_SIZE / 2))
+    for _ in range(100):
+        scene.step()
+
+    assert_equal(sensor1.link_temperatures, sensor2.link_temperatures)
+
+    assert (link_temps[..., hot_link_idx] < HOT_BASE - 1.0).all(), "Hot box link should have cooled"
+    assert (link_temps[..., cold_link_idx] > COLD_BASE + 1.0).all(), "Cold box link should have heated up"
+
+    assert_allclose(torch.mean(sensor1.read()), link_temps[..., hot_link_idx], tol=2e-2)
+    assert_allclose(torch.mean(sensor2.read()), link_temps[..., cold_link_idx], tol=2e-2)
 
 
 @pytest.mark.required
