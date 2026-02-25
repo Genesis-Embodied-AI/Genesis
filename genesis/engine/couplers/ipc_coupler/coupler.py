@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import tempfile
 import weakref
 from functools import partial
@@ -313,9 +312,7 @@ class IPCCoupler(RBC):
             UIPCTimer.disable_all()
 
         # Create workspace directory for IPC output, named after scene UID.
-        # The UID contains < and > which are illegal in Windows paths.
-        uid_safe = re.sub(r"[<>]", "", str(self.sim.scene.uid))
-        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{uid_safe}")
+        workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid.full()}")
         os.makedirs(workspace, exist_ok=True)
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
