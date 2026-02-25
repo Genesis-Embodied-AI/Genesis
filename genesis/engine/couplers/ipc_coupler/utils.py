@@ -436,7 +436,7 @@ def compute_coupling_forces(
     return out_forces, out_torques
 
 
-def compute_link_contact_forces(
+def compute_links_contact_wrench(
     forces_grad,
     links_idx,
     envs_idx,
@@ -445,7 +445,6 @@ def compute_link_contact_forces(
 ):
     """
     Compute contact forces and torques for rigid links from vertex gradients.
-    Uses np.add.at for accumulation (equivalent to atomic add).
 
     Parameters
     ----------
@@ -469,7 +468,7 @@ def compute_link_contact_forces(
     r = verts_pos - links_center  # (n, 3)
     torques = np.cross(r, forces)  # (n, 3)
 
-    # Accumulate using np.add.at (unbuffered, like atomic add)
+    # Accumulate using np.add.at (unbuffered)
     np.add.at(out_forces, (links_idx, envs_idx), forces)
     np.add.at(out_torques, (links_idx, envs_idx), torques)
 
