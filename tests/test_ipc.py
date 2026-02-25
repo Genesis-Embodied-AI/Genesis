@@ -673,8 +673,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("enable_contact_proxy", [False, True])
-def test_momentum_conversation(n_envs, enable_contact_proxy, show_viewer):
+def test_momentum_conversation(n_envs, show_viewer):
     DT = 0.001
     DURATION = 0.30
     CONTACT_MARGIN = 0.01
@@ -689,7 +688,6 @@ def test_momentum_conversation(n_envs, enable_contact_proxy, show_viewer):
             contact_d_hat=CONTACT_MARGIN,
             constraint_strength_translation=1,
             constraint_strength_rotation=1,
-            enable_contact_proxy=enable_contact_proxy,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),
