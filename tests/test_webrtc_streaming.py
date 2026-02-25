@@ -24,6 +24,15 @@ def _load_webrtc_module():
     return module
 
 
+def _load_streaming_common_module():
+    module_path = Path(__file__).resolve().parents[1] / "genesis" / "vis" / "streaming" / "common.py"
+    spec = importlib.util.spec_from_file_location("genesis.vis.streaming.common", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class DummyCamera:
     res = (64, 48)
 
@@ -73,3 +82,30 @@ def test_webrtc_streamer_shutdown_route_enabled():
     assert ("GET", "/") in routes
     assert ("POST", "/offer") in routes
     assert ("POST", "/shutdown") in routes
+
+
+def test_webrtc_index_html_has_chrome_playback_fallback():
+    module = _load_webrtc_module()
+    html = module.WebRTCStreamer._index_html(ice_servers=[], allow_shutdown=False)
+
+    assert "video.muted = true;" in html
+    assert "fallbackStream" in html
+    assert "await video.play();" in html
+
+
+def test_build_stream_url_wildcard_host_uses_detected_ip():
+    module = _load_streaming_common_module()
+    module._detect_non_loopback_ipv4 = lambda: "10.20.30.40"
+
+    url = module.build_stream_url(host="0.0.0.0", port=8000)
+
+    assert url == "http://10.20.30.40:8000"
+
+
+def test_build_stream_url_wildcard_host_falls_back_to_loopback():
+    module = _load_streaming_common_module()
+    module._detect_non_loopback_ipv4 = lambda: None
+
+    url = module.build_stream_url(host="0.0.0.0", port=8000)
+
+    assert url == "http://127.0.0.1:8000"

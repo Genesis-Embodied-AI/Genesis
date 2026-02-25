@@ -4,8 +4,10 @@ Headless WebRTC streaming example using the manipulation `GraspEnv`.
 Usage:
     python examples/streaming/webrtc_manipulation_env.py --host 0.0.0.0 --port 8000
 
-Then open:
-    http://<server-ip>:8000
+Then open the printed terminal URL:
+    WebRTC viewer URL: http://<server-ip>:8000
+
+Use --public-host to override the host shown in the printed URL.
 """
 
 import argparse

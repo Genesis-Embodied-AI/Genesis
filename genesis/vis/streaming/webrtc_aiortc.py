@@ -9,7 +9,14 @@ import numpy as np
 
 try:
     from aiohttp import web
-    from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+    from aiortc import (
+        RTCConfiguration,
+        RTCIceServer,
+        RTCPeerConnection,
+        RTCRtpSender,
+        RTCSessionDescription,
+        VideoStreamTrack,
+    )
     from av import VideoFrame
 except ImportError as exc:
     raise ImportError(
@@ -270,6 +277,7 @@ class WebRTCStreamer:
         try:
             video_track = GenesisCameraVideoTrack(self._camera, fps=self._fps)
             sender = peer_connection.addTrack(video_track)
+            self._prefer_h264_codec(peer_connection, sender)
             await self._configure_sender(sender)
 
             await peer_connection.setRemoteDescription(offer)
@@ -326,6 +334,28 @@ class WebRTCStreamer:
                 LOGGER.info("Configured video bitrate cap to %.2f Mbps", self._video_bitrate_bps / 1_000_000.0)
         except Exception as exc:
             LOGGER.warning("Failed to apply sender bitrate settings: %s", exc)
+
+    @staticmethod
+    def _prefer_h264_codec(peer_connection: RTCPeerConnection, sender: Any) -> None:
+        """Prefer H264 for broad browser compatibility while keeping codec fallbacks."""
+        try:
+            transceiver = next((t for t in peer_connection.getTransceivers() if t.sender == sender), None)
+            if transceiver is None:
+                return
+
+            capabilities = RTCRtpSender.getCapabilities("video")
+            if capabilities is None:
+                return
+
+            codecs = [codec for codec in capabilities.codecs if codec.mimeType.lower() != "video/rtx"]
+            h264_codecs = [codec for codec in codecs if codec.mimeType.lower() == "video/h264"]
+            if not h264_codecs:
+                return
+
+            preferred = h264_codecs + [codec for codec in codecs if codec not in h264_codecs]
+            transceiver.setCodecPreferences(preferred)
+        except Exception as exc:
+            LOGGER.debug("Failed to prioritize H264 codec: %s", exc)
 
     @staticmethod
     async def _wait_for_ice_gathering(peer_connection: RTCPeerConnection, timeout: float = 5.0) -> None:
@@ -504,9 +534,12 @@ class WebRTCStreamer:
     const iceStateEl = document.getElementById("ice-state");
     const closeBtn = document.getElementById("close-btn");
     const video = document.getElementById("video");
+    video.muted = true;
+    video.setAttribute("muted", "muted");
     const iceServers = __ICE_SERVERS__;
     const allowShutdown = __ALLOW_SHUTDOWN__;
     let currentPc = null;
+    let fallbackStream = null;
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     const withToken = (path) => token ? `${path}?token=${encodeURIComponent(token)}` : path;
@@ -541,6 +574,12 @@ class WebRTCStreamer:
           track.stop();
         }
       }
+      if (fallbackStream) {
+        for (const track of fallbackStream.getTracks()) {
+          track.stop();
+        }
+      }
+      fallbackStream = null;
       video.srcObject = null;
       setChipState(peerStateEl, "Peer", "closed");
       setChipState(iceStateEl, "ICE", "closed");
@@ -569,8 +608,23 @@ class WebRTCStreamer:
       closeBtn.disabled = false;
       pc.addTransceiver("video", { direction: "recvonly" });
 
-      pc.ontrack = (event) => {
-        video.srcObject = event.streams[0];
+      pc.ontrack = async (event) => {
+        const stream = event.streams && event.streams.length > 0 ? event.streams[0] : null;
+        if (stream) {
+          video.srcObject = stream;
+        } else {
+          if (!fallbackStream) {
+            fallbackStream = new MediaStream();
+          }
+          fallbackStream.addTrack(event.track);
+          video.srcObject = fallbackStream;
+        }
+        try {
+          await video.play();
+        } catch (error) {
+          setStatus(`Connected, but autoplay was blocked: ${error}`, "tone-warn");
+          return;
+        }
         setStatus("Receiving video", "tone-ok");
       };
 

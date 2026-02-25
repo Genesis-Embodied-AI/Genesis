@@ -19,7 +19,8 @@ python examples/streaming/webrtc_camera.py --host 0.0.0.0 --port 8000 --width 12
 Manipulation environment example:
 
 ```bash
-python examples/streaming/webrtc_manipulation_env.py --host 0.0.0.0 --port 8000 --width 640 --height 480 --video-bitrate-mbps 10
+python examples/streaming/webrtc_manipulation_env.py \
+  --host 0.0.0.0 --port 8000 --width 640 --height 480 --video-bitrate-mbps 10
 ```
 
 Then open:
@@ -27,6 +28,10 @@ Then open:
 ```text
 http://<server-ip>:8000
 ```
+
+The examples also print a `WebRTC viewer URL` in the terminal. When binding with `--host 0.0.0.0` or `--host ::`, this
+URL uses an auto-detected non-loopback IP by default. Use `--public-host` to override the printed host if needed
+(for example, DNS names, tunnels, or explicit NAT addresses).
 
 The example creates `gs.Scene(show_viewer=False)` and a camera with `GUI=False`, so it works without an interactive
 display.
@@ -50,6 +55,11 @@ display.
 - The stream page includes a `Close Stream` button that:
   - closes the current WebRTC connection in the browser
   - requests server shutdown so the example CLI process exits
+
+## Browser Compatibility
+
+- The built-in page is tested for both Chrome and Safari playback paths.
+- Video starts muted to satisfy stricter autoplay requirements in some browsers.
 
 ## Quality Tips
 

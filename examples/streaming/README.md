@@ -28,7 +28,16 @@ Open:
 http://<server-ip>:8000
 ```
 
-The page provides a `Close Stream` button that closes the current peer connection and requests server shutdown so the CLI exits.
+The examples also print `WebRTC viewer URL: ...` in the terminal. For wildcard bind hosts (`0.0.0.0` / `::`), the
+printed URL uses an auto-detected non-loopback IP by default. Use `--public-host` to override it.
+
+The page provides a `Close Stream` button that closes the current peer connection
+and requests server shutdown so the CLI exits.
+
+## Browser Compatibility
+
+- The stream page supports both Chrome and Safari playback flows.
+- The video element is muted by default to satisfy autoplay policy constraints.
 
 ## Quality Tuning
 
@@ -38,7 +47,8 @@ The page provides a `Close Stream` button that closes the current peer connectio
 
 ## Common CLI Options
 
-- `--host`, `--port`, `--public-host`
+- `--host`, `--port`
+- `--public-host` (override host shown in printed browser URL)
 - `--fps`, `--video-bitrate-mbps`
 - `--ice-server` (repeatable), `--no-default-stun`
 - `--token` (or `GS_WEBRTC_TOKEN`)
@@ -78,7 +88,8 @@ uv run pytest tests/test_webrtc_streaming.py
 4. Commit cleanly:
 
 ```bash
-git add genesis/vis/streaming examples/streaming tests/test_webrtc_streaming.py WEBRTC_STREAMING.md README.md pyproject.toml
+git add genesis/vis/streaming examples/streaming tests/test_webrtc_streaming.py \
+  WEBRTC_STREAMING.md README.md pyproject.toml
 git commit -m "[FEATURE] Add headless WebRTC streaming MVP with examples and docs"
 ```
 
@@ -87,4 +98,3 @@ git commit -m "[FEATURE] Add headless WebRTC streaming MVP with examples and doc
 ```bash
 git push -u origin feature/webrtc-streaming-mvp
 ```
-
