@@ -772,14 +772,23 @@ def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
             pos=(0.0, 0.0, BOX_SIZE * 2 + 0.001),
         )
     )
+    hot_link_idx = hot_box.base_link_idx
+    cold_link_idx = cold_box.base_link_idx
     sensor1 = scene.add_sensor(
         gs.sensors.TemperatureGrid(
             entity_idx=hot_box.idx,
             grid_size=(1, 1, 1),
             ambient_temperature=BASE_TEMP,
             properties_dict={
-                -1: gs.sensors.TemperatureProperties(
+                hot_link_idx: gs.sensors.TemperatureProperties(
                     base_temperature=HOT_BASE,
+                    conductivity=200.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+                cold_link_idx: gs.sensors.TemperatureProperties(
+                    base_temperature=COLD_BASE,
                     conductivity=200.0,
                     density=2000.0,
                     specific_heat=1.0,
@@ -797,8 +806,6 @@ def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
     )
     scene.build(n_envs=n_envs)
 
-    hot_link_idx = hot_box.base_link_idx
-    cold_link_idx = cold_box.base_link_idx
     link_temps = sensor1.link_temperatures  # (n_envs, n_links)
 
     assert_equal(link_temps[..., hot_link_idx], HOT_BASE)

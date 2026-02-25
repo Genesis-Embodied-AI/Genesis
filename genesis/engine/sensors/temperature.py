@@ -46,6 +46,28 @@ class _PropIdx(IntEnum):
     RHO_CP = 3
 
 
+class _ScratchIdx(IntEnum):
+    OTHER_LINK = 0
+    CONTACT_IDX = 1
+    DEPTH = 2
+    POS_X = 3
+    POS_Y = 4
+    POS_Z = 5
+    NORMAL_X = 6
+    NORMAL_Y = 7
+    NORMAL_Z = 8
+    GROUP_CONTACT_IDX = 9
+    GROUP_POS_X = 10
+    GROUP_POS_Y = 11
+    GROUP_POS_Z = 12
+    GROUP_NORMAL_X = 13
+    GROUP_NORMAL_Y = 14
+    GROUP_NORMAL_Z = 15
+    GROUP_DEPTH = 16
+    GROUP_POS2_X = 17
+    GROUP_POS2_Y = 18
+
+
 def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float) -> torch.Tensor:
     """Squared wave numbers for 3D real FFT: K2[i,j,k] = (2*pi*kx)^2 + (2*pi*ky)^2 + (2*pi*kz)^2 with rfft layout."""
     kx = torch.fft.fftfreq(nx, d=dx, device=gs.device).to(gs.tc_float)
@@ -115,14 +137,13 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points(
+def _qd_polygon_area_from_points_3d(
     n: gs.qd_int,
     scratch: qd.types.ndarray(),
     i_b: gs.qd_int,
-    i_s: gs.qd_int,
     eps: gs.qd_float,
 ) -> gs.qd_float:
-    """Area of polygon from scratch[i_b,i_s,:, 10:13] (pts), 13:16 (nms), xy in 17:19. scratch is 4D (n_b, n_s, max_cp, 19)."""
+    """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
         cx = gs.qd_float(0.0)
@@ -132,12 +153,12 @@ def _qd_polygon_area_from_points(
         ny = gs.qd_float(0.0)
         nz = gs.qd_float(0.0)
         for i in range(n):
-            cx = cx + scratch[i_b, i_s, i, 10]
-            cy = cy + scratch[i_b, i_s, i, 11]
-            cz = cz + scratch[i_b, i_s, i, 12]
-            nx = nx + scratch[i_b, i_s, i, 13]
-            ny = ny + scratch[i_b, i_s, i, 14]
-            nz = nz + scratch[i_b, i_s, i, 15]
+            cx = cx + scratch[i_b, i, _ScratchIdx.GROUP_POS_X]
+            cy = cy + scratch[i_b, i, _ScratchIdx.GROUP_POS_Y]
+            cz = cz + scratch[i_b, i, _ScratchIdx.GROUP_POS_Z]
+            nx = nx + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_X]
+            ny = ny + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Y]
+            nz = nz + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Z]
         n_inv = gs.qd_float(1.0) / gs.qd_float(n)
         cx, cy, cz = cx * n_inv, cy * n_inv, cz * n_inv
         nx, ny, nz = nx * n_inv, ny * n_inv, nz * n_inv
@@ -161,28 +182,32 @@ def _qd_polygon_area_from_points(
         v_norm = qd.sqrt(vx * vx + vy * vy + vz * vz) + eps
         vx, vy, vz = vx / v_norm, vy / v_norm, vz / v_norm
         for i in range(n):
-            rx = scratch[i_b, i_s, i, 10] - cx
-            ry = scratch[i_b, i_s, i, 11] - cy
-            rz = scratch[i_b, i_s, i, 12] - cz
-            scratch[i_b, i_s, i, 17] = rx * ux + ry * uy + rz * uz
-            scratch[i_b, i_s, i, 18] = rx * vx + ry * vy + rz * vz
+            rx = scratch[i_b, i, 10] - cx
+            ry = scratch[i_b, i, 11] - cy
+            rz = scratch[i_b, i, 12] - cz
+            scratch[i_b, i, _ScratchIdx.GROUP_POS2_X] = rx * ux + ry * uy + rz * uz
+            scratch[i_b, i, _ScratchIdx.GROUP_POS2_Y] = rx * vx + ry * vy + rz * vz
         for i in range(1, n):
-            key_x = scratch[i_b, i_s, i, 17]
-            key_y = scratch[i_b, i_s, i, 18]
+            key_x = scratch[i_b, i, _ScratchIdx.GROUP_POS2_X]
+            key_y = scratch[i_b, i, _ScratchIdx.GROUP_POS2_Y]
             j = i - 1
             key_angle = qd.atan2(key_y, key_x)
-            while j >= 0 and qd.atan2(scratch[i_b, i_s, j, 18], scratch[i_b, i_s, j, 17]) > key_angle:
-                scratch[i_b, i_s, j + 1, 17] = scratch[i_b, i_s, j, 17]
-                scratch[i_b, i_s, j + 1, 18] = scratch[i_b, i_s, j, 18]
+            while (
+                j >= 0
+                and qd.atan2(scratch[i_b, j, _ScratchIdx.GROUP_POS2_Y], scratch[i_b, j, _ScratchIdx.GROUP_POS2_X])
+                > key_angle
+            ):
+                scratch[i_b, j + 1, _ScratchIdx.GROUP_POS2_X] = scratch[i_b, j, _ScratchIdx.GROUP_POS2_X]
+                scratch[i_b, j + 1, _ScratchIdx.GROUP_POS2_Y] = scratch[i_b, j, _ScratchIdx.GROUP_POS2_Y]
                 j = j - 1
-            scratch[i_b, i_s, j + 1, 17] = key_x
-            scratch[i_b, i_s, j + 1, 18] = key_y
+            scratch[i_b, j + 1, _ScratchIdx.GROUP_POS2_X] = key_x
+            scratch[i_b, j + 1, _ScratchIdx.GROUP_POS2_Y] = key_y
         for i in range(n):
             i_next = (i + 1) % n
             area = (
                 area
-                + scratch[i_b, i_s, i, 17] * scratch[i_b, i_s, i_next, 18]
-                - scratch[i_b, i_s, i_next, 17] * scratch[i_b, i_s, i, 18]
+                + scratch[i_b, i, _ScratchIdx.GROUP_POS2_X] * scratch[i_b, i_next, _ScratchIdx.GROUP_POS2_Y]
+                - scratch[i_b, i_next, _ScratchIdx.GROUP_POS2_X] * scratch[i_b, i, _ScratchIdx.GROUP_POS2_Y]
             )
         area = qd.abs(area) * gs.qd_float(0.5)
 
@@ -193,79 +218,77 @@ def _qd_polygon_area_from_points(
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
-    links_idx: qd.types.ndarray(),
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
     eps: gs.qd_float,
 ):
-    # scratch shape (n_batches, n_sensors, max_contact_pairs, 19). Layout per (i_b, i_s):
-    # 0=other_link_idx, 1=idx, 2=depth, 3:6=pos, 6:9=normal, 9=group_idx,
-    # 10:13=group_pos, 13:16=group_normal, 16=group_depth, 17:19=xy
+    # contact_area shape (n_c_max, n_batches). scratch (n_batches, n_c_max, len(_ScratchIdx)).
     n_batches = contact_area.shape[1]
-    n_sensors = links_idx.shape[0]
-    for i_b, i_s in qd.ndrange(n_batches, n_sensors):
-        sensor_link_idx = links_idx[i_s]
+    for i_b in range(n_batches):
         n_c = collider_state.n_contacts[i_b]
-        n_valid = 0
         for i_c in range(n_c):
             la = collider_state.contact_data.link_a[i_c, i_b]
             lb = collider_state.contact_data.link_b[i_c, i_b]
-            if la != sensor_link_idx and lb != sensor_link_idx:
-                continue
-            other = lb if la == sensor_link_idx else la
-            scratch[i_b, i_s, n_valid, 0] = gs.qd_float(other)
-            scratch[i_b, i_s, n_valid, 1] = gs.qd_float(i_c)
-            scratch[i_b, i_s, n_valid, 2] = collider_state.contact_data.penetration[i_c, i_b]
+            scratch[i_b, i_c, _ScratchIdx.OTHER_LINK] = gs.qd_float(lb)
+            scratch[i_b, i_c, _ScratchIdx.CONTACT_IDX] = gs.qd_float(i_c)
+            scratch[i_b, i_c, _ScratchIdx.DEPTH] = collider_state.contact_data.penetration[i_c, i_b]
             p_world = collider_state.contact_data.pos[i_c, i_b]
-            link_pos = links_state.pos[sensor_link_idx, i_b]
-            link_quat = links_state.quat[sensor_link_idx, i_b]
+            link_pos = links_state.pos[la, i_b]
+            link_quat = links_state.quat[la, i_b]
             p_local = gu.qd_inv_transform_by_trans_quat(p_world, link_pos, link_quat)
-            scratch[i_b, i_s, n_valid, 3] = p_local.x
-            scratch[i_b, i_s, n_valid, 4] = p_local.y
-            scratch[i_b, i_s, n_valid, 5] = p_local.z
+            scratch[i_b, i_c, _ScratchIdx.POS_X] = p_local.x
+            scratch[i_b, i_c, _ScratchIdx.POS_Y] = p_local.y
+            scratch[i_b, i_c, _ScratchIdx.POS_Z] = p_local.z
             n_w = collider_state.contact_data.normal[i_c, i_b]
-            scratch[i_b, i_s, n_valid, 6] = n_w.x
-            scratch[i_b, i_s, n_valid, 7] = n_w.y
-            scratch[i_b, i_s, n_valid, 8] = n_w.z
-            n_valid = n_valid + 1
+            scratch[i_b, i_c, _ScratchIdx.NORMAL_X] = n_w.x
+            scratch[i_b, i_c, _ScratchIdx.NORMAL_Y] = n_w.y
+            scratch[i_b, i_c, _ScratchIdx.NORMAL_Z] = n_w.z
 
-        for i in range(n_valid):
-            other = gs.qd_int(scratch[i_b, i_s, i, 0])
+        for i_c in range(n_c):
+            la = collider_state.contact_data.link_a[i_c, i_b]
+            lb = collider_state.contact_data.link_b[i_c, i_b]
             is_first = True
-            for k in range(i):
-                if gs.qd_int(scratch[i_b, i_s, k, 0]) == other:
+            for k in range(i_c):
+                la_k = collider_state.contact_data.link_a[k, i_b]
+                lb_k = collider_state.contact_data.link_b[k, i_b]
+                if la_k == la and lb_k == lb:
                     is_first = False
             if not is_first:
                 continue
 
             count = 0
-            for j in range(n_valid):
-                if gs.qd_int(scratch[i_b, i_s, j, 0]) == other:
-                    scratch[i_b, i_s, count, 9] = scratch[i_b, i_s, j, 1]
-                    scratch[i_b, i_s, count, 10] = scratch[i_b, i_s, j, 3]
-                    scratch[i_b, i_s, count, 11] = scratch[i_b, i_s, j, 4]
-                    scratch[i_b, i_s, count, 12] = scratch[i_b, i_s, j, 5]
-                    scratch[i_b, i_s, count, 13] = scratch[i_b, i_s, j, 6]
-                    scratch[i_b, i_s, count, 14] = scratch[i_b, i_s, j, 7]
-                    scratch[i_b, i_s, count, 15] = scratch[i_b, i_s, j, 8]
-                    scratch[i_b, i_s, count, 16] = scratch[i_b, i_s, j, 2]
+            for j in range(n_c):
+                la_j = collider_state.contact_data.link_a[j, i_b]
+                lb_j = collider_state.contact_data.link_b[j, i_b]
+                if la_j == la and lb_j == lb:
+                    scratch[i_b, count, _ScratchIdx.GROUP_CONTACT_IDX] = scratch[i_b, j, _ScratchIdx.CONTACT_IDX]
+                    scratch[i_b, count, _ScratchIdx.GROUP_POS_X] = scratch[i_b, j, _ScratchIdx.POS_X]
+                    scratch[i_b, count, _ScratchIdx.GROUP_POS_Y] = scratch[i_b, j, _ScratchIdx.POS_Y]
+                    scratch[i_b, count, _ScratchIdx.GROUP_POS_Z] = scratch[i_b, j, _ScratchIdx.POS_Z]
+                    scratch[i_b, count, _ScratchIdx.GROUP_NORMAL_X] = scratch[i_b, j, _ScratchIdx.NORMAL_X]
+                    scratch[i_b, count, _ScratchIdx.GROUP_NORMAL_Y] = scratch[i_b, j, _ScratchIdx.NORMAL_Y]
+                    scratch[i_b, count, _ScratchIdx.GROUP_NORMAL_Z] = scratch[i_b, j, _ScratchIdx.NORMAL_Z]
+                    scratch[i_b, count, _ScratchIdx.GROUP_DEPTH] = scratch[i_b, j, _ScratchIdx.DEPTH]
                     count = count + 1
 
             group_area = eps
             if count >= 3:
-                group_area = _qd_polygon_area_from_points(count, scratch, i_b, i_s, eps)
+                group_area = _qd_polygon_area_from_points_3d(count, scratch, i_b, eps)
             else:
                 for k in range(count):
-                    d = scratch[i_b, i_s, k, 16]
-                    group_area = group_area + d * d
+                    d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
+                    group_area = group_area + d * PI
 
-            total_d2 = eps
+            area_per_contact = group_area / (gs.qd_float(count) + eps)
             for k in range(count):
-                d = scratch[i_b, i_s, k, 16]
-                total_d2 = total_d2 + d * d
-            for k in range(count):
-                d = scratch[i_b, i_s, k, 16]
-                contact_area[gs.qd_int(scratch[i_b, i_s, k, 9]), i_b, i_s] = group_area * (d * d / total_d2)
+                contact_idx = gs.qd_int(scratch[i_b, k, _ScratchIdx.GROUP_CONTACT_IDX])
+                contact_area[contact_idx, i_b] = area_per_contact
+
+
+@qd.func
+def _qd_k_eff(k_a: gs.qd_float, k_b: gs.qd_float, eps: gs.qd_float) -> gs.qd_float:
+    """Effective conductivity for series thermal resistance: 2*k_a*k_b/(k_a+k_b+eps)."""
+    return 2.0 * k_a * k_b / (k_a + k_b + eps)
 
 
 @qd.kernel
@@ -277,8 +300,8 @@ def _kernel_contact_heat(
     grid_size: qd.types.ndarray(),
     voxel_size: qd.types.ndarray(),
     voxel_volume: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
     depth_weight: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
     link_temps: qd.types.ndarray(),
     link_volume: qd.types.ndarray(),
     link_to_material_idx: qd.types.ndarray(),
@@ -290,17 +313,20 @@ def _kernel_contact_heat(
     eps: gs.qd_float,
     output: qd.types.ndarray(),
 ):
+    # contact_area shape (n_c_max, n_batches)
     n_batches = output.shape[0]
     n_sensors = links_idx.shape[0]
     use_link_temps = link_temps.shape[0] > 0
+
+    # Grid update: only for contacts that involve a sensorized link; use contact_area[i_c, i_b]
     for i_b, i_s in qd.ndrange(n_batches, n_sensors):
         sensor_link_idx = links_idx[i_s]
+        dw = depth_weight[i_s]
         start = sensor_cache_start[i_s]
         nx = grid_size[i_s, 0]
         ny = grid_size[i_s, 1]
         nz = grid_size[i_s, 2]
         vol = voxel_volume[i_s] + eps
-        dw = depth_weight[i_s]
         mat_idx_sensor = link_to_material_idx[sensor_link_idx]
         if mat_idx_sensor < 0:
             continue
@@ -324,8 +350,7 @@ def _kernel_contact_heat(
             if mat_other >= 0:
                 T_other = qd.select(use_link_temps, link_temps[i_b, other_link], link_base_temperature[mat_other])
                 k_other = link_conductivity[mat_other]
-                k_eff = gs.qd_float(2.0) * k_sensor * k_other / (k_sensor + k_other + eps)
-                depth = collider_state.contact_data.penetration[i_c, i_b]
+                k_eff = _qd_k_eff(k_sensor, k_other, eps)
                 p_world = collider_state.contact_data.pos[i_c, i_b]
                 link_pos = links_state.pos[sensor_link_idx, i_b]
                 link_quat = links_state.quat[sensor_link_idx, i_b]
@@ -338,16 +363,41 @@ def _kernel_contact_heat(
                 iz = min(max(0, int(u_z)), nz - 1)
                 cell_idx = ix * (ny * nz) + iy * nz + iz
                 T_cell = output[i_b, start + cell_idx]
-                c_area = contact_area[i_c, i_b, i_s]
-                area = max(qd.select(c_area > eps, c_area, PI * dw * depth), eps)
+                area_base = contact_area[i_c, i_b] + eps
+                area = qd.max(area_base, PI * dw * collider_state.contact_data.penetration[i_c, i_b])
                 flux = k_eff * (T_other - T_cell) / (vol / area + eps)
                 Q_vol = flux * area / vol
                 delta_T = dt * Q_vol / rcp
                 output[i_b, start + cell_idx] = T_cell + delta_T
-                if use_link_temps:
-                    rcp_vol_other = link_rho_cp[mat_other] * link_volume[other_link] + eps
-                    delta_T_other = gs.qd_float(-1.0) * dt * flux * area / rcp_vol_other
-                    link_temps[i_b, other_link] = link_temps[i_b, other_link] + delta_T_other
+
+    # Link temps update for all contacts (both links) when use_link_temps
+    if use_link_temps:
+        for i_b in range(n_batches):
+            n_c = collider_state.n_contacts[i_b]
+            for i_c in range(n_c):
+                la = collider_state.contact_data.link_a[i_c, i_b]
+                lb = collider_state.contact_data.link_b[i_c, i_b]
+                mat_la = link_to_material_idx[la]
+                mat_lb = link_to_material_idx[lb]
+                if mat_la < 0 or mat_lb < 0:
+                    continue
+                T_la = link_temps[i_b, la]
+                T_lb = link_temps[i_b, lb]
+                k_la = link_conductivity[mat_la] + eps
+                k_lb = link_conductivity[mat_lb] + eps
+                k_eff = _qd_k_eff(k_la, k_lb, eps)
+                area = contact_area[i_c, i_b] + eps
+                vol_la = link_volume[la] + eps
+                vol_lb = link_volume[lb] + eps
+                length_scale = (vol_la + vol_lb) / (gs.qd_float(2.0) * area)
+                flux = k_eff * (T_la - T_lb) / length_scale
+                power = flux * area
+                rcp_vol_la = link_rho_cp[mat_la] * vol_la + eps
+                rcp_vol_lb = link_rho_cp[mat_lb] * vol_lb + eps
+                delta_T_la = gs.qd_float(-1.0) * dt * power / rcp_vol_la
+                delta_T_lb = dt * power / rcp_vol_lb
+                link_temps[i_b, la] = link_temps[i_b, la] + delta_T_la
+                link_temps[i_b, lb] = link_temps[i_b, lb] + delta_T_lb
 
 
 def _radiation_convection_delta_T(
@@ -439,7 +489,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     ambient_temperature: float = 21.0
     convection_coeff: float = 1.0
     link_to_material_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    link_material_properties: torch.Tensor = make_tensor_field((0, 5), dtype=gs.tc_float)
+    link_material_properties: torch.Tensor = make_tensor_field((0, len(_PropIdx)), dtype=gs.tc_float)
     properties_dict: dict[int, TemperatureProperties] = field(default_factory=dict)
     simulate_all_link_temps: bool = False
     link_temps: torch.Tensor = make_tensor_field((0, 0))
@@ -455,8 +505,8 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     K2_spectral: list[torch.Tensor] = field(default_factory=list)
     sensor_surface_mask: list[torch.Tensor] = field(default_factory=list)
     heat_generation: list[torch.Tensor | None] = field(default_factory=list)
-    contact_area_scratch: torch.Tensor = make_tensor_field((0, 19))
-    contact_area_buffer: torch.Tensor = make_tensor_field((0, 0, 0))
+    contact_area_scratch: torch.Tensor = make_tensor_field((0, len(_ScratchIdx)))
+    contact_area_buffer: torch.Tensor = make_tensor_field((0, 0))
 
     sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
 
@@ -611,14 +661,13 @@ class TemperatureGridSensor(
             self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
         )
 
-        # Contact area buffers
+        # Contact area buffers: one area per contact per batch (n_c_max, n_batches); scratch (n_batches, n_c_max, len(_ScratchIdx))
         n_c_max = int(solver.collider._collider_info.max_contact_pairs[None])
-        n_sensors = self._shared_metadata.links_idx.shape[0]
         self._shared_metadata.contact_area_buffer = torch.zeros(
-            (n_c_max, solver._B, n_sensors), device=gs.device, dtype=gs.tc_float
+            (n_c_max, solver._B), device=gs.device, dtype=gs.tc_float
         )
         self._shared_metadata.contact_area_scratch = torch.empty(
-            (solver._B, n_sensors, n_c_max, 19), device=gs.device, dtype=gs.tc_float
+            (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
@@ -682,7 +731,6 @@ class TemperatureGridSensor(
         _kernel_compute_contact_areas(
             solver.links_state,
             collider_state,
-            shared_metadata.links_idx,
             shared_metadata.contact_area_buffer,
             shared_metadata.contact_area_scratch,
             gs.EPS,
@@ -696,8 +744,8 @@ class TemperatureGridSensor(
             shared_metadata.grid_size,
             shared_metadata.voxel_size,
             shared_metadata.voxel_volume,
-            shared_metadata.sensor_cache_start,
             shared_metadata.contact_depth_weight,
+            shared_metadata.sensor_cache_start,
             shared_metadata.link_temps,
             shared_metadata.link_volume,
             shared_metadata.link_to_material_idx,
