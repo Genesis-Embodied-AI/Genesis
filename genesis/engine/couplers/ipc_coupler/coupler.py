@@ -291,7 +291,21 @@ class IPCCoupler(RBC):
         self._add_objects_to_ipc()
         self._finalize_ipc()
 
-        self.coupling_data = IPCCouplingData()
+        # Categorize entities by coupling type (stable after build)
+        self._categorize_entities_by_coupling_type()
+
+        # Pre-compute the entity set for rigid state retrieval
+        self._rigid_retrieve_entity_set = set(
+            self._entities_by_coupling_type["two_way_soft_constraint"]
+            + self._entities_by_coupling_type["ipc_only"]
+            + self._articulation_with_non_fixed_base
+        )
+
+        # Pre-allocate coupling data for the exact number of ABD bodies matching the entity set
+        n_coupling_items = sum(
+            entity_idx in self._rigid_retrieve_entity_set for _, _, entity_idx in self._abd_body_idx_to_link.values()
+        )
+        self.coupling_data = IPCCouplingData(n_coupling_items)
 
     def _init_ipc(self):
         """Initialize IPC system components"""
@@ -1056,13 +1070,7 @@ class IPCCoupler(RBC):
                 self._gs_stored_states.setdefault(link_idx, {})[env_idx] = link_transform
 
     def _categorize_entities_by_coupling_type(self):
-        """
-        Categorize entities by their coupling type.
-        Called once during build or first couple() call, cached for subsequent calls.
-        """
-        if self._entities_by_coupling_type is not None:
-            return  # Already categorized
-
+        """Categorize entities by their coupling type. Called once during build()."""
         result = {"two_way_soft_constraint": [], "external_articulation": [], "ipc_only": []}
         for entity_idx, coupling_type in self._entity_coupling_types.items():
             if coupling_type in result:
@@ -1088,67 +1096,37 @@ class IPCCoupler(RBC):
         if not self.is_active:
             return
 
-        # Ensure entities are categorized (cached after first call)
-        self._categorize_entities_by_coupling_type()
-
-        two_way_entities = self._entities_by_coupling_type["two_way_soft_constraint"]
-        articulation_entities = self._entities_by_coupling_type["external_articulation"]
-        ipc_only_entities = self._entities_by_coupling_type["ipc_only"]
-
-        # ========== Step 1: Store Genesis rigid states (common) ==========
+        # Step 1: Store Genesis rigid states (common)
         self._store_gs_rigid_states()
 
-        # ========== Step 2: Pre-advance processing (per entity type) ==========
-        # For two_way_soft_constraint: Animator handles aim_transform during advance
-        # (no explicit pre-processing needed here)
+        # Step 2: Pre-advance processing (per entity type)
+        self._pre_advance_external_articulation()
 
-        # For external_articulation: prepare articulation data before advance
-        if articulation_entities:
-            self._pre_advance_external_articulation(articulation_entities)
-
-        # For ipc_only: no pre-processing needed
-
-        # ========== Step 3: IPC advance + retrieve (common, only once) ==========
+        # Step 3: IPC advance + retrieve (common)
         self._ipc_world.advance()
         self._ipc_world.retrieve()
 
-        # ========== Step 4: Retrieve FEM states (common) ==========
+        # Step 4: Retrieve states
         self._retrieve_fem_states()
+        self._retrieve_rigid_states()
 
-        # ========== Step 5: Post-advance processing (per entity type) ==========
-        # Get articulation entities with non-fixed base (pre-computed during build)
-        articulation_with_non_fixed_base = self._articulation_with_non_fixed_base
-
-        # Retrieve rigid states for: two_way + ipc_only + articulation with non-fixed base
-        rigid_entities = two_way_entities + ipc_only_entities + articulation_with_non_fixed_base
-        if rigid_entities:
-            self._retrieve_rigid_states(set(rigid_entities))
-
-        # For two_way_soft_constraint: apply coupling forces
-        if two_way_entities:
-            if self.options.two_way_coupling:
-                self._apply_abd_coupling_forces()
-            if self.options.enable_contact_proxy:
-                self._record_ipc_contact_forces()
-                self._apply_ipc_contact_forces()
-
-        # For external_articulation: read delta_theta and update Genesis qpos
-        if articulation_entities:
-            self._post_advance_external_articulation(articulation_entities)
-
-        # For ipc_only: directly set Genesis transforms from IPC
-        if ipc_only_entities:
-            self._post_advance_ipc_only(ipc_only_entities)
+        # Step 5: Post-advance processing (per entity type)
+        self._apply_abd_coupling_forces()
+        self._apply_ipc_contact_forces()
+        self._post_advance_external_articulation()
+        self._post_advance_ipc_only()
 
     # ============================================================
     # Section 6: External Articulation Coupling
     # ============================================================
 
-    def _pre_advance_external_articulation(self, entity_indices):
+    def _pre_advance_external_articulation(self):
         """
         Pre-advance processing for external_articulation entities.
         Prepares articulation data and updates IPC geometry before advance().
         """
+        if not self._entities_by_coupling_type["external_articulation"]:
+            return
 
         if len(self._articulated_entities) == 0:
             return
@@ -1264,11 +1242,13 @@ class IPCCoupler(RBC):
                     for i in range(n_joints * n_joints):
                         mass_view[i] = mass_flat[i]
 
-    def _post_advance_external_articulation(self, entity_indices):
+    def _post_advance_external_articulation(self):
         """
         Post-advance processing for external_articulation entities.
         Reads delta_theta from IPC and updates Genesis qpos.
         """
+        if not self._entities_by_coupling_type["external_articulation"]:
+            return
 
         if len(self._articulated_entities) == 0:
             return
@@ -1454,12 +1434,16 @@ class IPCCoupler(RBC):
             entity = self.rigid_solver._entities[entity_idx]
             entity.zero_all_dofs_velocity(envs_idx=envs_idx)
 
-    def _post_advance_ipc_only(self, entity_indices):
+    def _post_advance_ipc_only(self):
         """
         Post-advance processing for ipc_only entities.
         Directly sets Genesis transforms from IPC results.
         Only handles simple case (single base link entities).
         """
+        entity_indices = self._entities_by_coupling_type["ipc_only"]
+        if not entity_indices:
+            return
+
         for env_idx in range(self.sim._B):
             robot_entities = []
             non_robot_entities = []
@@ -1506,8 +1490,8 @@ class IPCCoupler(RBC):
             solver_type, env_idx, entity_idx = meta
             if solver_type not in ("fem", "cloth"):
                 continue
-
-            assert geo.dim() in (2, 3), f"Expected FEM/cloth geometry dim 2 or 3, got {geo.dim()}"
+            if geo.dim() not in (2, 3):
+                continue
 
             try:
                 proc_geo = geo
@@ -1535,17 +1519,12 @@ class IPCCoupler(RBC):
                     envs_pos = np.stack(per_env_positions, axis=0, dtype=gs.np_float)
                     entity.set_pos(0, envs_pos)
 
-    def _retrieve_rigid_states(self, entity_set):
+    def _retrieve_rigid_states(self):
         """
         Retrieve ABD transforms/affine matrices after IPC step using AffineBodyStateAccessorFeature.
 
         O(num_rigid_bodies) instead of O(total_geometries).
         Also populates coupling_data arrays for force computation.
-
-        Parameters
-        ----------
-        entity_set : set
-            Set of entity indices to process.
         """
         self.abd_data_by_link.clear()
 
@@ -1569,15 +1548,10 @@ class IPCCoupler(RBC):
         vel_attr = self._abd_state_geo.instances().find(builtin.velocity)
         velocities = vel_attr.view() if vel_attr is not None else None  # Shape: (num_bodies, 4, 4)
 
+        entity_set = self._rigid_retrieve_entity_set
         links_inertia = qd_to_numpy(self.rigid_solver.links_info.inertial_i)
-
-        # Collect coupling data for _apply_abd_coupling_forces
-        cd_link_indices = []
-        cd_env_indices = []
-        cd_ipc_transforms = []
-        cd_aim_transforms = []
-        cd_link_masses = []
-        cd_inertia_tensors = []
+        cd = self.coupling_data
+        n = 0
 
         for abd_body_idx, (env_idx, link_idx, entity_idx) in self._abd_body_idx_to_link.items():
             if entity_idx not in entity_set:
@@ -1598,21 +1572,14 @@ class IPCCoupler(RBC):
                 velocity=velocity,
             )
 
-            cd_link_indices.append(link_idx)
-            cd_env_indices.append(env_idx)
-            cd_ipc_transforms.append(transform_matrix)
-            cd_aim_transforms.append(aim_transform)
-            cd_link_masses.append(self.rigid_solver.links_info.inertial_mass[link_idx])
-            cd_inertia_tensors.append(links_inertia[link_idx])
-
-        # Store as arrays for _apply_abd_coupling_forces
-        cd = self.coupling_data
-        cd.link_indices = np.array(cd_link_indices, dtype=gs.np_int)
-        cd.env_indices = np.array(cd_env_indices, dtype=gs.np_int)
-        cd.ipc_transforms = np.array(cd_ipc_transforms, dtype=gs.np_float)
-        cd.aim_transforms = np.array(cd_aim_transforms, dtype=gs.np_float)
-        cd.link_masses = np.array(cd_link_masses, dtype=gs.np_float)
-        cd.inertia_tensors = np.array(cd_inertia_tensors, dtype=gs.np_float)
+            # Write directly to pre-allocated coupling_data buffers
+            cd.link_indices[n] = link_idx
+            cd.env_indices[n] = env_idx
+            cd.ipc_transforms[n] = transform_matrix
+            cd.aim_transforms[n] = aim_transform
+            cd.link_masses[n] = self.rigid_solver.links_info.inertial_mass[link_idx]
+            cd.inertia_tensors[n] = links_inertia[link_idx]
+            n += 1
 
     def _apply_abd_coupling_forces(self):
         """
@@ -1625,6 +1592,12 @@ class IPCCoupler(RBC):
         - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
         - Genesis reaction force: F_genesis = M * (q_ipc^{n+1} - q_genesis^n) = G_ipc
         """
+        if not self._entities_by_coupling_type["two_way_soft_constraint"]:
+            return
+
+        if not self.options.two_way_coupling:
+            return
+
         cd = self.coupling_data
 
         if len(cd.link_indices) == 0:
@@ -1634,7 +1607,7 @@ class IPCCoupler(RBC):
         rotation_strength = float(self.options.constraint_strength_rotation)
         dt2 = self.sim._dt**2
 
-        out_forces, out_torques = compute_coupling_forces(
+        cd.out_forces, cd.out_torques = compute_coupling_forces(
             cd.ipc_transforms,
             cd.aim_transforms,
             cd.link_masses,
@@ -1644,7 +1617,7 @@ class IPCCoupler(RBC):
             dt2,
         )
 
-        if np.isnan(out_forces).any() or np.isnan(out_torques).any():
+        if np.isnan(cd.out_forces).any() or np.isnan(cd.out_torques).any():
             gs.raise_exception(
                 "NaN detected in IPC coupling force/torque. "
                 "This indicates numerical instability — consider decreasing the simulation timestep.",
@@ -1653,12 +1626,12 @@ class IPCCoupler(RBC):
         # Group by environment and apply
         env_batches = {}
         for i in range(len(cd.link_indices)):
-            env_idx = int(cd.env_indices[i])
+            env_idx = cd.env_indices[i]
             if env_idx not in env_batches:
                 env_batches[env_idx] = ForceBatch()
-            env_batches[env_idx].link_indices.append(int(cd.link_indices[i]))
-            env_batches[env_idx].forces.append(out_forces[i])
-            env_batches[env_idx].torques.append(out_torques[i])
+            env_batches[env_idx].link_indices.append(cd.link_indices[i])
+            env_batches[env_idx].forces.append(cd.out_forces[i])
+            env_batches[env_idx].torques.append(cd.out_torques[i])
 
         self._apply_forces_to_rigid_links(env_batches)
 
@@ -1766,13 +1739,19 @@ class IPCCoupler(RBC):
 
         return link_forces
 
-    def _record_ipc_contact_forces(self):
+    def _apply_ipc_contact_forces(self):
         """
         Record contact forces from IPC for two_way_soft_constraint coupling links.
 
         This method extracts contact forces and torques from IPC's contact system
         and stores them for later application to Genesis rigid bodies.
         """
+        if not self._entities_by_coupling_type["two_way_soft_constraint"]:
+            return
+
+        if not self.options.enable_contact_proxy:
+            return
+
         if not self.abd_data_by_link:
             return
 
@@ -1849,11 +1828,12 @@ class IPCCoupler(RBC):
             meta = read_ipc_geometry_metadata(geo)
             if meta is None:
                 continue
+            if geo.dim() not in (2, 3):
+                continue
 
-            assert geo.dim() in (2, 3), f"Expected geometry dim 2 or 3, got {geo.dim()}"
             n_verts = geo.vertices().size()
-
             solver_type, env_idx, link_idx = meta
+
             if solver_type == "rigid":
                 first_vertex_idx = global_vertex_offset
                 if first_vertex_idx in vertex_to_link:
@@ -1907,17 +1887,10 @@ class IPCCoupler(RBC):
                 force_vector = out_forces_12d[i].astype(np.float64, copy=False)
                 self._external_force_data[(contacts_link_idx[i], contacts_env_idx[i])] = force_vector
 
-    def _apply_ipc_contact_forces(self):
-        """
-        Apply recorded IPC contact forces to Genesis rigid bodies.
-
-        This method takes the contact forces and torques recorded by _record_ipc_contact_forces
-        and applies them to the corresponding Genesis rigid links.
-        """
+        # Apply contact forces to Genesis rigid bodies
         if not self._ipc_contact_forces:
-            return  # No contact forces to apply
+            return
 
-        # Group forces by environment
         env_batches = {}
         for link_idx, env_data in self._ipc_contact_forces.items():
             for env_idx, force_data in env_data.items():
