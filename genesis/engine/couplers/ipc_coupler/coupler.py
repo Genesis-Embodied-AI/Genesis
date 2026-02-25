@@ -989,11 +989,6 @@ class IPCCoupler(RBC):
     # Section 2: Main Coupling Loop & Shared Helpers
     # ============================================================
 
-    @staticmethod
-    def _get_art_env_data(art_data):
-        """Return (active_env_indices, articulation_slots_by_env)."""
-        return art_data.active_env_indices, art_data.articulation_slots_by_env
-
     def _apply_forces_to_rigid_links(self, env_batches):
         """Apply batched forces/torques from *env_batches* to Genesis rigid links.
 
@@ -1189,11 +1184,8 @@ class IPCCoupler(RBC):
 
         # Update IPC geometry for each articulated entity
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            n_joints = art_data.n_joints
-            active_env_indices, articulation_slots_by_env = self._get_art_env_data(art_data)
-
-            for env_idx in active_env_indices:
-                articulation_slot = articulation_slots_by_env[env_idx]
+            for env_idx in art_data.active_env_indices:
+                articulation_slot = art_data.articulation_slots_by_env[env_idx]
                 articulation_geo = articulation_slot.geometry()
 
                 # Update ref_dof_prev on all ABD instances
@@ -1220,7 +1212,7 @@ class IPCCoupler(RBC):
                 # Set delta_theta_tilde to IPC geometry
                 delta_theta_tilde_attr = articulation_geo["joint"].find("delta_theta_tilde")
                 delta_theta_tilde_view = view(delta_theta_tilde_attr)
-                for joint_idx in range(n_joints):
+                for joint_idx in range(art_data.n_joints):
                     delta_theta_tilde_view[joint_idx] = ad.delta_theta_tilde[idx, env_idx, joint_idx]
 
                 # Extract and transfer mass matrix from Genesis to IPC
@@ -1252,15 +1244,11 @@ class IPCCoupler(RBC):
 
         # Read delta_theta_ipc from IPC
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            n_joints = art_data.n_joints
-            active_env_indices, articulation_slots_by_env = self._get_art_env_data(art_data)
-
-            for env_idx in active_env_indices:
-                scene_art_geo = articulation_slots_by_env[env_idx].geometry()
-
+            for env_idx in art_data.active_env_indices:
+                scene_art_geo = art_data.articulation_slots_by_env[env_idx].geometry()
                 delta_theta_attr = scene_art_geo["joint"].find("delta_theta")
                 delta_theta_view = view(delta_theta_attr)
-                for joint_idx in range(n_joints):
+                for joint_idx in range(art_data.n_joints):
                     ad.delta_theta_ipc[idx, env_idx, joint_idx] = delta_theta_view[joint_idx]
 
         # Compute qpos_new: copy ref_dof_prev then scatter joint deltas
@@ -1279,14 +1267,13 @@ class IPCCoupler(RBC):
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
             entity = art_data.entity
             n_dofs = int(ad.entity_n_dofs[idx])
-            active_env_indices, _ = self._get_art_env_data(art_data)
-
-            for env_idx in active_env_indices:
+            for env_idx in art_data.active_env_indices:
                 qpos_new_slice = ad.qpos_new[idx, env_idx, :n_dofs].astype(gs.np_float, copy=False)
                 # Set qpos for all DOFs
                 # Note: For non-fixed base robots, qpos_new already preserves base DOFs from ref_dof_prev
                 # (only joint DOFs were updated by the qpos_new computation above)
                 # The base link transform will be overwritten later using IPC data
+                # FIXME: base link transform is NOT overwritten using IPC data.
                 self.rigid_solver.set_qpos(
                     qpos_new_slice,
                     qs_idx=slice(entity.q_start, entity.q_end),
@@ -1326,7 +1313,7 @@ class IPCCoupler(RBC):
                         ]
                     )
 
-                    base_dof_velocity = np.concatenate([linear_vel, angular_vel])
+                    base_dof_velocity = np.concatenate([linear_vel, angular_vel], dtype=gs.np_float)
                     entity.set_dofs_velocity(
                         base_dof_velocity,
                         dofs_idx_local=slice(None, 6),
@@ -1340,8 +1327,7 @@ class IPCCoupler(RBC):
 
         # Store current link transforms to prev_link_transforms
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            active_env_indices, _ = self._get_art_env_data(art_data)
-            for env_idx in active_env_indices:
+            for env_idx in art_data.active_env_indices:
                 for joint_idx, joint in enumerate(art_data.revolute_joints + art_data.prismatic_joints):
                     child_link_idx = joint.link.idx
                     if child_link_idx in self._gs_stored_states and env_idx in self._gs_stored_states[child_link_idx]:
@@ -1351,84 +1337,6 @@ class IPCCoupler(RBC):
     # ============================================================
     # Section 4: IPC-Only Coupling
     # ============================================================
-
-    def _apply_ipc_only_robot_qpos(self, entity_indices, env_idx: int):
-        """Update robot qpos from IPC transforms; returns list of updated entities."""
-        if not self.abd_data_by_link:
-            return []
-
-        is_batched = self.sim.n_envs > 0
-        updated_entities = []
-
-        for entity_idx in entity_indices:
-            entity = self.rigid_solver._entities[entity_idx]
-            link_idx = entity.base_link_idx
-
-            if entity.n_qs < 7:
-                gs.raise_exception(
-                    f"ipc_only entity {entity_idx} has n_qs={entity.n_qs}; expected at least 7 for base pose."
-                )
-
-            ipc_transform = self.abd_data_by_link[(link_idx, env_idx)].transform
-
-            qpos_current = tensor_to_array(entity.get_qpos(envs_idx=env_idx if is_batched else None))
-            if qpos_current.ndim > 1:
-                qpos_current = qpos_current[0]
-
-            qpos_new = qpos_current.copy()
-            qpos_new[:3], qpos_new[3:7] = gu.T_to_trans_quat(ipc_transform)
-
-            self.rigid_solver.set_qpos(
-                qpos_new,
-                qs_idx=slice(entity.q_start, entity.q_end),
-                envs_idx=env_idx if is_batched else None,
-                skip_forward=True,
-            )
-
-            updated_entities.append(entity_idx)
-
-        return updated_entities
-
-    def _finalize_ipc_only_robot_fk(self, entity_indices, env_idx: int):
-        """Run forward kinematics/geoms update for robot entities only."""
-        if not entity_indices:
-            return
-
-        is_batched = self.sim.n_envs > 0
-        envs_idx = self.sim._scene._sanitize_envs_idx(env_idx if is_batched else None)
-        for entity_idx in entity_indices:
-            self.rigid_solver._func_forward_kinematics_entity(entity_idx, envs_idx)
-        self.rigid_solver._func_update_geoms(envs_idx)
-        self.rigid_solver._is_forward_pos_updated = True
-        self.rigid_solver._is_forward_vel_updated = True
-
-    def _apply_ipc_only_transforms(self, entity_indices, env_idx: int):
-        """Apply IPC transforms directly to base links (non-robots)."""
-        is_batched = self.sim.n_envs > 0
-        links_pos = []
-        links_quat = []
-        links_idx = []
-
-        for entity_idx in entity_indices:
-            entity = self.rigid_solver._entities[entity_idx]
-            link_idx = entity.base_link_idx
-
-            ipc_transform = self.abd_data_by_link[(link_idx, env_idx)].transform
-            pos, quat_wxyz = gu.T_to_trans_quat(ipc_transform)
-
-            links_pos.append(pos)
-            links_quat.append(quat_wxyz)
-            links_idx.append(link_idx)
-
-        if not links_pos:
-            return
-
-        envs_idx = env_idx if is_batched else None
-        self.rigid_solver.set_base_links_pos(links_pos, links_idx, envs_idx=envs_idx, relative=False)
-        self.rigid_solver.set_base_links_quat(links_quat, links_idx, envs_idx=envs_idx, relative=False)
-        for entity_idx in entity_indices:
-            entity = self.rigid_solver._entities[entity_idx]
-            entity.zero_all_dofs_velocity(envs_idx=envs_idx)
 
     def _post_advance_ipc_only(self):
         """
@@ -1440,24 +1348,22 @@ class IPCCoupler(RBC):
         if not entity_indices:
             return
 
-        for env_idx in range(self.sim._B):
-            robot_entities = []
-            non_robot_entities = []
+        # FIXME: Velocity of 'ipc_only' entities is not updated.
+        envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
+        for entity_idx in entity_indices:
+            entity = self.rigid_solver._entities[entity_idx]
+            if entity.n_qs == 0:
+                continue
 
-            for entity_idx in entity_indices:
-                entity = self.rigid_solver._entities[entity_idx]
-                if is_robot_entity(entity):
-                    robot_entities.append(entity_idx)
-                else:
-                    non_robot_entities.append(entity_idx)
+            for env_idx in range(self.sim._B):
+                ipc_transform = self.abd_data_by_link[(entity.base_link_idx, env_idx)].transform
+                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(ipc_transform)
 
-            updated_robot_entities = self._apply_ipc_only_robot_qpos(robot_entities, env_idx)
-
-            if non_robot_entities:
-                self._apply_ipc_only_transforms(non_robot_entities, env_idx)
-            else:
-                # Only robots are present; run FK update explicitly.
-                self._finalize_ipc_only_robot_fk(updated_robot_entities, env_idx)
+            self.rigid_solver.set_qpos(
+                envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
+                qs_idx=slice(None, 7),
+                skip_forward=True,
+            )
 
     # ============================================================
     # Section 5: FEM State Retrieval
@@ -1552,18 +1458,12 @@ class IPCCoupler(RBC):
                 continue
 
             aim_transform = self._gs_stored_states[link_idx][env_idx]
-
-            # Direct array access from IPC - O(1)
             transform_matrix = transforms[abd_body_idx]
-
-            # Copy needed: transforms/velocities are views into the UIPC buffer that get
-            # overwritten on the next call to _abd_state_feature.copy_to()
-            velocity = velocities[abd_body_idx].copy() if velocities is not None else None
 
             self.abd_data_by_link[(link_idx, env_idx)] = ABDLinkEntry(
                 transform=transform_matrix.copy(),
                 aim_transform=aim_transform,
-                velocity=velocity,
+                velocity=velocities[abd_body_idx].copy(),
             )
 
             # Write directly to pre-allocated coupling_data buffers
