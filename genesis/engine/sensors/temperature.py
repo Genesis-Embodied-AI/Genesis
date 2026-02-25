@@ -530,13 +530,7 @@ class TemperatureGridSensor(
         self._debug_objects: list = []
         self._debug_t_min: float = self._options.debug_temperature_range[0]
         self._debug_t_range: float = self._options.debug_temperature_range[1] - self._debug_t_min
-        # Precomputed for draw_debug: grid shape and cell-center offsets in grid coords (i+0.5, j+0.5, k+0.5)
-        nx, ny, nz = self._options.grid_size
-        self._debug_nx, self._debug_ny, self._debug_nz = nx, ny, nz
-        xs = np.arange(nx, dtype=gs.np_float) + 0.5
-        ys = np.arange(ny, dtype=gs.np_float) + 0.5
-        zs = np.arange(nz, dtype=gs.np_float) + 0.5
-        self._debug_cell_offsets: np.ndarray = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
+        self._debug_cell_local_positions: np.ndarray = np.array([])  # set in build
 
     def build(self):
         super().build()
@@ -642,6 +636,13 @@ class TemperatureGridSensor(
 
         dx, dy, dz = voxel_size.tolist()
         nx, ny, nz = grid_size_tensor.tolist()
+
+        xs = torch.arange(nx, device=gs.device, dtype=gs.tc_float) + 0.5
+        ys = torch.arange(ny, device=gs.device, dtype=gs.tc_float) + 0.5
+        zs = torch.arange(nz, device=gs.device, dtype=gs.tc_float) + 0.5
+        grid = torch.stack(torch.meshgrid(xs, ys, zs, indexing="ij"), dim=-1).reshape(-1, 3)
+        self._debug_cell_local_positions = (aabb_min_local.unsqueeze(0) + grid * voxel_size.unsqueeze(0)).cpu().numpy()
+
         K2_padded = _compute_K2_rfft3(nx * 2, ny * 2, nz * 2, dx, dy, dz)
         self._shared_metadata.K2_spectral.append(K2_padded)
 
@@ -661,7 +662,7 @@ class TemperatureGridSensor(
             self._shared_metadata.sensor_cache_start, current_cache_start, expand=(1,), dim=0
         )
 
-        # Contact area buffers: one area per contact per batch (n_c_max, n_batches); scratch (n_batches, n_c_max, len(_ScratchIdx))
+        # Contact area buffers
         n_c_max = int(solver.collider._collider_info.max_contact_pairs[None])
         self._shared_metadata.contact_area_buffer = torch.zeros(
             (n_c_max, solver._B), device=gs.device, dtype=gs.tc_float
@@ -760,7 +761,7 @@ class TemperatureGridSensor(
         output.clamp_(-MAX_TEMP, MAX_TEMP)
         if not shared_ground_truth_cache.is_contiguous():
             shared_ground_truth_cache.copy_(output)
-        # 4) Radiation and convection (grid then links)
+        # 4) Radiation and convection
         _apply_radiation_convection(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
@@ -821,14 +822,10 @@ class TemperatureGridSensor(
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
 
         i_s = self._idx
-        aabb_min = tensor_to_array(self._shared_metadata.aabb_min[i_s]).reshape(3)
-        aabb_extent = tensor_to_array(self._shared_metadata.aabb_extent[i_s]).reshape(3)
-        grid_cell_size = aabb_extent / np.array([self._debug_nx, self._debug_ny, self._debug_nz], dtype=np.float64)
+        voxel_size = tensor_to_array(self._shared_metadata.voxel_size[i_s]).reshape(3)
 
-        # All cell centers in link frame (nx*ny*nz, 3); cell_offsets precomputed in __init__
-        local_positions = aabb_min + self._debug_cell_offsets * grid_cell_size
         # World poses: same rotation as link, translation = link_T @ local_pos
-        world_trans = (link_T[:3, :3] @ local_positions.T).T + link_T[:3, 3]
+        world_trans = (link_T[:3, :3] @ self._debug_cell_local_positions.T).T + link_T[:3, 3]
         poses = np.tile(link_T[np.newaxis], (len(world_trans), 1, 1)).astype(np.float64)
         poses[:, :3, 3] = world_trans
 
@@ -842,7 +839,7 @@ class TemperatureGridSensor(
         # Blue (0,0,1) -> Red (1,0,0)
         colors = np.column_stack((norm, np.zeros_like(norm), 1.0 - norm, np.full_like(norm, 0.5)))
         for i, pose in enumerate(poses):
-            mesh = mu.create_box(extents=grid_cell_size, color=tuple(float(c) for c in colors[i]))
+            mesh = mu.create_box(extents=voxel_size, color=tuple(float(c) for c in colors[i]))
             self._debug_objects.append(context.draw_debug_mesh(mesh, T=pose))
 
     @property
