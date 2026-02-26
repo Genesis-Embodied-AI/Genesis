@@ -3,7 +3,6 @@ from typing import Optional
 import numpy as np
 
 import genesis as gs
-from genesis.utils.warnings import warn_once
 
 from .options import Options
 
@@ -291,9 +290,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
         For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
         When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
         is fully driven by IPC physics. Defaults to False.
-    fem_fem_friction_mu : float, optional
-        Deprecated. FEM-FEM friction is now derived from ``entity.material.friction_mu`` per entity and
-        combined with geometric mean. This field is no longer used. Defaults to 0.001.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -339,16 +335,7 @@ class IPCCouplerOptions(BaseCouplerOptions):
     enable_rigid_rigid_contact: bool = True
     two_way_coupling: bool = True
     enable_rigid_dofs_sync: bool = False
-    fem_fem_friction_mu: float = 0.001  # Deprecated: per-entity friction_mu is used instead
     free_base_driven_by_ipc: bool = False
-
-    def model_post_init(self, _):
-        super().model_post_init(_)
-        if "fem_fem_friction_mu" in self.model_fields_set:
-            warn_once(
-                "`IPCCouplerOptions.fem_fem_friction_mu` is deprecated and ignored. "
-                "Use per-entity material friction (`Rigid.coup_friction`, `FEM/Cloth.friction_mu`) instead."
-            )
 
 
 ############################ Solvers inside simulator ############################

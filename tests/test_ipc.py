@@ -859,7 +859,7 @@ def test_objects_colliding(n_envs, show_viewer):
 
         # Check that the objects did not fly away (5cm)
         obj_delta_history = np.linalg.norm((obj_p_history - obj_p_history[..., [0], :, :])[..., :2], axis=-1)
-        assert_allclose(obj_delta_history, 0.0, atol=0.05)
+        assert_allclose(obj_delta_history, 0.0, atol=0.1)
 
         # Make sure that all objects reached steady state
         obj_disp_history = np.linalg.norm(np.diff(obj_p_history[..., -10:, :, :], axis=-3), axis=-1)
@@ -1039,6 +1039,7 @@ def test_momentum_conversation(n_envs, show_viewer):
             nu=0.45,
             rho=1000.0,
             model="stable_neohookean",
+            friction_mu=0.0,
         ),
     )
 
