@@ -523,7 +523,6 @@ def func_convex_convex_contact(
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
     faces_info: array_class.FacesInfo,
-    edges_info: array_class.EdgesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
@@ -534,7 +533,6 @@ def func_convex_convex_contact(
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
     gjk_static_config: qd.template(),
-    sdf_info: array_class.SDFInfo,
     support_field_info: array_class.SupportFieldInfo,
     # FIXME: Passing nested data structure as input argument is not supported for now.
     diff_contact_input: array_class.DiffContactInput,
@@ -1022,7 +1020,6 @@ def func_narrow_phase_convex_vs_convex(
                         geoms_init_AABB=geoms_init_AABB,
                         verts_info=verts_info,
                         faces_info=faces_info,
-                        edges_info=edges_info,
                         rigid_global_info=rigid_global_info,
                         static_rigid_sim_config=static_rigid_sim_config,
                         collider_state=collider_state,
@@ -1033,7 +1030,6 @@ def func_narrow_phase_convex_vs_convex(
                         gjk_state=gjk_state,
                         gjk_info=gjk_info,
                         gjk_static_config=gjk_static_config,
-                        sdf_info=sdf_info,
                         support_field_info=support_field_info,
                         # FIXME: Passing nested data structure as input argument is not supported for now.
                         diff_contact_input=diff_contact_input,
@@ -1052,7 +1048,6 @@ def func_narrow_phase_convex_vs_convex(
                             geoms_init_AABB=geoms_init_AABB,
                             verts_info=verts_info,
                             faces_info=faces_info,
-                            edges_info=edges_info,
                             rigid_global_info=rigid_global_info,
                             static_rigid_sim_config=static_rigid_sim_config,
                             collider_state=collider_state,
@@ -1063,7 +1058,6 @@ def func_narrow_phase_convex_vs_convex(
                             gjk_state=gjk_state,
                             gjk_info=gjk_info,
                             gjk_static_config=gjk_static_config,
-                            sdf_info=sdf_info,
                             support_field_info=support_field_info,
                             # FIXME: Passing nested data structure as input argument is not supported for now.
                             diff_contact_input=diff_contact_input,

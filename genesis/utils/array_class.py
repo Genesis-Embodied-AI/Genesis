@@ -236,6 +236,10 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: V_ANNOTATION
     nt_vec: V_ANNOTATION
+    # Compacted list of constraints whose active state changed, used by incremental Cholesky update
+    # to reduce GPU thread divergence by iterating only over constraints that need processing.
+    incr_changed_idx: V_ANNOTATION
+    incr_n_changed: V_ANNOTATION
     # Backward gradients
     dL_dqacc: V_ANNOTATION
     dL_dM: V_ANNOTATION
@@ -310,6 +314,8 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
+        incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
+        incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
         active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
