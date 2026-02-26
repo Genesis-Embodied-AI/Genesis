@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 
 import genesis as gs
+from genesis.utils.warnings import warn_once
 
 from .options import Options
 
@@ -238,7 +239,10 @@ class IPCCouplerOptions(BaseCouplerOptions):
         (``coup_friction`` for Rigid, ``friction_mu`` for FEM/Cloth) via geometric mean for all contact
         pairs involving the ground. Defaults to 0.5.
     contact_resistance : float, optional
-        Contact resistance/stiffness. Defaults to 1e9.
+        Ground/default contact resistance/stiffness. It is used for ground contact pairs and
+        as the per-entity fallback when a material does not define ``contact_resistance``.
+        For ground pairs, it is combined with entity ``material.contact_resistance`` via
+        geometric mean. Defaults to 1e9.
     contact_eps_velocity : float, optional
         Epsilon velocity for contact. Defaults to None (use libuipc default: 0.01).
     contact_constitution : str, optional
@@ -337,6 +341,14 @@ class IPCCouplerOptions(BaseCouplerOptions):
     enable_rigid_dofs_sync: bool = False
     fem_fem_friction_mu: float = 0.001  # Deprecated: per-entity friction_mu is used instead
     free_base_driven_by_ipc: bool = False
+
+    def model_post_init(self, _):
+        super().model_post_init(_)
+        if "fem_fem_friction_mu" in self.model_fields_set:
+            warn_once(
+                "`IPCCouplerOptions.fem_fem_friction_mu` is deprecated and ignored. "
+                "Use per-entity material friction (`Rigid.coup_friction`, `FEM/Cloth.friction_mu`) instead."
+            )
 
 
 ############################ Solvers inside simulator ############################

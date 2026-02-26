@@ -36,6 +36,9 @@ class Cloth(Base):
         Default is "stable_neohookean".
     friction_mu : float, optional
         Friction coefficient. Default is 0.1.
+    contact_resistance : float | None, optional
+        IPC contact resistance/stiffness override. ``None`` uses the IPC coupler
+        global default. Default is None.
 
     Notes
     -----
@@ -64,9 +67,10 @@ class Cloth(Base):
         bending_stiffness=None,  # Optional bending stiffness
         model="stable_neohookean",  # FEM model (unused for cloth)
         friction_mu=0.1,
+        contact_resistance=None,
     ):
         # Call FEM base constructor
-        super().__init__(E=E, nu=nu, rho=rho, friction_mu=friction_mu)
+        super().__init__(E=E, nu=nu, rho=rho, friction_mu=friction_mu, contact_resistance=contact_resistance)
 
         # Cloth-specific properties
         self._thickness = thickness

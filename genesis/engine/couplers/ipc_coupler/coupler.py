@@ -809,45 +809,62 @@ class IPCCoupler(RBC):
         # All mass is handled by IPC, Genesis uses external_kinetic for kinematic coupling
 
     def _register_contact_pairs(self):
-        """Register pairwise contact models for all entity contact elements using per-material friction.
+        """Register pairwise contact models for all entity contact elements.
 
-        Friction for each pair is computed as the geometric mean of the two entities' friction
-        coefficients, matching the SAP coupler's convention. The ground surface friction is taken
-        from ``options.contact_friction_mu``.
+        Friction and resistance for each entity-entity pair are combined by geometric mean,
+        matching the SAP coupler's friction convention. When an entity material does not define
+        ``contact_resistance``, ``options.contact_resistance`` is used as the per-entity fallback.
+        Ground pairs combine entity parameters with ``options.contact_friction_mu`` and
+        ``options.contact_resistance``.
         """
         tab = self._ipc_scene.contact_tabular()
-        resistance = self.options.contact_resistance
-        ground_mu = self.options.contact_friction_mu  # ground surface friction coefficient
+        global_resistance = self.options.contact_resistance
+        ground_mu = self.options.contact_friction_mu
 
-        # Collect (ContactElement, friction_mu, is_abd) for all entity contact elements
+        def resolve_entity_resistance(material_resistance):
+            return global_resistance if material_resistance is None else material_resistance
+
+        def geom_mean_nonneg(a, b, name):
+            if a < 0 or b < 0:
+                gs.raise_exception(f"{name} must be non-negative to compute geometric mean, got values {a} and {b}.")
+            return (a * b) ** 0.5
+
+        # Collect (ContactElement, friction_mu, resistance, is_abd) for all entity contact elements.
         all_elems = []
         for i_e, entity in enumerate(self.fem_solver._entities):
+            mat = entity.material
+            mu = mat.friction_mu
+            resistance = resolve_entity_resistance(mat.contact_resistance)
             if i_e in self._ipc_cloth_contacts:
-                all_elems.append((self._ipc_cloth_contacts[i_e], entity.material.friction_mu, False))
+                all_elems.append((self._ipc_cloth_contacts[i_e], mu, resistance, False))
             elif i_e in self._ipc_fem_contacts:
-                all_elems.append((self._ipc_fem_contacts[i_e], entity.material.friction_mu, False))
+                all_elems.append((self._ipc_fem_contacts[i_e], mu, resistance, False))
         for entity_idx, elem in self._ipc_abd_contacts.items():
-            mu = self.rigid_solver._entities[entity_idx].material.coup_friction
-            all_elems.append((elem, mu, True))
+            mat = self.rigid_solver._entities[entity_idx].material
+            mu = mat.coup_friction
+            resistance = resolve_entity_resistance(mat.contact_resistance)
+            all_elems.append((elem, mu, resistance, True))
 
-        # Register entity-entity pairs (upper triangle including self-pairs)
-        for i, (elem_i, mu_i, is_abd_i) in enumerate(all_elems):
-            for elem_j, mu_j, is_abd_j in all_elems[i:]:
-                friction_ij = (mu_i * mu_j) ** 0.5
+        # Register entity-entity pairs (upper triangle including self-pairs).
+        for i, (elem_i, mu_i, res_i, is_abd_i) in enumerate(all_elems):
+            for elem_j, mu_j, res_j, is_abd_j in all_elems[i:]:
+                friction_ij = geom_mean_nonneg(mu_i, mu_j, "contact friction")
+                resistance_ij = geom_mean_nonneg(res_i, res_j, "contact resistance")
                 enabled = not (is_abd_i and is_abd_j) or self.options.enable_rigid_rigid_contact
-                tab.insert(elem_i, elem_j, friction_ij, resistance, enabled)
+                tab.insert(elem_i, elem_j, friction_ij, resistance_ij, enabled)
 
-        # Register ground contact pairs
-        for elem, mu, is_abd in all_elems:
-            friction_ground = (mu * ground_mu) ** 0.5
+        # Register ground contact pairs.
+        for elem, mu, resistance, is_abd in all_elems:
+            friction_ground = geom_mean_nonneg(mu, ground_mu, "ground contact friction")
+            resistance_ground = geom_mean_nonneg(resistance, global_resistance, "ground contact resistance")
             enabled = not is_abd or self.options.enable_rigid_ground_contact
-            tab.insert(self._ipc_ground_contact, elem, friction_ground, resistance, enabled)
+            tab.insert(self._ipc_ground_contact, elem, friction_ground, resistance_ground, enabled)
 
-        # Register no_collision pairs (always disabled)
-        for elem, _mu, _is_abd in all_elems:
-            tab.insert(self._ipc_no_collision_contact, elem, 0.0, resistance, False)
-        tab.insert(self._ipc_no_collision_contact, self._ipc_ground_contact, 0.0, resistance, False)
-        tab.insert(self._ipc_no_collision_contact, self._ipc_no_collision_contact, 0.0, resistance, False)
+        # Register no_collision pairs (always disabled).
+        for elem, _mu, _res, _is_abd in all_elems:
+            tab.insert(self._ipc_no_collision_contact, elem, 0.0, global_resistance, False)
+        tab.insert(self._ipc_no_collision_contact, self._ipc_ground_contact, 0.0, global_resistance, False)
+        tab.insert(self._ipc_no_collision_contact, self._ipc_no_collision_contact, 0.0, global_resistance, False)
 
     def _finalize_ipc(self):
         """Finalize IPC setup and initialize AffineBodyStateAccessorFeature"""
