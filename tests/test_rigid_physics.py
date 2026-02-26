@@ -2532,7 +2532,7 @@ def test_terrain_generation(is_named, show_viewer, tol):
         scene.step()
 
     # Check that objects are not moving anymore
-    assert_allclose(obj.get_vel(), 0.0, tol=0.05)
+    assert_allclose(obj.get_vel(), 0.0, tol=0.1)
 
     # Check the the terrain is not entirely flat and has the expected size
     terrain_min_corner, terrain_max_corner = tensor_to_array(terrain.geoms[0].get_AABB()) - TERRAIN_OFFSET

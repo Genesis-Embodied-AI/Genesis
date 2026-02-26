@@ -85,45 +85,23 @@ def _animate_rigid_link(coupler_ref, env_idx, link_idx, info):
     if coupler is None:
         gs.raise_exception("IPCCoupler was garbage collected while animator callback is still active.")
 
-    geo_slots = info.geo_slots()
-    if len(geo_slots) == 0:
+    geom_slots = info.geo_slots()
+    if not geom_slots:
         return
-    geo = geo_slots[0].geometry()
+    geom = geom_slots[0].geometry()
 
-    try:
-        # Read stored Genesis transform (q_genesis^n)
-        # This was stored in _store_gs_rigid_states() before advance()
-        if coupler._gs_stored_states is not None:
-            stored_states = coupler._gs_stored_states
-            if link_idx in stored_states and env_idx in stored_states[link_idx]:
-                transform_matrix = stored_states[link_idx][env_idx]
+    # Read stored Genesis transform (q_genesis^n)
+    # This was stored in _store_gs_rigid_states() before advance()
+    transform_matrix = coupler._gs_stored_states[link_idx][env_idx]
+    if transform_matrix is None:
+        return
 
-                # Enable constraint and set target transform
-                is_constrained = geo.instances().find(builtin.is_constrained)
-                aim_transform_attr = geo.instances().find(builtin.aim_transform)
-
-                if is_constrained and aim_transform_attr:
-                    view(is_constrained)[0] = 1
-                    view(aim_transform_attr)[:] = transform_matrix
-
-        # Update external force if user has set it
-        if coupler._external_force_data is not None:
-            force_data = coupler._external_force_data
-            force_attr = geo.instances().find("external_force")
-            is_constrained_attr = geo.instances().find("is_constrained")
-            key = (link_idx, env_idx)
-            if key in force_data:
-                if force_attr is not None:
-                    force_vector = force_data[key]
-                    view(force_attr)[:] = force_vector[:, None]
-
-                if is_constrained_attr is not None:
-                    view(is_constrained_attr)[:] = 1
-            else:
-                if force_attr is not None:
-                    view(force_attr)[:] = np.zeros((12, 1), dtype=np.float64)
-    except (ValueError, RuntimeError, KeyError) as e:
-        gs.raise_exception_from(f"Error setting IPC animation target for link {link_idx}, env {env_idx}.", e)
+    # Enable constraint and set target transform
+    is_constrained_attr = geom.instances().find(builtin.is_constrained)
+    aim_transform_attr = geom.instances().find(builtin.aim_transform)
+    assert is_constrained_attr and aim_transform_attr
+    view(is_constrained_attr)[0] = 1
+    view(aim_transform_attr)[:] = transform_matrix
 
 
 class IPCCoupler(RBC):
@@ -215,10 +193,6 @@ class IPCCoupler(RBC):
         # Storage for IPC contact forces on rigid links (both coupling mode)
         # Maps link_idx -> {env_idx: ContactForceEntry}
         self._ipc_contact_forces = {}
-
-        # Storage for external force data for rigid links
-        # Maps (link_idx, env_idx) -> force_vector (12D numpy array)
-        self._external_force_data = {}
 
         # Pre-computed mapping from vertex index to rigid link (built once during IPC setup)
         # Maps global_vertex_idx -> (link_idx, env_idx, local_vertex_idx)
@@ -828,7 +802,7 @@ class IPCCoupler(RBC):
                             if self._ipc_animator is None:
                                 self._ipc_animator = self._ipc_scene.animator()
 
-                            animate_func = self._make_animate_callback(i_b, link_idx)
+                            animate_func = partial(_animate_rigid_link, weakref.ref(self), i_b, link_idx)
                             self._ipc_animator.insert(rigid_obj, animate_func)
 
                         self._rigid_meshes_handle[f"rigid_link_{i_b}_{link_idx}"] = merged_mesh
@@ -967,10 +941,6 @@ class IPCCoupler(RBC):
                     f"Entity {entity_idx}: IPC collision disabled for "
                     f"{len(self._link_collision_settings.get(entity_idx, {}))} link(s)"
                 )
-
-    def _make_animate_callback(self, env_idx, link_idx):
-        """Create an animator callback for a soft-constraint coupled rigid link."""
-        return partial(_animate_rigid_link, weakref.ref(self), env_idx, link_idx)
 
     @property
     def has_any_rigid_coupling(self) -> bool:
@@ -1359,7 +1329,12 @@ class IPCCoupler(RBC):
             for env_idx in range(self.sim._B):
                 abd_entry = self.abd_data_by_link[(entity.base_link_idx, env_idx)]
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
-                self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
+                # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
+                # self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
+                entity.set_dofs_velocity(
+                    envs_idx=env_idx if self.sim.n_envs > 0 else None,
+                    skip_forward=True,
+                )
 
             self.rigid_solver.set_qpos(
                 envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
