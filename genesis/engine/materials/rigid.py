@@ -66,7 +66,7 @@ class Rigid(Material):
         sdf_cell_size=0.005,
         sdf_min_res=32,
         sdf_max_res=128,
-        gravity_compensation=0,
+        gravity_compensation=0.0,
         coupling_mode=None,
         coupling_link_filter=None,
         enable_coupling_collision=True,
