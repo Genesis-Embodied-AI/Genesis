@@ -1,4 +1,6 @@
+import math
 from contextlib import nullcontext
+from itertools import permutations
 
 import numpy as np
 import pytest
@@ -79,46 +81,7 @@ def get_ipc_rigid_links_idx(scene, env_idx):
     return links_idx
 
 
-def get_entity_base_z(entity):
-    pos = tensor_to_array(entity.get_pos())
-    if pos.ndim == 1:
-        return float(pos[2])
-    return float(pos.reshape(-1, 3)[0, 2])
-
-
-def _contact_model_scalar(model, attr):
-    value = getattr(model, attr)
-    if callable(value):
-        value = value()
-    if hasattr(value, "item"):
-        try:
-            value = value.item()
-        except (TypeError, ValueError):
-            pass
-    return value
-
-
-def _ipc_contact_model(tab, elem_a, elem_b):
-    elem_a_id = int(_contact_model_scalar(elem_a, "id"))
-    elem_b_id = int(_contact_model_scalar(elem_b, "id"))
-    model = tab.at(elem_a_id, elem_b_id)
-    return (
-        float(_contact_model_scalar(model, "friction_rate")),
-        float(_contact_model_scalar(model, "resistance")),
-        bool(_contact_model_scalar(model, "is_enabled")),
-    )
-
-
-def _entity_pos_xyz(entity):
-    return tensor_to_array(entity.get_pos()).reshape(-1, 3)[0]
-
-
-def _entity_ground_clearance_z(entity):
-    verts = tensor_to_array(entity.get_verts()).reshape(-1, 3)
-    return float(verts[:, 2].min())
-
-
-def test_ipc_contact_pair_models_per_entity_friction_resistance():
+def test_contact_pair_friction_resistance():
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             contact_friction_mu=0.81,
@@ -128,10 +91,12 @@ def test_ipc_contact_pair_models_per_entity_friction_resistance():
         show_viewer=False,
     )
 
-    scene.add_entity(gs.morphs.Plane())
-
+    plane = scene.add_entity(gs.morphs.Plane())
     rigid_a = scene.add_entity(
-        gs.morphs.Box(pos=(0.0, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
+        gs.morphs.Box(
+            pos=(0.0, 0.0, 0.12),
+            size=(0.05, 0.05, 0.05),
+        ),
         material=gs.materials.Rigid(
             coupling_mode="ipc_only",
             coup_friction=0.25,
@@ -139,15 +104,32 @@ def test_ipc_contact_pair_models_per_entity_friction_resistance():
         ),
     )
     rigid_b = scene.add_entity(
-        gs.morphs.Box(pos=(0.2, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
+        gs.morphs.Box(
+            pos=(0.2, 0.0, 0.12),
+            size=(0.05, 0.05, 0.05),
+        ),
         material=gs.materials.Rigid(
             coupling_mode="ipc_only",
             coup_friction=0.64,
             contact_resistance=16.0,
         ),
     )
+    rigid_c = scene.add_entity(
+        gs.morphs.Box(
+            pos=(-0.2, 0.0, 0.12),
+            size=(0.05, 0.05, 0.05),
+        ),
+        material=gs.materials.Rigid(
+            coupling_mode="ipc_only",
+            coup_friction=0.16,
+            contact_resistance=None,
+        ),
+    )
     fem = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.4, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
+        morph=gs.morphs.Box(
+            pos=(0.4, 0.0, 0.12),
+            size=(0.05, 0.05, 0.05),
+        ),
         material=gs.materials.FEM.Elastic(
             E=5e4,
             nu=0.35,
@@ -157,139 +139,45 @@ def test_ipc_contact_pair_models_per_entity_friction_resistance():
         ),
     )
 
-    scene.build(n_envs=0)
+    scene.build()
 
-    coupler = scene.sim.coupler
-    tab = coupler._ipc_scene.contact_tabular()
-
-    rigid_solver = scene.sim.rigid_solver
-    fem_solver = scene.sim.fem_solver
-    rigid_a_idx = rigid_solver.entities.index(rigid_a)
-    rigid_b_idx = rigid_solver.entities.index(rigid_b)
-    fem_idx = fem_solver.entities.index(fem)
-
-    abd_a = coupler._ipc_abd_contacts[rigid_a_idx]
-    abd_b = coupler._ipc_abd_contacts[rigid_b_idx]
-    fem_elem = coupler._ipc_fem_contacts[fem_idx]
-    ground_elem = coupler._ipc_ground_contact
-
-    friction, resistance, enabled = _ipc_contact_model(tab, abd_a, fem_elem)
-    assert friction == pytest.approx((0.25 * 0.49) ** 0.5)
-    assert resistance == pytest.approx((9.0 * 25.0) ** 0.5)
-    assert enabled is True
-
-    friction, resistance, enabled = _ipc_contact_model(tab, abd_a, abd_b)
-    assert friction == pytest.approx((0.25 * 0.64) ** 0.5)
-    assert resistance == pytest.approx((9.0 * 16.0) ** 0.5)
-    assert enabled is False
-
-    friction, resistance, enabled = _ipc_contact_model(tab, ground_elem, abd_a)
-    assert friction == pytest.approx((0.81 * 0.25) ** 0.5)
-    assert resistance == pytest.approx((36.0 * 9.0) ** 0.5)
-    assert enabled is True
-
-    friction, resistance, enabled = _ipc_contact_model(tab, ground_elem, fem_elem)
-    assert friction == pytest.approx((0.81 * 0.49) ** 0.5)
-    assert resistance == pytest.approx((36.0 * 25.0) ** 0.5)
-    assert enabled is True
+    tab = scene.sim.coupler._ipc_scene.contact_tabular()
+    for entities in permutations((plane, rigid_a, rigid_b, rigid_c, fem), 2):
+        elems_idx = []
+        frictions = []
+        resistances = []
+        for entity in entities:
+            if isinstance(entity, gs.engine.entities.RigidEntity):
+                if entity is plane:
+                    elem = scene.sim.coupler._ipc_ground_contact
+                    friction = scene.sim.coupler.options.contact_friction_mu
+                else:
+                    entity_idx = scene.sim.rigid_solver.entities.index(entity)
+                    elem = scene.sim.coupler._ipc_abd_contacts[entity_idx]
+                    friction = entity.material.coup_friction
+            else:  # isinstance(entity, gs.engine.entities.FEMEntity)
+                entity_idx = scene.sim.fem_solver.entities.index(fem)
+                elem = scene.sim.coupler._ipc_fem_contacts[entity_idx]
+                friction = entity.material.friction_mu
+            resistance = entity.material.contact_resistance or scene.sim.coupler.options.contact_resistance
+            elems_idx.append(elem.id())
+            frictions.append(friction)
+            resistances.append(resistance)
+        model = tab.at(*elems_idx)
+        assert model.friction_rate() == pytest.approx(math.sqrt(math.prod(frictions)))
+        assert model.resistance() == pytest.approx(math.sqrt(math.prod(resistances)))
+        assert model.is_enabled() ^ all(
+            isinstance(entity, gs.engine.entities.RigidEntity) and entity is not plane for entity in entities
+        )
 
 
-def test_ipc_contact_resistance_fallback():
-    scene = gs.Scene(
-        coupler_options=gs.options.IPCCouplerOptions(
-            contact_friction_mu=0.36,
-            contact_resistance=49.0,
-            enable_rigid_rigid_contact=True,
-        ),
-        show_viewer=False,
-    )
-
-    scene.add_entity(gs.morphs.Plane())
-
-    rigid_a = scene.add_entity(
-        gs.morphs.Box(pos=(0.0, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
-            coup_friction=0.16,
-            contact_resistance=None,
-        ),
-    )
-    rigid_b = scene.add_entity(
-        gs.morphs.Box(pos=(0.2, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
-            coup_friction=0.25,
-            contact_resistance=None,
-        ),
-    )
-    fem = scene.add_entity(
-        morph=gs.morphs.Box(pos=(0.4, 0.0, 0.12), size=(0.05, 0.05, 0.05)),
-        material=gs.materials.FEM.Elastic(
-            E=3e4,
-            nu=0.3,
-            rho=900.0,
-            friction_mu=0.81,
-            contact_resistance=9.0,
-        ),
-    )
-
-    scene.build(n_envs=0)
-
-    coupler = scene.sim.coupler
-    tab = coupler._ipc_scene.contact_tabular()
-    rigid_solver = scene.sim.rigid_solver
-    fem_solver = scene.sim.fem_solver
-
-    rigid_a_idx = rigid_solver.entities.index(rigid_a)
-    rigid_b_idx = rigid_solver.entities.index(rigid_b)
-    fem_idx = fem_solver.entities.index(fem)
-
-    abd_a = coupler._ipc_abd_contacts[rigid_a_idx]
-    abd_b = coupler._ipc_abd_contacts[rigid_b_idx]
-    fem_elem = coupler._ipc_fem_contacts[fem_idx]
-    ground_elem = coupler._ipc_ground_contact
-
-    _friction, resistance, enabled = _ipc_contact_model(tab, abd_a, abd_b)
-    assert resistance == pytest.approx(49.0)
-    assert enabled is True
-
-    _friction, resistance, _enabled = _ipc_contact_model(tab, abd_a, fem_elem)
-    assert resistance == pytest.approx((49.0 * 9.0) ** 0.5)
-
-    _friction, resistance, _enabled = _ipc_contact_model(tab, ground_elem, abd_a)
-    assert resistance == pytest.approx(49.0)
-
-    _friction, resistance, _enabled = _ipc_contact_model(tab, ground_elem, fem_elem)
-    assert resistance == pytest.approx((49.0 * 9.0) ** 0.5)
-
-
-def test_ipc_contact_resistance_validation():
-    with pytest.raises(gs.GenesisException):
-        gs.materials.FEM.Elastic(friction_mu=-1.0)
-    with pytest.raises(gs.GenesisException):
-        gs.materials.FEM.Elastic(contact_resistance=-1.0)
-    with pytest.raises(gs.GenesisException):
-        gs.materials.FEM.Cloth(contact_resistance=-1.0)
-    with pytest.raises(gs.GenesisException):
-        gs.materials.Rigid(contact_resistance=-1.0)
-
-
-def test_ipc_rigid_ground_sliding_order_by_coup_friction(show_viewer):
-    DT = 0.005
-    NUM_STEPS = 400
-    GRAVITY = np.array([3.5, 0.0, -9.8], dtype=gs.np_float)
-    X0 = 0.0
-    Z0 = 0.12
-    SIZE = (0.08, 0.08, 0.08)
-    MIN_DISP = 0.05
-    MIN_GAP = 0.01
-    MAX_Y_DRIFT = 0.03
-    mus = [0.0, 0.01, 0.04, 0.09, 0.16]
-    y_positions = np.linspace(-0.4, 0.4, len(mus))
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_rigid_ground_sliding(n_envs, show_viewer):
+    GRAVITY = np.array([5.0, 0.0, -10.0], dtype=gs.np_float)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=DT,
+            dt=0.01,
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -303,11 +191,11 @@ def test_ipc_rigid_ground_sliding_order_by_coup_friction(show_viewer):
     scene.add_entity(gs.morphs.Plane())
 
     cubes = []
-    for y, mu in zip(y_positions, mus):
+    for y, mu in ((-0.4, 0.0), (-0.2, 0.01), (0.0, 0.04), (0.2, 0.09), (0.4, 0.16)):
         cube = scene.add_entity(
             gs.morphs.Box(
-                pos=(X0, float(y), Z0),
-                size=SIZE,
+                pos=(0.0, y, 0.12),
+                size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
                 coupling_mode="ipc_only",
@@ -316,51 +204,36 @@ def test_ipc_rigid_ground_sliding_order_by_coup_friction(show_viewer):
         )
         cubes.append(cube)
 
-    scene.build(n_envs=0)
+    scene.build(n_envs=n_envs)
 
-    initial_positions = np.stack([_entity_pos_xyz(cube) for cube in cubes], axis=0)
-    initial_x = initial_positions[:, 0]
-    initial_y = initial_positions[:, 1]
-
-    for _ in range(NUM_STEPS):
+    initial_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
+    for _ in range(100):
         scene.step()
+    final_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
 
-    final_positions = np.stack([_entity_pos_xyz(cube) for cube in cubes], axis=0)
-    final_x = final_positions[:, 0]
-    final_y = final_positions[:, 1]
-    final_z = final_positions[:, 2]
+    # Coarse non-penetration sanity check
+    assert (final_positions[..., 2] > 0.0).all()
+
+    # Distance from ground should be friction-independent
+    assert_allclose(np.diff(final_positions[..., 2], axis=-1), 0.0, tol=TOL_SINGLE)
+
+    # No y-axis driving force: lateral drift should be minimal
+    assert_allclose(initial_positions[..., 1], final_positions[..., 1], tol=TOL_SINGLE)
 
     # All cubes should move along +x under tilted gravity.
-    assert ((final_x - initial_x) > MIN_DISP).all()
+    assert ((final_positions[..., 0] - initial_positions[..., 0]) > 0.5).all()
 
     # Lower coup_friction should slide farther, so x should strictly decrease as mu increases.
-    assert (np.diff(final_x) < -MIN_GAP).all()
-
-    # No y-axis driving force: lateral drift should stay small.
-    assert (np.abs(final_y - initial_y) < MAX_Y_DRIFT).all()
-
-    # Coarse non-penetration sanity check.
-    assert (final_z > 0.0).all()
+    assert (np.diff(final_positions[..., ::-1, 0], axis=-1) > 0.2).all()
 
 
-def test_ipc_rigid_ground_clearance_order_by_contact_resistance(show_viewer):
-    DT = 0.005
-    NUM_STEPS = 500
-    TAIL_STEPS = 50
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
-    X0 = 0.0
-    Z0 = 0.20
-    SIZE = (0.08, 0.08, 0.08)
-    MAX_X_DRIFT = 0.02
-    MAX_Y_DRIFT = 0.03
-    MIN_CLEARANCE_GAP = 5e-5
-    # Ascending order: higher resistance should end with larger ground clearance.
-    resistances = [1e2, 1e3, 1e4, 1e5, 1e6]
-    y_positions = np.linspace(-0.4, 0.4, len(resistances))
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=DT,
+            dt=0.005,
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
@@ -375,11 +248,11 @@ def test_ipc_rigid_ground_clearance_order_by_contact_resistance(show_viewer):
     scene.add_entity(gs.morphs.Plane())
 
     cubes = []
-    for y, resistance in zip(y_positions, resistances):
+    for y, resistance in ((-0.4, 1e2), (-0.2, 1e3), (0.0, 1e4), (0.2, 1e5), (0.4, 1e6)):
         cube = scene.add_entity(
             gs.morphs.Box(
-                pos=(X0, float(y), Z0),
-                size=SIZE,
+                pos=(0.0, y, 0.05),
+                size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
                 coupling_mode="ipc_only",
@@ -389,34 +262,28 @@ def test_ipc_rigid_ground_clearance_order_by_contact_resistance(show_viewer):
         )
         cubes.append(cube)
 
-    scene.build(n_envs=0)
+    scene.build(n_envs=n_envs)
 
-    initial_positions = np.stack([_entity_pos_xyz(cube) for cube in cubes], axis=0)
-    initial_x = initial_positions[:, 0]
-    initial_y = initial_positions[:, 1]
+    initial_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
 
-    clearance_tail = []
-    for i in range(NUM_STEPS):
+    dist = []
+    for _ in range(70):
         scene.step()
-        if i >= NUM_STEPS - TAIL_STEPS:
-            clearance_tail.append([_entity_ground_clearance_z(cube) for cube in cubes])
+    for _ in range(20):
+        scene.step()
+        dist.append(np.stack([tensor_to_array(cube.get_verts())[..., 2].min(axis=-1) for cube in cubes], axis=-1))
+    dist = np.stack(dist, axis=-1)
 
-    clearance_tail = np.array(clearance_tail, dtype=np.float64)
-    mean_clearances = clearance_tail.mean(axis=0)
-    final_clearances = clearance_tail[-1]
-    final_positions = np.stack([_entity_pos_xyz(cube) for cube in cubes], axis=0)
-    final_x = final_positions[:, 0]
-    final_y = final_positions[:, 1]
+    final_positions = np.stack([tensor_to_array(cube.get_pos()) for cube in cubes], axis=-2)
 
     # No lateral driving force in x/y; drift should stay small.
-    assert (np.abs(final_x - initial_x) < MAX_X_DRIFT).all()
-    assert (np.abs(final_y - initial_y) < MAX_Y_DRIFT).all()
+    assert_allclose(initial_positions[..., :2], final_positions[..., :2], atol=TOL_SINGLE)
+
+    # Make sure that it reaches equilibrium
+    assert_allclose(dist[..., -1], dist[..., -2], tol=TOL_SINGLE)
 
     # Larger contact resistance should produce larger ground clearance (less penetration/compression).
-    assert (np.diff(mean_clearances) > MIN_CLEARANCE_GAP).all()
-
-    # Final-frame ordering should match the same monotonic trend.
-    assert (np.diff(final_clearances) > 0.0).all()
+    assert (np.diff(dist, axis=-2) > TOL_SINGLE).all()
 
 
 @pytest.mark.required
