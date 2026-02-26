@@ -1296,29 +1296,7 @@ class IPCCoupler(RBC):
                 self.rigid_solver.set_base_links_quat(quat_wxyz, [base_link_idx], envs_idx=envs_idx, relative=False)
 
                 # Set base link velocities from IPC if available
-                ipc_velocity = abd_entry.velocity
-                if ipc_velocity is not None:
-                    linear_vel = ipc_velocity[:3, 3]
-
-                    # omega_skew = dR/dt @ R^T
-                    R_current = ipc_transform[:3, :3]
-                    dR_dt = ipc_velocity[:3, :3]
-                    omega_skew = dR_dt @ R_current.T
-
-                    angular_vel = np.array(
-                        [
-                            (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
-                            (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
-                            (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
-                        ]
-                    )
-
-                    base_dof_velocity = np.concatenate([linear_vel, angular_vel], dtype=gs.np_float)
-                    entity.set_dofs_velocity(
-                        base_dof_velocity,
-                        dofs_idx_local=slice(None, 6),
-                        envs_idx=env_idx if self.sim.n_envs > 0 else None,
-                    )
+                self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
 
         # Update ref_dof_prev for next timestep
         for idx in range(ad.n_entities):
@@ -1334,6 +1312,29 @@ class IPCCoupler(RBC):
                         key = (idx, joint_idx, env_idx)
                         ad.prev_link_transforms[key] = self._gs_stored_states[child_link_idx][env_idx].copy()
 
+    def _apply_base_link_velocity_from_ipc(self, entity, abd_entry, env_idx):
+        ipc_velocity = abd_entry.velocity
+        if ipc_velocity is None:
+            return
+        ipc_transform = abd_entry.transform
+        linear_vel = ipc_velocity[:3, 3]
+        # omega_skew = dR/dt @ R^T
+        R_current = ipc_transform[:3, :3]
+        dR_dt = ipc_velocity[:3, :3]
+        omega_skew = dR_dt @ R_current.T
+        angular_vel = np.array(
+            [
+                (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
+                (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
+                (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
+            ]
+        )
+        entity.set_dofs_velocity(
+            np.concatenate([linear_vel, angular_vel], dtype=gs.np_float),
+            dofs_idx_local=slice(None, 6),
+            envs_idx=env_idx if self.sim.n_envs > 0 else None,
+        )
+
     # ============================================================
     # Section 4: IPC-Only Coupling
     # ============================================================
@@ -1348,7 +1349,6 @@ class IPCCoupler(RBC):
         if not entity_indices:
             return
 
-        # FIXME: Velocity of 'ipc_only' entities is not updated.
         envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
         for entity_idx in entity_indices:
             entity = self.rigid_solver._entities[entity_idx]
@@ -1356,8 +1356,10 @@ class IPCCoupler(RBC):
                 continue
 
             for env_idx in range(self.sim._B):
-                ipc_transform = self.abd_data_by_link[(entity.base_link_idx, env_idx)].transform
+                abd_entry = self.abd_data_by_link[(entity.base_link_idx, env_idx)]
+                ipc_transform = abd_entry.transform
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(ipc_transform)
+                self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
 
             self.rigid_solver.set_qpos(
                 envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
