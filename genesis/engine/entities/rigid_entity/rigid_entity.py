@@ -655,8 +655,6 @@ class RigidEntity(Entity):
         base_l_info, base_j_info, base_g_info = l_infos[0], links_j_infos[0], links_g_infos[0]
         if (
             len(l_infos) > 1
-            and (np.abs(l_infos[1]["pos"]) < gs.EPS).all()
-            and (np.abs(l_infos[1]["quat"] - (1, 0, 0, 0)) < gs.EPS).all()
             and (base_l_info["name"] == "world" and base_j_info and base_j_info[0]["name"] == "world")
             and sum(j_info["n_dofs"] for j_info in base_j_info) == 0
             and not base_g_info
