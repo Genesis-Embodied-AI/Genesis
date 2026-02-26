@@ -66,19 +66,17 @@ class ForceBatch:
 
 
 class IPCCouplingData:
-    """Pre-allocated numpy arrays for coupling force computation."""
+    """Pre-allocated arrays for coupling force computation, sized exactly at build time."""
 
-    def __init__(self, max_links):
-        # Pre-allocated numpy buffers for coupling force computation
-        self.link_indices = np.empty(max_links, dtype=gs.np_int)
-        self.env_indices = np.empty(max_links, dtype=gs.np_int)
-        self.ipc_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
-        self.aim_transforms = np.empty((max_links, 4, 4), dtype=gs.np_float)
-        self.link_masses = np.empty(max_links, dtype=gs.np_float)
-        self.inertia_tensors = np.empty((max_links, 3, 3), dtype=gs.np_float)
-        self.out_forces = np.empty((max_links, 3), dtype=gs.np_float)
-        self.out_torques = np.empty((max_links, 3), dtype=gs.np_float)
-        self.n_items = 0
+    def __init__(self, n):
+        self.link_indices = np.empty(n, dtype=gs.np_int)
+        self.env_indices = np.empty(n, dtype=gs.np_int)
+        self.ipc_transforms = np.empty((n, 4, 4), dtype=gs.np_float)
+        self.aim_transforms = np.empty((n, 4, 4), dtype=gs.np_float)
+        self.link_masses = np.empty(n, dtype=gs.np_float)
+        self.inertia_tensors = np.empty((n, 3, 3), dtype=gs.np_float)
+        self.out_forces = np.empty((n, 3), dtype=gs.np_float)
+        self.out_torques = np.empty((n, 3), dtype=gs.np_float)
 
 
 class ArticulationData:

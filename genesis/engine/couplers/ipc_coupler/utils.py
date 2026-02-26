@@ -282,102 +282,33 @@ def read_ipc_geometry_metadata(geo):
     """
     Read solver_type, env_idx, and entity/link index from IPC geometry metadata.
 
-    Parameters
-    ----------
-    geo : Geometry
-        An IPC geometry with meta attributes
-
-    Returns
-    -------
-    tuple or None
-        (solver_type, env_idx, idx) where idx is entity_idx for fem/cloth
-        or link_idx for rigid. Returns None if metadata is missing/invalid.
+    Returns (solver_type, env_idx, idx) where idx is entity_idx for fem/cloth
+    or link_idx for rigid. Returns None if the geometry has no solver_type
+    metadata (i.e. not a Genesis-created geometry).
     """
-    try:
-        meta_attrs = geo.meta()
-        solver_type_attr = meta_attrs.find("solver_type")
-
-        if not solver_type_attr or solver_type_attr.name() != "solver_type":
-            return None
-
-        solver_type_view = solver_type_attr.view()
-        if len(solver_type_view) == 0:
-            return None
-        solver_type = str(solver_type_view[0])
-
-        env_idx_attr = meta_attrs.find("env_idx")
-        if not env_idx_attr:
-            return None
-        env_idx = int(str(env_idx_attr.view()[0]))
-
-        if solver_type == "rigid":
-            link_idx_attr = meta_attrs.find("link_idx")
-            if not link_idx_attr:
-                return None
-            idx = int(str(link_idx_attr.view()[0]))
-        elif solver_type in ("fem", "cloth"):
-            entity_idx_attr = meta_attrs.find("entity_idx")
-            if not entity_idx_attr:
-                return None
-            idx = int(str(entity_idx_attr.view()[0]))
-        else:
-            return None
-
-        return (solver_type, env_idx, idx)
-    except Exception:
+    meta_attrs = geo.meta()
+    solver_type_attr = meta_attrs.find("solver_type")
+    if solver_type_attr is None:
         return None
+
+    (solver_type,) = solver_type_attr.view()
+    solver_type = str(solver_type)
+
+    (env_idx,) = map(int, meta_attrs.find("env_idx").view())
+
+    if solver_type == "rigid":
+        (idx,) = map(int, meta_attrs.find("link_idx").view())
+    elif solver_type in ("fem", "cloth"):
+        (idx,) = map(int, meta_attrs.find("entity_idx").view())
+    else:
+        gs.raise_exception(f"Unknown IPC geometry solver_type: {solver_type!r}")
+
+    return (solver_type, env_idx, idx)
 
 
 # ============================================================
 # Numpy computation functions (replacing Quadrants kernels)
 # ============================================================
-
-
-@nb.jit(nopython=True, cache=True)
-def compute_external_force_12d(contact_forces, contact_torques, abd_transforms):
-    """
-    Compute 12D external force from contact forces and torques.
-
-    force_12d = [force (3), M_affine (9)]
-    where M_affine = skew(torque) @ A, A is the rotation part of ABD transform.
-
-    Parameters
-    ----------
-    contact_forces : np.ndarray, shape (n, 3)
-    contact_torques : np.ndarray, shape (n, 3)
-    abd_transforms : np.ndarray, shape (n, 4, 4)
-
-    Returns
-    -------
-    np.ndarray, shape (n, 12)
-    """
-    n = contact_forces.shape[0]
-    out = np.zeros((n, 12), dtype=contact_forces.dtype)
-
-    for i in range(n):
-        fx = -0.5 * contact_forces[i, 0]
-        fy = -0.5 * contact_forces[i, 1]
-        fz = -0.5 * contact_forces[i, 2]
-        out[i, 0] = fx
-        out[i, 1] = fy
-        out[i, 2] = fz
-
-        tx = -0.5 * contact_torques[i, 0]
-        ty = -0.5 * contact_torques[i, 1]
-        tz = -0.5 * contact_torques[i, 2]
-
-        # S = skew(torque), A = abd_transforms[i, :3, :3]
-        # M = S @ A, then flatten to 9 elements
-        A = abd_transforms[i, :3, :3]
-        for j in range(3):
-            # S @ A column j = [(-tz*A[1,j] + ty*A[2,j]),
-            #                   ( tz*A[0,j] - tx*A[2,j]),
-            #                   (-ty*A[0,j] + tx*A[1,j])]
-            out[i, 3 + 0 * 3 + j] = -tz * A[1, j] + ty * A[2, j]
-            out[i, 3 + 1 * 3 + j] = tz * A[0, j] - tx * A[2, j]
-            out[i, 3 + 2 * 3 + j] = -ty * A[0, j] + tx * A[1, j]
-
-    return out
 
 
 @nb.jit(nopython=True, cache=True)
@@ -454,46 +385,5 @@ def compute_coupling_forces(
             for m in range(3):
                 val += I_world[k, m] * rotvec[m]
             out_torques[i, k] = scale * val
-
-    return out_forces, out_torques
-
-
-def compute_link_contact_forces(
-    force_gradients,
-    link_indices,
-    env_indices,
-    vert_positions,
-    link_centers,
-    max_links,
-    max_envs,
-):
-    """
-    Compute contact forces and torques for rigid links from vertex gradients.
-    Uses np.add.at for accumulation (equivalent to atomic add).
-
-    Parameters
-    ----------
-    force_gradients : np.ndarray, shape (n, 3)
-    link_indices : np.ndarray, shape (n,), int
-    env_indices : np.ndarray, shape (n,), int
-    vert_positions : np.ndarray, shape (n, 3)
-    link_centers : np.ndarray, shape (n, 3)
-    max_links : int
-    max_envs : int
-
-    Returns
-    -------
-    tuple of (out_forces, out_torques), each shape (max_links, max_envs, 3)
-    """
-    out_forces = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
-    out_torques = np.zeros((max_links, max_envs, 3), dtype=force_gradients.dtype)
-
-    forces = -force_gradients  # (n, 3)
-    r = vert_positions - link_centers  # (n, 3)
-    torques = np.cross(r, forces)  # (n, 3)
-
-    # Accumulate using np.add.at (unbuffered, like atomic add)
-    np.add.at(out_forces, (link_indices, env_indices), forces)
-    np.add.at(out_torques, (link_indices, env_indices), torques)
 
     return out_forces, out_torques

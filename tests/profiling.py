@@ -3,6 +3,12 @@ import pytest
 
 def parser_add_options(parser: pytest.Parser) -> None:
     parser.addoption(
+        "--profile-ref",
+        type=str,
+        default="",
+        help="Added to output filename.",
+    )
+    parser.addoption(
         "--profile-wait",
         type=int,
         required=True,
@@ -42,12 +48,21 @@ def pytorch_profiler(pytestconfig):
     warmup = pytestconfig.getoption("--profile-warmup")
     active = pytestconfig.getoption("--profile-active")
     repeat = pytestconfig.getoption("--profile-repeat")
+    ref = pytestconfig.getoption("--profile-ref")
 
     schedule = torch.profiler.schedule(wait=wait, warmup=warmup, active=active, repeat=repeat)
 
     activities = [ProfilerActivity.CPU]
     if torch.cuda.is_available():
         activities.append(ProfilerActivity.CUDA)
+
+    trace_counter = [0]
+
+    def trace_handler(prof):
+        trace_path = f"trace_{ref}_{trace_counter[0]}.json"
+        prof.export_chrome_trace(trace_path)
+        trace_counter[0] += 1
+        print(f"Exported trace cycle {trace_counter[0]} to {trace_path}")
 
     prof = torch.profiler.profile(
         activities=activities,
@@ -56,12 +71,9 @@ def pytorch_profiler(pytestconfig):
         profile_memory=False,
         with_stack=True,
         with_flops=False,
+        on_trace_ready=trace_handler,
     )
 
     print(f"PyTorch profiling enabled (wait={wait}, warmup={warmup}, active={active})")
     with prof:
         yield prof.step
-
-    trace_path = "profile_trace.json"
-    prof.export_chrome_trace(str(trace_path))
-    print(f"Chrome trace exported to: {trace_path}")

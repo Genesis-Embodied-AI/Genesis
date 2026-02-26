@@ -607,7 +607,6 @@ def func_equality_connect(
     dofs_state: array_class.DofsState,
     equalities_info: array_class.EqualitiesInfo,
     constraint_state: array_class.ConstraintState,
-    collider_state: array_class.ColliderState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
@@ -821,7 +820,6 @@ def add_equality_constraints(
                     dofs_state=dofs_state,
                     equalities_info=equalities_info,
                     constraint_state=constraint_state,
-                    collider_state=collider_state,
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
@@ -1637,6 +1635,24 @@ def func_hessian_and_cholesky_factor_direct(
 
 
 @qd.func
+def func_build_changed_constraint_list(
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    """Build a compact list of constraint indices whose active state changed.
+
+    This reduces GPU thread divergence in the subsequent incremental Cholesky update by ensuring threads iterate
+    only over constraints that need processing, rather than branching over all constraints.
+    """
+    n_changed = 0
+    for i_c in range(constraint_state.n_constraints[i_b]):
+        if constraint_state.active[i_c, i_b] ^ constraint_state.prev_active[i_c, i_b]:
+            constraint_state.incr_changed_idx[n_changed, i_b] = i_c
+            n_changed += 1
+    constraint_state.incr_n_changed[i_b] = n_changed
+
+
+@qd.func
 def func_hessian_and_cholesky_factor_incremental_dense_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -1647,37 +1663,35 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
     n_dofs = constraint_state.nt_H.shape[1]
 
     is_degenerated = False
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        is_active = constraint_state.active[i_c, i_b]
-        is_active_prev = constraint_state.prev_active[i_c, i_b]
-        if is_active ^ is_active_prev:
-            sign = 1.0 if is_active else -1.0
-            efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
+    for idx in range(constraint_state.incr_n_changed[i_b]):
+        i_c = constraint_state.incr_changed_idx[idx, i_b]
+        sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
+        efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
-            for i_d in range(n_dofs):
-                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+        for i_d in range(n_dofs):
+            constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-            for k in range(n_dofs):
-                if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                    Lkk = constraint_state.nt_H[i_b, k, k]
-                    tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                    if tmp < EPS:
-                        is_degenerated = True
-                        break
-                    r = qd.sqrt(tmp)
-                    c = r / Lkk
-                    cinv = 1 / c
-                    s = constraint_state.nt_vec[k, i_b] / Lkk
-                    constraint_state.nt_H[i_b, k, k] = r
-                    for i in range(k + 1, n_dofs):
-                        constraint_state.nt_H[i_b, i, k] = (
-                            constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                        ) * cinv
+        for k in range(n_dofs):
+            if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
+                Lkk = constraint_state.nt_H[i_b, k, k]
+                tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+                if tmp < EPS:
+                    is_degenerated = True
+                    break
+                r = qd.sqrt(tmp)
+                c = r / Lkk
+                cinv = 1 / c
+                s = constraint_state.nt_vec[k, i_b] / Lkk
+                constraint_state.nt_H[i_b, k, k] = r
+                for i in range(k + 1, n_dofs):
+                    constraint_state.nt_H[i_b, i, k] = (
+                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                    ) * cinv
 
-                    for i in range(k + 1, n_dofs):
-                        constraint_state.nt_vec[i, i_b] = (
-                            constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                        )
+                for i in range(k + 1, n_dofs):
+                    constraint_state.nt_vec[i, i_b] = (
+                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                    )
 
     return is_degenerated
 
@@ -1691,40 +1705,38 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
     EPS = rigid_global_info.EPS[None]
 
     is_degenerated = False
-    for i_c in range(constraint_state.n_constraints[i_b]):
-        is_active = constraint_state.active[i_c, i_b]
-        is_active_prev = constraint_state.prev_active[i_c, i_b]
-        if is_active ^ is_active_prev:
-            sign = 1.0 if is_active else -1.0
-            efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
+    for idx in range(constraint_state.incr_n_changed[i_b]):
+        i_c = constraint_state.incr_changed_idx[idx, i_b]
+        sign = 1.0 if constraint_state.active[i_c, i_b] else -1.0
+        efc_D_sqrt = qd.sqrt(constraint_state.efc_D[i_c, i_b])
 
-            for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
+        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            constraint_state.nt_vec[i_d, i_b] = constraint_state.jac[i_c, i_d, i_b] * efc_D_sqrt
 
-            for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-                Lkk = constraint_state.nt_H[i_b, k, k]
-                tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
-                if tmp < EPS:
-                    is_degenerated = True
-                    break
-                r = qd.sqrt(tmp)
-                c = r / Lkk
-                cinv = 1 / c
-                s = constraint_state.nt_vec[k, i_b] / Lkk
-                constraint_state.nt_H[i_b, k, k] = r
-                for i_ in range(k_):
-                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                    constraint_state.nt_H[i_b, i, k] = (
-                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
-                    ) * cinv
+        for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+            k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
+            Lkk = constraint_state.nt_H[i_b, k, k]
+            tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
+            if tmp < EPS:
+                is_degenerated = True
+                break
+            r = qd.sqrt(tmp)
+            c = r / Lkk
+            cinv = 1 / c
+            s = constraint_state.nt_vec[k, i_b] / Lkk
+            constraint_state.nt_H[i_b, k, k] = r
+            for i_ in range(k_):
+                i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                constraint_state.nt_H[i_b, i, k] = (
+                    constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                ) * cinv
 
-                for i_ in range(k_):
-                    i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                    constraint_state.nt_vec[i, i_b] = (
-                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
-                    )
+            for i_ in range(k_):
+                i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
+                constraint_state.nt_vec[i, i_b] = (
+                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                )
 
     return is_degenerated
 
@@ -2963,6 +2975,7 @@ def func_solve_iter(
         )
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
             is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
                 i_b,
                 constraint_state=constraint_state,
