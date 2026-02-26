@@ -32,7 +32,6 @@ class ArticulatedEntityData:
     """Typed container for per-entity articulation coupling data."""
 
     entity: object
-    active_env_indices: list
     revolute_joints: list
     prismatic_joints: list
     joint_geo_slots_by_env: dict

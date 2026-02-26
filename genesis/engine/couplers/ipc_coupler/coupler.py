@@ -1154,7 +1154,7 @@ class IPCCoupler(RBC):
 
         # Update IPC geometry for each articulated entity
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            for env_idx in art_data.active_env_indices:
+            for env_idx in range(self.sim._B):
                 articulation_slot = art_data.articulation_slots_by_env[env_idx]
                 articulation_geo = articulation_slot.geometry()
 
@@ -1213,8 +1213,8 @@ class IPCCoupler(RBC):
         n_envs = self.sim._B
 
         # Read delta_theta_ipc from IPC
-        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            for env_idx in art_data.active_env_indices:
+        for idx, art_data in enumerate(self._articulated_entities.values()):
+            for env_idx in range(self.sim._B):
                 scene_art_geo = art_data.articulation_slots_by_env[env_idx].geometry()
                 delta_theta_attr = scene_art_geo["joint"].find("delta_theta")
                 delta_theta_view = view(delta_theta_attr)
@@ -1233,39 +1233,35 @@ class IPCCoupler(RBC):
                         ad.ref_dof_prev[idx, :n_envs, qi] + ad.delta_theta_ipc[idx, :n_envs, j]
                     )
 
-        # Write qpos_new back to Genesis using numpy slices
-        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
+        # Write qpos_new back to Genesis
+        for idx, art_data in enumerate(self._articulated_entities.values()):
             entity = art_data.entity
             n_dofs = ad.entity_n_dofs[idx]
-            for env_idx in art_data.active_env_indices:
-                qpos_new_slice = ad.qpos_new[idx, env_idx, :n_dofs].astype(gs.np_float, copy=False)
-                # Set qpos for all DOFs.
-                # Note: For non-fixed base robots, 'qpos_new' preserves base pose from 'ref_dof_prev' as only joint
-                # DOFs were updated by the above computation. The base link transform will be updated later using
-                # IPC data.
-                self.rigid_solver.set_qpos(
-                    qpos_new_slice,
-                    qs_idx=slice(entity.q_start, entity.q_end),
-                    envs_idx=env_idx if self.sim.n_envs > 0 else None,
-                    skip_forward=False,
-                )
 
-                # For non-fixed base robots, apply base link transform and velocity from IPC
+            # Set qpos for all DOFs
+            envs_qpos = np.empty((self.sim._B, n_dofs), dtype=gs.np_float)
+            for env_idx in range(self.sim._B):
+                # Note: For non-fixed base robots, 'qpos_new' preserves base pose from 'ref_dof_prev' as only joint
+                # DOFs were updated by the above computation.
+                envs_qpos[env_idx] = ad.qpos_new[idx, env_idx, :n_dofs]
+
+                # For non-fixed base robots, apply base link transform  from IPC
                 if not art_data.has_free_base:
                     continue
 
-                # Get IPC transform and velocity for base link from abd_data_by_link
+                # Get IPC transform for base link from abd_data_by_link
                 abd_entry = self.abd_data_by_link[(art_data.base_link_idx, env_idx)]
-                pos, quat_wxyz = gu.T_to_trans_quat(abd_entry.transform)
-                self.rigid_solver.set_qpos(
-                    np.concatenate([pos, quat_wxyz], dtype=gs.np_float),
-                    qs_idx=slice(entity.q_start, entity.q_start + 7),
-                    envs_idx=env_idx if self.sim.n_envs > 0 else None,
-                    skip_forward=False,
-                )
+                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
 
-                # Set base link velocities from IPC if available
-                self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
+            self.rigid_solver.set_qpos(
+                envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
+                qs_idx=slice(entity.q_start, entity.q_end),
+                skip_forward=False,
+            )
+
+            # Set base link velocities from IPC if available
+            if art_data.has_free_base:
+                self._apply_base_link_velocity_from_ipc(entity)
 
         # Update ref_dof_prev for next timestep
         for idx in range(ad.n_entities):
@@ -1273,37 +1269,32 @@ class IPCCoupler(RBC):
             ad.ref_dof_prev[idx, :n_envs, :n_dofs] = ad.qpos_new[idx, :n_envs, :n_dofs]
 
         # Store current link transforms to prev_link_transforms
-        for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
-            for env_idx in art_data.active_env_indices:
+        for idx, art_data in enumerate(self._articulated_entities.values()):
+            for env_idx in range(self.sim._B):
                 for joint_idx, joint in enumerate(art_data.revolute_joints + art_data.prismatic_joints):
                     child_link_idx = joint.link.idx
                     if child_link_idx in self._gs_stored_states and env_idx in self._gs_stored_states[child_link_idx]:
-                        key = (idx, joint_idx, env_idx)
-                        ad.prev_link_transforms[key] = self._gs_stored_states[child_link_idx][env_idx].copy()
+                        ad.prev_link_transforms[(idx, joint_idx, env_idx)] = self._gs_stored_states[child_link_idx][
+                            env_idx
+                        ].copy()
 
-    def _apply_base_link_velocity_from_ipc(self, entity, abd_entry, env_idx):
-        ipc_velocity = abd_entry.velocity
-        if ipc_velocity is None:
-            return
-
-        linear_vel = ipc_velocity[:3, 3]
-        # omega_skew = dR/dt @ R^T
-        R_current = abd_entry.transform[:3, :3]
-        dR_dt = ipc_velocity[:3, :3]
-        omega_skew = dR_dt @ R_current.T
-        angular_vel = np.array(
-            [
+    def _apply_base_link_velocity_from_ipc(self, entity):
+        envs_vel = np.empty((self.sim._B, 6), dtype=gs.np_float)
+        for env_idx in range(self.sim._B):
+            abd_entry = self.abd_data_by_link[(entity.base_link_idx, env_idx)]
+            envs_vel[env_idx, :3] = abd_entry.velocity[:3, 3]
+            # omega_skew = dR/dt @ R^T
+            omega_skew = abd_entry.velocity[:3, :3] @ abd_entry.transform[:3, :3].T
+            envs_vel[env_idx, 3:] = (
                 (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
                 (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
                 (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
-            ],
-            dtype=gs.np_float,
-        )
+            )
 
-        entity.set_dofs_velocity(
-            np.concatenate([linear_vel, angular_vel], dtype=gs.np_float),
-            dofs_idx_local=slice(None, 6),
-            envs_idx=env_idx if self.sim.n_envs > 0 else None,
+        self.rigid_solver.set_dofs_velocity(
+            envs_vel if self.sim.n_envs > 0 else envs_vel[0],
+            dofs_idx=slice(entity.dof_start, entity.dof_start + 6),
+            skip_forward=True,
         )
 
     # ============================================================
@@ -1329,16 +1320,18 @@ class IPCCoupler(RBC):
             for env_idx in range(self.sim._B):
                 abd_entry = self.abd_data_by_link[(entity.base_link_idx, env_idx)]
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
-                # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
-                # self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
-                entity.set_dofs_velocity(
-                    envs_idx=env_idx if self.sim.n_envs > 0 else None,
-                    skip_forward=True,
-                )
 
             self.rigid_solver.set_qpos(
                 envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
-                qs_idx=slice(None, 7),
+                qs_idx=slice(entity.q_start, entity.q_start + 7),
+                skip_forward=True,
+            )
+
+            # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
+            # self._apply_base_link_velocity_from_ipc(entity)
+            self.rigid_solver.set_dofs_velocity(
+                velocity=None,
+                dofs_idx=slice(entity.dof_start, entity.dof_start + 6),
                 skip_forward=True,
             )
 
@@ -1621,7 +1614,6 @@ class IPCCoupler(RBC):
             abrj = AffineBodyRevoluteJoint()
             abpj = AffineBodyPrismaticJoint()
             n_joints = joint_info["n_joints"]
-            active_env_indices = list(range(self.sim._B))
             joint_geo_slots_by_env = {}
             articulation_geos_by_env = {}
             articulation_slots_by_env = {}
@@ -1629,7 +1621,7 @@ class IPCCoupler(RBC):
             mass_matrix = np.eye(n_joints, dtype=np.float64) * 1e4  # Default stiffness
 
             # Build one EA geometry set per environment.
-            for i_b in active_env_indices:
+            for i_b in range(self.sim._B):
                 joint_geo_slots = []
 
                 # Add revolute and prismatic joints (unified loop)
@@ -1677,7 +1669,6 @@ class IPCCoupler(RBC):
             # Store articulation data
             self._articulated_entities[entity_idx] = ArticulatedEntityData(
                 entity=entity,
-                active_env_indices=active_env_indices,
                 revolute_joints=joint_info["revolute_joints"],
                 prismatic_joints=joint_info["prismatic_joints"],
                 joint_geo_slots_by_env=joint_geo_slots_by_env,
