@@ -653,8 +653,20 @@ class RigidEntity(Entity):
         # * Our legacy parser adds a root 'world' link if the root joint is not a fixed joint in file morph.
         # This check is somewhat fragile, but there is no way to distinguish between virtual and manually added root.
         base_l_info, base_j_info, base_g_info = l_infos[0], links_j_infos[0], links_g_infos[0]
+        # Safe to remove the virtual world link if the child has a free joint (the free joint absorbs the full pose
+        # into init_qpos regardless of pos/quat), or if the child has an identity transform (no structural information
+        # would be lost by removing the world link).
+        child_has_freejoint = (
+            any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in links_j_infos[1]) if len(l_infos) > 1 else False
+        )
+        child_is_identity = (
+            ((np.abs(l_infos[1]["pos"]) < gs.EPS).all() and (np.abs(l_infos[1]["quat"] - (1, 0, 0, 0)) < gs.EPS).all())
+            if len(l_infos) > 1
+            else False
+        )
         if (
             len(l_infos) > 1
+            and (child_has_freejoint or child_is_identity)
             and (base_l_info["name"] == "world" and base_j_info and base_j_info[0]["name"] == "world")
             and sum(j_info["n_dofs"] for j_info in base_j_info) == 0
             and not base_g_info

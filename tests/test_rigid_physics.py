@@ -4615,11 +4615,12 @@ def test_set_qpos_get_pos_mjcf_freejoint(tmp_path, show_viewer, tol):
     had a non-zero initial position, causing base_link_idx to point to the static world link instead of the actual
     robot base.
     """
-    # Minimal MJCF: body with non-zero pos (like G1 pelvis at z=0.793) and a freejoint
+    # Minimal MJCF: body with non-zero pos AND non-identity quat (like G1 pelvis at z=0.793) and a freejoint.
+    # Both pos and quat are non-trivial to ensure we don't rely on either being identity.
     mjcf_content = """\
     <mujoco model="test_freejoint">
       <worldbody>
-        <body name="base" pos="0 0 0.793">
+        <body name="base" pos="0 0 0.793" quat="0.9238795 0 0 0.3826834">
           <freejoint name="root"/>
           <inertial pos="0 0 0" mass="1.0" diaginertia="0.01 0.01 0.01"/>
           <geom type="box" size="0.05 0.05 0.05"/>
