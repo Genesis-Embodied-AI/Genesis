@@ -1253,11 +1253,11 @@ class IPCCoupler(RBC):
 
         # Compute qpos_new: copy ref_dof_prev then scatter joint deltas
         for idx in range(ad.n_entities):
-            n_dofs = int(ad.entity_n_dofs[idx])
-            n_joints = int(ad.entity_n_joints[idx])
+            n_dofs = ad.entity_n_dofs[idx]
+            n_joints = ad.entity_n_joints[idx]
             ad.qpos_new[idx, :n_envs, :n_dofs] = ad.ref_dof_prev[idx, :n_envs, :n_dofs]
             for j in range(n_joints):
-                qi = int(ad.joint_qpos_indices[idx, j])
+                qi = ad.joint_qpos_indices[idx, j]
                 if qi < n_dofs:
                     ad.qpos_new[idx, :n_envs, qi] = (
                         ad.ref_dof_prev[idx, :n_envs, qi] + ad.delta_theta_ipc[idx, :n_envs, j]
@@ -1266,14 +1266,13 @@ class IPCCoupler(RBC):
         # Write qpos_new back to Genesis using numpy slices
         for idx, (entity_idx, art_data) in enumerate(self._articulated_entities.items()):
             entity = art_data.entity
-            n_dofs = int(ad.entity_n_dofs[idx])
+            n_dofs = ad.entity_n_dofs[idx]
             for env_idx in art_data.active_env_indices:
                 qpos_new_slice = ad.qpos_new[idx, env_idx, :n_dofs].astype(gs.np_float, copy=False)
-                # Set qpos for all DOFs
-                # Note: For non-fixed base robots, qpos_new already preserves base DOFs from ref_dof_prev
-                # (only joint DOFs were updated by the qpos_new computation above)
-                # The base link transform will be overwritten later using IPC data
-                # FIXME: base link transform is NOT overwritten using IPC data.
+                # Set qpos for all DOFs.
+                # Note: For non-fixed base robots, 'qpos_new' preserves base pose from 'ref_dof_prev' as only joint
+                # DOFs were updated by the above computation. The base link transform will be updated later using
+                # IPC data.
                 self.rigid_solver.set_qpos(
                     qpos_new_slice,
                     qs_idx=slice(entity.q_start, entity.q_end),
@@ -1282,18 +1281,18 @@ class IPCCoupler(RBC):
                 )
 
                 # For non-fixed base robots, apply base link transform and velocity from IPC
-                if not art_data.has_non_fixed_base:
+                if not art_data.has_free_base:
                     continue
 
                 # Get IPC transform and velocity for base link from abd_data_by_link
-                base_link_idx = art_data.base_link_idx
-                abd_entry = self.abd_data_by_link[(base_link_idx, env_idx)]
-                ipc_transform = abd_entry.transform
-                pos, quat_wxyz = gu.T_to_trans_quat(ipc_transform)
-
-                envs_idx = env_idx if self.sim.n_envs > 0 else None
-                self.rigid_solver.set_base_links_pos(pos, [base_link_idx], envs_idx=envs_idx, relative=False)
-                self.rigid_solver.set_base_links_quat(quat_wxyz, [base_link_idx], envs_idx=envs_idx, relative=False)
+                abd_entry = self.abd_data_by_link[(art_data.base_link_idx, env_idx)]
+                pos, quat_wxyz = gu.T_to_trans_quat(abd_entry.transform)
+                self.rigid_solver.set_qpos(
+                    np.concatenate([pos, quat_wxyz], dtype=gs.np_float),
+                    qs_idx=slice(entity.q_start, entity.q_start + 7),
+                    envs_idx=env_idx if self.sim.n_envs > 0 else None,
+                    skip_forward=False,
+                )
 
                 # Set base link velocities from IPC if available
                 self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
@@ -1316,10 +1315,10 @@ class IPCCoupler(RBC):
         ipc_velocity = abd_entry.velocity
         if ipc_velocity is None:
             return
-        ipc_transform = abd_entry.transform
+
         linear_vel = ipc_velocity[:3, 3]
         # omega_skew = dR/dt @ R^T
-        R_current = ipc_transform[:3, :3]
+        R_current = abd_entry.transform[:3, :3]
         dR_dt = ipc_velocity[:3, :3]
         omega_skew = dR_dt @ R_current.T
         angular_vel = np.array(
@@ -1327,8 +1326,10 @@ class IPCCoupler(RBC):
                 (omega_skew[2, 1] - omega_skew[1, 2]) / 2.0,
                 (omega_skew[0, 2] - omega_skew[2, 0]) / 2.0,
                 (omega_skew[1, 0] - omega_skew[0, 1]) / 2.0,
-            ]
+            ],
+            dtype=gs.np_float,
         )
+
         entity.set_dofs_velocity(
             np.concatenate([linear_vel, angular_vel], dtype=gs.np_float),
             dofs_idx_local=slice(None, 6),
@@ -1341,9 +1342,9 @@ class IPCCoupler(RBC):
 
     def _post_advance_ipc_only(self):
         """
-        Post-advance processing for ipc_only entities.
-        Directly sets Genesis transforms from IPC results.
-        Only handles simple case (single base link entities).
+        Post-advance processing for 'ipc_only' entities.
+
+        This method directly sets Genesis transforms from IPC results. It only handles rigid objects.
         """
         entity_indices = self._entities_by_coupling_type["ipc_only"]
         if not entity_indices:
@@ -1352,13 +1353,12 @@ class IPCCoupler(RBC):
         envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
         for entity_idx in entity_indices:
             entity = self.rigid_solver._entities[entity_idx]
-            if entity.n_qs == 0:
+            if entity.base_link.is_fixed:
                 continue
 
             for env_idx in range(self.sim._B):
                 abd_entry = self.abd_data_by_link[(entity.base_link_idx, env_idx)]
-                ipc_transform = abd_entry.transform
-                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(ipc_transform)
+                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
                 self._apply_base_link_velocity_from_ipc(entity, abd_entry, env_idx)
 
             self.rigid_solver.set_qpos(
@@ -1627,12 +1627,13 @@ class IPCCoupler(RBC):
             # Extract joints from the entity
             joint_info = extract_articulated_joints(entity)
 
+            # Skip entities without joints
             if joint_info["n_joints"] == 0:
-                continue  # Skip entities without joints
+                continue
 
             # Detect non-fixed base (for handling base link separately via SoftTransformConstraint)
             base_link = entity.links[0]
-            has_non_fixed_base = not base_link.is_fixed
+            has_free_base = not base_link.is_fixed
             base_link_idx = entity.base_link_idx
 
             gs.logger.debug(
@@ -1701,7 +1702,6 @@ class IPCCoupler(RBC):
             # Store articulation data
             self._articulated_entities[entity_idx] = ArticulatedEntityData(
                 entity=entity,
-                env_idx=0,  # Legacy env0 alias; runtime uses *_by_env containers.
                 active_env_indices=active_env_indices,
                 revolute_joints=joint_info["revolute_joints"],
                 prismatic_joints=joint_info["prismatic_joints"],
@@ -1709,10 +1709,6 @@ class IPCCoupler(RBC):
                 articulation_geos_by_env=articulation_geos_by_env,
                 articulation_slots_by_env=articulation_slots_by_env,
                 articulation_objects_by_env=articulation_objects_by_env,
-                joint_geo_slots=joint_geo_slots_by_env[0],
-                articulation_geo=articulation_geos_by_env[0],
-                articulation_slot=articulation_slots_by_env[0],  # env0 alias for compatibility
-                articulation_object=articulation_objects_by_env[0],  # env0 alias for compatibility
                 n_joints=n_joints,
                 ref_dof_prev=np.zeros(entity.n_dofs, dtype=np.float64),
                 delta_theta_tilde=np.zeros(n_joints, dtype=np.float64),
@@ -1720,12 +1716,12 @@ class IPCCoupler(RBC):
                 joint_qpos_indices=joint_info["joint_qpos_indices"],
                 joint_dof_indices=joint_info["joint_dof_indices"],
                 mass_matrix=mass_matrix,
-                has_non_fixed_base=has_non_fixed_base,
+                has_free_base=has_free_base,
                 base_link_idx=base_link_idx,
             )
 
             # Add to cache list if non-fixed base (for _retrieve_rigid_states in couple())
-            if has_non_fixed_base:
+            if has_free_base:
                 self._articulation_with_non_fixed_base.append(entity_idx)
 
             gs.logger.debug(f"Successfully added articulated entity {entity_idx} to IPC")

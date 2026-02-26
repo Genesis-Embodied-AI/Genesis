@@ -989,9 +989,6 @@ class Scene(RBC):
 
         if update_visualizer:
             self._visualizer.update(force=False, auto=refresh_visualizer)
-            # Update IPC GUI if enabled
-            if hasattr(self, "_ipc_gui_enabled") and self._ipc_gui_enabled:
-                self._sim._coupler.update_ipc_gui()
 
         if self.profiling_options.show_FPS:
             self.FPS_tracker.step()
