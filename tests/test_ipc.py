@@ -81,12 +81,13 @@ def get_ipc_rigid_links_idx(scene, env_idx):
     return links_idx
 
 
-def test_contact_pair_friction_resistance():
+@pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
+def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             contact_friction_mu=0.81,
             contact_resistance=36.0,
-            enable_rigid_rigid_contact=False,
+            enable_rigid_rigid_contact=enable_rigid_rigid_contact,
         ),
         show_viewer=False,
     )
@@ -165,9 +166,10 @@ def test_contact_pair_friction_resistance():
             resistances.append(resistance)
         model = tab.at(*elems_idx)
         assert model.friction_rate() == pytest.approx(math.sqrt(math.prod(frictions)))
-        assert model.resistance() == pytest.approx(math.sqrt(math.prod(resistances)))
-        assert model.is_enabled() ^ all(
-            isinstance(entity, gs.engine.entities.RigidEntity) and entity is not plane for entity in entities
+        assert model.resistance() == pytest.approx(math.prod(resistances) / math.fsum(resistances))
+        assert model.is_enabled() ^ (
+            all(isinstance(entity, gs.engine.entities.RigidEntity) and entity is not plane for entity in entities)
+            and not enable_rigid_rigid_contact
         )
 
 

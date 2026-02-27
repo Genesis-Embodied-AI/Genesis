@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import tempfile
 import weakref
@@ -821,20 +822,12 @@ class IPCCoupler(RBC):
         global_resistance = self.options.contact_resistance
         ground_mu = self.options.contact_friction_mu
 
-        def resolve_entity_resistance(material_resistance):
-            return global_resistance if material_resistance is None else material_resistance
-
-        def geom_mean_nonneg(a, b, name):
-            if a < 0 or b < 0:
-                gs.raise_exception(f"{name} must be non-negative to compute geometric mean, got values {a} and {b}.")
-            return (a * b) ** 0.5
-
         # Collect (ContactElement, friction_mu, resistance, is_abd) for all entity contact elements.
         all_elems = []
         for i_e, entity in enumerate(self.fem_solver._entities):
             mat = entity.material
             mu = mat.friction_mu
-            resistance = resolve_entity_resistance(mat.contact_resistance)
+            resistance = mat.contact_resistance or self.options.contact_resistance
             if i_e in self._ipc_cloth_contacts:
                 all_elems.append((self._ipc_cloth_contacts[i_e], mu, resistance, False))
             elif i_e in self._ipc_fem_contacts:
@@ -842,21 +835,21 @@ class IPCCoupler(RBC):
         for entity_idx, elem in self._ipc_abd_contacts.items():
             mat = self.rigid_solver._entities[entity_idx].material
             mu = mat.coup_friction
-            resistance = resolve_entity_resistance(mat.contact_resistance)
+            resistance = mat.contact_resistance or self.options.contact_resistance
             all_elems.append((elem, mu, resistance, True))
 
         # Register entity-entity pairs (upper triangle including self-pairs).
         for i, (elem_i, mu_i, res_i, is_abd_i) in enumerate(all_elems):
             for elem_j, mu_j, res_j, is_abd_j in all_elems[i:]:
-                friction_ij = geom_mean_nonneg(mu_i, mu_j, "contact friction")
-                resistance_ij = geom_mean_nonneg(res_i, res_j, "contact resistance")
+                friction_ij = math.sqrt(mu_i * mu_j)
+                resistance_ij = res_i * res_j / (res_i + res_j)
                 enabled = not (is_abd_i and is_abd_j) or self.options.enable_rigid_rigid_contact
                 tab.insert(elem_i, elem_j, friction_ij, resistance_ij, enabled)
 
         # Register ground contact pairs.
         for elem, mu, resistance, is_abd in all_elems:
-            friction_ground = geom_mean_nonneg(mu, ground_mu, "ground contact friction")
-            resistance_ground = geom_mean_nonneg(resistance, global_resistance, "ground contact resistance")
+            friction_ground = math.sqrt(mu * ground_mu)
+            resistance_ground = resistance * global_resistance / (resistance + global_resistance)
             enabled = not is_abd or self.options.enable_rigid_ground_contact
             tab.insert(self._ipc_ground_contact, elem, friction_ground, resistance_ground, enabled)
 
