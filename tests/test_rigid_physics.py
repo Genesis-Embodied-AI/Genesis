@@ -2885,6 +2885,58 @@ def test_urdf_parsing_merge_fixed_links(urdf_path, fixed, show_viewer, tol):
     assert_allclose(com_robot_1, com_robot_2, tol=tol)
 
 
+@pytest.fixture(scope="session")
+def box_freejoint_offset():
+    mjcf = ET.Element("mujoco", model="test_freejoint")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+
+    base_body = ET.SubElement(worldbody, "body", name="base", pos="0 0 1.0", quat="1.0 0 0 1.0")
+    ET.SubElement(base_body, "freejoint", name="root")
+    ET.SubElement(base_body, "inertial", pos="0 0 0", mass="1.0", diaginertia="0.01 0.01 0.01")
+    ET.SubElement(base_body, "geom", type="box", size="0.05 0.05 0.05")
+
+    child_body = ET.SubElement(base_body, "body", name="child", pos="0 0 0.1")
+    ET.SubElement(child_body, "inertial", pos="0 0 0", mass="0.5", diaginertia="0.001 0.001 0.001")
+    ET.SubElement(child_body, "joint", name="joint1", type="hinge", axis="0 1 0")
+    ET.SubElement(child_body, "geom", type="box", size="0.03 0.03 0.05")
+
+    return mjcf
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["box_freejoint_offset"])
+def test_mjcf_parsing_merge_fixed_links(xml_path, show_viewer):
+    """Test that get_pos reflects set_qpos for MJCF robots with freejoint and non-zero initial body position."""
+    POS = (1.0, 2.0, 3.0)
+    QUAT = (0.0, 1.0, 0.0, 0.0)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+        )
+    )
+    scene.build()
+
+    assert_allclose(robot.get_pos(), (0.0, 0.0, 1.0), tol=gs.EPS)
+    assert_allclose(robot.get_quat(), np.array([1.0, 0.0, 0.0, 1.0]) / math.sqrt(2), tol=gs.EPS)
+
+    robot.set_qpos((*POS, *QUAT), qs_idx_local=slice(None, 7))
+    assert_allclose(robot.get_pos(), POS, tol=gs.EPS)
+    assert_allclose(robot.get_quat(), QUAT, tol=gs.EPS)
+
+    scene.reset()
+    assert_allclose(robot.get_pos(), (0.0, 0.0, 1.0), tol=gs.EPS)
+    assert_allclose(robot.get_quat(), np.array([1.0, 0.0, 0.0, 1.0]) / math.sqrt(2), tol=gs.EPS)
+
+    robot.set_pos(POS)
+    robot.set_quat(QUAT)
+    assert_allclose(robot.get_pos(), POS, tol=gs.EPS)
+    assert_allclose(robot.get_quat(), QUAT, tol=gs.EPS)
+
+
 @pytest.mark.required
 def test_urdf_capsule(tmp_path, show_viewer, tol):
     urdf_path = tmp_path / "capsule.urdf"
@@ -4605,52 +4657,3 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     # Stacked boxes should form 1 contact island
     assert solver.constraint_solver.contact_island.n_islands[0] == 1
-
-
-@pytest.mark.required
-def test_set_qpos_get_pos_mjcf_freejoint(tmp_path, show_viewer, tol):
-    """Test that get_pos reflects set_qpos for MJCF robots with freejoint and non-zero initial body position.
-
-    Regression test for a bug where the virtual 'world' root link was not removed for MJCF bodies whose first body
-    had a non-zero initial position, causing base_link_idx to point to the static world link instead of the actual
-    robot base.
-    """
-    # Minimal MJCF: body with non-zero pos AND non-identity quat (like G1 pelvis at z=0.793) and a freejoint.
-    # Both pos and quat are non-trivial to ensure we don't rely on either being identity.
-    mjcf_content = """\
-    <mujoco model="test_freejoint">
-      <worldbody>
-        <body name="base" pos="0 0 0.793" quat="0.9238795 0 0 0.3826834">
-          <freejoint name="root"/>
-          <inertial pos="0 0 0" mass="1.0" diaginertia="0.01 0.01 0.01"/>
-          <geom type="box" size="0.05 0.05 0.05"/>
-          <body name="child" pos="0 0 0.1">
-            <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
-            <joint name="joint1" type="hinge" axis="0 1 0"/>
-            <geom type="box" size="0.03 0.03 0.05"/>
-          </body>
-        </body>
-      </worldbody>
-    </mujoco>
-    """
-    xml_path = str(tmp_path / "test_freejoint.xml")
-    with open(xml_path, "w") as f:
-        f.write(mjcf_content)
-
-    scene = gs.Scene(show_viewer=show_viewer)
-    robot = scene.add_entity(gs.morphs.MJCF(file=xml_path))
-    scene.build()
-
-    # The virtual 'world' link should have been removed; first link should be 'base'
-    assert robot.links[0].name != "world", (
-        f"Virtual 'world' link was not removed. Links: {[l.name for l in robot.links]}"
-    )
-
-    # set_qpos with a known base position
-    target_pos = torch.tensor([1.0, 2.0, 3.0], dtype=gs.tc_float, device=gs.device)
-    target_quat = torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=gs.tc_float, device=gs.device)
-    dof_pos = torch.zeros(robot.n_qs - 7, dtype=gs.tc_float, device=gs.device)
-    robot.set_qpos(torch.cat([target_pos, target_quat, dof_pos]))
-
-    # get_pos must return the base position we just set
-    assert_allclose(robot.get_pos(), target_pos, tol=tol)
