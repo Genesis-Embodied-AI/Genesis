@@ -9,7 +9,6 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-import genesis.utils.mesh as mu
 from genesis.repr_base import RBC
 from genesis.utils.misc import tensor_to_array, qd_to_numpy
 
@@ -144,8 +143,6 @@ class IPCCoupler(RBC):
         self._ipc_scene = None
         self._ipc_abd = None
         self._ipc_stk = None
-        self._ipc_abd_contact = None
-        self._ipc_fem_contact = None
         self._ipc_scene_subscenes = {}
         self._use_subscenes = False  # Will be set in _init_ipc based on number of environments
 
@@ -156,8 +153,12 @@ class IPCCoupler(RBC):
         self._ipc_dsb = None
         self._ipc_animator = None
         self._ipc_no_collision_contact = None
-        self._ipc_cloth_contact = None
         self._ipc_ground_contact = None
+
+        # Per-entity contact elements (populated in _add_*_to_ipc, registered in _register_contact_pairs)
+        self._ipc_fem_contacts = {}  # fem entity_idx -> ContactElement
+        self._ipc_cloth_contacts = {}  # cloth entity_idx -> ContactElement
+        self._ipc_abd_contacts = {}  # rigid entity_idx -> ContactElement
 
         # Cached categorization (built on first couple() call)
         self._entities_by_coupling_type = None
@@ -314,48 +315,10 @@ class IPCCoupler(RBC):
             self.options.contact_friction_mu, self.options.contact_resistance
         )
 
-        # Create separate contact elements for ABD, FEM, Cloth, and Ground to control their interactions
-        self._ipc_abd_contact = self._ipc_scene.contact_tabular().create("abd_contact")
-        self._ipc_fem_contact = self._ipc_scene.contact_tabular().create("fem_contact")
-        self._ipc_cloth_contact = self._ipc_scene.contact_tabular().create("cloth_contact")
+        # Shared contact elements: ground and no-collision are common to all entities.
+        # Per-entity contact elements are created in _add_*_to_ipc and registered in _register_contact_pairs.
         self._ipc_ground_contact = self._ipc_scene.contact_tabular().create("ground_contact")
-        # Create no_collision contact element for links with collision disabled
         self._ipc_no_collision_contact = self._ipc_scene.contact_tabular().create("no_collision_contact")
-
-        # Configure contact interactions between element types.
-        # Each entry: (element_a, element_b, friction_mu, enabled)
-        contact_pairs = [
-            # Inter-material contacts
-            (self._ipc_fem_contact, self._ipc_fem_contact, self.options.fem_fem_friction_mu, True),
-            (self._ipc_fem_contact, self._ipc_abd_contact, self.options.contact_friction_mu, True),
-            (
-                self._ipc_abd_contact,
-                self._ipc_abd_contact,
-                self.options.contact_friction_mu,
-                self.options.enable_rigid_rigid_contact,
-            ),
-            (self._ipc_cloth_contact, self._ipc_cloth_contact, self.options.fem_fem_friction_mu, True),
-            (self._ipc_cloth_contact, self._ipc_fem_contact, self.options.fem_fem_friction_mu, True),
-            (self._ipc_cloth_contact, self._ipc_abd_contact, self.options.contact_friction_mu, True),
-            # Ground contacts
-            (
-                self._ipc_ground_contact,
-                self._ipc_abd_contact,
-                self.options.contact_friction_mu,
-                self.options.enable_rigid_ground_contact,
-            ),
-            (self._ipc_ground_contact, self._ipc_fem_contact, self.options.contact_friction_mu, True),
-            (self._ipc_ground_contact, self._ipc_cloth_contact, self.options.contact_friction_mu, True),
-            # No-collision element: disabled against everything
-            (self._ipc_no_collision_contact, self._ipc_abd_contact, self.options.contact_friction_mu, False),
-            (self._ipc_no_collision_contact, self._ipc_fem_contact, self.options.contact_friction_mu, False),
-            (self._ipc_no_collision_contact, self._ipc_cloth_contact, self.options.contact_friction_mu, False),
-            (self._ipc_no_collision_contact, self._ipc_ground_contact, self.options.contact_friction_mu, False),
-            (self._ipc_no_collision_contact, self._ipc_no_collision_contact, self.options.contact_friction_mu, False),
-        ]
-        tab = self._ipc_scene.contact_tabular()
-        for elem_a, elem_b, friction, enabled in contact_pairs:
-            tab.insert(elem_a, elem_b, friction, self.options.contact_resistance, enabled)
 
         # Set up subscenes for multi-environment (scene grouping)
         # Only use subscenes when n_envs > 0 to isolate per-environment contacts
@@ -393,6 +356,9 @@ class IPCCoupler(RBC):
         if has_articulation_entities and self.rigid_solver.is_active:
             self._add_articulated_entities_to_ipc()
 
+        # Register all per-entity contact pair models with per-material friction
+        self._register_contact_pairs()
+
     def _add_fem_entities_to_ipc(self):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
 
@@ -426,11 +392,15 @@ class IPCCoupler(RBC):
                 if self._use_subscenes:
                     self._ipc_scene_subscenes[i_b].apply_to(mesh)
 
-                # Apply contact element based on type
+                # Apply per-entity contact element (created once per entity on first env iteration)
                 if is_cloth:
-                    self._ipc_cloth_contact.apply_to(mesh)
+                    if i_e not in self._ipc_cloth_contacts:
+                        self._ipc_cloth_contacts[i_e] = self._ipc_scene.contact_tabular().create(f"cloth_contact_{i_e}")
+                    self._ipc_cloth_contacts[i_e].apply_to(mesh)
                 else:
-                    self._ipc_fem_contact.apply_to(mesh)
+                    if i_e not in self._ipc_fem_contacts:
+                        self._ipc_fem_contacts[i_e] = self._ipc_scene.contact_tabular().create(f"fem_contact_{i_e}")
+                    self._ipc_fem_contacts[i_e].apply_to(mesh)
 
                 label_surface(mesh)
 
@@ -682,9 +652,13 @@ class IPCCoupler(RBC):
                             if link_idx in self._link_collision_settings[entity_idx]:
                                 collision_enabled = self._link_collision_settings[entity_idx][link_idx]
 
-                        # Apply appropriate contact element
+                        # Apply per-entity contact element (created once per entity on first link)
                         if collision_enabled:
-                            self._ipc_abd_contact.apply_to(merged_mesh)
+                            if entity_idx not in self._ipc_abd_contacts:
+                                self._ipc_abd_contacts[entity_idx] = self._ipc_scene.contact_tabular().create(
+                                    f"abd_contact_{entity_idx}"
+                                )
+                            self._ipc_abd_contacts[entity_idx].apply_to(merged_mesh)
                         else:
                             self._ipc_no_collision_contact.apply_to(merged_mesh)
 
@@ -833,6 +807,64 @@ class IPCCoupler(RBC):
 
         # NOTE: Mass scaling removed - now using external_kinetic=1 instead
         # All mass is handled by IPC, Genesis uses external_kinetic for kinematic coupling
+
+    def _register_contact_pairs(self):
+        """Register pairwise contact models for all entity contact elements.
+
+        Friction and resistance for each entity-entity pair are combined by geometric mean,
+        matching the SAP coupler's friction convention. When an entity material does not define
+        ``contact_resistance``, ``options.contact_resistance`` is used as the per-entity fallback.
+        Ground pairs combine entity parameters with ``options.contact_friction_mu`` and
+        ``options.contact_resistance``.
+        """
+        tab = self._ipc_scene.contact_tabular()
+        global_resistance = self.options.contact_resistance
+        ground_mu = self.options.contact_friction_mu
+
+        def resolve_entity_resistance(material_resistance):
+            return global_resistance if material_resistance is None else material_resistance
+
+        def geom_mean_nonneg(a, b, name):
+            if a < 0 or b < 0:
+                gs.raise_exception(f"{name} must be non-negative to compute geometric mean, got values {a} and {b}.")
+            return (a * b) ** 0.5
+
+        # Collect (ContactElement, friction_mu, resistance, is_abd) for all entity contact elements.
+        all_elems = []
+        for i_e, entity in enumerate(self.fem_solver._entities):
+            mat = entity.material
+            mu = mat.friction_mu
+            resistance = resolve_entity_resistance(mat.contact_resistance)
+            if i_e in self._ipc_cloth_contacts:
+                all_elems.append((self._ipc_cloth_contacts[i_e], mu, resistance, False))
+            elif i_e in self._ipc_fem_contacts:
+                all_elems.append((self._ipc_fem_contacts[i_e], mu, resistance, False))
+        for entity_idx, elem in self._ipc_abd_contacts.items():
+            mat = self.rigid_solver._entities[entity_idx].material
+            mu = mat.coup_friction
+            resistance = resolve_entity_resistance(mat.contact_resistance)
+            all_elems.append((elem, mu, resistance, True))
+
+        # Register entity-entity pairs (upper triangle including self-pairs).
+        for i, (elem_i, mu_i, res_i, is_abd_i) in enumerate(all_elems):
+            for elem_j, mu_j, res_j, is_abd_j in all_elems[i:]:
+                friction_ij = geom_mean_nonneg(mu_i, mu_j, "contact friction")
+                resistance_ij = geom_mean_nonneg(res_i, res_j, "contact resistance")
+                enabled = not (is_abd_i and is_abd_j) or self.options.enable_rigid_rigid_contact
+                tab.insert(elem_i, elem_j, friction_ij, resistance_ij, enabled)
+
+        # Register ground contact pairs.
+        for elem, mu, resistance, is_abd in all_elems:
+            friction_ground = geom_mean_nonneg(mu, ground_mu, "ground contact friction")
+            resistance_ground = geom_mean_nonneg(resistance, global_resistance, "ground contact resistance")
+            enabled = not is_abd or self.options.enable_rigid_ground_contact
+            tab.insert(self._ipc_ground_contact, elem, friction_ground, resistance_ground, enabled)
+
+        # Register no_collision pairs (always disabled).
+        for elem, _mu, _res, _is_abd in all_elems:
+            tab.insert(self._ipc_no_collision_contact, elem, 0.0, global_resistance, False)
+        tab.insert(self._ipc_no_collision_contact, self._ipc_ground_contact, 0.0, global_resistance, False)
+        tab.insert(self._ipc_no_collision_contact, self._ipc_no_collision_contact, 0.0, global_resistance, False)
 
     def _finalize_ipc(self):
         """Finalize IPC setup and initialize AffineBodyStateAccessorFeature"""

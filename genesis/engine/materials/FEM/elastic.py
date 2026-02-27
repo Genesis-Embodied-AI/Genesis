@@ -37,6 +37,9 @@ class Elastic(Base):
         - 'stable_neohookean': A numerically stable Neo-Hookean model
         - 'linear_corotated': Linear corotated elasticity model
         Default is 'linear'.
+    contact_resistance: float | None, optional
+        IPC contact resistance/stiffness override. ``None`` uses the coupler global
+        default. Default is None.
     """
 
     def __init__(
@@ -47,8 +50,16 @@ class Elastic(Base):
         hydroelastic_modulus=1e7,  # hydroelastic_modulus for hydroelastic contact
         friction_mu=0.1,
         model="linear",
+        contact_resistance=None,
     ):
-        super().__init__(E, nu, rho, hydroelastic_modulus, friction_mu)
+        super().__init__(
+            E=E,
+            nu=nu,
+            rho=rho,
+            hydroelastic_modulus=hydroelastic_modulus,
+            friction_mu=friction_mu,
+            contact_resistance=contact_resistance,
+        )
 
         if model == "linear":
             self.update_stress = self.update_stress_linear

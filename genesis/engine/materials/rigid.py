@@ -53,6 +53,9 @@ class Rigid(Material):
         coupling_collision_links : tuple of str or None, optional
             If set, only these links are affected by ``enable_coupling_collision``. Only used by the IPC coupler.
             If None, the setting applies to ALL coupled links of this entity. Default is None.
+        contact_resistance : float or None, optional
+            IPC coupling contact resistance/stiffness override for this entity. ``None`` means use
+            ``IPCCouplerOptions.contact_resistance``. Default is None.
     """
 
     def __init__(
@@ -71,6 +74,7 @@ class Rigid(Material):
         coupling_link_filter=None,
         enable_coupling_collision=True,
         coupling_collision_links=None,
+        contact_resistance=None,
     ):
         super().__init__()
 
@@ -92,6 +96,9 @@ class Rigid(Material):
 
         if coup_softness < 0:
             gs.raise_exception("`coup_softness` must be non-negative.")
+
+        if contact_resistance is not None and contact_resistance < 0:
+            gs.raise_exception("`contact_resistance` must be non-negative.")
 
         if coup_restitution < 0 or coup_restitution > 1:
             gs.raise_exception("`coup_restitution` must be in the range [0, 1].")
@@ -121,6 +128,7 @@ class Rigid(Material):
         self._coupling_collision_links = (
             tuple(coupling_collision_links) if coupling_collision_links is not None else None
         )
+        self._contact_resistance = float(contact_resistance) if contact_resistance is not None else None
 
     @property
     def gravity_compensation(self) -> float:
@@ -151,6 +159,11 @@ class Rigid(Material):
     def coup_restitution(self) -> float:
         """Restitution coefficient used during contact in coupling."""
         return self._coup_restitution
+
+    @property
+    def contact_resistance(self) -> float | None:
+        """IPC coupling contact resistance/stiffness override, or None for coupler default."""
+        return self._contact_resistance
 
     @property
     def sdf_cell_size(self) -> float:

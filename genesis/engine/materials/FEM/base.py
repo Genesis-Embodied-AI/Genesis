@@ -1,5 +1,6 @@
 import quadrants as qd
 
+import genesis as gs
 
 from ..base import Material
 
@@ -25,6 +26,9 @@ class Base(Material):
         Hydroelastic modulus for hydroelastic contact. Default is 1e7.
     friction_mu: float, optional
         Friction coefficient. Default is 0.1.
+    contact_resistance: float | None, optional
+        IPC contact resistance/stiffness override for this material. ``None`` means
+        use the IPC coupler global default (``IPCCouplerOptions.contact_resistance``).
     hessian_invariant: bool, optional
         If True, Hessian is computed only once. Default is False.
     """
@@ -36,15 +40,22 @@ class Base(Material):
         rho=1000.0,
         hydroelastic_modulus=1e7,
         friction_mu=0.1,
+        contact_resistance=None,
         hessian_invariant=False,
     ):
         super().__init__()
+
+        if friction_mu < 0:
+            gs.raise_exception("`friction_mu` must be non-negative.")
+        if contact_resistance is not None and contact_resistance < 0:
+            gs.raise_exception("`contact_resistance` must be non-negative.")
 
         self._E = E
         self._nu = nu
         self._rho = rho
         self._hydroelastic_modulus = hydroelastic_modulus
-        self._friction_mu = friction_mu
+        self._friction_mu = float(friction_mu)
+        self._contact_resistance = float(contact_resistance) if contact_resistance is not None else None
         self.hessian_invariant = hessian_invariant
         self.hessian_ready = False
 
@@ -112,3 +123,8 @@ class Base(Material):
     def friction_mu(self):
         """The friction coefficient."""
         return self._friction_mu
+
+    @property
+    def contact_resistance(self):
+        """IPC contact resistance/stiffness override, or None to use coupler default."""
+        return self._contact_resistance
