@@ -57,7 +57,6 @@ def main():
             contact_enable=True,
             enable_rigid_rigid_contact=True,
             contact_d_hat=0.001,
-            contact_friction_mu=0.5,
             contact_resistance=1e7,
         ),
         viewer_options=gs.options.ViewerOptions(

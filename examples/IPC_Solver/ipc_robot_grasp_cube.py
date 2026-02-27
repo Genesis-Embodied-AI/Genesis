@@ -23,7 +23,6 @@ def main():
     coupler_options = None
     if not args.no_ipc:
         coupler_options = gs.options.IPCCouplerOptions(
-            contact_friction_mu=0.8,
             constraint_strength_translation=10.0,
             constraint_strength_rotation=10.0,
             enable_rigid_rigid_contact=False,

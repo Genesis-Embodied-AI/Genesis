@@ -234,8 +234,6 @@ class Collider:
         excluded_links = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
             for entity in self._solver._entities:
-                if not isinstance(entity.material, Rigid):
-                    continue
                 mode = entity.material.coupling_mode
                 if mode is None:
                     continue
@@ -244,8 +242,7 @@ class Collider:
                     for name in link_filter_names:
                         excluded_links.add(entity.get_link(name=name))
                 else:
-                    for link in entity.links:
-                        excluded_links.add(link)
+                    excluded_links.update(entity.links)
 
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
@@ -274,8 +271,8 @@ class Collider:
                 if link_a is link_b:
                     continue
 
-                # Skip pairs involving links whose contact is handled by IPC
-                if link_a in excluded_links or link_b in excluded_links:
+                # Skip contact links pairs that are handled by IPC
+                if link_a in excluded_links and link_b in excluded_links:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed

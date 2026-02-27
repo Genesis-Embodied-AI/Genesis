@@ -233,10 +233,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Contact distance threshold. Defaults to None (use libuipc default: 0.01).
     contact_friction_enable : bool, optional
         Whether to enable friction in contact. Defaults to None (use libuipc default: True).
-    contact_friction_mu : float, optional
-        Friction coefficient of the ground/floor surface. Combined with per-entity material friction
-        (``coup_friction`` for Rigid, ``friction_mu`` for FEM/Cloth) via geometric mean for all contact
-        pairs involving the ground. Defaults to 0.5.
     contact_resistance : float, optional
         Ground/default contact resistance/stiffness. It is used for ground contact pairs and
         as the per-entity fallback when a material does not define ``contact_resistance``.
@@ -314,7 +310,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
     contact_enable: bool = None
     contact_d_hat: float = None
     contact_friction_enable: bool = None
-    contact_friction_mu: float = 0.5
     contact_resistance: float = 1e9
     contact_eps_velocity: float = None
     contact_constitution: str = None

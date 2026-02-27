@@ -203,6 +203,11 @@ class FEMEntity(Entity):
         if not is_valid:
             gs.raise_exception("Tensor shape not supported.")
 
+        # Immediately flush to the solver's internal elements_v so that the
+        # visualizer can render the updated positions without scene.step().
+        if is_valid and self._tgt["pos"] is not None:
+            self.set_pos(self._sim.cur_substep_local, self._tgt["pos"])
+
     def set_velocity(self, vel):
         """
         Set the target velocity(ies) for the FEM entity.
