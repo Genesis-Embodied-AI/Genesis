@@ -1118,6 +1118,18 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
             if i_ga < i_gb:
                 assert pair_idx[i_ga, i_gb] == -1
 
+    # Mixed pairs (IPC-excluded ↔ non-IPC) must be kept in rigid solver
+    for i_ga in ipc_excluded_geoms:
+        for i_gb in box_geoms:
+            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+            assert pair_idx[a, b] >= 0
+
+    # IPC-excluded geom ↔ ground must be kept in rigid solver (ground is not IPC-excluded)
+    for i_ga in ipc_excluded_geoms:
+        for i_gb in ground_geoms:
+            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+            assert pair_idx[a, b] >= 0
+
     # Non-excluded rigid geoms (if any) keep rigid solver ground and self-collision pairs
     if rigid_kept_geoms:
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
