@@ -234,7 +234,7 @@ class Collider:
         excluded_links = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
             for entity in self._solver._entities:
-                mode = entity.material.coupling_mode
+                mode = entity.material.coupling_type
                 if mode is None:
                     continue
                 link_filter_names = entity.material.coupling_link_filter

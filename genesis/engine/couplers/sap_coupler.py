@@ -11,7 +11,6 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.constants import IntEnum
 from genesis.engine.bvh import AABB, LBVH, FEMSurfaceTetLBVH, RigidTetLBVH
-from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
 from genesis.options.solvers import SAPCouplerOptions
 from genesis.repr_base import RBC
 
@@ -595,6 +594,8 @@ class SAPCoupler(RBC):
         )
 
     def precompute(self, i_step):
+        from genesis.engine.solvers.rigid.rigid_solver import kernel_update_all_verts
+
         if self.fem_solver.is_active:
             if qd.static(self._fem_floor_contact_type == FEMFloorContactType.TET or self._enable_fem_self_tet_contact):
                 self.fem_compute_pressure_gradient(i_step)
