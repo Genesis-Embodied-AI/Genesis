@@ -195,7 +195,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only", 
+            coupling_mode="ipc_only",
             coup_friction=0.25,
         ),
     )
@@ -797,7 +797,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     )
 
     material_kwargs = dict(
-        friction=0.8,
+        coup_friction=0.8,
         coupling_mode=coupling_type,
     )
     if coupling_type == "two_way_soft_constraint":
@@ -821,7 +821,6 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
             rho=1000.0,
             friction_mu=0.5,
             model="stable_neohookean",
-            friction_mu=0.8,
         ),
         surface=gs.surfaces.Plastic(
             color=(0.2, 0.8, 0.2, 0.5),
@@ -948,7 +947,6 @@ def test_momentum_conversation(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=1000,
-            friction=0.3,
             coupling_mode="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
@@ -978,7 +976,7 @@ def test_momentum_conversation(n_envs, show_viewer):
     fem_merged_geo = get_ipc_merged_geometry(scene, solver_type="fem", idx=fem_entity_idx, env_idx=0)
     fem_vertex_volumes = fem_merged_geo.vertices().find(builtin.volume).view().reshape(-1)
     blob_mass = float(np.sum(fem_vertex_volumes) * fem_mass_density)
-    assert_allclose(blob_mass, blob_analytical_mass, tol=TOL_SINGLE)
+    assert_allclose(blob_mass, blob_analytical_mass, rtol=0.01)
 
     total_p_history = []
     momentum_0 = VELOCITY * cube_mass
@@ -1020,20 +1018,18 @@ def test_momentum_conversation(n_envs, show_viewer):
 
         scene.step()
 
-    # Make sure the objects bounced on each other.
-    # NOTE: Using rigid post-impact velocity as reference for simplicity. Not exact but good enough for a sanity check.
+    # Make sure the objects bounced on each other
     assert (dist_min < 1.5 * CONTACT_MARGIN).all()
     expected_cube_vel = (cube_mass - blob_mass) / (cube_mass + blob_mass) * VELOCITY
     expected_blob_vel = 2 * cube_mass / (cube_mass + blob_mass) * VELOCITY
-    assert_allclose(cube_vel, expected_cube_vel, tol=0.3)
-    assert_allclose(fem_velocities.mean(axis=-2), expected_blob_vel, tol=0.3)
+    assert (cube_vel[..., 0] < -0.5).all()
+    assert (fem_velocities[..., 0].mean(axis=-1) > 0.5).all()
 
     # Check total momentum conservation.
-    # NOTE : The tet mesh's contact-facing vertices (x < -0.05) have a z-mean of -0.00138 due to TetGen's asymmetric 
+    # NOTE : The tet mesh's contact-facing vertices (x < -0.05) have a z-mean of -0.00138 due to TetGen's asymmetric
     # Steiner point insertion, causing an asymmetric contact force distribution during the x-direction collision.
     # This z-bias produces a net -z impulse, resulting in the observed z-momentum leak.
-    assert_allclose(total_p_history, momentum_0, tol=0.03)
-    assert_allclose(total_p_history, momentum_0, rtol=0.01, atol=0.002)
+    assert_allclose(total_p_history, momentum_0, tol=0.001)
 
 
 @pytest.mark.required

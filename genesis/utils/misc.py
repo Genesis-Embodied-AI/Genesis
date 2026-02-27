@@ -276,7 +276,7 @@ def harmonic_mean(a, b):
         gs.raise_exception(f"harmonic_mean requires non-negative values, got {a} and {b}.")
     if a == 0 or b == 0:
         return 0.0
-    return  2 * (a * b) / (a + b)
+    return 2 * (a * b) / (a + b)
 
 
 def assert_gs_tensor(x):
