@@ -35,6 +35,10 @@ def main():
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 1.0, 1.0),
+            camera_lookat=(0.3, 0.0, 0.5),
+        ),
         coupler_options=coupler_options,
         show_viewer=args.vis,
     )
@@ -42,7 +46,7 @@ def main():
     scene.add_entity(gs.morphs.Plane())
 
     franka_material_kwargs = dict(
-        friction=0.8,
+        coup_friction=0.8,
         coupling_mode=args.coupling_type,
     )
     if args.coupling_type == "two_way_soft_constraint":
@@ -60,6 +64,7 @@ def main():
             E=5.0e4,
             nu=0.45,
             rho=1000.0,
+            friction_mu=0.5,
             model="stable_neohookean",
         )
     else:

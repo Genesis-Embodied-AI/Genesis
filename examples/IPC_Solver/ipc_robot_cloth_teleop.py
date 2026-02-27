@@ -107,7 +107,7 @@ def main():
             rho=200,
             thickness=0.001,
             bending_stiffness=10.0,
-            friction_mu=0.0,
+            friction_mu=0.5,
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.1, 0.8, 1.0),
@@ -126,7 +126,7 @@ def main():
             rho=200,
             thickness=0.001,
             bending_stiffness=40.0,
-            friction_mu=0.0,
+            friction_mu=0.5,
         ),
         surface=gs.surfaces.Plastic(
             color=(0.3, 0.5, 0.8, 1.0),
@@ -149,7 +149,7 @@ def main():
                 ),
                 material=gs.materials.Rigid(
                     rho=500,
-                    friction=0.5,
+                    coup_friction=0.5,
                     coupling_mode="ipc_only",
                 ),
                 surface=gs.surfaces.Plastic(

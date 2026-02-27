@@ -377,7 +377,6 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
             fixed=fixed,
         ),
         material=gs.materials.Rigid(
-            friction=0.5,
             coupling_mode=coupling_type,
         ),
     )
@@ -520,7 +519,6 @@ def test_objects_freefall(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=500.0,
-            friction=0.3,
             coupling_mode="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
@@ -672,7 +670,7 @@ def test_objects_colliding(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=500.0,
-            friction=0.3,
+            coup_friction=0.3,
             coupling_mode="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
@@ -689,6 +687,7 @@ def test_objects_colliding(n_envs, show_viewer):
             E=1.0e3,
             nu=0.3,
             rho=1000.0,
+            friction_mu=0.3,
             model="stable_neohookean",
         ),
         surface=gs.surfaces.Plastic(
@@ -769,7 +768,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     scene.add_entity(gs.morphs.Plane())
 
     material_kwargs = dict(
-        friction=0.8,
+        coup_friction=0.8,
         coupling_mode=coupling_type,
     )
     if coupling_type == "two_way_soft_constraint":
@@ -791,6 +790,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
             E=5.0e4,
             nu=0.45,
             rho=1000.0,
+            friction_mu=0.5,
             model="stable_neohookean",
         ),
         surface=gs.surfaces.Plastic(
