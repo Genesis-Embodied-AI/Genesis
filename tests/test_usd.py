@@ -956,11 +956,7 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
 @pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_uv_size_mismatch_no_crash(asset_tmp_path):
     """
-    Test that a USD mesh with mismatched UV size does not crash the parser.
-
-    Regression test for GitHub issue #2477: meshes with UV coordinates whose count
-    does not match the vertex or face-vertex count should warn and discard UVs
-    instead of raising an exception.
+    Test that a USD mesh with mismatched UV size does not crash the parser for consistency with Nvidia omniverse.
     """
     usd_file = str(asset_tmp_path / "uv_mismatch.usda")
 
