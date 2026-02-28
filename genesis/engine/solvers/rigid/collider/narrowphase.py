@@ -15,7 +15,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 
-from . import capsule_contact, diff_gjk, gjk, mpr
+from . import capsule_contact, cylinder_contact, diff_gjk, gjk, mpr
 from .box_contact import (
     func_box_box_contact,
     func_plane_box_contact,
@@ -631,6 +631,39 @@ def func_convex_convex_contact(
                     geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
                 ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
                     is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
+                        geoms_info=geoms_info,
+                        rigid_global_info=rigid_global_info,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                    is_col, normal, contact_pos, penetration = cylinder_contact.func_sphere_sphere_contact(
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        ga_pos=ga_pos_current,
+                        gb_pos=gb_pos_current,
+                        geoms_info=geoms_info,
+                        rigid_global_info=rigid_global_info,
+                    )
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER):
+                    is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_sphere_contact(
+                        i_ga=i_ga,
+                        i_gb=i_gb,
+                        ga_pos=ga_pos_current,
+                        ga_quat=ga_quat_current,
+                        gb_pos=gb_pos_current,
+                        gb_quat=gb_quat_current,
+                        geoms_info=geoms_info,
+                        rigid_global_info=rigid_global_info,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER:
+                    is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_cylinder_contact(
                         i_ga=i_ga,
                         i_gb=i_gb,
                         ga_pos=ga_pos_current,
