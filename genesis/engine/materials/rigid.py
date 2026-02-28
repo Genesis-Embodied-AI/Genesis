@@ -115,8 +115,8 @@ class Rigid(Material):
         if coup_softness < 0:
             gs.raise_exception("`coup_softness` must be non-negative.")
 
-        if contact_resistance is not None and contact_resistance < 0:
-            gs.raise_exception("`contact_resistance` must be non-negative.")
+        if contact_resistance is not None and contact_resistance <= 0:
+            gs.raise_exception("`contact_resistance` must be positive.")
 
         if coup_restitution < 0 or coup_restitution > 1:
             gs.raise_exception("`coup_restitution` must be in the range [0, 1].")

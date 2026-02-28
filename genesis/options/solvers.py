@@ -286,6 +286,11 @@ class IPCCouplerOptions(BaseCouplerOptions):
         For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
         When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
         is fully driven by IPC physics. Defaults to False.
+    show_debug_info : bool, optional
+        Enable verbose libuipc logging, performance timers, and solver state dump to disk.
+        Also enabled when Genesis logger level is DEBUG. Defaults to False.
+    show_ipc_gui : bool, optional
+        Enable the libuipc built-in GUI viewer for visualizing the IPC scene. Defaults to False.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -331,6 +336,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     two_way_coupling: bool = True
     enable_rigid_dofs_sync: bool = False
     free_base_driven_by_ipc: bool = False
+    show_debug_info: bool = False
+    show_ipc_gui: bool = False
 
 
 ############################ Solvers inside simulator ############################

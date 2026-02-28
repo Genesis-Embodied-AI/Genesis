@@ -47,6 +47,8 @@ if UIPC_AVAILABLE:
         StableNeoHookean,
         StrainLimitingBaraffWitkinShell,
     )
+    import polyscope as ps
+    from uipc.gui import SceneGUI
     from uipc.geometry import (
         Geometry,
         SimplicialComplexSlot,
@@ -183,6 +185,9 @@ class IPCCoupler(RBC):
         self._vertex_to_link_mapping = {}  # global_vertex_idx -> (i_l, env_idx, local_vertex_idx)
         self._global_vertex_offset = 0  # Counter for vertex indices across geometries
 
+        # ==== GUI ====
+        self._ipc_gui = None  # SceneGUI instance (polyscope), only when show_ipc_gui=True
+
         # ==== External Articulation ====
         self._articulation_metadata_initialized = False  # Flag for one-time articulation setup
         self._articulation_non_fixed_base_entities = []  # [i_e, ...] entities with non-fixed base
@@ -208,6 +213,8 @@ class IPCCoupler(RBC):
         self._init_ipc()
         self._add_objects_to_ipc()
         self._finalize_ipc()
+        if self.options.show_ipc_gui:
+            self._init_ipc_gui()
 
         # Categorize entities by coupling type (stable after build)
         self._categorize_coupling_type_to_entities()
@@ -228,8 +235,12 @@ class IPCCoupler(RBC):
     def _init_ipc(self):
         """Initialize IPC system components"""
 
-        # Derive IPC logging level from Genesis logger
-        if gs.logger.level > logging.DEBUG:
+        self._show_debug_info = self.options.show_debug_info or gs.logger.level <= logging.DEBUG
+
+        if self._show_debug_info:
+            UIPCLogger.set_level(UIPCLogger.Level.Info)
+            UIPCTimer.enable_all()
+        else:
             UIPCLogger.set_level(UIPCLogger.Level.Error)
             UIPCTimer.disable_all()
 
@@ -237,8 +248,6 @@ class IPCCoupler(RBC):
         workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid.full()}")
         os.makedirs(workspace, exist_ok=True)
 
-        # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
-        # before Genesis initialization, as libuipc Engine does not expose device selection in constructor
         self._ipc_engine = Engine("cuda", workspace)
         self._ipc_world = World(self._ipc_engine)
 
@@ -602,19 +611,16 @@ class IPCCoupler(RBC):
         ``contact_resistance``, ``options.contact_resistance`` is used as the per-entity fallback.
         Ground pairs combine entity parameters with the plane entity's material friction.
         """
-        global_resistance = self.options.contact_resistance
-
-        def resolve_entity_resistance(material_resistance):
-            return global_resistance if material_resistance is None else material_resistance
+        default_res = self.options.contact_resistance
 
         # Collect (ContactElement, friction_mu, resistance, is_abd) for all entity contact elements.
         all_elems = []
         for i_e, elem in (*self._ipc_cloth_contacts.items(), *self._ipc_fem_contacts.items()):
             mat = self.fem_solver._entities[i_e].material
-            all_elems.append((elem, mat.friction_mu, resolve_entity_resistance(mat.contact_resistance), False))
+            all_elems.append((elem, mat.friction_mu, mat.contact_resistance or default_res, False))
         for i_e, elem in self._ipc_abd_contacts.items():
             mat = self.rigid_solver._entities[i_e].material
-            all_elems.append((elem, mat.coup_friction, resolve_entity_resistance(mat.contact_resistance), True))
+            all_elems.append((elem, mat.coup_friction, mat.contact_resistance or default_res, True))
 
         # Register entity-entity pairs (upper triangle including self-pairs).
         for i, (elem_i, mu_i, res_i, is_abd_i) in enumerate(all_elems):
@@ -628,29 +634,39 @@ class IPCCoupler(RBC):
         for i_e, ground_elem in self._ipc_ground_contacts.items():
             plane_mat = self.rigid_solver._entities[i_e].material
             plane_mu = plane_mat.coup_friction
-            plane_res = resolve_entity_resistance(plane_mat.contact_resistance)
+            plane_res = plane_mat.contact_resistance or default_res
             for elem, mu, resistance, is_abd in all_elems:
                 friction_ground = geometric_mean(mu, plane_mu)
                 resistance_ground = harmonic_mean(resistance, plane_res)
                 enabled = not is_abd or self.options.enable_rigid_ground_contact
                 self._ipc_contact_tabular.insert(ground_elem, elem, friction_ground, resistance_ground, enabled)
-            self._ipc_contact_tabular.insert(self._ipc_no_collision_contact, ground_elem, 0.0, global_resistance, False)
+            self._ipc_contact_tabular.insert(self._ipc_no_collision_contact, ground_elem, 0.0, default_res, False)
 
         # Register no_collision pairs (always disabled).
         for elem, _mu, _res, _is_abd in all_elems:
-            self._ipc_contact_tabular.insert(self._ipc_no_collision_contact, elem, 0.0, global_resistance, False)
+            self._ipc_contact_tabular.insert(self._ipc_no_collision_contact, elem, 0.0, default_res, False)
         self._ipc_contact_tabular.insert(
-            self._ipc_no_collision_contact, self._ipc_no_collision_contact, 0.0, global_resistance, False
+            self._ipc_no_collision_contact, self._ipc_no_collision_contact, 0.0, default_res, False
         )
 
     def _finalize_ipc(self):
         """Finalize IPC setup and initialize AffineBodyStateAccessorFeature"""
         self._ipc_world.init(self._ipc_scene)
-        self._ipc_world.dump()
+        if self._show_debug_info:
+            self._ipc_world.dump()
         gs.logger.info("IPC world initialized successfully")
 
         # Initialize AffineBodyStateAccessorFeature for optimized ABD state retrieval
         self._init_abd_state_accessor()
+
+    def _init_ipc_gui(self):
+        """Initialize polyscope-based IPC GUI viewer."""
+        if not ps.is_initialized():
+            ps.init()
+        self._ipc_gui = SceneGUI(self._ipc_scene, "split")
+        self._ipc_gui.register()  # also sets up_dir and ground_plane_height from scene
+        ps.show(forFrames=1)
+        gs.logger.info("IPC GUI initialized successfully")
 
     def _init_abd_state_accessor(self):
         """
@@ -890,6 +906,11 @@ class IPCCoupler(RBC):
         self._apply_abd_coupling_forces()
         self._post_advance_external_articulation()
         self._post_advance_ipc_only()
+
+        # Step 6: Update GUI if enabled
+        if self._ipc_gui is not None:
+            ps.frame_tick()
+            self._ipc_gui.update()
 
     # ============================================================
     # Section 3: External Articulation Coupling
