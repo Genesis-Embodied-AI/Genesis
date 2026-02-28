@@ -1284,6 +1284,24 @@ def kernel_delete_weld_constraint(
 
 
 @qd.func
+def linear_to_lower_tri(i_pair: qd.i32) -> qd.i32:
+    """Convert a linear index into the row index of a lower-triangular matrix.
+
+    Maps i_pair -> i_d1 such that the linear sequence 0,1,2,... visits
+    (0,0), (1,0), (1,1), (2,0), (2,1), (2,2), ...
+    The column is then i_d2 = i_pair - i_d1*(i_d1+1)//2.
+
+    Uses a float sqrt approximation with an integer post-correction to handle
+    GPUs whose sqrt is not correctly rounded for perfect squares (observed on
+    Apple Metal where e.g. sqrt(11881) returns ~108.999 instead of 109).
+    """
+    i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) - 1.0) / 2.0), qd.i32)
+    if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
+        i_d1 = i_d1 + 1
+    return i_d1
+
+
+@qd.func
 def func_hessian_direct_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -1461,9 +1479,7 @@ def func_hessian_direct_tiled(
         if n_c == 0:
             i_pair = tid
             while i_pair < n_lower_tri:
-                i_d1 = qd.cast(qd.floor((-1.0 + qd.sqrt(1.0 + 8.0 * i_pair)) / 2.0), gs.qd_int)
-                if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
-                    i_d1 = i_d1 + 1
+                i_d1 = linear_to_lower_tri(i_pair)
                 i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
                 constraint_state.nt_H[i_b, i_d1, i_d2] = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
                 i_pair = i_pair + BLOCK_DIM
@@ -1543,9 +1559,7 @@ def func_cholesky_factor_direct_tiled(
         # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
         i_pair = tid
         while i_pair < n_lower_tri:
-            i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) - 1.0) / 2.0), qd.i32)
-            if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
-                i_d1 = i_d1 + 1
+            i_d1 = linear_to_lower_tri(i_pair)
             i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
             H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
             i_pair = i_pair + BLOCK_DIM
@@ -1578,9 +1592,7 @@ def func_cholesky_factor_direct_tiled(
         # Copy the final result back from shared memory, only considered the lower triangular part
         i_pair = tid
         while i_pair < n_lower_tri:
-            i_d1 = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * i_pair + 1, gs.qd_float)) - 1.0) / 2.0), qd.i32)
-            if (i_d1 + 1) * (i_d1 + 2) // 2 <= i_pair:
-                i_d1 = i_d1 + 1
+            i_d1 = linear_to_lower_tri(i_pair)
             i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
             constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
             i_pair = i_pair + BLOCK_DIM
