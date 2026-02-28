@@ -1164,6 +1164,39 @@ def test_filter_neutral_self_collisions(show_viewer):
         scene.step()
 
 
+def test_collision_links(show_viewer):
+    """collision_links filters rigid solver collision pairs at link level."""
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(enable_self_collision=True),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
+        material=gs.materials.Rigid(
+            collision_links=("left_finger", "right_finger"),
+        ),
+    )
+    scene.build()
+
+    pair_idx = scene.sim.rigid_solver.collider._collision_pair_idx
+    finger_links = {franka.get_link(name=n) for n in ("left_finger", "right_finger")}
+    excluded_links = {l for l in franka.links if l not in finger_links}
+
+    # Excluded links' geoms have no collision pairs at all
+    for link in excluded_links:
+        for geom in link.geoms:
+            for i_gb in range(scene.sim.rigid_solver.n_geoms):
+                if i_gb != geom.idx:
+                    a, b = min(geom.idx, i_gb), max(geom.idx, i_gb)
+                    assert pair_idx[a, b] == -1
+
+    # Finger geoms still collide with ground
+    ground_geoms = {plane.geoms[0].idx}
+    finger_geoms = {g.idx for l in finger_links for g in l.geoms}
+    assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in finger_geoms for b in ground_geoms)
+
+
 @pytest.mark.required
 def test_info_batching(tol):
     scene = gs.Scene(

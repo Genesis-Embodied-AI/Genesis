@@ -166,17 +166,7 @@ class IPCCoupler(RBC):
         self._coupling_collision_settings = {}  # i_e -> {i_l: bool}
         self._coupling_type_to_entities = None  # coupling_type -> [i_e, ...] (built lazily)
 
-        # ==== IPC Mesh Tracking (per solver) ====
-        self._rigid_env_objs = None
-        self._rigid_env_meshes = None
-        self._rigid_meshes_handle = None
-        self._fem_env_objs = None
-        self._fem_env_meshes = None
-        self._fem_meshes_handle = None
-
         # ==== ABD Geometry & State ====
-        self._abd_transforms = None  # ABD transform data
-        self._abd_link_to_geo = {}  # (env_idx, i_l) -> abd_geometry
         self._abd_link_to_slot = {}  # (env_idx, i_l) -> abd_geometry_slot
         self._abd_primary_links = []  # [(env_idx, i_l), ...] excludes merged aliases
         self._abd_body_idx_to_link = {}  # abd_body_idx -> (env_idx, i_l, i_e)
@@ -318,38 +308,32 @@ class IPCCoupler(RBC):
             self._ipc_dsb = DiscreteShellBending()
             self._ipc_constitution_tabular.insert(self._ipc_dsb)
 
-        self._fem_meshes_handle = {}
-        self._fem_env_objs = []
-        self._fem_env_meshes = []
-
         for i_b in range(self.sim._B):
-            self._fem_env_objs.append([])
-            self._fem_env_meshes.append([])
             for i_e, entity in enumerate(self.fem_solver._entities):
                 is_cloth = isinstance(entity.material, ClothMaterial)
 
-                # Create object in IPC
-                obj_name = f"cloth_{i_b}_{i_e}" if is_cloth else f"fem_{i_b}_{i_e}"
-                self._fem_env_objs[i_b].append(self._ipc_objects.create(obj_name))
-
-                # Create mesh: trimesh for cloth (2D shell), tetmesh for volumetric FEM (3D)
+                # ---- Create mesh ----
                 if is_cloth:
-                    # Cloth: use surface triangles only
                     verts = tensor_to_array(entity.init_positions).astype(np.float64, copy=False)
                     faces = entity.surface_triangles.astype(np.int32, copy=False)
                     mesh = uipc_trimesh(verts, faces)
                 else:
-                    # Volumetric FEM: use tetrahedral mesh
                     mesh = tetmesh(tensor_to_array(entity.init_positions), entity.elems)
                 label_surface(mesh)
 
-                self._fem_env_meshes[i_b].append(mesh)
+                # ---- Apply constitutions ----
+                if is_cloth:
+                    moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
+                    self._ipc_nks.apply_to(
+                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
+                    )
+                    if entity.material.bending_stiffness is not None:
+                        self._ipc_dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
+                else:
+                    moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
+                    self._ipc_stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
 
-                # Add to contact subscene (only for multi-environment)
-                if self._use_subscenes:
-                    self._ipc_scene_subscenes[i_b].apply_to(mesh)
-
-                # Apply per-entity contact element (created once per entity on first env iteration)
+                # Per-entity contact element (created once per entity on first env iteration)
                 if is_cloth:
                     if i_e not in self._ipc_cloth_contacts:
                         self._ipc_cloth_contacts[i_e] = self._ipc_contact_tabular.create(f"cloth_contact_{i_e}")
@@ -359,33 +343,19 @@ class IPCCoupler(RBC):
                         self._ipc_fem_contacts[i_e] = self._ipc_contact_tabular.create(f"fem_contact_{i_e}")
                     self._ipc_fem_contacts[i_e].apply_to(mesh)
 
-                # Apply material constitution based on type
-                if is_cloth:
-                    moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
-                    # Apply shell material for cloth
-                    self._ipc_nks.apply_to(
-                        mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
-                    )
-                    # Apply bending stiffness if specified
-                    if entity.material.bending_stiffness is not None:
-                        self._ipc_dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
-                else:
-                    # Apply volumetric material for FEM
-                    moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
-                    self._ipc_stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
+                # ---- Apply subscene and metadata ----
+                if self._use_subscenes:
+                    self._ipc_scene_subscenes[i_b].apply_to(mesh)
 
-                # Add metadata to identify geometry type
                 meta_attrs = mesh.meta()
                 meta_attrs.create("solver_type", "cloth" if is_cloth else "fem")
                 meta_attrs.create("env_idx", str(i_b))
                 meta_attrs.create("entity_idx", str(i_e))
 
-                # Create geometry in IPC scene
-                self._fem_env_objs[i_b][i_e].geometries().create(mesh)
-                self._fem_meshes_handle[f"fem_{i_b}_{i_e}"] = mesh
-
-                # Update global vertex offset (FEM vertices occupy index space but aren't in mapping)
-                self._global_vertex_offset += mesh.vertices().size()
+                # ---- Create IPC object and geometry slot ----
+                obj_name = f"cloth_{i_b}_{i_e}" if is_cloth else f"fem_{i_b}_{i_e}"
+                fem_obj = self._ipc_objects.create(obj_name)
+                fem_obj.geometries().create(mesh)
 
     def _add_rigid_geoms_to_ipc(self):
         """Add rigid geoms to the IPC scene as ABD objects, merging geoms by link."""
@@ -398,15 +368,12 @@ class IPCCoupler(RBC):
             self._ipc_ext_force = AffineBodyExternalBodyForce()
             self._ipc_constitution_tabular.insert(self._ipc_ext_force)
 
-        has_soft_constraint = coupling_types_present - {"ipc_only"}
+        has_soft_constraint = "two_way_soft_constraint" in coupling_types_present or (
+            "external_articulation" in coupling_types_present and not self.options.free_base_driven_by_ipc
+        )
         if has_soft_constraint:
             self._ipc_stc = SoftTransformConstraint()
             self._ipc_constitution_tabular.insert(self._ipc_stc)
-
-        self._rigid_env_objs = []
-        self._rigid_env_meshes = []
-        self._rigid_meshes_handle = {}
-        self._abd_transforms = {}
 
         gs.logger.debug(f"Registered entity coupling types: {self._coupling_types}")
 
@@ -462,15 +429,12 @@ class IPCCoupler(RBC):
 
         # ========== Process each environment ==========
         for i_b in range(self.sim._B):
-            self._rigid_env_objs.append([])
-            self._rigid_env_meshes.append([])
-
             for i_target_link, source_links in target_groups.items():
                 i_e = int(links_entity_idx[i_target_link])
                 entity = self.rigid_solver._entities[i_e]
                 entity_coupling_type = self._coupling_types[i_e]
 
-                # Inner loop: iterate geoms of all source links
+                # ---- Collect geom meshes ----
                 meshes = []
                 for i_l in source_links:
                     link = self.rigid_solver.links[i_l]
@@ -478,7 +442,7 @@ class IPCCoupler(RBC):
                         if geoms_type[i_g] == gs.GEOM_TYPE.PLANE:
                             if entity_coupling_type != "ipc_only":
                                 gs.raise_exception(
-                                    f"Plane entity (solver idx={i_e}) has coupling_mode='{entity_coupling_type}', "
+                                    f"Plane entity (solver idx={i_e}) has ipc_coup_mode='{entity_coupling_type}', "
                                     f"but only 'ipc_only' is supported for plane geoms."
                                 )
 
@@ -493,15 +457,11 @@ class IPCCoupler(RBC):
                                 self._ipc_ground_contacts[i_e] = plane_contact
                             self._ipc_ground_contacts[i_e].apply_to(plane_geom)
 
-                            plane_obj = self._ipc_objects.create(f"rigid_plane_{i_b}_{i_g}")
-                            self._rigid_env_objs[i_b].append(plane_obj)
-                            self._rigid_env_meshes[i_b].append(None)
-
                             if self._use_subscenes:
                                 self._ipc_scene_subscenes[i_b].apply_to(plane_geom)
 
+                            plane_obj = self._ipc_objects.create(f"rigid_plane_{i_b}_{i_g}")
                             plane_obj.geometries().create(plane_geom)
-                            self._rigid_meshes_handle[f"rigid_plane_{i_b}_{i_g}"] = plane_geom
 
                         elif geoms_vert_num[i_g] > 0:
                             try:
@@ -510,10 +470,9 @@ class IPCCoupler(RBC):
 
                                 geom_verts = verts_init_pos[vert_start:vert_end]
                                 geom_faces = faces_verts_idx[face_start:face_end] - vert_start
-
-                                # Apply geom transform to vertices
-                                geom_rot_mat = gu.quat_to_R(geoms_quat[i_g])
-                                transformed_verts = geom_verts @ geom_rot_mat.T + geoms_pos[i_g]
+                                transformed_verts = gu.transform_by_trans_quat(
+                                    geom_verts, geoms_pos[i_g], geoms_quat[i_g]
+                                )
 
                                 # Apply additional transform for fixed joint merging
                                 if i_l != i_target_link:
@@ -532,26 +491,34 @@ class IPCCoupler(RBC):
                 if not meshes:
                     continue
 
-                # Merge meshes belonging to this target link
+                # ---- Merge meshes and apply world transform ----
                 merged_mesh = meshes[0] if len(meshes) == 1 else merge(meshes)
                 label_surface(merged_mesh)
 
-                # Apply target link world transform
                 trans_view = view(merged_mesh.transforms())
                 if self.sim.n_envs > 0:
                     trans_view[0] = gu.trans_quat_to_T(links_pos[i_target_link, i_b], links_quat[i_target_link, i_b])
                 else:
                     trans_view[0] = gu.trans_quat_to_T(links_pos[i_target_link], links_quat[i_target_link])
 
-                # Create rigid object
-                rigid_obj = self._ipc_objects.create(f"rigid_link_{i_b}_{i_target_link}")
-                self._rigid_env_objs[i_b].append(rigid_obj)
-                self._rigid_env_meshes[i_b].append(merged_mesh)
+                # ---- Determine coupling behavior ----
+                is_ipc_only = entity_coupling_type == "ipc_only"
+                is_free_base = (
+                    entity_coupling_type == "external_articulation"
+                    and i_target_link == entity.base_link_idx
+                    and not entity.links[0].is_fixed
+                )
+                is_free_base_ipc_driven = is_free_base and self.options.free_base_driven_by_ipc
+                is_soft_constraint_target = entity_coupling_type == "two_way_soft_constraint" or (
+                    is_free_base and not self.options.free_base_driven_by_ipc
+                )
 
-                if self._use_subscenes:
-                    self._ipc_scene_subscenes[i_b].apply_to(merged_mesh)
+                # ---- Apply constitutions ----
+                self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA, mass_density=entity.material.rho)
 
-                # Apply per-entity contact element or no-collision marker
+                # Per-entity contact element or no-collision marker
+                # FIXME: collision settings are checked against i_target_link (the fixed-joint merge target),
+                # so specifying links that get merged into another target has no effect.
                 collision_enabled = True
                 if i_e in self._coupling_collision_settings:
                     if i_target_link in self._coupling_collision_settings[i_e]:
@@ -565,37 +532,6 @@ class IPCCoupler(RBC):
                 else:
                     self._ipc_no_collision_contact.apply_to(merged_mesh)
 
-                # Determine coupling behavior
-                is_ipc_only = entity_coupling_type == "ipc_only"
-                is_free_base = (
-                    entity_coupling_type == "external_articulation"
-                    and i_target_link == entity.base_link_idx
-                    and not entity.links[0].is_fixed
-                )
-                is_soft_constraint_target = entity_coupling_type == "two_way_soft_constraint" or (
-                    is_free_base and not self.options.free_base_driven_by_ipc
-                )
-
-                # Apply ABD constitution
-                self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA, mass_density=entity.material.rho)
-
-                # Set external_kinetic: 1 for bodies driven by rigid solver, 0 for IPC-only and IPC-driven free base
-                external_kinetic_attr = merged_mesh.instances().find(builtin.external_kinetic)
-                if external_kinetic_attr is not None:
-                    is_free_base_ipc_driven = is_free_base and self.options.free_base_driven_by_ipc
-                    view(external_kinetic_attr)[:] = int(not is_free_base_ipc_driven and not is_ipc_only)
-
-                # Set is_fixed for links that are fixed in Genesis
-                is_fixed_attr = merged_mesh.instances().find(builtin.is_fixed)
-                if is_fixed_attr is not None:
-                    view(is_fixed_attr)[0] = int(self.rigid_solver.links[i_target_link].is_fixed)
-
-                # For external_articulation, store reference DOF for articulation constraint sync
-                if entity_coupling_type == "external_articulation" and self.options.enable_rigid_dofs_sync:
-                    ref_dof_prev_attr = merged_mesh.instances().create("ref_dof_prev", Vector12.Zero())
-                    view(ref_dof_prev_attr)[0] = affine_body.transform_to_q(trans_view[0])
-
-                # Apply SoftTransformConstraint and animator for coupled links
                 if is_soft_constraint_target:
                     constraint_strength = np.array(
                         [self.options.constraint_strength_translation, self.options.constraint_strength_rotation],
@@ -603,20 +539,51 @@ class IPCCoupler(RBC):
                     )
                     self._ipc_stc.apply_to(merged_mesh, constraint_strength)
 
-                    self._ipc_animator.insert(
-                        rigid_obj, partial(_animate_rigid_link, weakref.ref(self), i_b, i_target_link)
-                    )
-
-                # Apply external force (initially zero)
+                # FIXME: _ipc_ext_force is applied with zeros and never updated during simulation.
+                # Kept to ensure the body_force attribute exists on the mesh.
                 self._ipc_ext_force.apply_to(merged_mesh, np.zeros(12, dtype=np.float64))
 
-                # Metadata
+                # ---- Set instance attributes ----
+                # external_kinetic: 1 = driven by rigid solver, 0 = IPC-only or IPC-driven free base
+                view(merged_mesh.instances().find(builtin.external_kinetic))[:] = int(
+                    not is_free_base_ipc_driven and not is_ipc_only
+                )
+                view(merged_mesh.instances().find(builtin.is_fixed))[:] = int(
+                    self.rigid_solver.links[i_target_link].is_fixed
+                )
+
+                if entity_coupling_type == "external_articulation" and self.options.enable_rigid_dofs_sync:
+                    ref_dof_prev_attr = merged_mesh.instances().create("ref_dof_prev", Vector12.Zero())
+                    view(ref_dof_prev_attr)[0] = affine_body.transform_to_q(trans_view[0])
+
+                # ---- Apply subscene and metadata ----
+                if self._use_subscenes:
+                    self._ipc_scene_subscenes[i_b].apply_to(merged_mesh)
+
                 meta_attrs = merged_mesh.meta()
                 meta_attrs.create("solver_type", "rigid")
                 meta_attrs.create("env_idx", str(i_b))
                 meta_attrs.create("link_idx", str(i_target_link))
 
-                # Vertex-to-link mapping for two_way_soft_constraint contact force feedback
+                # ---- Create IPC object and geometry slot ----
+                rigid_obj = self._ipc_objects.create(f"rigid_link_{i_b}_{i_target_link}")
+                abd_slot, _ = rigid_obj.geometries().create(merged_mesh)
+
+                if is_soft_constraint_target:
+                    self._ipc_animator.insert(
+                        rigid_obj, partial(_animate_rigid_link, weakref.ref(self), i_b, i_target_link)
+                    )
+
+                # ---- Store slot mappings ----
+                # Target link must be stored explicitly — it may not be in source_links
+                # if filtered out by coup_links while its fixed-joint children remain.
+                self._abd_link_to_slot[(i_b, i_target_link)] = abd_slot
+                self._abd_primary_links.append((i_b, i_target_link))
+                for i_l in source_links:
+                    self._abd_link_to_slot[(i_b, i_l)] = abd_slot
+
+                # FIXME: _vertex_to_link_mapping is populated but never read.
+                # Kept for potential future use in contact force feedback.
                 if entity_coupling_type == "two_way_soft_constraint":
                     n_verts = merged_mesh.vertices().size()
                     for local_idx in range(n_verts):
@@ -625,26 +592,7 @@ class IPCCoupler(RBC):
                             i_b,
                             local_idx,
                         )
-
                 self._global_vertex_offset += merged_mesh.vertices().size()
-
-                abd_slot, _ = rigid_obj.geometries().create(merged_mesh)
-                self._rigid_meshes_handle[f"rigid_link_{i_b}_{i_target_link}"] = merged_mesh
-                self._abd_link_to_geo[(i_b, i_target_link)] = merged_mesh
-                self._abd_link_to_slot[(i_b, i_target_link)] = abd_slot
-                self._abd_primary_links.append((i_b, i_target_link))
-
-                # Alias mappings for links merged via fixed joints
-                for i_l in source_links:
-                    if i_l != i_target_link:
-                        self._abd_link_to_geo[(i_b, i_l)] = merged_mesh
-                        self._abd_link_to_slot[(i_b, i_l)] = abd_slot
-                        gs.logger.debug(
-                            f"ABD slot alias: link {i_l} -> target link {i_target_link} (fixed joint merge)"
-                        )
-
-        # NOTE: Mass scaling removed - now using external_kinetic=1 instead
-        # All mass is handled by IPC, Genesis uses external_kinetic for kinematic coupling
 
     def _register_contact_pairs(self):
         """Register pairwise contact models for all entity contact elements.
@@ -713,6 +661,8 @@ class IPCCoupler(RBC):
         fast lookups during runtime.
         """
         self._abd_state_feature = self._ipc_world.features().find(AffineBodyStateAccessorFeature)
+        if self._abd_state_feature is None:
+            return
         body_count = self._abd_state_feature.body_count()
         gs.logger.debug(f"AffineBodyStateAccessorFeature initialized with {body_count} ABD bodies")
 
@@ -761,18 +711,27 @@ class IPCCoupler(RBC):
         return self._ipc_world is not None
 
     def _collect_coupling_config_from_materials(self):
-        """Read coupling_mode, coupling_link_filter, and collision settings from entity materials."""
+        """Read ipc_coup_mode, coup_links, and collision settings from entity materials."""
 
         for i_e, entity in enumerate(self.rigid_solver.entities):
-            coupling_mode = entity.material.coupling_mode
-            if coupling_mode is None:
+            # needs_coup=False takes precedence over ipc_coup_mode
+            if not entity.material.needs_coup:
+                if entity.material.ipc_coup_mode is not None:
+                    gs.logger.info(
+                        f"Entity {i_e}: needs_coup=False overrides ipc_coup_mode='{entity.material.ipc_coup_mode}'. "
+                        f"Skipping IPC coupling."
+                    )
                 continue
 
-            self._coupling_types[i_e] = coupling_mode
-            gs.logger.debug(f"Rigid entity (solver idx={i_e}): coupling mode '{coupling_mode}'")
+            coup_mode = entity.material.ipc_coup_mode
+            if coup_mode is None:
+                continue
+
+            self._coupling_types[i_e] = coup_mode
+            gs.logger.debug(f"Rigid entity (solver idx={i_e}): coupling mode '{coup_mode}'")
 
             # Resolve link filter from material
-            link_filter_names = entity.material.coupling_link_filter
+            link_filter_names = entity.material.coup_links
             if link_filter_names is not None:
                 target_links = set()
                 for name in link_filter_names:
@@ -782,17 +741,21 @@ class IPCCoupler(RBC):
                 gs.logger.debug(f"Entity {i_e}: IPC link filter set to {len(target_links)} link(s)")
 
             # Resolve collision settings from material
-            if not entity.material.enable_coupling_collision:
-                collision_link_names = entity.material.coupling_collision_links
-                if collision_link_names is not None:
-                    collision_links = [entity.get_link(name=name) for name in collision_link_names]
-                else:
-                    collision_links = entity.links
-                for link in collision_links:
+            # enable_ipc_collision=False → disable collision for ALL links
+            # enable_ipc_collision=True + ipc_collision_links → only listed links get collision
+            if not entity.material.enable_ipc_collision:
+                for link in entity.links:
                     self._coupling_collision_settings.setdefault(i_e, {})[link.idx] = False
+                gs.logger.debug(f"Entity {i_e}: IPC collision disabled for all {len(entity.links)} link(s)")
+            elif entity.material.ipc_collision_links is not None:
+                included_links = {entity.get_link(name=name).idx for name in entity.material.ipc_collision_links}
+                for link in entity.links:
+                    if link.idx not in included_links:
+                        self._coupling_collision_settings.setdefault(i_e, {})[link.idx] = False
+                n_excluded = len(self._coupling_collision_settings.get(i_e, {}))
                 gs.logger.debug(
-                    f"Entity {i_e}: IPC collision disabled for "
-                    f"{len(self._coupling_collision_settings.get(i_e, {}))} link(s)"
+                    f"Entity {i_e}: IPC collision limited to {len(included_links)} link(s), "
+                    f"{n_excluded} link(s) excluded"
                 )
 
     @property

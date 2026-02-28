@@ -46,10 +46,10 @@ def main():
 
     franka_material_kwargs = dict(
         coup_friction=0.8,
-        coupling_mode=args.coupling_type,
+        ipc_coup_mode=args.coupling_type,
     )
     if args.coupling_type == "two_way_soft_constraint":
-        franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+        franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")
     franka_material = gs.materials.Rigid(**franka_material_kwargs) if not args.no_ipc else None
     franka = scene.add_entity(
         gs.morphs.MJCF(

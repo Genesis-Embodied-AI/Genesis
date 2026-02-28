@@ -294,6 +294,10 @@ class RigidEntity(Entity):
                 )
 
             # Add collision geometries
+            # coup_links filters which links' geoms participate in coupling
+            needs_coup = self.material.needs_coup
+            if needs_coup and self.material.coup_links is not None:
+                needs_coup = link.name in self.material.coup_links
             for g_info in cg_infos:
                 friction = self.material.friction
                 if friction is None:
@@ -306,7 +310,7 @@ class RigidEntity(Entity):
                     friction=friction,
                     sol_params=g_info["sol_params"],
                     data=g_info.get("data"),
-                    needs_coup=self.material.needs_coup,
+                    needs_coup=needs_coup,
                     contype=g_info["contype"],
                     conaffinity=g_info["conaffinity"],
                 )
@@ -770,11 +774,11 @@ class RigidEntity(Entity):
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self.material.coupling_mode == "ipc_only"
+            and self.material.ipc_coup_mode == "ipc_only"
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
             gs.raise_exception(
-                "`RigidMaterial.coupling_mode='ipc_only'` only supported by rigid non-articulated objects."
+                "`RigidMaterial.ipc_coup_mode='ipc_only'` only supported by rigid non-articulated objects."
             )
 
         # Add (link, joints, geoms) tuples sequentially
@@ -1064,6 +1068,10 @@ class RigidEntity(Entity):
             )
 
         # Add collision geometries
+        # coup_links filters which links' geoms participate in coupling
+        needs_coup = self.material.needs_coup
+        if needs_coup and self.material.coup_links is not None:
+            needs_coup = link.name in self.material.coup_links
         for g_info in cg_infos:
             friction = self.material.friction
             if friction is None:
@@ -1076,7 +1084,7 @@ class RigidEntity(Entity):
                 friction=friction,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
-                needs_coup=self.material.needs_coup,
+                needs_coup=needs_coup,
                 contype=g_info["contype"],
                 conaffinity=g_info["conaffinity"],
             )
@@ -2623,8 +2631,8 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.ipc_coup_mode == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.ipc_coup_mode='external_articulation'`.")
 
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
@@ -2766,8 +2774,8 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.ipc_coup_mode == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.ipc_coup_mode='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:

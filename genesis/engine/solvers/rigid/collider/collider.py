@@ -225,24 +225,57 @@ class Collider:
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
         """
-        # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
-        # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
-        # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
-        # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
+        # IPC collision delegation — two categories:
+        #
+        # 1. ipc_pose_controlled_links: IPC fully controls pose via set_qpos. Rigid solver collision
+        #    is meaningless → skip if EITHER link is in this set.
+        #    - ipc_only: all links
+        #    - external_articulation: all links EXCEPT the free base link when
+        #      free_base_driven_by_ipc=False (that base uses STC, so rigid collision feeds
+        #      into a better aim_transform)
+        #
+        # 2. ipc_contact_delegated_links: STC applies correction forces, rigid solver dynamics
+        #    still matter. Only skip when BOTH links are IPC-managed.
+        #    - two_way_soft_constraint links (respecting coup_links filter)
+        #    - external_articulation free base when free_base_driven_by_ipc=False
         from genesis.engine.couplers import IPCCoupler
 
-        excluded_links = set()
+        ipc_pose_controlled_links = set()
+        ipc_contact_delegated_links = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
+            coupler = self._solver.sim.coupler
             for entity in self._solver._entities:
-                mode = entity.material.coupling_mode
+                mode = entity.material.ipc_coup_mode
                 if mode is None:
                     continue
-                link_filter_names = entity.material.coupling_link_filter
-                if mode == "two_way_soft_constraint" and link_filter_names is not None:
-                    for name in link_filter_names:
-                        excluded_links.add(entity.get_link(name=name))
-                else:
-                    excluded_links.update(entity.links)
+                if mode == "ipc_only":
+                    ipc_pose_controlled_links.update(entity.links)
+                elif mode == "external_articulation":
+                    base_link = entity.links[0]
+                    has_stc_base = not base_link.is_fixed and not coupler.options.free_base_driven_by_ipc
+                    for link in entity.links:
+                        if link is base_link and has_stc_base:
+                            ipc_contact_delegated_links.add(link)
+                        else:
+                            ipc_pose_controlled_links.add(link)
+                elif mode == "two_way_soft_constraint":
+                    link_filter_names = entity.material.coup_links
+                    if link_filter_names is not None:
+                        for name in link_filter_names:
+                            ipc_contact_delegated_links.add(entity.get_link(name=name))
+                    else:
+                        ipc_contact_delegated_links.update(entity.links)
+
+        # Links opted out of rigid collision via RigidMaterial.collision_links.
+        # When EITHER link in a pair is opted out, the rigid solver skips that pair.
+        collision_disabled_links = set()
+        for entity in self._solver._entities:
+            mat_collision_links = entity.material.collision_links
+            if mat_collision_links is not None:
+                included = {entity.get_link(name=name) for name in mat_collision_links}
+                for link in entity.links:
+                    if link not in included:
+                        collision_disabled_links.add(link)
 
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
@@ -271,8 +304,16 @@ class Collider:
                 if link_a is link_b:
                     continue
 
-                # Skip contact links pairs that are handled by IPC
-                if link_a in excluded_links and link_b in excluded_links:
+                # Skip links opted out of rigid collision
+                if link_a in collision_disabled_links or link_b in collision_disabled_links:
+                    continue
+
+                # Skip pairs involving IPC pose-controlled links (ipc_only, ext_art non-base)
+                if link_a in ipc_pose_controlled_links or link_b in ipc_pose_controlled_links:
+                    continue
+
+                # Skip pairs where both links have IPC contact delegation (two_way, ext_art STC base)
+                if link_a in ipc_contact_delegated_links and link_b in ipc_contact_delegated_links:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed

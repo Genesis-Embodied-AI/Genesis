@@ -34,7 +34,11 @@ class Rigid(Material):
             Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
-        coupling_mode : str or None, optional
+        collision_links : tuple of str or None, optional
+            Tuple of link names whose geoms participate in rigid solver collision detection.
+            If None, all links participate. When set, geoms belonging to links NOT in this tuple
+            are excluded from rigid solver collision pair computation. Default is None.
+        ipc_coup_mode : str or None, optional
             IPC coupling mode for this entity. Valid values:
               - None: Entity not processed by IPC. Entity is completely ignored by IPC coupler.
               - 'two_way_soft_constraint': Two-way soft coupling.
@@ -43,16 +47,20 @@ class Rigid(Material):
               - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only supported by rigid
                 non-articulated objects.
             Default is None.
-        coupling_link_filter : tuple of str or None, optional
-            Tuple of link names to include in IPC coupling. Only supported with coupling_mode='two_way_soft_constraint'.
-            If None, all links participate. Use this to filter to specific links. Default is None.
-        enable_coupling_collision : bool, optional
-            Whether IPC collision is enabled for this entity's links. Only used by the IPC coupler.
-            Unlike ``coupling_mode=None`` (which removes the entity from IPC entirely), setting this to
-            False keeps the entity in IPC for coupling forces but disables contact response. Default is True.
-        coupling_collision_links : tuple of str or None, optional
-            If set, only these links are affected by ``enable_coupling_collision``. Only used by the IPC coupler.
-            If None, the setting applies to ALL coupled links of this entity. Default is None.
+        coup_links : tuple of str or None, optional
+            Tuple of link names to include in coupling. When set, only the named links' geoms have
+            ``needs_coup=True``; other links' geoms are excluded from coupling. Works with all couplers.
+            For IPC, only supported with ipc_coup_mode=None or 'two_way_soft_constraint'. Default is None.
+        enable_ipc_collision : bool, optional
+            Whether IPC collision is enabled for this entity's links. Used by the IPC coupler.
+            Unlike ``ipc_coup_mode=None`` (which removes the entity from IPC entirely), setting this to
+            False keeps the entity in IPC for coupling forces but disables contact response for ALL links.
+            Default is True.
+        ipc_collision_links : tuple of str or None, optional
+            Tuple of link names whose geoms participate in IPC collision. Used by the IPC coupler.
+            Only effective when ``enable_ipc_collision=True``. If None, all coupled links have collision.
+            When set, only the named links get IPC collision; other links are marked no-collision.
+            Default is None.
         contact_resistance : float or None, optional
             IPC coupling contact resistance/stiffness override for this entity. ``None`` means use
             ``IPCCouplerOptions.contact_resistance``. Default is None.
@@ -70,22 +78,32 @@ class Rigid(Material):
         sdf_min_res=32,
         sdf_max_res=128,
         gravity_compensation=0.0,
-        coupling_mode=None,
-        coupling_link_filter=None,
-        enable_coupling_collision=True,
-        coupling_collision_links=None,
+        collision_links=None,
+        ipc_coup_mode=None,
+        coup_links=None,
+        enable_ipc_collision=True,
+        ipc_collision_links=None,
         contact_resistance=None,
     ):
         super().__init__()
 
-        if coupling_mode not in (None, "two_way_soft_constraint", "external_articulation", "ipc_only"):
+        if ipc_coup_mode not in (None, "two_way_soft_constraint", "external_articulation", "ipc_only"):
             gs.raise_exception(
-                f"`coupling_mode` must be one of None, 'two_way_soft_constraint', "
-                f"'external_articulation', or 'ipc_only', got '{coupling_mode}'."
+                f"`ipc_coup_mode` must be one of None, 'two_way_soft_constraint', "
+                f"'external_articulation', or 'ipc_only', got '{ipc_coup_mode}'."
             )
 
-        if coupling_link_filter is not None and coupling_mode != "two_way_soft_constraint":
-            gs.raise_exception("`coupling_link_filter` is only supported with coupling_mode='two_way_soft_constraint'.")
+        if coup_links is not None and ipc_coup_mode not in (None, "two_way_soft_constraint"):
+            gs.raise_exception(
+                "`coup_links` is only supported with ipc_coup_mode=None or 'two_way_soft_constraint'. "
+                f"Got ipc_coup_mode='{ipc_coup_mode}'."
+            )
+
+        if ipc_collision_links is not None and not enable_ipc_collision:
+            gs.raise_exception(
+                "`ipc_collision_links` is only effective when `enable_ipc_collision=True`. "
+                "Set `enable_ipc_collision=False` to disable collision for all links."
+            )
 
         if friction is not None:
             if friction < 1e-2 or friction > 5.0:
@@ -122,18 +140,22 @@ class Rigid(Material):
         self._sdf_max_res = int(sdf_max_res)
         self._rho = float(rho)
         self._gravity_compensation = float(gravity_compensation)
-        self._coupling_mode = coupling_mode
-        self._coupling_link_filter = tuple(coupling_link_filter) if coupling_link_filter is not None else None
-        self._enable_coupling_collision = bool(enable_coupling_collision)
-        self._coupling_collision_links = (
-            tuple(coupling_collision_links) if coupling_collision_links is not None else None
-        )
+        self._collision_links = tuple(collision_links) if collision_links is not None else None
+        self._ipc_coup_mode = ipc_coup_mode
+        self._coup_links = tuple(coup_links) if coup_links is not None else None
+        self._enable_ipc_collision = bool(enable_ipc_collision)
+        self._ipc_collision_links = tuple(ipc_collision_links) if ipc_collision_links is not None else None
         self._contact_resistance = float(contact_resistance) if contact_resistance is not None else None
 
     @property
     def gravity_compensation(self) -> float:
         """Gravity compensation factor. 1.0 cancels gravity."""
         return self._gravity_compensation
+
+    @property
+    def collision_links(self) -> tuple[str, ...] | None:
+        """Tuple of link names whose geoms participate in rigid solver collision. None = all links."""
+        return self._collision_links
 
     @property
     def friction(self) -> float | None:
@@ -186,21 +208,21 @@ class Rigid(Material):
         return self._rho
 
     @property
-    def coupling_mode(self) -> str | None:
+    def ipc_coup_mode(self) -> str | None:
         """IPC coupling mode for this entity."""
-        return self._coupling_mode
+        return self._ipc_coup_mode
 
     @property
-    def coupling_link_filter(self) -> tuple[str, ...] | None:
+    def coup_links(self) -> tuple[str, ...] | None:
         """Tuple of link names to include in IPC coupling."""
-        return self._coupling_link_filter
+        return self._coup_links
 
     @property
-    def enable_coupling_collision(self) -> bool:
+    def enable_ipc_collision(self) -> bool:
         """Whether IPC collision is enabled for this entity's links."""
-        return self._enable_coupling_collision
+        return self._enable_ipc_collision
 
     @property
-    def coupling_collision_links(self) -> tuple[str, ...] | None:
-        """Tuple of link names affected by enable_coupling_collision."""
-        return self._coupling_collision_links
+    def ipc_collision_links(self) -> tuple[str, ...] | None:
+        """Tuple of link names affected by enable_ipc_collision."""
+        return self._ipc_collision_links

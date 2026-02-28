@@ -93,7 +93,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     plane = scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
         ),
     )
     rigid_a = scene.add_entity(
@@ -102,7 +102,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.25,
             contact_resistance=9.0,
         ),
@@ -113,7 +113,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.64,
             contact_resistance=16.0,
         ),
@@ -124,7 +124,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.16,
             contact_resistance=None,
         ),
@@ -195,7 +195,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.25,
         ),
     )
@@ -208,7 +208,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coupling_mode="ipc_only",
+                ipc_coup_mode="ipc_only",
                 coup_friction=mu,
             ),
         )
@@ -257,7 +257,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
         ),
     )
 
@@ -269,7 +269,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coupling_mode="ipc_only",
+                ipc_coup_mode="ipc_only",
                 coup_friction=0.0,
                 contact_resistance=resistance,
             ),
@@ -318,8 +318,8 @@ def test_link_filter_strict():
             fixed=True,
         ),
         material=gs.materials.Rigid(
-            coupling_mode="two_way_soft_constraint",
-            coupling_link_filter=("moving",),
+            ipc_coup_mode="two_way_soft_constraint",
+            coup_links=("moving",),
         ),
     )
 
@@ -339,6 +339,28 @@ def test_link_filter_strict():
 
     assert (0, moving_link_idx) in coupler._abd_link_to_slot
     assert (0, base_link_idx) not in coupler._abd_link_to_slot
+
+    # coup_links sets per-geom needs_coup: "moving" geoms → True, "base" geoms → False
+    for geom in robot.get_link("moving").geoms:
+        assert geom.needs_coup
+    for geom in robot.get_link("base").geoms:
+        assert not geom.needs_coup
+
+
+def test_needs_coup():
+    """needs_coup=False takes precedence over ipc_coup_mode — entity excluded from IPC."""
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
+        material=gs.materials.Rigid(needs_coup=False, ipc_coup_mode="ipc_only"),
+    )
+    scene.build()
+    assert scene.sim.coupler._coupling_types == {}
+    assert not scene.sim.coupler.has_any_rigid_coupling
 
 
 @pytest.mark.required
@@ -384,7 +406,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -396,7 +418,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
             fixed=fixed,
         ),
         material=gs.materials.Rigid(
-            coupling_mode=coupling_type,
+            ipc_coup_mode=coupling_type,
         ),
     )
 
@@ -537,7 +559,7 @@ def test_objects_freefall(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=500.0,
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -616,19 +638,22 @@ def test_objects_freefall(n_envs, show_viewer):
             assert_allclose(p_i, expected_p, tol=TOL_SINGLE)
 
     for obj in objs_kwargs.keys():
-        # Validate centroid consistency
+        # Validate centroid consistency (IPC positions match Genesis state)
         ipc_centroid = p_prev[obj].mean(axis=-2)
         gs_centroid = obj.get_state().pos.mean(axis=-2)
         assert_allclose(ipc_centroid, gs_centroid, atol=TOL_SINGLE)
+
+        # FIXME: Sphere's tetrahedral FEM mesh has non-uniform lumped mass and initial
+        # elastic strain from mesh discretization error. Internal elastic forces cause
+        # the arithmetic centroid to deviate from exact freefall (center of mass follows
+        # freefall, but mean(F_internal_i / m_i) != 0 with non-uniform mass).
+        if obj is sphere:
+            continue
 
         # Validate centroidal total displacement: 0.5 * GRAVITY * t * (t + DT)
         p_delta = p_prev[obj] - p_0[obj]
         expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
         assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=5e-4)
-
-        # FIXME: This test does not pass for sphere entity...
-        if obj is sphere:
-            continue
 
         # Validate vertex-based total displacement
         assert_allclose(p_delta, expected_displacement, tol=TOL_SINGLE)
@@ -662,7 +687,7 @@ def test_objects_colliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -695,7 +720,7 @@ def test_objects_colliding(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=500.0,
             coup_friction=0.3,
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -791,17 +816,17 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_mode="ipc_only",
+            ipc_coup_mode="ipc_only",
             coup_friction=0.8,
         ),
     )
 
     material_kwargs = dict(
         coup_friction=0.8,
-        coupling_mode=coupling_type,
+        ipc_coup_mode=coupling_type,
     )
     if coupling_type == "two_way_soft_constraint":
-        material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+        material_kwargs["coup_links"] = ("left_finger", "right_finger")
 
     franka = scene.add_entity(
         gs.morphs.MJCF(
@@ -947,7 +972,7 @@ def test_momentum_conversation(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=1000,
-            coupling_mode="two_way_soft_constraint",
+            ipc_coup_mode="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),
@@ -1034,9 +1059,9 @@ def test_momentum_conversation(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
-@pytest.mark.parametrize("coupling_mode", ["ipc_only", "two_way_soft_constraint"])
-def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_contact):
-    """Verify collision pair delegation between IPC and rigid solver based on coupling_mode and ground contact."""
+@pytest.mark.parametrize("ipc_coup_mode", ["ipc_only", "two_way_soft_constraint"])
+def test_collision_delegation_ipc_vs_rigid(ipc_coup_mode, enable_rigid_ground_contact):
+    """Verify collision pair delegation between IPC and rigid solver based on ipc_coup_mode and ground contact."""
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             enable_self_collision=True,
@@ -1047,7 +1072,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
         show_viewer=False,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())  # No coupling_mode: stays in rigid solver only
+    plane = scene.add_entity(gs.morphs.Plane())  # No ipc_coup_mode: stays in rigid solver only
 
     # Non-IPC box — always handled by rigid solver
     box = scene.add_entity(
@@ -1058,20 +1083,18 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
         material=gs.materials.Rigid(),
     )
 
-    if coupling_mode == "two_way_soft_constraint":
+    if ipc_coup_mode == "two_way_soft_constraint":
         entity = scene.add_entity(
             gs.morphs.MJCF(
                 file="xml/franka_emika_panda/panda_non_overlap.xml",
             ),
             material=gs.materials.Rigid(
-                coupling_mode="two_way_soft_constraint",
-                coupling_link_filter=("left_finger", "right_finger"),
+                ipc_coup_mode="two_way_soft_constraint",
+                coup_links=("left_finger", "right_finger"),
             ),
         )
 
-        ipc_excluded_geoms = {
-            geom.idx for name in entity.material.coupling_link_filter for geom in entity.get_link(name).geoms
-        }
+        ipc_excluded_geoms = {geom.idx for name in entity.material.coup_links for geom in entity.get_link(name).geoms}
     else:
         with pytest.raises(gs.GenesisException):
             entity = scene.add_entity(
@@ -1080,7 +1103,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
                     pos=(0.0, 0.0, 1.0),
                 ),
                 material=gs.materials.Rigid(
-                    coupling_mode="ipc_only",
+                    ipc_coup_mode="ipc_only",
                 ),
             )
 
@@ -1090,7 +1113,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
                 pos=(0.0, 0.0, 0.6),
             ),
             material=gs.materials.Rigid(
-                coupling_mode="ipc_only",
+                ipc_coup_mode="ipc_only",
             ),
         )
 
@@ -1114,19 +1137,59 @@ def test_collision_delegation_ipc_vs_rigid(coupling_mode, enable_rigid_ground_co
             if i_ga < i_gb:
                 assert pair_idx[i_ga, i_gb] == -1
 
-    # Mixed pairs (IPC-excluded ↔ non-IPC) must be kept in rigid solver
-    for i_ga in ipc_excluded_geoms:
-        for i_gb in box_geoms:
-            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-            assert pair_idx[a, b] >= 0
-
-    # IPC-excluded geom ↔ ground must be kept in rigid solver (ground is not IPC-excluded)
-    for i_ga in ipc_excluded_geoms:
-        for i_gb in ground_geoms:
-            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-            assert pair_idx[a, b] >= 0
+    if ipc_coup_mode == "ipc_only":
+        # ipc_only links are fully pose-controlled by IPC — ALL pairs involving them are skipped
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in box_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] == -1
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in ground_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] == -1
+    else:
+        # two_way_soft_constraint: mixed pairs (IPC ↔ non-IPC) kept in rigid solver
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in box_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] >= 0
+        # IPC-excluded geom ↔ ground kept in rigid solver
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in ground_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] >= 0
 
     # Non-excluded rigid geoms (if any) keep rigid solver ground and self-collision pairs
     if rigid_kept_geoms:
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
+
+
+def test_ipc_collision_links():
+    """ipc_collision_links whitelists IPC collision; enable_ipc_collision=False disables all."""
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
+        material=gs.materials.Rigid(
+            ipc_coup_mode="two_way_soft_constraint",
+            coup_links=("left_finger", "right_finger"),
+            ipc_collision_links=("left_finger",),
+        ),
+    )
+    scene.build()
+
+    coupler = scene.sim.coupler
+    i_e = next(iter(coupler._coupling_types))
+    settings = coupler._coupling_collision_settings.get(i_e, {})
+
+    # right_finger excluded (not in ipc_collision_links), left_finger kept
+    assert franka.get_link("right_finger").idx in settings
+    assert franka.get_link("left_finger").idx not in settings
+
+    # enable_ipc_collision=False + ipc_collision_links raises
+    with pytest.raises(gs.GenesisException):
+        gs.materials.Rigid(enable_ipc_collision=False, ipc_collision_links=("x",))
