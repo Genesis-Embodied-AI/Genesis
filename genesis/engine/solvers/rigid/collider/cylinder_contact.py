@@ -153,9 +153,7 @@ def func_cylinder_sphere_contact(
     cyl_halflength = 0.5 * geoms_info.data[cyl_idx][1]
     sph_radius = geoms_info.data[sph_idx][0]
 
-    closest, _is_on_cap = _closest_point_on_cylinder(
-        cyl_pos, cyl_quat, cyl_radius, cyl_halflength, sph_pos, EPS
-    )
+    closest, _is_on_cap = _closest_point_on_cylinder(cyl_pos, cyl_quat, cyl_radius, cyl_halflength, sph_pos, EPS)
 
     diff = sph_pos - closest
     dist_sq = diff.dot(diff)

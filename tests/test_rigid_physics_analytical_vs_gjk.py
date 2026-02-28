@@ -703,7 +703,9 @@ def create_cylinder_mjcf(name, pos, euler, radius, half_length):
     return mjcf
 
 
-def scene_add_cylinder(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float, name: str = "cylinder") -> "RigidGeom":
+def scene_add_cylinder(
+    tmp_path: Path, scene: gs.Scene, half_length: float, radius: float, name: str = "cylinder"
+) -> "RigidGeom":
     cyl_mjcf = create_cylinder_mjcf(name, (0, 0, 0), (0, 0, 0), radius, half_length)
     cyl_path = tmp_path / f"{name}.xml"
     ET.ElementTree(cyl_mjcf).write(cyl_path)
@@ -754,8 +756,7 @@ def test_sphere_sphere_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer:
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
             raise AssertionError(
-                f"\nFAILED (analytical): {description}\n"
-                f"pos0={pos0}, pos1={pos1}, expected={should_collide}\n"
+                f"\nFAILED (analytical): {description}\npos0={pos0}, pos1={pos1}, expected={should_collide}\n"
             ) from e
 
     scene_creator.apply_gjk_patch()
@@ -779,16 +780,21 @@ def test_sphere_sphere_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer:
 
             if has_a and has_g:
                 assert_allclose(
-                    contacts_analytical["penetration"][0], contacts_gjk["penetration"][0],
-                    atol=POS_TOL, rtol=0.1, err_msg=f"Penetration mismatch for {description}",
+                    contacts_analytical["penetration"][0],
+                    contacts_gjk["penetration"][0],
+                    atol=POS_TOL,
+                    rtol=0.1,
+                    err_msg=f"Penetration mismatch for {description}",
                 )
                 na = np.array(contacts_analytical["normal"][0])
                 ng = np.array(contacts_gjk["normal"][0])
                 normal_tol = 0.5 if description == "coincident" else 0.95
                 assert abs(np.dot(na, ng)) > normal_tol, f"Normal mismatch for {description}"
                 assert_allclose(
-                    contacts_analytical["position"][0], contacts_gjk["position"][0],
-                    tol=POS_TOL, err_msg=f"Position mismatch for {description}",
+                    contacts_analytical["position"][0],
+                    contacts_gjk["position"][0],
+                    tol=POS_TOL,
+                    err_msg=f"Position mismatch for {description}",
                 )
         except AssertionError as e:
             gjk_disagreements.append(f"{description}: {e}")
@@ -874,15 +880,20 @@ def test_cylinder_sphere_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
             if has_a and has_g:
                 assert_allclose(
-                    contacts_analytical["penetration"][0], contacts_gjk["penetration"][0],
-                    atol=POS_TOL, rtol=0.1, err_msg=f"Penetration mismatch for {description}",
+                    contacts_analytical["penetration"][0],
+                    contacts_gjk["penetration"][0],
+                    atol=POS_TOL,
+                    rtol=0.1,
+                    err_msg=f"Penetration mismatch for {description}",
                 )
                 na = np.array(contacts_analytical["normal"][0])
                 ng = np.array(contacts_gjk["normal"][0])
                 assert abs(np.dot(na, ng)) > 0.95, f"Normal mismatch for {description}"
                 assert_allclose(
-                    contacts_analytical["position"][0], contacts_gjk["position"][0],
-                    tol=POS_TOL, err_msg=f"Position mismatch for {description}",
+                    contacts_analytical["position"][0],
+                    contacts_gjk["position"][0],
+                    tol=POS_TOL,
+                    err_msg=f"Position mismatch for {description}",
                 )
         except AssertionError as e:
             gjk_disagreements.append(f"{description}: {e}")
@@ -939,9 +950,7 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
             )
             if description in MULTICONTACT_CASES:
                 n = len(contacts["geom_a"])
-                assert n >= 2, (
-                    f"Analytical multi-contact: {description} produced only {n} contact(s), expected >= 2"
-                )
+                assert n >= 2, f"Analytical multi-contact: {description} produced only {n} contact(s), expected >= 2"
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
             raise AssertionError(
@@ -970,15 +979,20 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
 
             if has_a and has_g:
                 assert_allclose(
-                    contacts_analytical["penetration"][0], contacts_gjk["penetration"][0],
-                    atol=POS_TOL, rtol=0.1, err_msg=f"Penetration mismatch for {description}",
+                    contacts_analytical["penetration"][0],
+                    contacts_gjk["penetration"][0],
+                    atol=POS_TOL,
+                    rtol=0.1,
+                    err_msg=f"Penetration mismatch for {description}",
                 )
                 na = np.array(contacts_analytical["normal"][0])
                 ng = np.array(contacts_gjk["normal"][0])
                 assert abs(np.dot(na, ng)) > 0.95, f"Normal mismatch for {description}"
                 assert_allclose(
-                    contacts_analytical["position"][0], contacts_gjk["position"][0],
-                    tol=POS_TOL, err_msg=f"Position mismatch for {description}",
+                    contacts_analytical["position"][0],
+                    contacts_gjk["position"][0],
+                    tol=POS_TOL,
+                    err_msg=f"Position mismatch for {description}",
                 )
 
                 if description in MULTICONTACT_CASES:
@@ -1012,7 +1026,9 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
                             expected_xy = np.array([pos1[0] / 2, 0.0])
                             for pos_a in all_analytical_positions:
                                 assert_allclose(
-                                    pos_a[:2], expected_xy, tol=POS_TOL,
+                                    pos_a[:2],
+                                    expected_xy,
+                                    tol=POS_TOL,
                                     err_msg=f"Contact XY not on midline for {description}",
                                 )
         except AssertionError as e:
