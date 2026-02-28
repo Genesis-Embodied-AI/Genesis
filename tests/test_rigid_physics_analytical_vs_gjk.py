@@ -897,7 +897,9 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
     """Compare analytical cylinder-cylinder collision with GJK."""
     test_cases = [
         # (pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal)
-        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_barrel", 0.02, (-1, 0, 0)),
+        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0), True, "parallel_light", 0.02, (-1, 0, 0)),
+        # Deeper parallel penetration: pen = 0.2 - 0.12 = 0.08
+        ((0, 0, 0), (0, 0, 0), (0.12, 0, 0), (0, 0, 0), True, "parallel_deep", 0.08, (-1, 0, 0)),
         # Diagonal displacement in XY: radial dist = sqrt(0.15^2+0.15^2) = 0.212 > 2*r = 0.2.
         # AABBs overlap by 0.05 in both X and Y.
         ((0, 0, 0), (0, 0, 0), (0.15, 0.15, 0), (0, 0, 0), False, "parallel_miss", None, None),
@@ -907,6 +909,7 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
         ((0, 0, 0), (0, 0, 0), (0, 0.18, 0.34), (0, 90, 0), False, "perpendicular_miss", None, None),
         ((0, 0, 0), (0, 0, 0), (0.15, 0, 0.2), (0, 0, 0), True, "parallel_offset_z", 0.05, (-1, 0, 0)),
     ]
+    MULTICONTACT_CASES = {"parallel_light", "parallel_deep", "parallel_offset_z"}
 
     radius = 0.1
     half_length = 0.25
@@ -934,6 +937,11 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
             _check_expected_values(
                 contacts, description, exp_pen, exp_normal, "analytical", ANALYTICAL_PEN_TOL, ANALYTICAL_NORMAL_TOL
             )
+            if description in MULTICONTACT_CASES:
+                n = len(contacts["geom_a"])
+                assert n >= 2, (
+                    f"Analytical multi-contact: {description} produced only {n} contact(s), expected >= 2"
+                )
             analytical_results[description] = copy.deepcopy(contacts)
         except AssertionError as e:
             raise AssertionError(
@@ -972,6 +980,41 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
                     contacts_analytical["position"][0], contacts_gjk["position"][0],
                     tol=POS_TOL, err_msg=f"Position mismatch for {description}",
                 )
+
+                if description in MULTICONTACT_CASES:
+                    n_analytical = len(contacts_analytical["geom_a"])
+                    n_gjk = len(contacts_gjk["geom_a"])
+
+                    if n_gjk >= 2:
+                        assert n_analytical >= 2, (
+                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
+                            f"(expected at least 2)"
+                        )
+                        assert n_analytical >= (n_gjk - 1), (
+                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
+                            f"(expected at least {n_gjk - 1})"
+                        )
+
+                    if n_analytical >= 2 or n_gjk >= 2:
+                        all_analytical_positions = np.array(
+                            [contacts_analytical["position"][i] for i in range(n_analytical)]
+                        )
+                        all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
+
+                        for pos_a in all_analytical_positions:
+                            min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
+                            assert min_dist < POS_TOL, (
+                                f"Analytical contact at {pos_a} has no nearby GJK contact "
+                                f"(min_dist={min_dist:.4f}, tol={POS_TOL})"
+                            )
+
+                        if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):
+                            expected_xy = np.array([pos1[0] / 2, 0.0])
+                            for pos_a in all_analytical_positions:
+                                assert_allclose(
+                                    pos_a[:2], expected_xy, tol=POS_TOL,
+                                    err_msg=f"Contact XY not on midline for {description}",
+                                )
         except AssertionError as e:
             gjk_disagreements.append(f"{description}: {e}")
 
