@@ -665,7 +665,7 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_convex_convex: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
-    has_cylinder_or_sphere: bool
+    has_primitive_specialization: bool
     # maximum number of contact pairs per collision pair
     n_contacts_per_pair: int
     # ccd algorithm

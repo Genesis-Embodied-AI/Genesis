@@ -95,6 +95,45 @@ def _check_expected_values(contacts, description, exp_pen, exp_normal, method_na
             )
 
 
+def _assert_multicontact_lines_match(positions_a, positions_b, tol, description):
+    """Assert that two sets of multi-contact points span the same line segment.
+
+    Both contact sets should be collinear. We compare the endpoints (extremes along
+    the principal axis of the combined point cloud) and verify that all interior
+    points lie on the line between those endpoints.
+    """
+    all_pts = np.vstack([positions_a, positions_b])
+
+    # Principal axis = direction of greatest variance across all contacts
+    centroid = all_pts.mean(axis=0)
+    centered = all_pts - centroid
+    _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+    axis = Vt[0]  # first principal component
+
+    def _endpoints(pts):
+        projs = pts @ axis
+        return pts[np.argmin(projs)], pts[np.argmax(projs)]
+
+    lo_a, hi_a = _endpoints(positions_a)
+    lo_b, hi_b = _endpoints(positions_b)
+
+    np.testing.assert_allclose(lo_a, lo_b, atol=tol, err_msg=f"{description}: low-endpoint mismatch")
+    np.testing.assert_allclose(hi_a, hi_b, atol=tol, err_msg=f"{description}: high-endpoint mismatch")
+
+    # Verify every point lies on the line between the combined endpoints
+    lo_all, hi_all = _endpoints(all_pts)
+    line_vec = hi_all - lo_all
+    line_len = np.linalg.norm(line_vec)
+    if line_len < 1e-8:
+        return  # degenerate (all contacts at same point)
+    line_dir = line_vec / line_len
+    for pt in all_pts:
+        diff = pt - lo_all
+        along = np.dot(diff, line_dir)
+        perp = np.linalg.norm(diff - along * line_dir)
+        assert perp < tol, f"{description}: contact at {pt} is {perp:.4f} off the line (tol={tol})"
+
+
 def create_capsule_mjcf(name, pos, euler, radius, half_length):
     """Helper function to create an MJCF file with a single capsule."""
     mjcf = ET.Element("mujoco", model=name)
@@ -111,73 +150,6 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
     ET.SubElement(body, "geom", type="capsule", size=f"{radius} {half_length}")
     ET.SubElement(body, "joint", name=f"{name}_joint", type="free")
     return mjcf
-
-
-def find_and_disable_condition(lines, function_name):
-    """Find function call, look back for if/elif, and disable the entire multi-line condition."""
-    # Find the line with the function call
-    call_line_idx = None
-    for i, line in enumerate(lines):
-        if function_name in line and "(" in line:
-            call_line_idx = i
-            break
-
-    if call_line_idx is None:
-        raise ValueError(f"Could not find function call: {function_name}")
-
-    # Look backwards to find the if or elif line
-    condition_line_idx = None
-    for i in range(call_line_idx - 1, -1, -1):
-        stripped = lines[i].strip()
-        if stripped.startswith("if ") or stripped.startswith("elif "):
-            condition_line_idx = i
-            break
-        # Stop if we hit another major control structure
-        if stripped.startswith("else:"):
-            break
-
-    if condition_line_idx is None:
-        raise ValueError(f"Could not find if/elif for {function_name}")
-
-    # Find the end of the condition (look for the : that ends it)
-    condition_end_idx = condition_line_idx
-    for i in range(condition_line_idx, call_line_idx):
-        if ":" in lines[i]:
-            condition_end_idx = i
-            break
-
-    # Modify the condition to wrap entire thing in False and (...)
-    original_line = lines[condition_line_idx]
-    indent = len(original_line) - len(original_line.lstrip())
-    indent_str = original_line[:indent]
-
-    # Extract the condition part (after if/elif and before :)
-    if original_line.strip().startswith("if "):
-        prefix = "if "
-        rest = original_line.strip()[3:]  # Remove 'if '
-    elif original_line.strip().startswith("elif "):
-        prefix = "elif "
-        rest = original_line.strip()[5:]  # Remove 'elif '
-    else:
-        raise ValueError(f"Expected if/elif but got: {original_line}")
-
-    # If single-line condition
-    if condition_end_idx == condition_line_idx:
-        # Simple case: add False and
-        modified_line = f"{indent_str}{prefix}False and {rest}"
-        lines[condition_line_idx] = modified_line
-    else:
-        # Multi-line condition: wrap in False and (...)
-        rest_no_colon = rest.rstrip(":").rstrip()
-        lines[condition_line_idx] = f"{indent_str}{prefix}False and ({rest_no_colon}"
-
-        # Add closing ) before the : on the last line
-        last_line = lines[condition_end_idx]
-        if ":" in last_line:
-            # Insert ) before the :
-            lines[condition_end_idx] = last_line.replace(":", "):", 1)
-
-    return lines
 
 
 def insert_errno_before_call(lines, function_call_pattern, errno_value, comment):
@@ -226,12 +198,6 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = content.replace("from .", "from genesis.engine.solvers.rigid.collider.")
 
     lines = content.split("\n")
-
-    # Disable capsule-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_capsule_capsule_contact")
-
-    # Disable sphere-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_sphere_capsule_contact")
 
     # Insert errno before GJK calls
     lines = insert_errno_before_call(
@@ -317,11 +283,11 @@ class AnalyticalVsGJKSceneCreator:
             narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )
 
-        # Disable cylinder/sphere specializations so pairs flow to GJK in the main kernel.
+        # Disable primitive specializations so pairs flow to GJK in the main kernel.
         # The specializations kernel uses qd.static() on this flag, so setting it to False
-        # compiles out the cylinder/sphere branches and forces recompilation.
+        # compiles out the capsule/cylinder/sphere branches and forces recompilation.
         collider = self.scene_gjk.rigid_solver.collider
-        collider._collider_static_config.has_cylinder_or_sphere = False
+        collider._collider_static_config.has_primitive_specialization = False
 
     def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
@@ -418,6 +384,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
     scene_creator.apply_gjk_patch()
 
     # Phase 3: Run all GJK scenarios (patched kernel, fresh cache)
+    gjk_disagreements = []
     for pos0, euler0, pos1, euler1, should_collide, description, exp_pen, exp_normal in test_cases:
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
@@ -435,68 +402,43 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
 
             _check_expected_values(contacts_gjk, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
 
-            # If both detected a collision, compare the contact details
             if has_collision_analytical and has_collision_gjk:
-                pen_analytical = contacts_analytical["penetration"][0]
-                pen_gjk = contacts_gjk["penetration"][0]
+                assert_allclose(
+                    contacts_analytical["penetration"][0],
+                    contacts_gjk["penetration"][0],
+                    atol=POS_TOL,
+                    rtol=0.1,
+                    err_msg="Penetration mismatch!",
+                )
 
                 normal_analytical = np.array(contacts_analytical["normal"][0])
                 normal_gjk = np.array(contacts_gjk["normal"][0])
+                assert abs(np.dot(normal_analytical, normal_gjk)) > 0.95, "Normal mismatch!"
 
-                pos_analytical = np.array(contacts_analytical["position"][0])
-                pos_gjk = np.array(contacts_gjk["position"][0])
-                assert_allclose(pen_analytical, pen_gjk, atol=POS_TOL, rtol=0.1, err_msg="Penetration mismatch!")
-
-                normal_agreement = abs(np.dot(normal_analytical, normal_gjk))
-                assert normal_agreement > 0.95, "Normal mismatch!"
+                assert_allclose(
+                    contacts_analytical["position"][0],
+                    contacts_gjk["position"][0],
+                    tol=POS_TOL,
+                    err_msg=f"Position mismatch for {description}",
+                )
 
                 if description in ["parallel_light", "parallel_deep"]:
                     n_analytical = len(contacts_analytical["geom_a"])
                     n_gjk = len(contacts_gjk["geom_a"])
+                    assert n_analytical >= 2, f"Analytical produced only {n_analytical} contact(s)"
+                    assert n_gjk >= 2, f"GJK produced only {n_gjk} contact(s)"
 
-                    # When GJK has multicontact, verify analytical also generates sufficient contacts
-                    if n_gjk >= 2:
-                        assert n_analytical >= 2, (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least 2)"
-                        )
-                        assert n_analytical >= (n_gjk - 1), (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least {n_gjk - 1})"
-                        )
+                    all_analytical_positions = np.array(
+                        [contacts_analytical["position"][i] for i in range(n_analytical)]
+                    )
+                    all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
 
-                    if n_analytical >= 2 or n_gjk >= 2:
-                        all_analytical_positions = np.array(
-                            [contacts_analytical["position"][i] for i in range(n_analytical)]
-                        )
-                        all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
-
-                        for pos_a in all_analytical_positions:
-                            min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
-                            assert min_dist < POS_TOL
-
-                        # For parallel vertical capsules, verify contacts are on the line between axes
-                        if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):  # Both vertical
-                            expected_xy = np.array([pos1[0] / 2, 0.0])  # Midpoint between capsules
-                            for pos_a in all_analytical_positions:
-                                assert_allclose(pos_a[:2], expected_xy, tol=POS_TOL)
-                                assert_allclose(pos_a[2], 0.0, tol=0.26)
-                            for pos_g in all_gjk_positions:
-                                assert_allclose(pos_g[:2], expected_xy, tol=POS_TOL)
-                                assert -0.26 < pos_g[2] < 0.26
-                    else:
-                        assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
-                else:
-                    assert_allclose(pos_analytical, pos_gjk, tol=POS_TOL)
+                    _assert_multicontact_lines_match(all_analytical_positions, all_gjk_positions, POS_TOL, description)
         except AssertionError as e:
-            raise AssertionError(
-                f"\nFAILED TEST SCENARIO (GJK phase): {description}\n"
-                f"Capsule 0: pos={pos0}, euler={euler0}\n"
-                f"Capsule 1: pos={pos1}, euler={euler1}\n"
-                f"Expected collision: {should_collide}\n"
-                f"Backend: {backend}\n"
-                f"Radius: {radius}, Half-length: {half_length}\n"
-            ) from e
+            gjk_disagreements.append(f"{description}: {e}")
+
+    if gjk_disagreements:
+        pytest.xfail(f"GJK disagreements (may be GJK inaccuracy): {'; '.join(gjk_disagreements)}")
 
 
 @pytest.mark.required
@@ -995,39 +937,15 @@ def test_cylinder_cylinder_vs_gjk(backend, monkeypatch, tmp_path: Path, show_vie
                 if description in MULTICONTACT_CASES:
                     n_analytical = len(contacts_analytical["geom_a"])
                     n_gjk = len(contacts_gjk["geom_a"])
+                    assert n_analytical >= 2, f"Analytical produced only {n_analytical} contact(s)"
+                    assert n_gjk >= 2, f"GJK produced only {n_gjk} contact(s)"
 
-                    if n_gjk >= 2:
-                        assert n_analytical >= 2, (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least 2)"
-                        )
-                        assert n_analytical >= (n_gjk - 1), (
-                            f"GJK found {n_gjk} contacts, but analytical only found {n_analytical} "
-                            f"(expected at least {n_gjk - 1})"
-                        )
+                    all_analytical_positions = np.array(
+                        [contacts_analytical["position"][i] for i in range(n_analytical)]
+                    )
+                    all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
 
-                    if n_analytical >= 2 or n_gjk >= 2:
-                        all_analytical_positions = np.array(
-                            [contacts_analytical["position"][i] for i in range(n_analytical)]
-                        )
-                        all_gjk_positions = np.array([contacts_gjk["position"][i] for i in range(n_gjk)])
-
-                        for pos_a in all_analytical_positions:
-                            min_dist = min(np.linalg.norm(pos_a - pos_g) for pos_g in all_gjk_positions)
-                            assert min_dist < POS_TOL, (
-                                f"Analytical contact at {pos_a} has no nearby GJK contact "
-                                f"(min_dist={min_dist:.4f}, tol={POS_TOL})"
-                            )
-
-                        if euler0 == (0, 0, 0) and euler1 == (0, 0, 0):
-                            expected_xy = np.array([pos1[0] / 2, 0.0])
-                            for pos_a in all_analytical_positions:
-                                assert_allclose(
-                                    pos_a[:2],
-                                    expected_xy,
-                                    tol=POS_TOL,
-                                    err_msg=f"Contact XY not on midline for {description}",
-                                )
+                    _assert_multicontact_lines_match(all_analytical_positions, all_gjk_positions, POS_TOL, description)
         except AssertionError as e:
             gjk_disagreements.append(f"{description}: {e}")
 

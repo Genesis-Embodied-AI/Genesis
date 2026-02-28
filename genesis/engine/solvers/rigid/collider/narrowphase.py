@@ -616,31 +616,7 @@ def func_convex_convex_contact(
                 )
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                    is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif (
-                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
-                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
-                    is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = qd.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
                     )
@@ -981,9 +957,17 @@ def func_narrow_phase_convex_vs_convex(
             if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                 i_ga, i_gb = i_gb, i_ga
 
-            is_cylinder_or_sphere_pair = (
-                geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE or geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER
-            ) and (geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE or geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER)
+            # Pairs that have analytical specializations in the convex specializations kernel.
+            # Capsule-cylinder is excluded because it has no specialization.
+            type_a = geoms_info.type[i_ga]
+            type_b = geoms_info.type[i_gb]
+            is_capsule_or_sphere = (type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.CAPSULE) and (
+                type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.CAPSULE
+            )
+            is_cylinder_or_sphere = (type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.CYLINDER) and (
+                type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.CYLINDER
+            )
+            is_primitive_pair = is_capsule_or_sphere or is_cylinder_or_sphere
 
             if (
                 geoms_info.is_convex[i_ga]
@@ -994,7 +978,7 @@ def func_narrow_phase_convex_vs_convex(
                     and geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX
                     and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX
                 )
-                and not (collider_static_config.has_cylinder_or_sphere and is_cylinder_or_sphere_pair)
+                and not (collider_static_config.has_primitive_specialization and is_primitive_pair)
             ):
                 if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
                     func_convex_convex_contact(
@@ -1149,8 +1133,35 @@ def func_narrow_phase_convex_specializations(
                         errno,
                     )
 
-            if qd.static(collider_static_config.has_cylinder_or_sphere):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+            if qd.static(collider_static_config.has_primitive_specialization):
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
+                    capsule_contact.func_capsule_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        collider_static_config,
+                        errno,
+                    )
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                    capsule_contact.func_sphere_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
                     cylinder_contact.func_sphere_sphere_contact(
                         i_ga,
                         i_gb,
