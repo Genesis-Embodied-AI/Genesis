@@ -405,8 +405,7 @@ def test_linear_to_lower_tri(n_dofs):
     @qd.kernel
     def compute_indices():
         for i_pair in range(n_lower_tri):
-            i_d1 = linear_to_lower_tri(i_pair)
-            i_d2 = i_pair - i_d1 * (i_d1 + 1) // 2
+            i_d1, i_d2 = linear_to_lower_tri(i_pair)
             result_row[i_pair] = i_d1
             result_col[i_pair] = i_d2
 
