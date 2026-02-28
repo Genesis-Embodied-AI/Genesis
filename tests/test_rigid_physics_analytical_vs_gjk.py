@@ -233,15 +233,6 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Disable sphere-capsule analytical path
     lines = find_and_disable_condition(lines, "capsule_contact.func_sphere_capsule_contact")
 
-    # Disable sphere-sphere analytical path
-    lines = find_and_disable_condition(lines, "cylinder_contact.func_sphere_sphere_contact")
-
-    # Disable cylinder-sphere analytical path
-    lines = find_and_disable_condition(lines, "cylinder_contact.func_cylinder_sphere_contact")
-
-    # Disable cylinder-cylinder analytical path
-    lines = find_and_disable_condition(lines, "cylinder_contact.func_cylinder_cylinder_contact")
-
     # Insert errno before GJK calls
     lines = insert_errno_before_call(
         lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
@@ -325,6 +316,12 @@ class AnalyticalVsGJKSceneCreator:
             "func_narrow_phase_convex_vs_convex",
             narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )
+
+        # Disable cylinder/sphere specializations so pairs flow to GJK in the main kernel.
+        # The specializations kernel uses qd.static() on this flag, so setting it to False
+        # compiles out the cylinder/sphere branches and forces recompilation.
+        collider = self.scene_gjk.rigid_solver.collider
+        collider._collider_static_config.has_cylinder_or_sphere = False
 
     def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)

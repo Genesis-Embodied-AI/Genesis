@@ -640,39 +640,6 @@ def func_convex_convex_contact(
                         geoms_info=geoms_info,
                         rigid_global_info=rigid_global_info,
                     )
-                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
-                    is_col, normal, contact_pos, penetration = cylinder_contact.func_sphere_sphere_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        gb_pos=gb_pos_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif (
-                    geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
-                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER):
-                    is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_sphere_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER:
-                    is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_cylinder_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = qd.Vector(
                         [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
@@ -1014,6 +981,10 @@ def func_narrow_phase_convex_vs_convex(
             if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
                 i_ga, i_gb = i_gb, i_ga
 
+            is_cylinder_or_sphere_pair = (
+                geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE or geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER
+            ) and (geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE or geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER)
+
             if (
                 geoms_info.is_convex[i_ga]
                 and geoms_info.is_convex[i_gb]
@@ -1023,6 +994,7 @@ def func_narrow_phase_convex_vs_convex(
                     and geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX
                     and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX
                 )
+                and not (collider_static_config.has_cylinder_or_sphere and is_cylinder_or_sphere_pair)
             ):
                 if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
                     func_convex_convex_contact(
@@ -1173,6 +1145,47 @@ def func_narrow_phase_convex_specializations(
                         collider_state,
                         collider_info,
                         rigid_global_info,
+                        collider_static_config,
+                        errno,
+                    )
+
+            if qd.static(collider_static_config.has_cylinder_or_sphere):
+                if geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+                    cylinder_contact.func_sphere_sphere_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                elif (
+                    geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER):
+                    cylinder_contact.func_cylinder_sphere_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.CYLINDER and geoms_info.type[i_gb] == gs.GEOM_TYPE.CYLINDER:
+                    cylinder_contact.func_cylinder_cylinder_contact(
+                        i_ga,
+                        i_gb,
+                        i_b,
+                        geoms_state,
+                        geoms_info,
+                        rigid_global_info,
+                        collider_state,
+                        collider_info,
                         collider_static_config,
                         errno,
                     )
