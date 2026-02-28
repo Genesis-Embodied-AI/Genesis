@@ -950,3 +950,39 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
     usd_scene = build_usd_scene(usd_file, scale=scale)
 
     compare_scene(mjcf_scene, usd_scene, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
+def test_uv_size_mismatch_no_crash(asset_tmp_path):
+    """
+    Test that a USD mesh with mismatched UV size does not crash the parser for consistency with Nvidia omniverse.
+    """
+    usd_file = str(asset_tmp_path / "uv_mismatch.usda")
+
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    # Create a simple triangle mesh with intentionally mismatched UVs
+    mesh = UsdGeom.Mesh.Define(stage, "/root/mesh")
+    mesh.GetPointsAttr().Set([Gf.Vec3f(0, 0, 0), Gf.Vec3f(1, 0, 0), Gf.Vec3f(0, 1, 0), Gf.Vec3f(1, 1, 0)])
+    mesh.GetFaceVertexIndicesAttr().Set([0, 1, 2, 1, 3, 2])
+    mesh.GetFaceVertexCountsAttr().Set([3, 3])
+
+    # Add UVs with intentionally wrong count (5 UVs for 4 vertices / 6 face-vertex indices)
+    primvar_api = UsdGeom.PrimvarsAPI(mesh.GetPrim())
+    uv_primvar = primvar_api.CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex)
+    uv_primvar.Set([Gf.Vec2f(0, 0), Gf.Vec2f(1, 0), Gf.Vec2f(0, 1), Gf.Vec2f(1, 1), Gf.Vec2f(0.5, 0.5)])
+
+    UsdPhysics.RigidBodyAPI.Apply(mesh.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+
+    stage.Save()
+
+    # This should NOT raise an exception — it should warn and discard UVs
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="collision")
+    assert len(usd_scene.entities) > 0
