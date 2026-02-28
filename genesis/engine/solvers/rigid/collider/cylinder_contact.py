@@ -232,7 +232,7 @@ def func_cylinder_cylinder_contact(
         perp_vec = center_diff - center_diff.dot(axis_a) * axis_a
         perp_dist = qd.sqrt(perp_vec.dot(perp_vec))
 
-        b_on_a = center_diff.dot(axis_a)
+        b_on_a = -center_diff.dot(axis_a)  # B's center projected onto A's axis
         overlap_start = qd.max(-halflength_a, b_on_a - halflength_b)
         overlap_end = qd.min(halflength_a, b_on_a + halflength_b)
 
@@ -249,7 +249,7 @@ def func_cylinder_cylinder_contact(
                 normal = arb - arb.dot(axis_a) * axis_a
                 normal = normal / qd.sqrt(normal.dot(normal) + 1e-30)
             overlap_center = 0.5 * (overlap_start + overlap_end)
-            contact_pos = ga_pos + overlap_center * axis_a + (radius_a - 0.5 * penetration) * normal
+            contact_pos = ga_pos + overlap_center * axis_a - (radius_a - 0.5 * penetration) * normal
         elif perp_dist < combined_radius:
             # Barrels don't overlap but caps may interact (e.g., end-on approach).
             # Fall through to segment-endpoint closest-point check below.
