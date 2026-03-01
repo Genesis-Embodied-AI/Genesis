@@ -72,7 +72,7 @@ def main():
 
     # Add Franka robot
     franka_material_kwargs = dict(
-        coupling_mode=args.coupling_type,
+        coupling_type=args.coupling_type,
     )
     if args.coupling_type == "two_way_soft_constraint":
         franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
@@ -149,7 +149,7 @@ def main():
                 material=gs.materials.Rigid(
                     rho=500,
                     coup_friction=0.5,
-                    coupling_mode="ipc_only",
+                    coupling_type="ipc_only",
                 ),
                 surface=gs.surfaces.Plastic(
                     color=(0.8, 0.3, 0.2, 0.8),

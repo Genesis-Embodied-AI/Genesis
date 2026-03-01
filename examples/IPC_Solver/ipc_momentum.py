@@ -60,7 +60,7 @@ def main():
         material=gs.materials.Rigid(
             rho=1000,
             friction=0.3,
-            coupling_mode="two_way_soft_constraint",
+            coupling_type="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),

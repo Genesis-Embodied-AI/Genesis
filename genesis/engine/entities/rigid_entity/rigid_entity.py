@@ -17,7 +17,6 @@ from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.utils import array_class
-from genesis.utils import linalg as lu
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
@@ -770,11 +769,11 @@ class RigidEntity(Entity):
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self.material.coupling_mode == "ipc_only"
+            and self.material.coupling_type == "ipc_only"
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
             gs.raise_exception(
-                "`RigidMaterial.coupling_mode='ipc_only'` only supported by rigid non-articulated objects."
+                "`RigidMaterial.coupling_type='ipc_only'` only supported by rigid non-articulated objects."
             )
 
         # Add (link, joints, geoms) tuples sequentially
@@ -2623,8 +2622,8 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
@@ -2766,8 +2765,8 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
@@ -3615,7 +3614,7 @@ class RigidEntity(Entity):
         return self._links
 
     @property
-    def joints(self):
+    def joints(self) -> list[RigidJoint]:
         """The list of joints (`RigidJoint`) in the entity."""
         return tuple(chain.from_iterable(self._joints))
 
@@ -3625,12 +3624,12 @@ class RigidEntity(Entity):
         return self._joints
 
     @property
-    def base_link(self):
+    def base_link(self) -> RigidLink:
         """The base link of the entity"""
         return self._links[0]
 
     @property
-    def base_joint(self):
+    def base_joint(self) -> RigidJoint:
         """The base joint of the entity"""
         return self._joints[0][0]
 
