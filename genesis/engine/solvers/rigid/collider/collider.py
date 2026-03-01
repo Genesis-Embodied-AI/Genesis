@@ -46,17 +46,7 @@ from .contact import (
 from . import narrowphase
 from .narrowphase import (
     CCD_ALGORITHM_CODE,
-    func_contact_sphere_sdf,
-    func_contact_vertex_sdf,
-    func_contact_edge_sdf,
-    func_contact_convex_convex_sdf,
-    func_contact_mpr_terrain,
-    func_add_prism_vert,
-    func_plane_box_contact,
-    func_convex_convex_contact,
-    func_box_box_contact,
     func_narrow_phase_diff_convex_vs_convex,
-    func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
     func_narrow_phase_nonconvex_vs_nonterrain,
 )
@@ -517,7 +507,7 @@ class Collider:
                 self._solver._errno,
             )
         if self._collider_static_config.has_convex_specialization:
-            func_narrow_phase_convex_specializations(
+            narrowphase.func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
