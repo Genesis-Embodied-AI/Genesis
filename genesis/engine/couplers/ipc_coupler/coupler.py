@@ -66,8 +66,6 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
 from .data import COUPLING_TYPE, ABDLinkEntry, ArticulatedEntityData, IPCCouplingData
 from .utils import (
     find_target_link_for_fixed_merge,
-    compute_link_to_link_transform,
-    compute_link_init_world_rotation,
     build_ipc_scene_config,
     read_ipc_geometry_metadata,
     update_coupling_forces,
@@ -92,7 +90,7 @@ def _animate_rigid_link(coupler_ref, link, env_idx, info):
         return
     geom = geom_slots[0].geometry()
 
-    # Enable constraint and set target transform
+    # Enable constraint and set target transform (q_genesis^n)
     is_constrained_attr = geom.instances().find(builtin.is_constrained)
     aim_transform_attr = geom.instances().find(builtin.aim_transform)
     assert is_constrained_attr and aim_transform_attr
@@ -132,6 +130,9 @@ class IPCCoupler(RBC):
         # Define some proxies for convenience
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
+
+        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / self.sim.dt**2
+        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / self.sim.dt**2
 
         # ==== IPC System Infrastructure ====
         self._ipc_engine: Engine | None = None
@@ -214,19 +215,7 @@ class IPCCoupler(RBC):
         self._setup_coupling_config()
         self._add_objects_to_ipc()
         self._finalize_ipc()
-
-        # Pre-allocate coupling data
-        rigid_retrieve_entities = set(
-            self._coupling_type_to_entities[COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT]
-            + self._coupling_type_to_entities[COUPLING_TYPE.IPC_ONLY]
-            + self._articulation_non_fixed_base_entities
-        )
-        self.coupling_entries: list[tuple[int, "RigidLink", int]] = [
-            (abd_body_idx, link, env_idx)
-            for abd_body_idx, (link, env_idx) in enumerate(self._abd_primary_links)
-            if link.entity in rigid_retrieve_entities
-        ]
-        self.coupling_data = IPCCouplingData(self.coupling_entries)
+        self._init_accessors()
 
     def _setup_coupling_config(self):
         """Read coupling_type, coupling_link_filter, and collision settings from entity materials."""
@@ -243,7 +232,7 @@ class IPCCoupler(RBC):
                 gs.raise_exception(
                     f"Rigid entity {entity.idx} has no joint. Coupling type 'external_articulation' is not supported."
                 )
-            gs.logger.debug(f"Rigid entity {entity.idx}: coupling type '{str(coupling_type).lower()}'")
+            gs.logger.debug(f"Rigid entity {entity.idx}: coupling type '{coupling_type.name.lower()}'")
 
             # Resolve link filter from material
             link_filter_names = entity.material.coupling_link_filter
@@ -289,7 +278,7 @@ class IPCCoupler(RBC):
         self._ipc_world = World(self._ipc_engine)
 
         # Set up sub-scenes for multi-environment to isolate per-environment contacts if batched
-        for env_idx in range(self.sim.n_envs):
+        for env_idx in range(self.sim._B):
             ipc_subscene = self._ipc_subscene_tabular.create(f"subscene_{env_idx}")
             for other_ipc_subscene in self._ipc_subscenes:
                 self._ipc_subscene_tabular.insert(other_ipc_subscene, ipc_subscene, False)
@@ -383,8 +372,8 @@ class IPCCoupler(RBC):
                 # Add metadata to identify geometry type
                 meta_attrs = mesh.meta()
                 meta_attrs.create("solver_type", solver_type)
-                meta_attrs.create("env_idx", str(env_idx))
                 meta_attrs.create("entity_idx", str(i_e))
+                meta_attrs.create("env_idx", str(env_idx))
 
                 # Create geometry in IPC scene
                 fem_obj.geometries().create(mesh)
@@ -400,19 +389,16 @@ class IPCCoupler(RBC):
         """Add rigid geoms to the IPC scene as ABD objects, merging geoms by link."""
         assert gs.logger is not None
 
-        gs.logger.debug(f"Registered entity coupling types: {self._coupling_types}")
+        gs.logger.debug(f"Registered entity coupling types: {set(self._coupling_types.values())}")
 
         # ========== Pre-compute link groups (env-independent) ==========
         # Group links by fixed-joint merge target, matching mjcf.py behavior where geoms from fixed-joint children are
         # merged into the parent body's mesh.
         target_groups: dict["RigidLink", list["RigidLink"]] = {}  # target_link_idx -> [source_link_idx, ...]
-        merge_transforms: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {
-            # source_link_idx -> (pos, quat) relative to target frame
-        }
         for link in self.rigid_solver.links:
             entity = link.entity
 
-            coupling_type = self._coupling_types[link.entity]
+            coupling_type = self._coupling_types.get(link.entity)
             if coupling_type is None:
                 continue
 
@@ -426,13 +412,15 @@ class IPCCoupler(RBC):
             target_groups.setdefault(target_link, []).append(link)
 
             if target_link is not link:
-                merge_transforms[link] = compute_link_to_link_transform(link, target_link)
                 gs.logger.debug(
                     f"Merging link {link.idx} ({link.name}) into target link {target_link.idx} ({target_link.name}) via"
                     " fixed joint"
                 )
 
         # ========== Process each environment ==========
+        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
+        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
+
         for env_idx in range(self.sim._B):
             rigid_objects, rigid_meshes = [], []
             for target_link, source_links in target_groups.items():
@@ -471,22 +459,13 @@ class IPCCoupler(RBC):
                             plane_obj.geometries().create(plane_geom)
                             self._rigid_mesh_handles.setdefault(target_link, []).append(plane_geom)
                         elif geom.n_verts:
-                            # Apply geom transform to vertices
-                            transformed_verts = gu.transform_by_trans_quat(
-                                geom.init_verts, geom.init_pos, geom.init_quat
-                            )
-
-                            # Apply additional transform for fixed joint merging
-                            if source_link is not target_link:
-                                transformed_verts = gu.transform_by_trans_quat(
-                                    geom.init_verts, *merge_transforms[source_link]
-                                )
+                            # geom_verts = tensor_to_array(geom.get_verts(), dtype=np.float64)
+                            geom_verts = geom.init_verts.astype(np.float64, copy=False)
+                            if geom_verts.ndim > 2:
+                                geom_verts = geom_verts[env_idx]
 
                             try:
-                                mesh = uipc_trimesh(
-                                    transformed_verts.astype(np.float64, copy=False),
-                                    geom.init_faces.astype(np.int32, copy=False),
-                                )
+                                mesh = uipc_trimesh(geom_verts, geom.init_faces.astype(np.int32, copy=False))
                             except RuntimeError as e:
                                 gs.raise_exception_from(f"Failed to process geom {geom.idx} for IPC.", e)
 
@@ -501,7 +480,9 @@ class IPCCoupler(RBC):
 
                 # Apply target link world transform
                 trans_view = view(merged_mesh.transforms())
-                trans_view[0] = gu.trans_quat_to_T(target_link.pos, target_link.quat)
+                trans_view[0] = gu.trans_quat_to_T(
+                    links_pos[env_idx, target_link.idx], links_quat[env_idx, target_link.idx]
+                )
 
                 # Create rigid object
                 rigid_obj = self._ipc_objects.create(f"rigid_link_{target_link.idx}_{env_idx}")
@@ -535,7 +516,7 @@ class IPCCoupler(RBC):
                     and target_link is entity.base_link
                     and not entity.base_link.is_fixed
                 )
-                is_soft_constraint_target = entity_coupling_type == COUPLING_TYPE.EXTERNAL_ARTICULATION or (
+                is_soft_constraint_target = entity_coupling_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT or (
                     is_free_base and not self.options.free_base_driven_by_ipc
                 )
                 is_free_base_ipc_driven = is_free_base and self.options.free_base_driven_by_ipc
@@ -575,19 +556,16 @@ class IPCCoupler(RBC):
                 # Metadata
                 meta_attrs = merged_mesh.meta()
                 meta_attrs.create("solver_type", "rigid")
-                meta_attrs.create("env_idx", str(env_idx))
                 meta_attrs.create("link_idx", str(target_link.idx))
+                meta_attrs.create("env_idx", str(env_idx))
 
                 # Vertex-to-link mapping for two_way_soft_constraint contact force feedback.
                 # FIXME: This mapping should just store the offset.
-                if entity_coupling_type == "two_way_soft_constraint":
+                if entity_coupling_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
                     n_verts = merged_mesh.vertices().size()
                     for local_idx in range(n_verts):
-                        self._vertex_to_link_mapping[self._global_vertex_offset + local_idx] = (
-                            target_link,
-                            local_idx,
-                            env_idx,
-                        )
+                        link_entry = (target_link, local_idx, env_idx)
+                        self._vertex_to_link_mapping[self._global_vertex_offset + local_idx] = link_entry
 
                 self._global_vertex_offset += merged_mesh.vertices().size()
 
@@ -644,7 +622,6 @@ class IPCCoupler(RBC):
 
             # Build one EA geometry set per environment
             joints_idx: list[int] = []
-            joints_q_idx_local: list[int] = []
             joints_geom_slot_by_env: list[list[GeometrySlot]] = []
             articulation_geoms_by_env: list[Geometry] = []
             articulation_slots_by_env: list[GeometrySlot] = []
@@ -671,17 +648,13 @@ class IPCCoupler(RBC):
                         child_link = joint.link
                         parent_link = find_target_link_for_fixed_merge(parent_link)
                         joints_idx.append(joint.idx_local)
-
-                        child_quat = compute_link_init_world_rotation(child_link)
-                        joint_axis = gu.transform_by_quat(joint_axis_local, child_quat)
-                        child_transform = compute_link_to_link_transform(entity.base_link, joint.link)
-                        joint_pos = gu.transform_by_trans_quat(joint.pos, *child_transform)
+                        joint_axis = joint.get_anchor_axis()
+                        joint_pos = joint.get_anchor_pos()
 
                         gs.logger.debug(f"--- Processing joint: {joint.name} (env {env_idx}) ---")
                         gs.logger.debug(f"  Parent link: {parent_link.idx} ({parent_link.name})")
                         gs.logger.debug(f"  Child link: {child_link.idx} ({child_link.name})")
                         gs.logger.debug(f"  Joint axis (joint frame): {joint_axis_local}")
-                        gs.logger.debug(f"  Child link quat (world):\n{child_quat}")
                         gs.logger.debug(f"  Joint axis (world): {joint_axis}")
                         gs.logger.debug(f"  Joint position (world): {joint_pos}")
 
@@ -733,7 +706,7 @@ class IPCCoupler(RBC):
                 delta_theta_tilde=np.zeros(entity.n_joints, dtype=np.float64),
                 delta_theta_ipc=np.zeros((self.sim._B, entity.n_joints), dtype=np.float64),
                 delta_theta=np.zeros(entity.n_joints, dtype=np.float64),
-                prev_link_transforms=[[None for _ in range(self.sim._B)] for _ in joints_q_idx_local],
+                prev_link_transforms=[[None for _ in range(self.sim._B)] for _ in joints_idx],
             )
 
             # Add to cache list if non-fixed base for '_retrieve_rigid_states' in couple()
@@ -795,15 +768,7 @@ class IPCCoupler(RBC):
         self._ipc_world.dump()
         gs.logger.info("IPC world initialized successfully")
 
-        # Initialize AffineBodyStateAccessorFeature for optimized ABD state retrieval
-        self._init_abd_state_accessor()
-
-    def _init_abd_state_accessor(self):
-        """
-        Initialize AffineBodyStateAccessorFeature for efficient batch ABD state retrieval.
-
-        Creates index mapping from ABD body index to (link, env_idx) for fast lookups during runtime.
-        """
+    def _init_accessors(self):
         assert gs.logger is not None
         assert self._ipc_world is not None
 
@@ -826,6 +791,11 @@ class IPCCoupler(RBC):
         self._abd_state_geo.instances().create(builtin.transform, np.eye(4, dtype=np.float64))
         self._abd_state_geo.instances().create(builtin.velocity, np.zeros((4, 4), dtype=np.float64))
 
+        rigid_retrieve_entities = set(
+            self._coupling_type_to_entities[COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT]
+            + self._coupling_type_to_entities[COUPLING_TYPE.IPC_ONLY]
+            + self._articulation_non_fixed_base_entities
+        )
         self._abd_data_by_link = {
             link: [
                 ABDLinkEntry(
@@ -836,9 +806,20 @@ class IPCCoupler(RBC):
                 for _ in range(self.sim._B)
             ]
             for link, _ in self._abd_primary_links
+            if link.entity in rigid_retrieve_entities
         }
 
-        gs.logger.debug(f"ABD body index mapping created: {body_count} entries. ")
+        gs.logger.debug(f"ABD body index mapping created: {body_count} entries.")
+
+        # Pre-allocate coupling data
+        self.coupling_entries: list[tuple[int, "RigidLink", int]] = [
+            (abd_body_idx, link, env_idx)
+            for abd_body_idx, (link, env_idx) in enumerate(self._abd_primary_links)
+            if link.entity in rigid_retrieve_entities
+        ]
+        self.coupling_data = IPCCouplingData(self.coupling_entries)
+
+        gs.logger.debug(f"IPC coupling index mapping created: {len(self.coupling_entries)} entries.")
 
     # ============================================================
     # Section 1: Configuration API
@@ -894,7 +875,7 @@ class IPCCoupler(RBC):
         # Store transforms for all rigid links
         links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
         links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
-        links_transform: np.ndarray = cast(np.ndarray, gu.trans_quat_to_T(links_pos, links_quat))
+        links_transform = cast(np.ndarray, gu.trans_quat_to_T(links_pos, links_quat))
         for link, env_idx in self._abd_primary_links:
             self._stored_rigid_transforms.setdefault(link, []).append(links_transform[env_idx, link.idx])
 
@@ -1035,10 +1016,9 @@ class IPCCoupler(RBC):
             # Store current link transforms to prev_link_transforms
             for env_idx in range(self.sim._B):
                 for joint_idx in ad.joints_idx:
-                    child_link_idx = entity.joints[joint_idx].link.idx
-                    ad.prev_link_transforms[joint_idx][env_idx] = self._stored_rigid_transforms[child_link_idx][
-                        env_idx
-                    ].copy()
+                    child_link = entity.joints[joint_idx].link
+                    link_transform = self._stored_rigid_transforms[child_link][env_idx]
+                    ad.prev_link_transforms[joint_idx][env_idx] = link_transform.copy()
 
     def _apply_base_link_velocity_from_ipc(self, entity):
         envs_vel = np.empty((self.sim._B, 6), dtype=gs.np_float)
@@ -1180,8 +1160,8 @@ class IPCCoupler(RBC):
         """
         Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
 
-        Data has already been populated in data by _retrieve_rigid_states,
-        so this function computes forces and applies the results.
+        Data has already been populated in data by _retrieve_rigid_states, so this function computes forces and applies
+        the results.
 
         This ensures action-reaction force consistency:
         - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
@@ -1189,7 +1169,7 @@ class IPCCoupler(RBC):
         """
         if (
             not self.options.two_way_coupling
-            or not self._coupling_type_to_entities[COUPLING_TYPE.EXTERNAL_ARTICULATION]
+            or not self._coupling_type_to_entities[COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT]
             or not self.coupling_entries
         ):
             return
@@ -1200,9 +1180,8 @@ class IPCCoupler(RBC):
             self.coupling_data.aim_transforms,
             self.coupling_data.links_mass,
             self.coupling_data.links_inertia_i,
-            self.options.constraint_strength_translation,
-            self.options.constraint_strength_rotation,
-            self.sim._dt**2,
+            self._constraint_strength_translation_scaled,
+            self._constraint_strength_rotation_scaled,
             self.coupling_data.out_forces,
             self.coupling_data.out_torques,
         )
@@ -1214,12 +1193,12 @@ class IPCCoupler(RBC):
             )
 
         self.rigid_solver.apply_links_external_force(
-            force=self.coupling_data.out_forces,
+            self.coupling_data.out_forces if self.sim.n_envs > 0 else self.coupling_data.out_forces[0],
             links_idx=self.coupling_data.links_idx,
             local=False,
         )
         self.rigid_solver.apply_links_external_torque(
-            torque=self.coupling_data.out_torques,
+            self.coupling_data.out_torques if self.sim.n_envs > 0 else self.coupling_data.out_torques[0],
             links_idx=self.coupling_data.links_idx,
             local=False,
         )

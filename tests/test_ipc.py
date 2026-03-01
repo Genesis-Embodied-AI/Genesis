@@ -195,6 +195,10 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
             contact_d_hat=0.01,
             enable_rigid_rigid_contact=False,
         ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, 2.0, 1.5),
+            camera_lookat=(1.0, -0.5, 0.0),
+        ),
         show_viewer=show_viewer,
     )
 
@@ -256,6 +260,10 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
             contact_d_hat=0.01,
             contact_resistance=1e6,
             enable_rigid_rigid_contact=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 0.0, 0.1),
+            camera_lookat=(0.0, 0.0, 0.0),
         ),
         show_viewer=show_viewer,
     )
@@ -346,8 +354,8 @@ def test_link_filter_strict():
     assert moving_link.idx in ipc_links_idx
     assert base_link.idx not in ipc_links_idx
 
-    assert moving_link.idx in coupler._abd_link_to_slot
-    assert base_link.idx not in coupler._abd_link_to_slot
+    assert moving_link in coupler._abd_link_to_slot
+    assert base_link not in coupler._abd_link_to_slot
 
 
 @pytest.mark.required
@@ -424,9 +432,9 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     moving_link = robot.get_link("moving")
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
-    assert (0, moving_link) in coupler._abd_link_to_slot
+    assert moving_link in coupler._abd_link_to_slot
     if coupling_type == "two_way_soft_constraint":
-        assert (moving_link, 0) in coupler._abd_data_by_link
+        assert moving_link in coupler._abd_data_by_link
     elif coupling_type == "external_articulation":
         art_data = coupler.articulation_data[robot]
         assert len(art_data.articulation_slots_by_env) == max(scene.n_envs, 1)

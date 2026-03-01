@@ -45,53 +45,6 @@ def find_target_link_for_fixed_merge(link):
     return link
 
 
-def compute_link_to_link_transform(from_link, to_link):
-    """
-    Compute the relative transform from from_link to to_link.
-
-    Similar to _accumulate_body_to_parent_transform in mjcf.py, but computed
-    using Genesis link positions and quaternions.
-
-    Returns
-    -------
-    tuple
-        (pos, quat) transforming points from from_link frame to to_link frame
-    """
-    # Accumulate transforms going up from from_link to common ancestor (to_link)
-    pos = np.array([0.0, 0.0, 0.0], dtype=gs.np_float)
-    quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
-
-    assert from_link.entity is to_link.entity
-    entity = from_link.entity
-
-    link = from_link
-    while link is not to_link:
-        if link.parent_idx < 0:
-            gs.raise_exception(f"Cannot compute transform from link {from_link} to {to_link}")
-        pos, quat = gu.transform_pos_quat_by_trans_quat(pos, quat, link.pos, link.quat)
-        link = entity.links[link.parent_idx - entity.link_start]
-
-    return pos, quat
-
-
-def compute_link_init_world_rotation(link):
-    """
-    Compute the world rotation matrix for a link in its initial configuration.
-
-    This recursively computes the rotation by traversing up the kinematic tree.
-
-    Note that the joint origin rotation (rpy) is baked into the child link's body transformation.
-    """
-    # Root link, just use its own orientation
-    if link.parent_idx < 0:
-        return link.quat
-
-    entity = link.entity
-    parent_link = entity.links[link.parent_idx - entity.link_start]
-    parent_world_quat = compute_link_init_world_rotation(parent_link)
-    return gu.transform_quat_by_quat(parent_world_quat, link.quat)
-
-
 def build_ipc_scene_config(options, sim_options):
     """
     Build IPC Scene config dict from IPCCouplerOptions and SimOptions.
@@ -201,11 +154,6 @@ def read_ipc_geometry_metadata(geo):
     return (solver_type, env_idx, idx)
 
 
-# ============================================================
-# Numpy computation functions (replacing Quadrants kernels)
-# ============================================================
-
-
 @nb.jit(nopython=True, cache=True)
 def update_coupling_forces(
     ipc_transforms,
@@ -214,23 +162,32 @@ def update_coupling_forces(
     links_inertia_i,
     translation_strength,
     rotation_strength,
-    dt2,
     out_forces,
     out_torques,
 ):
     """Compute coupling forces and torques for all links."""
 
+    batch_shape = out_forces.shape[:-1]
+
     pos_current, R_current = ipc_transforms[..., :3, 3], ipc_transforms[..., :3, :3]
     pos_aim, R_aim = aim_transforms[..., :3, 3], aim_transforms[..., :3, :3]
 
     # Linear force
-    out_forces[:] = translation_strength * links_mass * (pos_current - pos_aim) / dt2
+    out_forces[:] = (translation_strength * links_mass[..., None]) * (pos_current - pos_aim)
+
+    # Relative rotation matrix
+    R_rel = np.empty((*batch_shape, 3, 3), dtype=ipc_transforms.dtype)
+    for idx in np.ndindex(batch_shape):
+        R_rel[idx] = R_current[idx] @ R_aim[idx].T
 
     # Relative rotation in angle-axis representation
-    rotvec = gu.R_to_rotvec(R_current @ R_aim.T)
+    rotvec = gu.R_to_rotvec(R_rel)
 
     # Transform inertia to world frame
-    I_world = R_current @ links_inertia_i @ R_current.T
+    I_world = np.empty((*batch_shape, 3, 3), dtype=ipc_transforms.dtype)
+    for idx in np.ndindex(batch_shape):
+        I_world[idx] = R_current[idx] @ links_inertia_i[idx[-1:]] @ R_current[idx].T
 
     # Torque
-    out_torques[:] = rotation_strength / dt2 * (I_world @ rotvec)
+    for idx in np.ndindex(batch_shape):
+        out_torques[idx] = rotation_strength * (I_world[idx] @ rotvec[idx])
