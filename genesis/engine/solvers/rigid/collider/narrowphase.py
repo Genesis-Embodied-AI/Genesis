@@ -643,61 +643,83 @@ def func_convex_convex_contact(
                     # Analytical specializations for primitive pairs.
                     # These produce a single contact; the perturbation loop adds multi-contact.
                     is_cylinder_or_sphere_pair = (
-                        (type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.CYLINDER)
-                        and (type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.CYLINDER)
-                    )
-                    is_capsule_pair = (
-                        type_a == gs.GEOM_TYPE.CAPSULE and type_b == gs.GEOM_TYPE.CAPSULE
-                    )
-                    is_sphere_capsule_pair = (
-                        (type_a == gs.GEOM_TYPE.SPHERE and type_b == gs.GEOM_TYPE.CAPSULE)
-                        or (type_a == gs.GEOM_TYPE.CAPSULE and type_b == gs.GEOM_TYPE.SPHERE)
+                        type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.CYLINDER
+                    ) and (type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.CYLINDER)
+                    is_capsule_pair = type_a == gs.GEOM_TYPE.CAPSULE and type_b == gs.GEOM_TYPE.CAPSULE
+                    is_sphere_capsule_pair = (type_a == gs.GEOM_TYPE.SPHERE and type_b == gs.GEOM_TYPE.CAPSULE) or (
+                        type_a == gs.GEOM_TYPE.CAPSULE and type_b == gs.GEOM_TYPE.SPHERE
                     )
                     use_analytical = is_cylinder_or_sphere_pair or is_capsule_pair or is_sphere_capsule_pair
 
                     if use_analytical:
                         if is_capsule_pair:
                             is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                                i_ga=i_ga, i_gb=i_gb,
-                                ga_pos=ga_pos_current, ga_quat=ga_quat_current,
-                                gb_pos=gb_pos_current, gb_quat=gb_quat_current,
-                                geoms_info=geoms_info, rigid_global_info=rigid_global_info,
+                                i_ga=i_ga,
+                                i_gb=i_gb,
+                                ga_pos=ga_pos_current,
+                                ga_quat=ga_quat_current,
+                                gb_pos=gb_pos_current,
+                                gb_quat=gb_quat_current,
+                                geoms_info=geoms_info,
+                                rigid_global_info=rigid_global_info,
                             )
                         elif is_sphere_capsule_pair:
                             is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                                i_ga=i_ga, i_gb=i_gb,
-                                ga_pos=ga_pos_current, ga_quat=ga_quat_current,
-                                gb_pos=gb_pos_current, gb_quat=gb_quat_current,
-                                geoms_info=geoms_info, rigid_global_info=rigid_global_info,
+                                i_ga=i_ga,
+                                i_gb=i_gb,
+                                ga_pos=ga_pos_current,
+                                ga_quat=ga_quat_current,
+                                gb_pos=gb_pos_current,
+                                gb_quat=gb_quat_current,
+                                geoms_info=geoms_info,
+                                rigid_global_info=rigid_global_info,
                             )
                         elif type_a == gs.GEOM_TYPE.SPHERE and type_b == gs.GEOM_TYPE.SPHERE:
                             is_col, normal, contact_pos, penetration = cylinder_contact.func_sphere_sphere_contact(
-                                ga_pos_current, gb_pos_current,
-                                geoms_info.data[i_ga][0], geoms_info.data[i_gb][0],
+                                ga_pos_current,
+                                gb_pos_current,
+                                geoms_info.data[i_ga][0],
+                                geoms_info.data[i_gb][0],
                                 EPS,
                             )
                         elif type_a == gs.GEOM_TYPE.CYLINDER and type_b == gs.GEOM_TYPE.CYLINDER:
                             is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_cylinder_contact(
-                                ga_pos_current, ga_quat_current,
-                                geoms_info.data[i_ga][0], 0.5 * geoms_info.data[i_ga][1],
-                                gb_pos_current, gb_quat_current,
-                                geoms_info.data[i_gb][0], 0.5 * geoms_info.data[i_gb][1],
+                                ga_pos_current,
+                                ga_quat_current,
+                                geoms_info.data[i_ga][0],
+                                0.5 * geoms_info.data[i_ga][1],
+                                gb_pos_current,
+                                gb_quat_current,
+                                geoms_info.data[i_gb][0],
+                                0.5 * geoms_info.data[i_gb][1],
                                 EPS,
                             )
                         else:
                             if type_a == gs.GEOM_TYPE.CYLINDER:
-                                is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_sphere_contact(
-                                    ga_pos_current, ga_quat_current,
-                                    geoms_info.data[i_ga][0], 0.5 * geoms_info.data[i_ga][1],
-                                    gb_pos_current, geoms_info.data[i_gb][0],
-                                    gs.qd_int(1), EPS,
+                                is_col, normal, contact_pos, penetration = (
+                                    cylinder_contact.func_cylinder_sphere_contact(
+                                        ga_pos_current,
+                                        ga_quat_current,
+                                        geoms_info.data[i_ga][0],
+                                        0.5 * geoms_info.data[i_ga][1],
+                                        gb_pos_current,
+                                        geoms_info.data[i_gb][0],
+                                        gs.qd_int(1),
+                                        EPS,
+                                    )
                                 )
                             else:
-                                is_col, normal, contact_pos, penetration = cylinder_contact.func_cylinder_sphere_contact(
-                                    gb_pos_current, gb_quat_current,
-                                    geoms_info.data[i_gb][0], 0.5 * geoms_info.data[i_gb][1],
-                                    ga_pos_current, geoms_info.data[i_ga][0],
-                                    gs.qd_int(-1), EPS,
+                                is_col, normal, contact_pos, penetration = (
+                                    cylinder_contact.func_cylinder_sphere_contact(
+                                        gb_pos_current,
+                                        gb_quat_current,
+                                        geoms_info.data[i_gb][0],
+                                        0.5 * geoms_info.data[i_gb][1],
+                                        ga_pos_current,
+                                        geoms_info.data[i_ga][0],
+                                        gs.qd_int(-1),
+                                        EPS,
+                                    )
                                 )
 
                     if not use_analytical:
@@ -1179,7 +1201,6 @@ def func_narrow_phase_convex_specializations(
                         collider_static_config,
                         errno,
                     )
-
 
 
 @qd.kernel(fastcache=gs.use_fastcache)

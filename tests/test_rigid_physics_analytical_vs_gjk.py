@@ -330,15 +330,15 @@ def create_instrumented_narrowphase_file(tmp_path: Path):
 
     for func_call_pattern, errno_bit in ANALYTICAL_ERRNO_BITS.items():
         lines = insert_errno_before_call(
-            lines, func_call_pattern + "(", errno_bit,
+            lines,
+            func_call_pattern + "(",
+            errno_bit,
             f"INSTRUMENTED: {func_call_pattern} called",
         )
 
     content = "\n".join(lines)
     for func_name, errno_bit in ANALYTICAL_ERRNO_BITS.items():
-        assert content.count(f"errno[i_b] |= {errno_bit}") >= 1, (
-            f"Failed to insert errno for {func_name}"
-        )
+        assert content.count(f"errno[i_b] |= {errno_bit}") >= 1, f"Failed to insert errno for {func_name}"
 
     temp_path = tmp_path / "narrow_instrumented.py"
     with open(temp_path, "w") as f:
@@ -899,8 +899,11 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
     BOUNCE_FORCE = 600.0
 
     rigid_opts = gs.options.RigidOptions(
-        dt=0.005, gravity=(0, 0, 0), enable_collision=True,
-        use_gjk_collision=True, enable_multi_contact=True,
+        dt=0.005,
+        gravity=(0, 0, 0),
+        enable_collision=True,
+        use_gjk_collision=True,
+        enable_multi_contact=True,
     )
 
     from genesis.engine.solvers.rigid.collider import narrowphase
@@ -952,7 +955,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
         step_qpos = []
         for body in entities_ana:
             q = body.get_qpos()
-            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, 'cpu') else np.array(q).copy())
+            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
         recorded_qpos.append(step_qpos)
 
         scene_ana._sim.rigid_solver._errno.fill(0)
@@ -1042,8 +1045,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
         if contacts_gjk["n"] > 0:
             assert (errno_val & ERRNO_CALLED_GJK) != 0, (
-                f"Step {step}: GJK scene produced {contacts_gjk['n']} contacts but "
-                f"errno indicates GJK was NOT called."
+                f"Step {step}: GJK scene produced {contacts_gjk['n']} contacts but errno indicates GJK was NOT called."
             )
             gjk_confirmed = True
 
@@ -1059,11 +1061,13 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
         ana_pairs = (
             set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
-            if contacts_ana["n"] > 0 else set()
+            if contacts_ana["n"] > 0
+            else set()
         )
         gjk_pairs = (
             set(zip(contacts_gjk["geom_a"].tolist(), contacts_gjk["geom_b"].tolist()))
-            if contacts_gjk["n"] > 0 else set()
+            if contacts_gjk["n"] > 0
+            else set()
         )
         all_pairs = ana_pairs | gjk_pairs
         print(f"  step {step}: ana={contacts_ana['n']} gjk={contacts_gjk['n']}  pairs={sorted(all_pairs)}")
@@ -1113,17 +1117,11 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 min_dot_seen = min(min_dot_seen, dot)
                 if pos_err > POS_TOL:
-                    mismatches.append(
-                        f"step {step} pair ({ga},{gb}): position err={pos_err:.6f}"
-                    )
+                    mismatches.append(f"step {step} pair ({ga},{gb}): position err={pos_err:.6f}")
                 if pen_err > POS_TOL:
-                    mismatches.append(
-                        f"step {step} pair ({ga},{gb}): penetration err={pen_err:.6f}"
-                    )
+                    mismatches.append(f"step {step} pair ({ga},{gb}): penetration err={pen_err:.6f}")
                 if dot < 0.95:
-                    mismatches.append(
-                        f"step {step} pair ({ga},{gb}): normal dot={dot:.4f}"
-                    )
+                    mismatches.append(f"step {step} pair ({ga},{gb}): normal dot={dot:.4f}")
                 continue
 
             # Multi-contact case: contacts should lie along a line.
@@ -1142,8 +1140,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
                         max_collinear_err_seen = max(max_collinear_err_seen, d)
                         if d > POS_TOL:
                             mismatches.append(
-                                f"step {step} pair ({ga},{gb}): {label} contact {k} "
-                                f"not collinear (dist={d:.6f})"
+                                f"step {step} pair ({ga},{gb}): {label} contact {k} not collinear (dist={d:.6f})"
                             )
 
             if n_ana < 2 or n_gjk < 2:
@@ -1156,10 +1153,8 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
             gjk_ends = np.array([gjk_pos[gjk_ei], gjk_pos[gjk_ej]])
 
             # Try both orderings and pick the better match.
-            err_same = (np.linalg.norm(ana_ends[0] - gjk_ends[0])
-                        + np.linalg.norm(ana_ends[1] - gjk_ends[1]))
-            err_swap = (np.linalg.norm(ana_ends[0] - gjk_ends[1])
-                        + np.linalg.norm(ana_ends[1] - gjk_ends[0]))
+            err_same = np.linalg.norm(ana_ends[0] - gjk_ends[0]) + np.linalg.norm(ana_ends[1] - gjk_ends[1])
+            err_swap = np.linalg.norm(ana_ends[0] - gjk_ends[1]) + np.linalg.norm(ana_ends[1] - gjk_ends[0])
             if err_swap < err_same:
                 gjk_ends = gjk_ends[::-1]
                 gjk_ei, gjk_ej = gjk_ej, gjk_ei
@@ -1169,8 +1164,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 if pos_err > POS_TOL:
                     mismatches.append(
-                        f"step {step} pair ({ga},{gb}): endpoint {idx} "
-                        f"position err={pos_err:.6f} (ana={ae}, gjk={ge})"
+                        f"step {step} pair ({ga},{gb}): endpoint {idx} position err={pos_err:.6f} (ana={ae}, gjk={ge})"
                     )
 
             # Compare normals at deepest contact for each method.
@@ -1195,7 +1189,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
     assert gjk_confirmed, "Phase 2: GJK was never confirmed via errno."
 
-    print(f"\n=== CYLINDER ARENA DIAGNOSTICS ===")
+    print("\n=== CYLINDER ARENA DIAGNOSTICS ===")
     print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
     print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
     print(f"Steps with different contact counts: {count_diff_steps}")
@@ -1204,7 +1198,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
     print(f"Max collinearity error: {max_collinear_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Min normal dot: {min_dot_seen:.6f}  (threshold=0.95)")
     print(f"Mismatches (failures): {len(mismatches)}")
-    print(f"==================================\n")
+    print("==================================\n")
 
     if mismatches:
         msg = f"Analytical vs GJK cylinder fuzz: {len(mismatches)} mismatches:\n" + "\n".join(mismatches[:20])
@@ -1237,8 +1231,11 @@ def test_primitives_fuzz_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path,
     MAX_FORCE = 800.0
 
     rigid_opts = gs.options.RigidOptions(
-        dt=0.005, gravity=(0, 0, 0), enable_collision=True,
-        use_gjk_collision=True, enable_multi_contact=True,
+        dt=0.005,
+        gravity=(0, 0, 0),
+        enable_collision=True,
+        use_gjk_collision=True,
+        enable_multi_contact=True,
     )
 
     from genesis.engine.solvers.rigid.collider import narrowphase
@@ -1286,7 +1283,7 @@ def test_primitives_fuzz_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path,
         step_qpos = []
         for body in entities_ana:
             q = body.get_qpos()
-            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, 'cpu') else np.array(q).copy())
+            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
         recorded_qpos.append(step_qpos)
 
         step_forces = []
@@ -1439,14 +1436,14 @@ def test_primitives_fuzz_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path,
         "The monkey-patch may not be working."
     )
 
-    print(f"\n=== DIAGNOSTICS ===")
+    print("\n=== DIAGNOSTICS ===")
     print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
     print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
     print(f"Steps with different contact counts: {count_diff_steps}")
     print(f"Max penetration error seen: {max_pen_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Min normal dot seen: {min_dot_seen:.6f}  (threshold=0.95)")
     print(f"Mismatches: {len(mismatches)}")
-    print(f"===================\n")
+    print("===================\n")
 
     if mismatches:
         msg = f"Analytical vs GJK fuzz: {len(mismatches)} mismatches:\n" + "\n".join(mismatches[:20])
