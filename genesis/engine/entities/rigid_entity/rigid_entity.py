@@ -2531,6 +2531,17 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self.material.coupling_type is not None
+            and self.base_link.is_fixed
+        ):
+            gs.raise_exception(
+                "This method is only supported by `RigidMaterial.coupling_type=None` for fixed-based rigid entities."
+            )
+
         # Throw exception in entity no longer has a "true" base link becaused it has attached
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
@@ -2561,6 +2572,17 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self.material.coupling_type is not None
+            and self.base_link.is_fixed
+        ):
+            gs.raise_exception(
+                "This method is only supported by `RigidMaterial.coupling_type=None` for fixed-based rigid entities."
+            )
+
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
         if zero_velocity:
@@ -2787,6 +2809,11 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "ipc_only":
+            gs.raise_exception("This method is not supported for `coupling_type='ipc_only'` entities.")
+
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.control_dofs_force(force, dofs_idx, envs_idx)
 
@@ -2804,6 +2831,11 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "ipc_only":
+            gs.raise_exception("This method is not supported for `coupling_type='ipc_only'` entities.")
+
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.control_dofs_velocity(velocity, dofs_idx, envs_idx)
 
@@ -2822,6 +2854,11 @@ class RigidEntity(Entity):
         envs_idx : array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "ipc_only":
+            gs.raise_exception("This method is not supported for `coupling_type='ipc_only'` entities.")
+
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.control_dofs_position(position, dofs_idx, envs_idx)
 
@@ -2841,6 +2878,11 @@ class RigidEntity(Entity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "ipc_only":
+            gs.raise_exception("This method is not supported for `coupling_type='ipc_only'` entities.")
+
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.control_dofs_position_velocity(position, velocity, dofs_idx, envs_idx)
 
