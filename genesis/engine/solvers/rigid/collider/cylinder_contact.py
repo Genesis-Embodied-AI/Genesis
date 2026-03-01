@@ -49,7 +49,8 @@ def _closest_point_on_cylinder(
 ):
     """Find the closest point on a cylinder surface (barrel + flat caps) to a query point.
 
-    Returns (closest_point, is_on_cap).  The cylinder is oriented along local Z.
+    Returns (closest_point, is_on_cap, is_inside).  The cylinder is oriented along local Z.
+    is_inside is True when the query point lies within the cylinder volume.
     """
     local_z = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
     axis = gu.qd_transform_by_quat_fast(local_z, cyl_quat)
@@ -60,6 +61,7 @@ def _closest_point_on_cylinder(
     radial_dist = qd.sqrt(radial_vec.dot(radial_vec))
 
     is_on_cap = False
+    is_inside = False
     closest = qd.Vector.zero(gs.qd_float, 3)
     perp = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
 
@@ -91,6 +93,7 @@ def _closest_point_on_cylinder(
     else:
         axis_point = cyl_pos + axial_proj * axis
         if radial_dist <= cyl_radius:
+            is_inside = True
             barrel_dist = cyl_radius - radial_dist
             cap_dist = cyl_halflength - qd.abs(axial_proj)
             if barrel_dist < cap_dist:
@@ -104,7 +107,7 @@ def _closest_point_on_cylinder(
         else:
             closest = axis_point + cyl_radius * radial_dir
 
-    return closest, is_on_cap
+    return closest, is_on_cap, is_inside
 
 
 @qd.func
@@ -123,7 +126,9 @@ def func_cylinder_sphere_contact(
     Returns (is_col, normal, contact_pos, penetration).
     normal_sign should be +1 if i_ga is the cylinder, -1 if i_gb is.
     """
-    closest, _is_on_cap = _closest_point_on_cylinder(cyl_pos, cyl_quat, cyl_radius, cyl_halflength, sph_pos, EPS)
+    closest, _is_on_cap, is_inside = _closest_point_on_cylinder(
+        cyl_pos, cyl_quat, cyl_radius, cyl_halflength, sph_pos, EPS
+    )
 
     diff = sph_pos - closest
     dist_sq = diff.dot(diff)
@@ -139,7 +144,12 @@ def func_cylinder_sphere_contact(
         if dist > EPS:
             normal = diff / dist
         penetration = sph_radius - dist
+        # contact_pos formula works correctly with the raw normal for both cases
         contact_pos = sph_pos - (sph_radius - 0.5 * penetration) * normal
+        # When the sphere center is inside the cylinder volume, diff points
+        # inward (from surface toward interior). Flip to get outward normal.
+        if is_inside:
+            normal = -normal
         normal = normal * gs.qd_float(normal_sign)
 
     return is_col, normal, contact_pos, penetration
