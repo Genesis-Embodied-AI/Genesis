@@ -133,8 +133,6 @@ class Collider:
         has_convex_vs_convex = False
         has_convex_specialization = False
         has_nonconvex_vs_nonterrain = False
-        has_primitive_specialization = False
-        primitive_types = {gs.GEOM_TYPE.CAPSULE, gs.GEOM_TYPE.CYLINDER, gs.GEOM_TYPE.SPHERE}
         for i_ga in range(self._solver.n_geoms):
             for i_gb in range(i_ga + 1, self._solver.n_geoms):
                 if self._collision_pair_idx[i_ga, i_gb] == -1:
@@ -154,13 +152,6 @@ class Collider:
                     geom_a.type == gs.GEOM_TYPE.PLANE and geom_b.type == gs.GEOM_TYPE.BOX
                 ):
                     has_convex_specialization = True
-                capsule_sphere_types = {gs.GEOM_TYPE.CAPSULE, gs.GEOM_TYPE.SPHERE}
-                cylinder_sphere_types = {gs.GEOM_TYPE.CYLINDER, gs.GEOM_TYPE.SPHERE}
-                is_capsule_or_sphere = geom_a.type in capsule_sphere_types and geom_b.type in capsule_sphere_types
-                is_cylinder_or_sphere = geom_a.type in cylinder_sphere_types and geom_b.type in cylinder_sphere_types
-                if is_capsule_or_sphere or is_cylinder_or_sphere:
-                    has_primitive_specialization = True
-                    has_convex_specialization = True
                 if (
                     not (geom_a.is_convex and geom_b.is_convex)
                     and geom_a.type != gs.GEOM_TYPE.TERRAIN
@@ -175,7 +166,7 @@ class Collider:
             has_convex_convex=has_convex_vs_convex,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
-            has_primitive_specialization=has_primitive_specialization,
+            has_primitive_specialization=False,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
