@@ -270,7 +270,13 @@ class RigidSolver(KinematicSolver):
                 "it could lead to numerically unstable collision detection."
             )
 
+        self.collider = None
+        self.constraint_solver = None
+
         self._is_backward: bool = False
+        self._is_forward_pos_updated: bool = False
+        self._is_forward_vel_updated: bool = False
+
         self._ckpt = dict()
 
     def init_ckpt(self):

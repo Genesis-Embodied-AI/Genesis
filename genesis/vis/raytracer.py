@@ -674,32 +674,21 @@ class Raytracer:
                 T = gu.trans_quat_to_T(pos, quat)
                 self.update_rigid(str(tool_entity.uid), T)
 
-        # rigid entities
-        if self.sim.rigid_solver.is_active:
-            for rigid_entity in self.sim.rigid_solver.entities:
-                if rigid_entity.surface.vis_mode == "visual":
-                    geoms = rigid_entity.vgeoms
-                    geoms_T = self.sim.rigid_solver._vgeoms_render_T
+        # rigid-like entities (rigid + kinematic)
+        for solver in (self.sim.rigid_solver, self.sim.kinematic_solver):
+            if not solver.is_active:
+                continue
+
+            for entity in solver.entities:
+                if entity.surface.vis_mode == "visual":
+                    geoms = entity.vgeoms
+                    geoms_T = solver._vgeoms_render_T
                 else:
-                    geoms = rigid_entity.geoms
-                    geoms_T = self.sim.rigid_solver._geoms_render_T
+                    geoms = entity.geoms
+                    geoms_T = solver._geoms_render_T
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx]  # TODO: support batching
-                    self.update_rigid_batch(str(geom.uid), geom_T)
-
-        # kinematic entities
-        if self.sim.kinematic_solver.is_active:
-            for kinematic_entity in self.sim.kinematic_solver.entities:
-                if kinematic_entity.surface.vis_mode == "visual":
-                    geoms = kinematic_entity.vgeoms
-                    geoms_T = self.sim.kinematic_solver._vgeoms_render_T
-                else:
-                    geoms = kinematic_entity.geoms
-                    geoms_T = self.sim.kinematic_solver._geoms_render_T
-
-                for geom in geoms:
-                    geom_T = geoms_T[geom.idx]
                     self.update_rigid_batch(str(geom.uid), geom_T)
 
         # MPM particles

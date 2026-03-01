@@ -385,7 +385,7 @@ class Scene(RBC):
         else:
             morph_for_checks = morph
 
-        if isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
+        if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size
             if isinstance(morph_for_checks, gs.morphs.Primitive):
                 material._sdf_max_res = 32

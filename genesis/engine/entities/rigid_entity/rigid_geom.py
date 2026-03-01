@@ -55,7 +55,7 @@ class RigidGeom(RBC):
     ):
         self._link: "RigidLink" = link
         self._entity: "RigidEntity" = link.entity
-        self._material: "RigidMaterial" = link.entity.material
+        self._material: "RigidMaterial" = getattr(link.entity, "_material_for_loading", link.entity.material)
         self._solver: "RigidSolver" = link.entity.solver
         self._mesh: "Mesh" = mesh
 

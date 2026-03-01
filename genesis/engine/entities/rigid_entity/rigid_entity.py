@@ -156,6 +156,7 @@ class KinematicEntity(Entity):
         self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         super().__init__(idx, scene, morph, solver, material, surface, name=name)
+        self._material_for_loading = self._to_internal_rigid_material(material)
 
         self._idx_in_solver = idx_in_solver
         self._link_start: int = link_start
@@ -192,6 +193,38 @@ class KinematicEntity(Entity):
         self._tgt_buffer = list()
         self._ckpt = dict()
         self._update_tgt_while_set = self._solver._requires_grad
+
+    @staticmethod
+    def _to_internal_rigid_material(material: Material) -> Material:
+        """
+        Normalize materials for the shared rigid-loading pipeline.
+
+        Kinematic entities still use rigid parsing/loading code paths, so we map
+        `Kinematic` to an internal `Rigid` material with inert defaults. This keeps
+        the public material semantics minimal while preserving loader compatibility.
+        """
+        if not isinstance(material, gs.materials.Kinematic):
+            return material
+
+        rigid_material = gs.materials.Rigid(
+            rho=material.rho,
+            friction=None,
+            needs_coup=False,
+            coup_friction=0.0,
+            coup_softness=0.0,
+            coup_restitution=0.0,
+            sdf_cell_size=0.005,
+            sdf_min_res=32,
+            sdf_max_res=32,
+            gravity_compensation=0.0,
+            coupling_mode=None,
+            coupling_link_filter=None,
+        )
+        # NOTE: Mark rigid-only coupling fields as undefined for kinematic materials.
+        rigid_material._coup_friction = np.nan
+        rigid_material._coup_softness = np.nan
+        rigid_material._coup_restitution = np.nan
+        return rigid_material
 
     def _update_tgt(self, key, value):
         # Set [self._tgt] value while keeping the insertion order between keys. When a new key is inserted or an existing
@@ -268,7 +301,7 @@ class KinematicEntity(Entity):
 
         # Compute first variant's inertial properties using stored g_infos
         cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(self._morph, self._first_g_infos, False)
-        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
+        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self._material_for_loading.rho)
         self.variants_inertial_mass.append(het_mass)
         self.variants_inertial_pos.append(het_pos)
         self.variants_inertial_i.append(het_i)
@@ -287,7 +320,9 @@ class KinematicEntity(Entity):
             cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
 
             # Compute inertial properties for this variant from collision or visual geometries
-            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
+            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(
+                cg_infos, vg_infos, self._material_for_loading.rho
+            )
             self.variants_inertial_mass.append(het_mass)
             self.variants_inertial_pos.append(het_pos)
             self.variants_inertial_i.append(het_i)
@@ -302,7 +337,7 @@ class KinematicEntity(Entity):
 
             # Add collision geometries
             for g_info in cg_infos:
-                friction = self.material.friction
+                friction = self._material_for_loading.friction
                 if friction is None:
                     friction = g_info.get("friction", gu.default_friction())
                 link._add_geom(
@@ -313,7 +348,7 @@ class KinematicEntity(Entity):
                     friction=friction,
                     sol_params=g_info["sol_params"],
                     data=g_info.get("data"),
-                    needs_coup=self.material.needs_coup,
+                    needs_coup=self._material_for_loading.needs_coup,
                     contype=g_info["contype"],
                     conaffinity=g_info["conaffinity"],
                 )
@@ -777,7 +812,7 @@ class KinematicEntity(Entity):
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self.material.coupling_mode == "ipc_only"
+            and self._material_for_loading.coupling_mode == "ipc_only"
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
             gs.raise_exception(
@@ -1072,7 +1107,7 @@ class KinematicEntity(Entity):
 
         # Add collision geometries
         for g_info in cg_infos:
-            friction = self.material.friction
+            friction = self._material_for_loading.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
             link._add_geom(
@@ -1083,7 +1118,7 @@ class KinematicEntity(Entity):
                 friction=friction,
                 sol_params=g_info["sol_params"],
                 data=g_info.get("data"),
-                needs_coup=self.material.needs_coup,
+                needs_coup=self._material_for_loading.needs_coup,
                 contype=g_info["contype"],
                 conaffinity=g_info["conaffinity"],
             )
@@ -2012,7 +2047,10 @@ class KinematicEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self._material_for_loading.coupling_mode == "external_articulation"
+        ):
             gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
@@ -2221,7 +2259,7 @@ class KinematicEntity(Entity):
     @property
     def gravity_compensation(self):
         """Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0"""
-        return self.material.gravity_compensation
+        return self._material_for_loading.gravity_compensation
 
     @property
     def link_start(self):
@@ -2898,7 +2936,10 @@ class RigidEntity(KinematicEntity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self._material_for_loading.coupling_mode == "external_articulation"
+        ):
             gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
 
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
@@ -2950,7 +2991,10 @@ class RigidEntity(KinematicEntity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_mode == "external_articulation":
+        if (
+            isinstance(self.sim.coupler, IPCCoupler)
+            and self._material_for_loading.coupling_mode == "external_articulation"
+        ):
             gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)

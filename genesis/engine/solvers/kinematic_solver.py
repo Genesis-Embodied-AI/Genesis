@@ -90,8 +90,6 @@ class KinematicSolver(Solver):
 
         self.qpos = None
 
-        self._is_forward_pos_updated = False
-        self._is_forward_vel_updated = False
         self._fk_dirty = False
 
         self._queried_states = QueriedStates()
@@ -917,8 +915,6 @@ class KinematicSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-            self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
