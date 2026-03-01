@@ -461,18 +461,8 @@ def anymal_random(solver, n_envs, gjk, pytorch_profiler_step):
 
 
 @pytest.fixture
-def anymal_zero_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=True, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
 def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
     return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def anymal_random_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=True, profiler_step=pytorch_profiler_step)
 
 
 def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
@@ -856,6 +846,8 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
         ("anymal_uniform", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 0, gs.cpu),
+        ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
+        ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
         ("go2", None, True, 4096, gs.gpu),
         ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
         ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
