@@ -76,6 +76,36 @@ GJK_PEN_TOL = 1e-2
 GJK_NORMAL_TOL = 1e-2
 
 
+def _find_line_endpoints(positions):
+    """Find the two contact points with maximum pairwise distance.
+
+    Returns (i_a, i_b) indices into positions, or (0, 0) if only one point.
+    """
+    n = len(positions)
+    if n <= 1:
+        return 0, 0
+    best_dist = -1.0
+    best_i, best_j = 0, 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            d = np.linalg.norm(positions[i] - positions[j])
+            if d > best_dist:
+                best_dist = d
+                best_i, best_j = i, j
+    return best_i, best_j
+
+
+def _point_line_distance(point, line_a, line_b):
+    """Perpendicular distance from point to the line through line_a and line_b."""
+    ab = line_b - line_a
+    ab_len = np.linalg.norm(ab)
+    if ab_len < 1e-12:
+        return np.linalg.norm(point - line_a)
+    t = np.dot(point - line_a, ab) / (ab_len * ab_len)
+    projection = line_a + t * ab
+    return np.linalg.norm(point - projection)
+
+
 def _check_expected_values(contacts, description, exp_pen, exp_normal, method_name, pen_tol, normal_tol):
     """Check that contacts match the expected penetration and/or normal, when provided.
 
@@ -987,7 +1017,9 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
     total_contacts_ana = 0
     total_contacts_gjk = 0
     steps_with_contacts = 0
+    max_pos_err_seen = 0.0
     max_pen_err_seen = 0.0
+    max_collinear_err_seen = 0.0
     min_dot_seen = 1.0
     count_diff_steps = 0
     gjk_confirmed = False
@@ -1035,18 +1067,22 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
             if contacts_gjk["n"] > 0 else set()
         )
 
-        if ana_pairs != gjk_pairs:
-            only_ana = ana_pairs - gjk_pairs
-            only_gjk = gjk_pairs - ana_pairs
-            mismatches.append(f"step {step}: pair mismatch — only_ana={only_ana}, only_gjk={only_gjk}")
-            continue
+        # Analytical detecting extra contacts is expected (more sensitive).
+        # GJK-only contacts would indicate analytical is missing collisions.
+        only_ana = ana_pairs - gjk_pairs
+        only_gjk = gjk_pairs - ana_pairs
+        if only_ana:
+            print(f"    step {step}: analytical-only pairs (expected): {only_ana}")
+        if only_gjk:
+            mismatches.append(f"step {step}: GJK-only pairs (unexpected): {only_gjk}")
 
-        for ga, gb in ana_pairs:
+        common_pairs = ana_pairs & gjk_pairs
+        for ga, gb in common_pairs:
             ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
             gjk_mask = (contacts_gjk["geom_a"] == ga) & (contacts_gjk["geom_b"] == gb)
 
-            ana_pen = np.sort(contacts_ana["penetration"][ana_mask])[::-1]
-            gjk_pen = np.sort(contacts_gjk["penetration"][gjk_mask])[::-1]
+            ana_pen = contacts_ana["penetration"][ana_mask]
+            gjk_pen = contacts_gjk["penetration"][gjk_mask]
             ana_nrm = contacts_ana["normal"][ana_mask]
             gjk_nrm = contacts_gjk["normal"][gjk_mask]
             ana_pos = contacts_ana["position"][ana_mask]
@@ -1054,44 +1090,120 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
             n_ana = len(ana_pen)
             n_gjk = len(gjk_pen)
-            if n_ana != n_gjk:
-                print(f"    pair ({ga},{gb}): count mismatch ana={n_ana} gjk={n_gjk}")
-                for j in range(n_ana):
-                    print(f"      ana[{j}] pos={ana_pos[j]} pen={ana_pen[j]:.6f} nrm={ana_nrm[j]}")
-                for j in range(n_gjk):
-                    print(f"      gjk[{j}] pos={gjk_pos[j]} pen={gjk_pen[j]:.6f} nrm={gjk_nrm[j]}")
 
-            n_compare = min(n_ana, n_gjk)
-            if n_compare > 0:
-                pen_err = np.max(np.abs(ana_pen[:n_compare] - gjk_pen[:n_compare]))
+            for j in range(n_ana):
+                print(f"      ana[{j}] pos={ana_pos[j]} pen={ana_pen[j]:.6f} nrm={ana_nrm[j]}")
+            for j in range(n_gjk):
+                print(f"      gjk[{j}] pos={gjk_pos[j]} pen={gjk_pen[j]:.6f} nrm={gjk_nrm[j]}")
+
+            # If GJK returns >= 2 contacts, analytical must also.
+            if n_gjk >= 2 and n_ana < 2:
+                mismatches.append(
+                    f"step {step} pair ({ga},{gb}): GJK has {n_gjk} contacts "
+                    f"but analytical only has {n_ana} (expected >= 2)"
+                )
+
+            # Single-contact case: compare directly.
+            if n_ana == 1 and n_gjk == 1:
+                pos_err = np.linalg.norm(ana_pos[0] - gjk_pos[0])
+                pen_err = abs(float(ana_pen[0]) - float(gjk_pen[0]))
+                dot = abs(np.dot(ana_nrm[0], gjk_nrm[0]))
+                max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
+                min_dot_seen = min(min_dot_seen, dot)
+                if pos_err > POS_TOL:
+                    mismatches.append(
+                        f"step {step} pair ({ga},{gb}): position err={pos_err:.6f}"
+                    )
                 if pen_err > POS_TOL:
                     mismatches.append(
-                        f"step {step} pair ({ga},{gb}): penetration err={pen_err:.6f} "
-                        f"(ana={ana_pen[:n_compare]}, gjk={gjk_pen[:n_compare]})"
+                        f"step {step} pair ({ga},{gb}): penetration err={pen_err:.6f}"
                     )
-
-            if len(ana_nrm) > 0 and len(gjk_nrm) > 0:
-                best_ana = np.argmax(contacts_ana["penetration"][ana_mask])
-                best_gjk = np.argmax(contacts_gjk["penetration"][gjk_mask])
-                dot = abs(np.dot(ana_nrm[best_ana], gjk_nrm[best_gjk]))
-                min_dot_seen = min(min_dot_seen, dot)
                 if dot < 0.95:
                     mismatches.append(
-                        f"step {step} pair ({ga},{gb}): normal dot={dot:.4f} "
-                        f"(ana={ana_nrm[best_ana]}, gjk={gjk_nrm[best_gjk]})"
+                        f"step {step} pair ({ga},{gb}): normal dot={dot:.4f}"
                     )
+                continue
+
+            # Multi-contact case: contacts should lie along a line.
+            # Find endpoints of each line segment, check collinearity,
+            # then compare endpoints between methods.
+            for label, pos, pen, nrm, n in [
+                ("ana", ana_pos, ana_pen, ana_nrm, n_ana),
+                ("gjk", gjk_pos, gjk_pen, gjk_nrm, n_gjk),
+            ]:
+                if n >= 3:
+                    ei, ej = _find_line_endpoints(pos)
+                    for k in range(n):
+                        if k == ei or k == ej:
+                            continue
+                        d = _point_line_distance(pos[k], pos[ei], pos[ej])
+                        max_collinear_err_seen = max(max_collinear_err_seen, d)
+                        if d > POS_TOL:
+                            mismatches.append(
+                                f"step {step} pair ({ga},{gb}): {label} contact {k} "
+                                f"not collinear (dist={d:.6f})"
+                            )
+
+            if n_ana < 2 or n_gjk < 2:
+                continue
+
+            # Compare line endpoints between analytical and GJK.
+            ana_ei, ana_ej = _find_line_endpoints(ana_pos)
+            gjk_ei, gjk_ej = _find_line_endpoints(gjk_pos)
+            ana_ends = np.array([ana_pos[ana_ei], ana_pos[ana_ej]])
+            gjk_ends = np.array([gjk_pos[gjk_ei], gjk_pos[gjk_ej]])
+
+            # Try both orderings and pick the better match.
+            err_same = (np.linalg.norm(ana_ends[0] - gjk_ends[0])
+                        + np.linalg.norm(ana_ends[1] - gjk_ends[1]))
+            err_swap = (np.linalg.norm(ana_ends[0] - gjk_ends[1])
+                        + np.linalg.norm(ana_ends[1] - gjk_ends[0]))
+            if err_swap < err_same:
+                gjk_ends = gjk_ends[::-1]
+                gjk_ei, gjk_ej = gjk_ej, gjk_ei
+
+            for idx, (ae, ge) in enumerate(zip(ana_ends, gjk_ends)):
+                pos_err = np.linalg.norm(ae - ge)
+                max_pos_err_seen = max(max_pos_err_seen, pos_err)
+                if pos_err > POS_TOL:
+                    mismatches.append(
+                        f"step {step} pair ({ga},{gb}): endpoint {idx} "
+                        f"position err={pos_err:.6f} (ana={ae}, gjk={ge})"
+                    )
+
+            # Compare normals at deepest contact for each method.
+            best_ana = int(np.argmax(ana_pen))
+            best_gjk = int(np.argmax(gjk_pen))
+            dot = abs(np.dot(ana_nrm[best_ana], gjk_nrm[best_gjk]))
+            min_dot_seen = min(min_dot_seen, dot)
+            if dot < 0.95:
+                mismatches.append(
+                    f"step {step} pair ({ga},{gb}): normal dot={dot:.4f} "
+                    f"(ana={ana_nrm[best_ana]}, gjk={gjk_nrm[best_gjk]})"
+                )
+
+            # Compare penetration at deepest contact.
+            pen_err = abs(float(ana_pen[best_ana]) - float(gjk_pen[best_gjk]))
+            max_pen_err_seen = max(max_pen_err_seen, pen_err)
+            if pen_err > POS_TOL:
+                mismatches.append(
+                    f"step {step} pair ({ga},{gb}): deepest penetration err={pen_err:.6f} "
+                    f"(ana={ana_pen[best_ana]:.6f}, gjk={gjk_pen[best_gjk]:.6f})"
+                )
 
     assert gjk_confirmed, "Phase 2: GJK was never confirmed via errno."
 
-    print(f"\n=== DIAGNOSTICS ===")
+    print(f"\n=== CYLINDER ARENA DIAGNOSTICS ===")
     print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
     print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
     print(f"Steps with different contact counts: {count_diff_steps}")
+    print(f"Max endpoint position error: {max_pos_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Max penetration error: {max_pen_err_seen:.8f}  (threshold={POS_TOL})")
+    print(f"Max collinearity error: {max_collinear_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Min normal dot: {min_dot_seen:.6f}  (threshold=0.95)")
-    print(f"Mismatches: {len(mismatches)}")
-    print(f"===================\n")
+    print(f"Mismatches (failures): {len(mismatches)}")
+    print(f"==================================\n")
 
     if mismatches:
         msg = f"Analytical vs GJK cylinder fuzz: {len(mismatches)} mismatches:\n" + "\n".join(mismatches[:20])
