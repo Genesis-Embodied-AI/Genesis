@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from genesis.engine.simulator import Simulator
     from genesis.engine.solvers import RigidSolver, FEMSolver
 
-from genesis.engine.materials.FEM.cloth import Cloth as ClothMaterial
+from genesis.engine.materials.FEM.cloth import Cloth
 from genesis.options.solvers import IPCCouplerOptions
 
 # Check if libuipc is available
@@ -169,20 +169,12 @@ class IPCCoupler(RBC):
 
         # ==== Two-Way Coupling State ====
         self._stored_rigid_transforms: dict["RigidLink", list[np.ndarray]] = {}
-        self.coupling_info: list[tuple[int, "RigidLink", int]] = []
         self.coupling_entries: list[tuple[int, "RigidLink", int]] = []
         self.coupling_data: IPCCouplingData | None = None
-
-        # ==== Vertex Mapping ====
-        self._vertex_to_link_mapping: dict[int, tuple["RigidLink", int, int]] = {
-            # global_vertex_idx -> (link, local_vertex_idx, env_idx)
-        }
-        self._global_vertex_offset = 0  # Counter for vertex indices across geometries
 
         # ==== External Articulation ====
         self._articulation_non_fixed_base_entities: list["RigidEntity"] = []  # entities with non-fixed base
         self.articulation_data: dict["RigidEntity", ArticulatedEntityData] = {}
-        self._articulation_stored_qpos: dict["RigidEntity", np.ndarray] = {}  # entity -> array (n_envs, n_qs)
 
     # ============================================================
     # Section 1: Configuration API
@@ -291,7 +283,7 @@ class IPCCoupler(RBC):
         for env_idx in range(self.sim._B):
             fem_objects, fem_meshes = [], []
             for i_e, entity in enumerate(cast(list["FEMEntity"], self.fem_solver.entities)):
-                is_cloth = isinstance(entity.material, ClothMaterial)
+                is_cloth = isinstance(entity.material, Cloth)
                 solver_type = "cloth" if is_cloth else "fem"
 
                 # Create object in IPC
@@ -362,9 +354,6 @@ class IPCCoupler(RBC):
                 # Create geometry in IPC scene
                 fem_obj.geometries().create(mesh)
                 self._fem_mesh_handles.setdefault(entity, []).append(mesh)
-
-                # Update global vertex offset (FEM vertices occupy index space but aren't in mapping)
-                self._global_vertex_offset += mesh.vertices().size()
 
             self._fem_env_objects.append(fem_objects)
             self._fem_env_meshes.append(fem_meshes)
@@ -493,7 +482,6 @@ class IPCCoupler(RBC):
                         self._ipc_abd_contacts[entity] = abd_contact
                     self._ipc_abd_contacts[entity].apply_to(merged_mesh)
                 else:
-                    assert self._ipc_no_collision_contact is not None
                     self._ipc_no_collision_contact.apply_to(merged_mesh)
 
                 # Apply ABD constitution
@@ -553,16 +541,6 @@ class IPCCoupler(RBC):
                 meta_attrs.create("link_idx", str(target_link.idx))
                 meta_attrs.create("env_idx", str(env_idx))
 
-                # Vertex-to-link mapping for two_way_soft_constraint contact force feedback.
-                # FIXME: This mapping should just store the offset.
-                if entity_coupling_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
-                    n_verts = merged_mesh.vertices().size()
-                    for local_idx in range(n_verts):
-                        link_entry = (target_link, local_idx, env_idx)
-                        self._vertex_to_link_mapping[self._global_vertex_offset + local_idx] = link_entry
-
-                self._global_vertex_offset += merged_mesh.vertices().size()
-
                 abd_slot, _ = rigid_obj.geometries().create(merged_mesh)
 
                 self._rigid_mesh_handles.setdefault(target_link, []).append(merged_mesh)
@@ -607,10 +585,7 @@ class IPCCoupler(RBC):
                 continue
 
             # Detect non-fixed base for handling base link separately via SoftTransformConstraint
-            gs.logger.debug(
-                f"Adding articulated entity {i_e} with {entity.n_joints} joints "
-                # f"({len(joint_info['revolute_joints'])} revolute, {len(joint_info['prismatic_joints'])} prismatic)"
-            )
+            gs.logger.debug(f"Adding articulated entity {i_e} with {entity.n_joints} joints")
 
             mass_matrix = np.diag(np.full((entity.n_dofs,), fill_value=STIFFNESS_DEFAULT, dtype=np.float64))
 
@@ -1117,7 +1092,7 @@ class IPCCoupler(RBC):
             self._abd_data_by_link[link][env_idx].aim_transform[:] = aim_transform
             self._abd_data_by_link[link][env_idx].velocity[:] = velocities[abd_body_idx]
 
-            link_idx_local = self.coupling_data.links_idx.index(link.idx)
+            link_idx_local = self.coupling_data.link_to_idx_local[link]
             self.coupling_data.ipc_transforms[env_idx, link_idx_local] = transform_matrix
             self.coupling_data.aim_transforms[env_idx, link_idx_local] = aim_transform
 

@@ -166,7 +166,6 @@ def read_ipc_geometry_metadata(geo):
         return None
 
     (solver_type,) = solver_type_attr.view()
-    solver_type = str(solver_type)
 
     (env_idx,) = map(int, meta_attrs.find("env_idx").view())
 

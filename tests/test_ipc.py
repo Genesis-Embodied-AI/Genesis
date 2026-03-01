@@ -935,7 +935,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_momentum_conversation(n_envs, show_viewer):
+def test_momentum_conservation(n_envs, show_viewer):
     from genesis.engine.entities import RigidEntity
 
     DT = 0.001

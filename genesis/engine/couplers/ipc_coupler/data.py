@@ -62,10 +62,11 @@ class IPCCouplingData:
         links = list(dict.fromkeys(link for _, link, _ in coupling_entries))
 
         n_links = len(links)
-        n_envs = len(set([env_idx for _, _, env_idx in coupling_entries]))
+        n_envs = len({env_idx for _, _, env_idx in coupling_entries})
         assert len(coupling_entries) == n_links * n_envs
 
         self.links_idx = [link.idx for link in links]
+        self.link_to_idx_local = {link: i for i, link in enumerate(links)}
         self.links_mass = np.array([link.inertial_mass for link in links], dtype=gs.np_float)
         if links:
             self.links_inertia_i = np.stack([link.inertial_i for link in links], axis=0, dtype=gs.np_float)
