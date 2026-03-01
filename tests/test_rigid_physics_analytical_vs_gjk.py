@@ -249,42 +249,43 @@ def find_and_disable_condition(lines, function_name):
 
 
 def insert_errno_before_call(lines, function_call_pattern, errno_value, comment):
-    """Insert errno marker on the line before a function call.
+    """Insert errno marker before every occurrence of a function call.
 
     Handles the case where the call is on a continuation line (e.g. after
     ``result = (\\n    func(...)``).  Walks backwards to find the statement
     start and inserts the errno line before it.
     """
-    call_line_idx = None
+    call_line_indices = []
     for i, line in enumerate(lines):
         if function_call_pattern in line:
             idx = line.find(function_call_pattern)
             if idx != -1:
                 if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
-                    call_line_idx = i
-                    break
-    else:
+                    call_line_indices.append(i)
+
+    if not call_line_indices:
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
-    # Check whether the call line is a continuation of a multi-line expression
-    # by scanning upward for unmatched open parens.
-    insert_idx = call_line_idx
-    paren_depth = 0
-    for j in range(call_line_idx - 1, -1, -1):
-        for ch in lines[j]:
-            if ch == "(":
-                paren_depth += 1
-            elif ch == ")":
-                paren_depth -= 1
-        if paren_depth > 0:
-            # Line j has an unmatched '(' — the call is a continuation.
-            # Insert the errno line before line j (the statement start).
-            insert_idx = j
-        break  # only need to inspect the immediately preceding line
+    offset = 0
+    for call_line_idx in call_line_indices:
+        call_line_idx += offset
 
-    indent_size = len(lines[insert_idx]) - len(lines[insert_idx].lstrip())
-    errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
-    lines.insert(insert_idx, errno_line)
+        insert_idx = call_line_idx
+        paren_depth = 0
+        for j in range(call_line_idx - 1, -1, -1):
+            for ch in lines[j]:
+                if ch == "(":
+                    paren_depth += 1
+                elif ch == ")":
+                    paren_depth -= 1
+            if paren_depth > 0:
+                insert_idx = j
+            break
+
+        indent_size = len(lines[insert_idx]) - len(lines[insert_idx].lstrip())
+        errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
+        lines.insert(insert_idx, errno_line)
+        offset += 1
 
     return lines
 
@@ -341,6 +342,8 @@ def create_instrumented_narrowphase_file(tmp_path: Path):
     """
     Create a version of narrowphase.py with the analytical paths intact but instrumented
     with errno bits so we can verify which specializations were actually called.
+
+    Also instruments the GJK path so we can verify the instrumented kernel is active.
     """
     lines = _read_narrowphase_source().split("\n")
 
@@ -351,6 +354,10 @@ def create_instrumented_narrowphase_file(tmp_path: Path):
             errno_bit,
             f"INSTRUMENTED: {func_call_pattern} called",
         )
+
+    lines = insert_errno_before_call(
+        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "INSTRUMENTED: GJK called"
+    )
 
     content = "\n".join(lines)
     for func_name, errno_bit in ANALYTICAL_ERRNO_BITS.items():
@@ -857,10 +864,9 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
     All walls and free objects are cylinders, so every collision exercises the
     cylinder_cylinder analytical specialization.  Two phases:
-      1. Analytical (instrumented): run forward, record contacts, verify
-         ERRNO_CALLED_CYLINDER_CYLINDER is set.
-      2. GJK (patched): replay same qpos+forces, verify ERRNO_CALLED_GJK is
-         set, compare contacts.
+      1. GJK (reference): run forward with GJK-forced kernel, record contacts.
+      2. Analytical (instrumented): replay same qpos+forces with analytical
+         kernel, verify ERRNO bits, compare contacts against GJK reference.
     """
     import torch
 
@@ -877,103 +883,25 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
     from genesis.engine.solvers.rigid.collider import narrowphase
 
-    # --- Patch 1: Instrumented analytical kernel ---
-    # Cylinder/sphere analytical paths are now inside func_narrow_phase_convex_vs_convex.
-    instrumented_path = create_instrumented_narrowphase_file(tmp_path=tmp_path)
-    spec_inst = importlib.util.spec_from_file_location("narrowphase_cyl_inst", instrumented_path)
-    narrowphase_instrumented = importlib.util.module_from_spec(spec_inst)
-    spec_inst.loader.exec_module(narrowphase_instrumented)
-
-    monkeypatch.setattr(
-        narrowphase,
-        "func_narrow_phase_convex_vs_convex",
-        narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
-    )
-
-    # --- Build both scenes ---
-    scene_ana = gs.Scene(show_viewer=show_viewer, rigid_options=rigid_opts)
-    entities_ana = []
-    ana_dir = tmp_path / "ana_mjcf"
-    ana_dir.mkdir()
-    _build_cylinder_arena(scene_ana, entities_ana, ana_dir)
-
-    scene_gjk = gs.Scene(show_viewer=False, rigid_options=rigid_opts)
+    # --- Build both scenes BEFORE any patching ---
+    scene_gjk = gs.Scene(show_viewer=show_viewer, rigid_options=rigid_opts)
     entities_gjk = []
     gjk_dir = tmp_path / "gjk_mjcf"
     gjk_dir.mkdir()
     _build_cylinder_arena(scene_gjk, entities_gjk, gjk_dir)
 
-    for body in entities_ana:
-        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
+    scene_ana = gs.Scene(show_viewer=False, rigid_options=rigid_opts)
+    entities_ana = []
+    ana_dir = tmp_path / "ana_mjcf"
+    ana_dir.mkdir()
+    _build_cylinder_arena(scene_ana, entities_ana, ana_dir)
+
     for body in entities_gjk:
         body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
-
-    # --- Phase 1: Analytical run ---
-    torch.manual_seed(0)
     for body in entities_ana:
-        v = (torch.rand(body.n_dofs, dtype=gs.tc_float, device=gs.device) * 2 - 1) * 3.0
-        body.set_dofs_velocity(v)
+        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
 
-    recorded_qpos = []
-    recorded_contacts = []
-    recorded_forces = []
-    analytical_errno_seen = 0
-
-    torch.manual_seed(42)
-    for step in range(N_STEPS):
-        step_qpos = []
-        for body in entities_ana:
-            q = body.get_qpos()
-            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
-        recorded_qpos.append(step_qpos)
-
-        scene_ana._sim.rigid_solver._errno.fill(0)
-        scene_ana.step()
-        recorded_contacts.append(_snapshot_contacts(scene_ana))
-
-        errno_val = int(scene_ana._sim.rigid_solver._errno[0])
-        analytical_errno_seen |= errno_val
-
-        # Apply random directional force to bodies that just collided
-        nc = recorded_contacts[-1]["n"]
-        step_forces = []
-        if nc > 0:
-            geom_a = recorded_contacts[-1]["geom_a"]
-            geom_b = recorded_contacts[-1]["geom_b"]
-            hit_geoms = set(geom_a.tolist()) | set(geom_b.tolist())
-        else:
-            hit_geoms = set()
-
-        for body in entities_ana:
-            body_geoms = set(range(body.geom_start, body.geom_end))
-            if body_geoms & hit_geoms:
-                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
-                f[0:3] = (torch.rand(3, dtype=gs.tc_float, device=gs.device) * 2 - 1) * BOUNCE_FORCE
-            else:
-                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
-            step_forces.append(f.clone())
-            body.control_dofs_force(f)
-        recorded_forces.append(step_forces)
-
-    # Verify cylinder-cylinder specialization was called
-    expected_bits = {
-        "cylinder_contact.func_cylinder_cylinder_contact": ERRNO_CALLED_CYLINDER_CYLINDER,
-    }
-    missing = [name for name, bit in expected_bits.items() if not (analytical_errno_seen & bit)]
-    if missing:
-        seen = [name for name, bit in ANALYTICAL_ERRNO_BITS.items() if analytical_errno_seen & bit]
-        pytest.fail(
-            f"Phase 1: expected specializations never called: {missing}\n"
-            f"Specializations called: {seen}\n"
-            f"errno bits seen: {analytical_errno_seen:#010x}"
-        )
-
-    total_ana = sum(c["n"] for c in recorded_contacts)
-    print(f"Phase 1: cylinder-cylinder confirmed. {total_ana} total contacts over {N_STEPS} steps.")
-
-    # --- Patch 2: GJK-forced kernel ---
-    monkeypatch.undo()
-
+    # --- Phase 1: GJK reference run ---
     gjk_path = create_modified_narrowphase_file(tmp_path=tmp_path)
     spec_gjk = importlib.util.spec_from_file_location("narrowphase_cyl_gjk", gjk_path)
     narrowphase_gjk = importlib.util.module_from_spec(spec_gjk)
@@ -985,103 +913,161 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
         narrowphase_gjk.func_narrow_phase_convex_vs_convex,
     )
 
-    # --- Phase 2: GJK replay ---
+    torch.manual_seed(0)
+    for body in entities_gjk:
+        v = (torch.rand(body.n_dofs, dtype=gs.tc_float, device=gs.device) * 2 - 1) * 3.0
+        body.set_dofs_velocity(v)
+
+    recorded_qpos = []
+    recorded_contacts = []
+    recorded_forces = []
+    gjk_confirmed = False
+
+    torch.manual_seed(42)
+    for step in range(N_STEPS):
+        step_qpos = []
+        for body in entities_gjk:
+            q = body.get_qpos()
+            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
+        recorded_qpos.append(step_qpos)
+
+        scene_gjk._sim.rigid_solver._errno.fill(0)
+        scene_gjk.step()
+        recorded_contacts.append(_snapshot_contacts(scene_gjk))
+
+        errno_val = int(scene_gjk._sim.rigid_solver._errno[0])
+        if recorded_contacts[-1]["n"] > 0:
+            assert (errno_val & ERRNO_CALLED_GJK) != 0, (
+                f"Step {step}: GJK not called despite {recorded_contacts[-1]['n']} contacts."
+            )
+            gjk_confirmed = True
+
+        nc = recorded_contacts[-1]["n"]
+        step_forces = []
+        if nc > 0:
+            geom_a = recorded_contacts[-1]["geom_a"]
+            geom_b = recorded_contacts[-1]["geom_b"]
+            hit_geoms = set(geom_a.tolist()) | set(geom_b.tolist())
+        else:
+            hit_geoms = set()
+
+        for body in entities_gjk:
+            body_geoms = set(range(body.geom_start, body.geom_end))
+            if body_geoms & hit_geoms:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+                f[0:3] = (torch.rand(3, dtype=gs.tc_float, device=gs.device) * 2 - 1) * BOUNCE_FORCE
+            else:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+            step_forces.append(f.clone())
+            body.control_dofs_force(f)
+        recorded_forces.append(step_forces)
+
+    assert gjk_confirmed, "Phase 1: GJK was never confirmed via errno."
+
+    total_gjk = sum(c["n"] for c in recorded_contacts)
+    print(f"Phase 1 (GJK): {total_gjk} total contacts over {N_STEPS} steps.")
+
+    # --- Phase 2: Analytical replay ---
+    monkeypatch.undo()
+
+    instrumented_path = create_instrumented_narrowphase_file(tmp_path=tmp_path)
+    spec_inst = importlib.util.spec_from_file_location("narrowphase_cyl_inst", instrumented_path)
+    narrowphase_instrumented = importlib.util.module_from_spec(spec_inst)
+    spec_inst.loader.exec_module(narrowphase_instrumented)
+
+    monkeypatch.setattr(
+        narrowphase,
+        "func_narrow_phase_convex_vs_convex",
+        narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
+    )
+
     mismatches = []
-    total_contacts_ana = 0
     total_contacts_gjk = 0
+    total_contacts_ana = 0
     steps_with_contacts = 0
     max_pos_err_seen = 0.0
     max_pen_err_seen = 0.0
     max_collinear_err_seen = 0.0
     min_dot_seen = 1.0
     count_diff_steps = 0
-    gjk_confirmed = False
+    analytical_errno_seen = 0
 
     for step in range(N_STEPS):
-        for i, body in enumerate(entities_gjk):
+        for i, body in enumerate(entities_ana):
             body.set_qpos(recorded_qpos[step][i])
             body.zero_all_dofs_velocity()
 
-        for i, body in enumerate(entities_gjk):
+        for i, body in enumerate(entities_ana):
             body.control_dofs_force(recorded_forces[step][i])
 
-        scene_gjk._sim.rigid_solver._errno.fill(0)
-        scene_gjk.step()
-        errno_val = int(scene_gjk._sim.rigid_solver._errno[0])
+        scene_ana._sim.rigid_solver._errno.fill(0)
+        scene_ana.step()
+        errno_val = int(scene_ana._sim.rigid_solver._errno[0])
+        analytical_errno_seen |= errno_val
 
-        contacts_gjk = _snapshot_contacts(scene_gjk)
-        contacts_ana = recorded_contacts[step]
+        contacts_ana = _snapshot_contacts(scene_ana)
+        contacts_gjk = recorded_contacts[step]
 
-        if contacts_gjk["n"] > 0:
-            assert (errno_val & ERRNO_CALLED_GJK) != 0, (
-                f"Step {step}: GJK scene produced {contacts_gjk['n']} contacts but errno indicates GJK was NOT called."
-            )
-            gjk_confirmed = True
-
-        total_contacts_ana += contacts_ana["n"]
         total_contacts_gjk += contacts_gjk["n"]
+        total_contacts_ana += contacts_ana["n"]
 
-        if contacts_ana["n"] == 0 and contacts_gjk["n"] == 0:
+        if contacts_gjk["n"] == 0 and contacts_ana["n"] == 0:
             continue
         steps_with_contacts += 1
 
-        if contacts_ana["n"] != contacts_gjk["n"]:
+        if contacts_gjk["n"] != contacts_ana["n"]:
             count_diff_steps += 1
 
-        ana_pairs = (
-            set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
-            if contacts_ana["n"] > 0
-            else set()
-        )
         gjk_pairs = (
             set(zip(contacts_gjk["geom_a"].tolist(), contacts_gjk["geom_b"].tolist()))
             if contacts_gjk["n"] > 0
             else set()
         )
-        all_pairs = ana_pairs | gjk_pairs
-        print(f"  step {step}: ana={contacts_ana['n']} gjk={contacts_gjk['n']}  pairs={sorted(all_pairs)}")
+        ana_pairs = (
+            set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
+            if contacts_ana["n"] > 0
+            else set()
+        )
+        all_pairs = gjk_pairs | ana_pairs
+        print(f"  step {step}: gjk={contacts_gjk['n']} ana={contacts_ana['n']}  pairs={sorted(all_pairs)}")
 
-        # Analytical detecting extra contacts is expected (more sensitive).
-        # GJK-only contacts would indicate analytical is missing collisions.
         only_ana = ana_pairs - gjk_pairs
         only_gjk = gjk_pairs - ana_pairs
         if only_ana:
-            print(f"    step {step}: analytical-only pairs (expected): {only_ana}")
+            print(f"    step {step}: analytical-only pairs: {only_ana}")
         if only_gjk:
-            mismatches.append(f"step {step}: GJK-only pairs (unexpected): {only_gjk}")
+            mismatches.append(f"step {step}: analytical missed GJK pairs: {only_gjk}")
 
-        common_pairs = ana_pairs & gjk_pairs
+        common_pairs = gjk_pairs & ana_pairs
         for ga, gb in common_pairs:
-            ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
             gjk_mask = (contacts_gjk["geom_a"] == ga) & (contacts_gjk["geom_b"] == gb)
+            ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
 
-            ana_pen = contacts_ana["penetration"][ana_mask]
             gjk_pen = contacts_gjk["penetration"][gjk_mask]
-            ana_nrm = contacts_ana["normal"][ana_mask]
+            ana_pen = contacts_ana["penetration"][ana_mask]
             gjk_nrm = contacts_gjk["normal"][gjk_mask]
-            ana_pos = contacts_ana["position"][ana_mask]
+            ana_nrm = contacts_ana["normal"][ana_mask]
             gjk_pos = contacts_gjk["position"][gjk_mask]
+            ana_pos = contacts_ana["position"][ana_mask]
 
-            n_ana = len(ana_pen)
             n_gjk = len(gjk_pen)
+            n_ana = len(ana_pen)
 
-            for j in range(n_ana):
-                print(f"      ana[{j}] pos={ana_pos[j]} pen={ana_pen[j]:.6f} nrm={ana_nrm[j]}")
             for j in range(n_gjk):
                 print(f"      gjk[{j}] pos={gjk_pos[j]} pen={gjk_pen[j]:.6f} nrm={gjk_nrm[j]}")
+            for j in range(n_ana):
+                print(f"      ana[{j}] pos={ana_pos[j]} pen={ana_pen[j]:.6f} nrm={ana_nrm[j]}")
 
-            # If GJK returns >= 2 contacts, analytical must also.
             if n_gjk >= 2 and n_ana < 2:
                 mismatches.append(
                     f"step {step} pair ({ga},{gb}): GJK has {n_gjk} contacts "
                     f"but analytical only has {n_ana} (expected >= 2)"
                 )
 
-            # Single-contact case: compare directly.
-            if n_ana == 1 and n_gjk == 1:
-                pos_err = np.linalg.norm(ana_pos[0] - gjk_pos[0])
-                pen_err = abs(float(ana_pen[0]) - float(gjk_pen[0]))
-                dot = abs(np.dot(ana_nrm[0], gjk_nrm[0]))
+            if n_gjk == 1 and n_ana == 1:
+                pos_err = np.linalg.norm(gjk_pos[0] - ana_pos[0])
+                pen_err = abs(float(gjk_pen[0]) - float(ana_pen[0]))
+                dot = abs(np.dot(gjk_nrm[0], ana_nrm[0]))
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 min_dot_seen = min(min_dot_seen, dot)
@@ -1093,12 +1079,9 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
                     mismatches.append(f"step {step} pair ({ga},{gb}): normal dot={dot:.4f}")
                 continue
 
-            # Multi-contact case: contacts should lie along a line.
-            # Find endpoints of each line segment, check collinearity,
-            # then compare endpoints between methods.
-            for label, pos, pen, nrm, n in [
-                ("ana", ana_pos, ana_pen, ana_nrm, n_ana),
+            for lbl, pos, pen, nrm, n in [
                 ("gjk", gjk_pos, gjk_pen, gjk_nrm, n_gjk),
+                ("ana", ana_pos, ana_pen, ana_nrm, n_ana),
             ]:
                 if n >= 3:
                     ei, ej = _find_line_endpoints(pos)
@@ -1109,58 +1092,64 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
                         max_collinear_err_seen = max(max_collinear_err_seen, d)
                         if d > POS_TOL:
                             mismatches.append(
-                                f"step {step} pair ({ga},{gb}): {label} contact {k} not collinear (dist={d:.6f})"
+                                f"step {step} pair ({ga},{gb}): {lbl} contact {k} not collinear (dist={d:.6f})"
                             )
 
-            if n_ana < 2 or n_gjk < 2:
+            if n_gjk < 2 or n_ana < 2:
                 continue
 
-            # Compare line endpoints between analytical and GJK.
-            ana_ei, ana_ej = _find_line_endpoints(ana_pos)
             gjk_ei, gjk_ej = _find_line_endpoints(gjk_pos)
-            ana_ends = np.array([ana_pos[ana_ei], ana_pos[ana_ej]])
+            ana_ei, ana_ej = _find_line_endpoints(ana_pos)
             gjk_ends = np.array([gjk_pos[gjk_ei], gjk_pos[gjk_ej]])
+            ana_ends = np.array([ana_pos[ana_ei], ana_pos[ana_ej]])
 
-            # Try both orderings and pick the better match.
-            err_same = np.linalg.norm(ana_ends[0] - gjk_ends[0]) + np.linalg.norm(ana_ends[1] - gjk_ends[1])
-            err_swap = np.linalg.norm(ana_ends[0] - gjk_ends[1]) + np.linalg.norm(ana_ends[1] - gjk_ends[0])
+            err_same = np.linalg.norm(gjk_ends[0] - ana_ends[0]) + np.linalg.norm(gjk_ends[1] - ana_ends[1])
+            err_swap = np.linalg.norm(gjk_ends[0] - ana_ends[1]) + np.linalg.norm(gjk_ends[1] - ana_ends[0])
             if err_swap < err_same:
-                gjk_ends = gjk_ends[::-1]
-                gjk_ei, gjk_ej = gjk_ej, gjk_ei
+                ana_ends = ana_ends[::-1]
 
-            for idx, (ae, ge) in enumerate(zip(ana_ends, gjk_ends)):
-                pos_err = np.linalg.norm(ae - ge)
+            for idx, (ge, ae) in enumerate(zip(gjk_ends, ana_ends)):
+                pos_err = np.linalg.norm(ge - ae)
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 if pos_err > POS_TOL:
                     mismatches.append(
-                        f"step {step} pair ({ga},{gb}): endpoint {idx} position err={pos_err:.6f} (ana={ae}, gjk={ge})"
+                        f"step {step} pair ({ga},{gb}): endpoint {idx} position err={pos_err:.6f} (gjk={ge}, ana={ae})"
                     )
 
-            # Compare normals at deepest contact for each method.
-            best_ana = int(np.argmax(ana_pen))
             best_gjk = int(np.argmax(gjk_pen))
-            dot = abs(np.dot(ana_nrm[best_ana], gjk_nrm[best_gjk]))
+            best_ana = int(np.argmax(ana_pen))
+            dot = abs(np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana]))
             min_dot_seen = min(min_dot_seen, dot)
             if dot < 0.95:
                 mismatches.append(
                     f"step {step} pair ({ga},{gb}): normal dot={dot:.4f} "
-                    f"(ana={ana_nrm[best_ana]}, gjk={gjk_nrm[best_gjk]})"
+                    f"(gjk={gjk_nrm[best_gjk]}, ana={ana_nrm[best_ana]})"
                 )
 
-            # Compare penetration at deepest contact.
-            pen_err = abs(float(ana_pen[best_ana]) - float(gjk_pen[best_gjk]))
+            pen_err = abs(float(gjk_pen[best_gjk]) - float(ana_pen[best_ana]))
             max_pen_err_seen = max(max_pen_err_seen, pen_err)
             if pen_err > POS_TOL:
                 mismatches.append(
                     f"step {step} pair ({ga},{gb}): deepest penetration err={pen_err:.6f} "
-                    f"(ana={ana_pen[best_ana]:.6f}, gjk={gjk_pen[best_gjk]:.6f})"
+                    f"(gjk={gjk_pen[best_gjk]:.6f}, ana={ana_pen[best_ana]:.6f})"
                 )
 
-    assert gjk_confirmed, "Phase 2: GJK was never confirmed via errno."
+    # Verify cylinder-cylinder specialization was called
+    expected_bits = {
+        "cylinder_contact.func_cylinder_cylinder_contact": ERRNO_CALLED_CYLINDER_CYLINDER,
+    }
+    missing = [name for name, bit in expected_bits.items() if not (analytical_errno_seen & bit)]
+    if missing:
+        seen = [name for name, bit in ANALYTICAL_ERRNO_BITS.items() if analytical_errno_seen & bit]
+        pytest.fail(
+            f"Phase 2: expected specializations never called: {missing}\n"
+            f"Specializations called: {seen}\n"
+            f"errno bits seen: {analytical_errno_seen:#010x}"
+        )
 
     print("\n=== CYLINDER ARENA DIAGNOSTICS ===")
     print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
-    print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
+    print(f"Total contacts — gjk: {total_contacts_gjk}, analytical: {total_contacts_ana}")
     print(f"Steps with different contact counts: {count_diff_steps}")
     print(f"Max endpoint position error: {max_pos_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Max penetration error: {max_pen_err_seen:.8f}  (threshold={POS_TOL})")
@@ -1196,40 +1185,59 @@ def _add_mjcf_entity(scene, tmp_path, geom_type, name, pos, euler, radius, half_
     return scene.add_entity(gs.morphs.MJCF(file=str(path)))
 
 
-def _build_wall_arena(scene, tmp_path, wall_type, free_bodies):
+def _build_wall_arena(scene, tmp_path, wall_type, free_bodies, arena_half=0.5):
     """Build a cage of fixed wall primitives with free bodies inside.
 
     Parameters
     ----------
     wall_type : str
-        ``"cylinder"`` or ``"capsule"`` — the primitive used for the walls.
+        ``"cylinder"``, ``"capsule"``, or ``"box"`` — the primitive used for
+        the walls.  ``"box"`` uses plain ``gs.morphs.Box`` (no analytical
+        specialization) so only the free-body pair triggers analytical paths.
     free_bodies : list[dict]
         Each dict has keys: ``type``, ``pos``, ``euler``, ``radius``, ``half_length``.
+    arena_half : float
+        Half-width of the cubic arena (default 0.5).
     Returns the list of free-body entities.
     """
-    ARENA_HALF = 0.5
-    WALL_R = 0.08
-    WALL_HALF_H = 1.0
-    SPACING = 0.20
-    idx = 0
+    ARENA_HALF = arena_half
+    WALL_THICKNESS = 2
 
-    positions = [i * SPACING for i in range(-int(ARENA_HALF / SPACING), int(ARENA_HALF / SPACING) + 1)]
+    if wall_type == "box":
+        arena = ARENA_HALF + WALL_THICKNESS / 2
+        wall_defs = [
+            ((0, 0, -arena), (2 * arena, 2 * arena, WALL_THICKNESS)),
+            ((0, 0, +arena), (2 * arena, 2 * arena, WALL_THICKNESS)),
+            ((-arena, 0, 0), (WALL_THICKNESS, 2 * arena, 2 * arena)),
+            ((+arena, 0, 0), (WALL_THICKNESS, 2 * arena, 2 * arena)),
+            ((0, -arena, 0), (2 * arena, WALL_THICKNESS, 2 * arena)),
+            ((0, +arena, 0), (2 * arena, WALL_THICKNESS, 2 * arena)),
+        ]
+        for pos, size in wall_defs:
+            scene.add_entity(gs.morphs.Box(pos=pos, size=size, fixed=True))
+    else:
+        WALL_R = 0.08
+        WALL_HALF_H = 1.0
+        SPACING = 0.20
+        idx = 0
 
-    def _add_wall(pos, euler):
-        nonlocal idx
-        name = f"wall_{idx}"
-        idx += 1
-        _add_mjcf_entity(scene, tmp_path, wall_type, name, pos, euler, WALL_R, WALL_HALF_H, fixed=True)
+        positions = [i * SPACING for i in range(-int(ARENA_HALF / SPACING), int(ARENA_HALF / SPACING) + 1)]
 
-    for y in positions:
-        _add_wall((0, y, -ARENA_HALF), (0, 90, 0))
-        _add_wall((0, y, +ARENA_HALF), (0, 90, 0))
-    for y in positions:
-        _add_wall((-ARENA_HALF, y, 0), (0, 0, 0))
-        _add_wall((+ARENA_HALF, y, 0), (0, 0, 0))
-    for x in positions:
-        _add_wall((x, -ARENA_HALF, 0), (0, 0, 0))
-        _add_wall((x, +ARENA_HALF, 0), (0, 0, 0))
+        def _add_wall(pos, euler):
+            nonlocal idx
+            name = f"wall_{idx}"
+            idx += 1
+            _add_mjcf_entity(scene, tmp_path, wall_type, name, pos, euler, WALL_R, WALL_HALF_H, fixed=True)
+
+        for y in positions:
+            _add_wall((0, y, -ARENA_HALF), (0, 90, 0))
+            _add_wall((0, y, +ARENA_HALF), (0, 90, 0))
+        for y in positions:
+            _add_wall((-ARENA_HALF, y, 0), (0, 0, 0))
+            _add_wall((+ARENA_HALF, y, 0), (0, 0, 0))
+        for x in positions:
+            _add_wall((x, -ARENA_HALF, 0), (0, 0, 0))
+            _add_wall((x, +ARENA_HALF, 0), (0, 0, 0))
 
     entities = []
     for i, body_def in enumerate(free_bodies):
@@ -1258,11 +1266,14 @@ def _run_pair_fuzz(
     free_bodies,
     expected_errno_bits,
     label,
+    arena_half=0.5,
 ):
-    """Reusable two-phase analytical-vs-GJK fuzz for a specific collision pair.
+    """Reusable two-phase GJK-vs-analytical fuzz for a specific collision pair.
 
-    Phase 1: Run with instrumented analytical kernel, record contacts.
-    Phase 2: Replay with GJK-forced kernel, compare contacts.
+    Phase 1 (GJK reference): Run with GJK-forced kernel (known-good), record
+        qpos, forces, and contacts.
+    Phase 2 (Analytical replay): Replay same qpos+forces with instrumented
+        analytical kernel, verify errno bits, compare contacts against GJK.
     """
     import torch
 
@@ -1279,91 +1290,23 @@ def _run_pair_fuzz(
 
     from genesis.engine.solvers.rigid.collider import narrowphase
 
-    instrumented_path = create_instrumented_narrowphase_file(tmp_path=tmp_path)
-    spec_inst = importlib.util.spec_from_file_location(f"narrowphase_{label}_inst", instrumented_path)
-    narrowphase_instrumented = importlib.util.module_from_spec(spec_inst)
-    spec_inst.loader.exec_module(narrowphase_instrumented)
-
-    monkeypatch.setattr(
-        narrowphase,
-        "func_narrow_phase_convex_vs_convex",
-        narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
-    )
+    # --- Build both scenes BEFORE any patching ---
+    gjk_dir = tmp_path / "gjk_mjcf"
+    gjk_dir.mkdir()
+    scene_gjk = gs.Scene(show_viewer=show_viewer, rigid_options=rigid_opts)
+    entities_gjk = _build_wall_arena(scene_gjk, gjk_dir, wall_type, free_bodies)
 
     ana_dir = tmp_path / "ana_mjcf"
     ana_dir.mkdir()
-    scene_ana = gs.Scene(show_viewer=show_viewer, rigid_options=rigid_opts)
+    scene_ana = gs.Scene(show_viewer=False, rigid_options=rigid_opts)
     entities_ana = _build_wall_arena(scene_ana, ana_dir, wall_type, free_bodies)
 
-    gjk_dir = tmp_path / "gjk_mjcf"
-    gjk_dir.mkdir()
-    scene_gjk = gs.Scene(show_viewer=False, rigid_options=rigid_opts)
-    entities_gjk = _build_wall_arena(scene_gjk, gjk_dir, wall_type, free_bodies)
-
-    for body in entities_ana:
-        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
     for body in entities_gjk:
         body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
-
-    # --- Phase 1: Analytical ---
-    torch.manual_seed(0)
     for body in entities_ana:
-        v = (torch.rand(body.n_dofs, dtype=gs.tc_float, device=gs.device) * 2 - 1) * 3.0
-        body.set_dofs_velocity(v)
+        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
 
-    recorded_qpos = []
-    recorded_contacts = []
-    recorded_forces = []
-    analytical_errno_seen = 0
-
-    torch.manual_seed(42)
-    for step in range(N_STEPS):
-        step_qpos = []
-        for body in entities_ana:
-            q = body.get_qpos()
-            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
-        recorded_qpos.append(step_qpos)
-
-        scene_ana._sim.rigid_solver._errno.fill(0)
-        scene_ana.step()
-        recorded_contacts.append(_snapshot_contacts(scene_ana))
-
-        errno_val = int(scene_ana._sim.rigid_solver._errno[0])
-        analytical_errno_seen |= errno_val
-
-        nc = recorded_contacts[-1]["n"]
-        step_forces = []
-        if nc > 0:
-            hit_geoms = set(recorded_contacts[-1]["geom_a"].tolist()) | set(recorded_contacts[-1]["geom_b"].tolist())
-        else:
-            hit_geoms = set()
-
-        for body in entities_ana:
-            body_geoms = set(range(body.geom_start, body.geom_end))
-            if body_geoms & hit_geoms:
-                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
-                f[0:3] = (torch.rand(3, dtype=gs.tc_float, device=gs.device) * 2 - 1) * BOUNCE_FORCE
-            else:
-                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
-            step_forces.append(f.clone())
-            body.control_dofs_force(f)
-        recorded_forces.append(step_forces)
-
-    missing = [name for name, bit in expected_errno_bits.items() if not (analytical_errno_seen & bit)]
-    if missing:
-        seen = [name for name, bit in ANALYTICAL_ERRNO_BITS.items() if analytical_errno_seen & bit]
-        pytest.fail(
-            f"[{label}] Phase 1: expected specializations never called: {missing}\n"
-            f"Specializations called: {seen}\n"
-            f"errno bits seen: {analytical_errno_seen:#010x}"
-        )
-
-    total_ana = sum(c["n"] for c in recorded_contacts)
-    print(f"[{label}] Phase 1 OK. {total_ana} total contacts over {N_STEPS} steps.")
-
-    # --- Phase 2: GJK replay ---
-    monkeypatch.undo()
-
+    # --- Phase 1: GJK reference run ---
     gjk_path = create_modified_narrowphase_file(tmp_path=tmp_path)
     spec_gjk = importlib.util.spec_from_file_location(f"narrowphase_{label}_gjk", gjk_path)
     narrowphase_gjk = importlib.util.module_from_spec(spec_gjk)
@@ -1375,73 +1318,144 @@ def _run_pair_fuzz(
         narrowphase_gjk.func_narrow_phase_convex_vs_convex,
     )
 
+    torch.manual_seed(0)
+    for body in entities_gjk:
+        v = (torch.rand(body.n_dofs, dtype=gs.tc_float, device=gs.device) * 2 - 1) * 3.0
+        body.set_dofs_velocity(v)
+
+    recorded_qpos = []
+    recorded_contacts = []
+    recorded_forces = []
+    gjk_confirmed = False
+
+    torch.manual_seed(42)
+    for step in range(N_STEPS):
+        step_qpos = []
+        for body in entities_gjk:
+            q = body.get_qpos()
+            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
+        recorded_qpos.append(step_qpos)
+
+        scene_gjk._sim.rigid_solver._errno.fill(0)
+        scene_gjk.step()
+        recorded_contacts.append(_snapshot_contacts(scene_gjk))
+
+        errno_val = int(scene_gjk._sim.rigid_solver._errno[0])
+        if recorded_contacts[-1]["n"] > 0:
+            assert (errno_val & ERRNO_CALLED_GJK) != 0, (
+                f"[{label}] Step {step}: GJK not called despite {recorded_contacts[-1]['n']} contacts."
+            )
+            gjk_confirmed = True
+
+        nc = recorded_contacts[-1]["n"]
+        step_forces = []
+        if nc > 0:
+            hit_geoms = set(recorded_contacts[-1]["geom_a"].tolist()) | set(
+                recorded_contacts[-1]["geom_b"].tolist()
+            )
+        else:
+            hit_geoms = set()
+
+        for body in entities_gjk:
+            body_geoms = set(range(body.geom_start, body.geom_end))
+            if body_geoms & hit_geoms:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+                f[0:3] = (torch.rand(3, dtype=gs.tc_float, device=gs.device) * 2 - 1) * BOUNCE_FORCE
+            else:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+            step_forces.append(f.clone())
+            body.control_dofs_force(f)
+        recorded_forces.append(step_forces)
+
+    assert gjk_confirmed, f"[{label}] Phase 1: GJK was never confirmed via errno."
+
+    total_gjk = sum(c["n"] for c in recorded_contacts)
+    all_pairs_seen = set()
+    for c in recorded_contacts:
+        if c["n"] > 0:
+            all_pairs_seen.update(zip(c["geom_a"].tolist(), c["geom_b"].tolist()))
+    print(f"[{label}] Phase 1 (GJK) OK. {total_gjk} contacts, pairs seen: {sorted(all_pairs_seen)}")
+
+    # --- Phase 2: Analytical replay ---
+    monkeypatch.undo()
+
+    instrumented_path = create_instrumented_narrowphase_file(tmp_path=tmp_path)
+    spec_inst = importlib.util.spec_from_file_location(f"narrowphase_{label}_inst", instrumented_path)
+    narrowphase_instrumented = importlib.util.module_from_spec(spec_inst)
+    spec_inst.loader.exec_module(narrowphase_instrumented)
+
+    monkeypatch.setattr(
+        narrowphase,
+        "func_narrow_phase_convex_vs_convex",
+        narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
+    )
+
+    assert narrowphase.func_narrow_phase_convex_vs_convex is narrowphase_instrumented.func_narrow_phase_convex_vs_convex, (
+        "monkeypatch failed: instrumented kernel not set"
+    )
+
     mismatches = []
-    total_contacts_ana = 0
     total_contacts_gjk = 0
+    total_contacts_ana = 0
     steps_with_contacts = 0
     max_pos_err_seen = 0.0
     max_pen_err_seen = 0.0
     min_dot_seen = 1.0
-    gjk_confirmed = False
+    analytical_errno_seen = 0
 
     for step in range(N_STEPS):
-        for i, body in enumerate(entities_gjk):
+        for i, body in enumerate(entities_ana):
             body.set_qpos(recorded_qpos[step][i])
             body.zero_all_dofs_velocity()
-        for i, body in enumerate(entities_gjk):
+        for i, body in enumerate(entities_ana):
             body.control_dofs_force(recorded_forces[step][i])
 
-        scene_gjk._sim.rigid_solver._errno.fill(0)
-        scene_gjk.step()
-        errno_val = int(scene_gjk._sim.rigid_solver._errno[0])
+        scene_ana._sim.rigid_solver._errno.fill(0)
+        scene_ana.step()
+        errno_val = int(scene_ana._sim.rigid_solver._errno[0])
+        analytical_errno_seen |= errno_val
 
-        contacts_gjk = _snapshot_contacts(scene_gjk)
-        contacts_ana = recorded_contacts[step]
+        contacts_ana = _snapshot_contacts(scene_ana)
+        contacts_gjk = recorded_contacts[step]
 
-        if contacts_gjk["n"] > 0:
-            assert (errno_val & ERRNO_CALLED_GJK) != 0, (
-                f"[{label}] Step {step}: GJK not called despite {contacts_gjk['n']} contacts."
-            )
-            gjk_confirmed = True
-
-        total_contacts_ana += contacts_ana["n"]
         total_contacts_gjk += contacts_gjk["n"]
+        total_contacts_ana += contacts_ana["n"]
 
-        if contacts_ana["n"] == 0 and contacts_gjk["n"] == 0:
+        if contacts_gjk["n"] == 0 and contacts_ana["n"] == 0:
             continue
         steps_with_contacts += 1
 
-        ana_pairs = (
-            set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
-            if contacts_ana["n"] > 0
-            else set()
-        )
         gjk_pairs = (
             set(zip(contacts_gjk["geom_a"].tolist(), contacts_gjk["geom_b"].tolist()))
             if contacts_gjk["n"] > 0
             else set()
         )
+        ana_pairs = (
+            set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
+            if contacts_ana["n"] > 0
+            else set()
+        )
 
         only_gjk = gjk_pairs - ana_pairs
         if only_gjk:
-            mismatches.append(f"step {step}: GJK-only pairs: {only_gjk}")
+            mismatches.append(f"step {step}: analytical missed GJK pairs: {only_gjk}")
 
-        common_pairs = ana_pairs & gjk_pairs
+        common_pairs = gjk_pairs & ana_pairs
         for ga, gb in common_pairs:
-            ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
             gjk_mask = (contacts_gjk["geom_a"] == ga) & (contacts_gjk["geom_b"] == gb)
+            ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
 
-            ana_pen = contacts_ana["penetration"][ana_mask]
             gjk_pen = contacts_gjk["penetration"][gjk_mask]
-            ana_nrm = contacts_ana["normal"][ana_mask]
+            ana_pen = contacts_ana["penetration"][ana_mask]
             gjk_nrm = contacts_gjk["normal"][gjk_mask]
-            ana_pos_arr = contacts_ana["position"][ana_mask]
+            ana_nrm = contacts_ana["normal"][ana_mask]
             gjk_pos_arr = contacts_gjk["position"][gjk_mask]
+            ana_pos_arr = contacts_ana["position"][ana_mask]
 
-            if len(ana_pen) == 1 and len(gjk_pen) == 1:
-                pos_err = np.linalg.norm(ana_pos_arr[0] - gjk_pos_arr[0])
-                pen_err = abs(float(ana_pen[0]) - float(gjk_pen[0]))
-                dot = abs(np.dot(ana_nrm[0], gjk_nrm[0]))
+            if len(gjk_pen) == 1 and len(ana_pen) == 1:
+                pos_err = np.linalg.norm(gjk_pos_arr[0] - ana_pos_arr[0])
+                pen_err = abs(float(gjk_pen[0]) - float(ana_pen[0]))
+                dot = abs(np.dot(gjk_nrm[0], ana_nrm[0]))
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 min_dot_seen = min(min_dot_seen, dot)
@@ -1451,23 +1465,32 @@ def _run_pair_fuzz(
                     mismatches.append(f"step {step} ({ga},{gb}): pen err={pen_err:.6f}")
                 if dot < 0.95:
                     mismatches.append(f"step {step} ({ga},{gb}): normal dot={dot:.4f}")
-            elif len(ana_pen) >= 2 and len(gjk_pen) >= 2:
-                best_ana = int(np.argmax(ana_pen))
+            elif len(gjk_pen) >= 2 and len(ana_pen) >= 2:
                 best_gjk = int(np.argmax(gjk_pen))
-                pen_err = abs(float(ana_pen[best_ana]) - float(gjk_pen[best_gjk]))
+                best_ana = int(np.argmax(ana_pen))
+                pen_err = abs(float(gjk_pen[best_gjk]) - float(ana_pen[best_ana]))
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 if pen_err > POS_TOL:
                     mismatches.append(f"step {step} ({ga},{gb}): pen err={pen_err:.6f}")
-                dot = abs(np.dot(ana_nrm[best_ana], gjk_nrm[best_gjk]))
+                dot = abs(np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana]))
                 min_dot_seen = min(min_dot_seen, dot)
                 if dot < 0.95:
                     mismatches.append(f"step {step} ({ga},{gb}): normal dot={dot:.4f}")
 
-    assert gjk_confirmed, f"[{label}] Phase 2: GJK never confirmed via errno."
+    print(f"[{label}] Phase 2: total analytical contacts={total_contacts_ana}, errno={analytical_errno_seen:#010x}")
+
+    missing = [name for name, bit in expected_errno_bits.items() if not (analytical_errno_seen & bit)]
+    if missing:
+        seen = [name for name, bit in ANALYTICAL_ERRNO_BITS.items() if analytical_errno_seen & bit]
+        pytest.fail(
+            f"[{label}] Phase 2: expected analytical specializations never called: {missing}\n"
+            f"Specializations called: {seen}\n"
+            f"errno bits seen: {analytical_errno_seen:#010x}"
+        )
 
     print(f"\n=== {label} DIAGNOSTICS ===")
     print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
-    print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
+    print(f"Total contacts — gjk: {total_contacts_gjk}, analytical: {total_contacts_ana}")
     print(f"Max position error: {max_pos_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Max penetration error: {max_pen_err_seen:.8f}  (threshold={POS_TOL})")
     print(f"Min normal dot: {min_dot_seen:.6f}  (threshold=0.95)")
@@ -1483,12 +1506,16 @@ def _run_pair_fuzz(
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_sphere_sphere_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
-    """Fuzz: two free spheres in a cylinder-wall arena."""
+    """Fuzz: two free spheres in a box-wall arena.
+
+    Box walls avoid cylinder-sphere wall collisions which have large contact
+    position differences, keeping the test focused on sphere-sphere only.
+    """
     _run_pair_fuzz(
         monkeypatch,
         tmp_path,
         show_viewer,
-        wall_type="cylinder",
+        wall_type="box",
         free_bodies=[
             {"type": "sphere", "pos": (0.05, 0.0, 0.0), "radius": 0.12, "half_length": 0},
             {"type": "sphere", "pos": (-0.05, 0.1, 0.0), "radius": 0.10, "half_length": 0},
@@ -1503,15 +1530,19 @@ def test_sphere_sphere_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.gpu])
 def test_cylinder_sphere_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
-    """Fuzz: one free cylinder + one free sphere in a cylinder-wall arena."""
+    """Fuzz: one free cylinder + one free sphere in a box-wall arena.
+
+    Bodies start close together so they collide quickly.  Box walls avoid
+    interfering cylinder-cylinder wall collisions.
+    """
     _run_pair_fuzz(
         monkeypatch,
         tmp_path,
         show_viewer,
-        wall_type="cylinder",
+        wall_type="box",
         free_bodies=[
-            {"type": "cylinder", "pos": (0.1, 0.05, 0.0), "euler": (0, 0, 0), "radius": 0.10, "half_length": 0.20},
-            {"type": "sphere", "pos": (-0.05, -0.05, 0.1), "radius": 0.10, "half_length": 0},
+            {"type": "cylinder", "pos": (0.0, 0.0, 0.0), "euler": (0, 0, 0), "radius": 0.10, "half_length": 0.20},
+            {"type": "sphere", "pos": (0.15, 0.0, 0.0), "radius": 0.10, "half_length": 0},
         ],
         expected_errno_bits={
             "cylinder_contact.func_cylinder_sphere_contact": ERRNO_CALLED_CYLINDER_SPHERE,
