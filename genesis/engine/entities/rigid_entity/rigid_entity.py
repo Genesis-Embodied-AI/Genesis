@@ -216,7 +216,7 @@ class KinematicEntity(Entity):
             sdf_min_res=32,
             sdf_max_res=32,
             gravity_compensation=0.0,
-            coupling_mode=None,
+            coupling_type=None,
             coupling_link_filter=None,
         )
         # NOTE: Mark rigid-only coupling fields as undefined for kinematic materials.
@@ -3475,9 +3475,9 @@ class RigidEntity(KinematicEntity):
 
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_mode == "external_articulation"
+            and self._material_for_loading.coupling_type == "external_articulation"
         ):
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
@@ -3530,9 +3530,9 @@ class RigidEntity(KinematicEntity):
 
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_mode == "external_articulation"
+            and self._material_for_loading.coupling_type == "external_articulation"
         ):
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
