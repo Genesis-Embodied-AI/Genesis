@@ -1067,7 +1067,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
             if n_gjk == 1 and n_ana == 1:
                 pos_err = np.linalg.norm(gjk_pos[0] - ana_pos[0])
                 pen_err = abs(float(gjk_pen[0]) - float(ana_pen[0]))
-                dot = abs(np.dot(gjk_nrm[0], ana_nrm[0]))
+                dot = np.dot(gjk_nrm[0], ana_nrm[0])
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 min_dot_seen = min(min_dot_seen, dot)
@@ -1118,7 +1118,7 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
 
             best_gjk = int(np.argmax(gjk_pen))
             best_ana = int(np.argmax(ana_pen))
-            dot = abs(np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana]))
+            dot = np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana])
             min_dot_seen = min(min_dot_seen, dot)
             if dot < 0.95:
                 mismatches.append(
@@ -1455,7 +1455,7 @@ def _run_pair_fuzz(
             if len(gjk_pen) == 1 and len(ana_pen) == 1:
                 pos_err = np.linalg.norm(gjk_pos_arr[0] - ana_pos_arr[0])
                 pen_err = abs(float(gjk_pen[0]) - float(ana_pen[0]))
-                dot = abs(np.dot(gjk_nrm[0], ana_nrm[0]))
+                dot = np.dot(gjk_nrm[0], ana_nrm[0])
                 max_pos_err_seen = max(max_pos_err_seen, pos_err)
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 min_dot_seen = min(min_dot_seen, dot)
@@ -1472,7 +1472,7 @@ def _run_pair_fuzz(
                 max_pen_err_seen = max(max_pen_err_seen, pen_err)
                 if pen_err > POS_TOL:
                     mismatches.append(f"step {step} ({ga},{gb}): pen err={pen_err:.6f}")
-                dot = abs(np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana]))
+                dot = np.dot(gjk_nrm[best_gjk], ana_nrm[best_ana])
                 min_dot_seen = min(min_dot_seen, dot)
                 if dot < 0.95:
                     mismatches.append(f"step {step} ({ga},{gb}): normal dot={dot:.4f}")

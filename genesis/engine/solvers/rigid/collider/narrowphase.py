@@ -704,7 +704,7 @@ def func_convex_convex_contact(
                                         0.5 * geoms_info.data[i_ga][1],
                                         gb_pos_current,
                                         geoms_info.data[i_gb][0],
-                                        gs.qd_int(1),
+                                        gs.qd_int(-1),
                                         EPS,
                                     )
                                 )
@@ -717,7 +717,7 @@ def func_convex_convex_contact(
                                         0.5 * geoms_info.data[i_gb][1],
                                         ga_pos_current,
                                         geoms_info.data[i_ga][0],
-                                        gs.qd_int(-1),
+                                        gs.qd_int(1),
                                         EPS,
                                     )
                                 )
