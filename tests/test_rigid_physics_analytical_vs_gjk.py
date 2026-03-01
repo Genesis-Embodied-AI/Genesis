@@ -248,27 +248,42 @@ def find_and_disable_condition(lines, function_name):
 
 
 def insert_errno_before_call(lines, function_call_pattern, errno_value, comment):
-    """Insert errno marker on the line before a function call."""
+    """Insert errno marker on the line before a function call.
+
+    Handles the case where the call is on a continuation line (e.g. after
+    ``result = (\\n    func(...)``).  Walks backwards to find the statement
+    start and inserts the errno line before it.
+    """
     call_line_idx = None
     for i, line in enumerate(lines):
         if function_call_pattern in line:
-            # Find the position of the pattern in the line
             idx = line.find(function_call_pattern)
             if idx != -1:
-                # Make sure it's not part of a longer identifier
-                # Check that the character before the pattern (if any) is not alphanumeric or underscore
                 if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
                     call_line_idx = i
                     break
     else:
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
-    # Get indentation from the call line
-    indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
+    # Check whether the call line is a continuation of a multi-line expression
+    # by scanning upward for unmatched open parens.
+    insert_idx = call_line_idx
+    paren_depth = 0
+    for j in range(call_line_idx - 1, -1, -1):
+        for ch in lines[j]:
+            if ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth -= 1
+        if paren_depth > 0:
+            # Line j has an unmatched '(' — the call is a continuation.
+            # Insert the errno line before line j (the statement start).
+            insert_idx = j
+        break  # only need to inspect the immediately preceding line
 
-    # Insert errno marker on the line before the call
+    indent_size = len(lines[insert_idx]) - len(lines[insert_idx].lstrip())
     errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
-    lines.insert(call_line_idx, errno_line)
+    lines.insert(insert_idx, errno_line)
 
     return lines
 
