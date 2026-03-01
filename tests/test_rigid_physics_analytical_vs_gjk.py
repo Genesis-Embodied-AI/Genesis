@@ -140,7 +140,7 @@ def _check_expected_values(contacts, description, exp_pen, exp_normal, method_na
             )
 
 
-def create_capsule_mjcf(name, pos, euler, radius, half_length):
+def create_capsule_mjcf(name, pos, euler, radius, half_length, fixed=False):
     """Helper function to create an MJCF file with a single capsule."""
     mjcf = ET.Element("mujoco", model=name)
     ET.SubElement(mjcf, "compiler", angle="degree")
@@ -154,7 +154,8 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
         euler=" ".join(map(str, euler)),
     )
     ET.SubElement(body, "geom", type="capsule", size=f"{radius} {half_length}")
-    ET.SubElement(body, "joint", name=f"{name}_joint", type="free")
+    if not fixed:
+        ET.SubElement(body, "joint", name=f"{name}_joint", type="free")
     return mjcf
 
 
@@ -1173,3 +1174,399 @@ def test_cylinder_arena_analytical_vs_gjk(backend, monkeypatch, tmp_path: Path, 
         if len(mismatches) > 20:
             msg += f"\n... and {len(mismatches) - 20} more"
         pytest.fail(msg)
+
+
+# ---------------------------------------------------------------------------
+# Per-pair fuzz tests
+# ---------------------------------------------------------------------------
+
+
+def _add_mjcf_entity(scene, tmp_path, geom_type, name, pos, euler, radius, half_length, fixed=False):
+    """Create and add a single MJCF primitive (cylinder, capsule, or sphere)."""
+    if geom_type == "cylinder":
+        mjcf = create_cylinder_mjcf(name, pos, euler, radius, half_length, fixed=fixed)
+    elif geom_type == "capsule":
+        mjcf = create_capsule_mjcf(name, pos, euler, radius, half_length, fixed=fixed)
+    elif geom_type == "sphere":
+        mjcf = create_sphere_mjcf(name, pos, radius)
+    else:
+        raise ValueError(f"Unknown geom_type: {geom_type}")
+    path = tmp_path / f"{name}.xml"
+    ET.ElementTree(mjcf).write(path)
+    return scene.add_entity(gs.morphs.MJCF(file=str(path)))
+
+
+def _build_wall_arena(scene, tmp_path, wall_type, free_bodies):
+    """Build a cage of fixed wall primitives with free bodies inside.
+
+    Parameters
+    ----------
+    wall_type : str
+        ``"cylinder"`` or ``"capsule"`` — the primitive used for the walls.
+    free_bodies : list[dict]
+        Each dict has keys: ``type``, ``pos``, ``euler``, ``radius``, ``half_length``.
+    Returns the list of free-body entities.
+    """
+    ARENA_HALF = 0.5
+    WALL_R = 0.08
+    WALL_HALF_H = 1.0
+    SPACING = 0.20
+    idx = 0
+
+    positions = [i * SPACING for i in range(-int(ARENA_HALF / SPACING), int(ARENA_HALF / SPACING) + 1)]
+
+    def _add_wall(pos, euler):
+        nonlocal idx
+        name = f"wall_{idx}"
+        idx += 1
+        _add_mjcf_entity(scene, tmp_path, wall_type, name, pos, euler, WALL_R, WALL_HALF_H, fixed=True)
+
+    for y in positions:
+        _add_wall((0, y, -ARENA_HALF), (0, 90, 0))
+        _add_wall((0, y, +ARENA_HALF), (0, 90, 0))
+    for y in positions:
+        _add_wall((-ARENA_HALF, y, 0), (0, 0, 0))
+        _add_wall((+ARENA_HALF, y, 0), (0, 0, 0))
+    for x in positions:
+        _add_wall((x, -ARENA_HALF, 0), (0, 0, 0))
+        _add_wall((x, +ARENA_HALF, 0), (0, 0, 0))
+
+    entities = []
+    for i, body_def in enumerate(free_bodies):
+        name = f"free_{i}"
+        ent = _add_mjcf_entity(
+            scene,
+            tmp_path,
+            body_def["type"],
+            name,
+            body_def["pos"],
+            body_def.get("euler", (0, 0, 0)),
+            body_def["radius"],
+            body_def.get("half_length", 0.0),
+        )
+        entities.append(ent)
+
+    scene.build()
+    return entities
+
+
+def _run_pair_fuzz(
+    monkeypatch,
+    tmp_path,
+    show_viewer,
+    wall_type,
+    free_bodies,
+    expected_errno_bits,
+    label,
+):
+    """Reusable two-phase analytical-vs-GJK fuzz for a specific collision pair.
+
+    Phase 1: Run with instrumented analytical kernel, record contacts.
+    Phase 2: Replay with GJK-forced kernel, compare contacts.
+    """
+    import torch
+
+    N_STEPS = 200
+    BOUNCE_FORCE = 600.0
+
+    rigid_opts = gs.options.RigidOptions(
+        dt=0.005,
+        gravity=(0, 0, 0),
+        enable_collision=True,
+        use_gjk_collision=True,
+        enable_multi_contact=True,
+    )
+
+    from genesis.engine.solvers.rigid.collider import narrowphase
+
+    instrumented_path = create_instrumented_narrowphase_file(tmp_path=tmp_path)
+    spec_inst = importlib.util.spec_from_file_location(f"narrowphase_{label}_inst", instrumented_path)
+    narrowphase_instrumented = importlib.util.module_from_spec(spec_inst)
+    spec_inst.loader.exec_module(narrowphase_instrumented)
+
+    monkeypatch.setattr(
+        narrowphase,
+        "func_narrow_phase_convex_vs_convex",
+        narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
+    )
+
+    ana_dir = tmp_path / "ana_mjcf"
+    ana_dir.mkdir()
+    scene_ana = gs.Scene(show_viewer=show_viewer, rigid_options=rigid_opts)
+    entities_ana = _build_wall_arena(scene_ana, ana_dir, wall_type, free_bodies)
+
+    gjk_dir = tmp_path / "gjk_mjcf"
+    gjk_dir.mkdir()
+    scene_gjk = gs.Scene(show_viewer=False, rigid_options=rigid_opts)
+    entities_gjk = _build_wall_arena(scene_gjk, gjk_dir, wall_type, free_bodies)
+
+    for body in entities_ana:
+        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
+    for body in entities_gjk:
+        body.set_dofs_damping(np.array([15.0, 15.0, 15.0], dtype=gs.np_float), dofs_idx_local=[3, 4, 5])
+
+    # --- Phase 1: Analytical ---
+    torch.manual_seed(0)
+    for body in entities_ana:
+        v = (torch.rand(body.n_dofs, dtype=gs.tc_float, device=gs.device) * 2 - 1) * 3.0
+        body.set_dofs_velocity(v)
+
+    recorded_qpos = []
+    recorded_contacts = []
+    recorded_forces = []
+    analytical_errno_seen = 0
+
+    torch.manual_seed(42)
+    for step in range(N_STEPS):
+        step_qpos = []
+        for body in entities_ana:
+            q = body.get_qpos()
+            step_qpos.append(q.cpu().numpy().copy() if hasattr(q, "cpu") else np.array(q).copy())
+        recorded_qpos.append(step_qpos)
+
+        scene_ana._sim.rigid_solver._errno.fill(0)
+        scene_ana.step()
+        recorded_contacts.append(_snapshot_contacts(scene_ana))
+
+        errno_val = int(scene_ana._sim.rigid_solver._errno[0])
+        analytical_errno_seen |= errno_val
+
+        nc = recorded_contacts[-1]["n"]
+        step_forces = []
+        if nc > 0:
+            hit_geoms = set(recorded_contacts[-1]["geom_a"].tolist()) | set(recorded_contacts[-1]["geom_b"].tolist())
+        else:
+            hit_geoms = set()
+
+        for body in entities_ana:
+            body_geoms = set(range(body.geom_start, body.geom_end))
+            if body_geoms & hit_geoms:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+                f[0:3] = (torch.rand(3, dtype=gs.tc_float, device=gs.device) * 2 - 1) * BOUNCE_FORCE
+            else:
+                f = torch.zeros(body.n_dofs, dtype=gs.tc_float, device=gs.device)
+            step_forces.append(f.clone())
+            body.control_dofs_force(f)
+        recorded_forces.append(step_forces)
+
+    missing = [name for name, bit in expected_errno_bits.items() if not (analytical_errno_seen & bit)]
+    if missing:
+        seen = [name for name, bit in ANALYTICAL_ERRNO_BITS.items() if analytical_errno_seen & bit]
+        pytest.fail(
+            f"[{label}] Phase 1: expected specializations never called: {missing}\n"
+            f"Specializations called: {seen}\n"
+            f"errno bits seen: {analytical_errno_seen:#010x}"
+        )
+
+    total_ana = sum(c["n"] for c in recorded_contacts)
+    print(f"[{label}] Phase 1 OK. {total_ana} total contacts over {N_STEPS} steps.")
+
+    # --- Phase 2: GJK replay ---
+    monkeypatch.undo()
+
+    gjk_path = create_modified_narrowphase_file(tmp_path=tmp_path)
+    spec_gjk = importlib.util.spec_from_file_location(f"narrowphase_{label}_gjk", gjk_path)
+    narrowphase_gjk = importlib.util.module_from_spec(spec_gjk)
+    spec_gjk.loader.exec_module(narrowphase_gjk)
+
+    monkeypatch.setattr(
+        narrowphase,
+        "func_narrow_phase_convex_vs_convex",
+        narrowphase_gjk.func_narrow_phase_convex_vs_convex,
+    )
+
+    mismatches = []
+    total_contacts_ana = 0
+    total_contacts_gjk = 0
+    steps_with_contacts = 0
+    max_pos_err_seen = 0.0
+    max_pen_err_seen = 0.0
+    min_dot_seen = 1.0
+    gjk_confirmed = False
+
+    for step in range(N_STEPS):
+        for i, body in enumerate(entities_gjk):
+            body.set_qpos(recorded_qpos[step][i])
+            body.zero_all_dofs_velocity()
+        for i, body in enumerate(entities_gjk):
+            body.control_dofs_force(recorded_forces[step][i])
+
+        scene_gjk._sim.rigid_solver._errno.fill(0)
+        scene_gjk.step()
+        errno_val = int(scene_gjk._sim.rigid_solver._errno[0])
+
+        contacts_gjk = _snapshot_contacts(scene_gjk)
+        contacts_ana = recorded_contacts[step]
+
+        if contacts_gjk["n"] > 0:
+            assert (errno_val & ERRNO_CALLED_GJK) != 0, (
+                f"[{label}] Step {step}: GJK not called despite {contacts_gjk['n']} contacts."
+            )
+            gjk_confirmed = True
+
+        total_contacts_ana += contacts_ana["n"]
+        total_contacts_gjk += contacts_gjk["n"]
+
+        if contacts_ana["n"] == 0 and contacts_gjk["n"] == 0:
+            continue
+        steps_with_contacts += 1
+
+        ana_pairs = (
+            set(zip(contacts_ana["geom_a"].tolist(), contacts_ana["geom_b"].tolist()))
+            if contacts_ana["n"] > 0
+            else set()
+        )
+        gjk_pairs = (
+            set(zip(contacts_gjk["geom_a"].tolist(), contacts_gjk["geom_b"].tolist()))
+            if contacts_gjk["n"] > 0
+            else set()
+        )
+
+        only_gjk = gjk_pairs - ana_pairs
+        if only_gjk:
+            mismatches.append(f"step {step}: GJK-only pairs: {only_gjk}")
+
+        common_pairs = ana_pairs & gjk_pairs
+        for ga, gb in common_pairs:
+            ana_mask = (contacts_ana["geom_a"] == ga) & (contacts_ana["geom_b"] == gb)
+            gjk_mask = (contacts_gjk["geom_a"] == ga) & (contacts_gjk["geom_b"] == gb)
+
+            ana_pen = contacts_ana["penetration"][ana_mask]
+            gjk_pen = contacts_gjk["penetration"][gjk_mask]
+            ana_nrm = contacts_ana["normal"][ana_mask]
+            gjk_nrm = contacts_gjk["normal"][gjk_mask]
+            ana_pos_arr = contacts_ana["position"][ana_mask]
+            gjk_pos_arr = contacts_gjk["position"][gjk_mask]
+
+            if len(ana_pen) == 1 and len(gjk_pen) == 1:
+                pos_err = np.linalg.norm(ana_pos_arr[0] - gjk_pos_arr[0])
+                pen_err = abs(float(ana_pen[0]) - float(gjk_pen[0]))
+                dot = abs(np.dot(ana_nrm[0], gjk_nrm[0]))
+                max_pos_err_seen = max(max_pos_err_seen, pos_err)
+                max_pen_err_seen = max(max_pen_err_seen, pen_err)
+                min_dot_seen = min(min_dot_seen, dot)
+                if pos_err > POS_TOL:
+                    mismatches.append(f"step {step} ({ga},{gb}): pos err={pos_err:.6f}")
+                if pen_err > POS_TOL:
+                    mismatches.append(f"step {step} ({ga},{gb}): pen err={pen_err:.6f}")
+                if dot < 0.95:
+                    mismatches.append(f"step {step} ({ga},{gb}): normal dot={dot:.4f}")
+            elif len(ana_pen) >= 2 and len(gjk_pen) >= 2:
+                best_ana = int(np.argmax(ana_pen))
+                best_gjk = int(np.argmax(gjk_pen))
+                pen_err = abs(float(ana_pen[best_ana]) - float(gjk_pen[best_gjk]))
+                max_pen_err_seen = max(max_pen_err_seen, pen_err)
+                if pen_err > POS_TOL:
+                    mismatches.append(f"step {step} ({ga},{gb}): pen err={pen_err:.6f}")
+                dot = abs(np.dot(ana_nrm[best_ana], gjk_nrm[best_gjk]))
+                min_dot_seen = min(min_dot_seen, dot)
+                if dot < 0.95:
+                    mismatches.append(f"step {step} ({ga},{gb}): normal dot={dot:.4f}")
+
+    assert gjk_confirmed, f"[{label}] Phase 2: GJK never confirmed via errno."
+
+    print(f"\n=== {label} DIAGNOSTICS ===")
+    print(f"Steps with contacts: {steps_with_contacts}/{N_STEPS}")
+    print(f"Total contacts — analytical: {total_contacts_ana}, gjk: {total_contacts_gjk}")
+    print(f"Max position error: {max_pos_err_seen:.8f}  (threshold={POS_TOL})")
+    print(f"Max penetration error: {max_pen_err_seen:.8f}  (threshold={POS_TOL})")
+    print(f"Min normal dot: {min_dot_seen:.6f}  (threshold=0.95)")
+    print(f"Mismatches: {len(mismatches)}")
+
+    if mismatches:
+        msg = f"[{label}] {len(mismatches)} mismatches:\n" + "\n".join(mismatches[:20])
+        if len(mismatches) > 20:
+            msg += f"\n... and {len(mismatches) - 20} more"
+        pytest.fail(msg)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_sphere_sphere_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
+    """Fuzz: two free spheres in a cylinder-wall arena."""
+    _run_pair_fuzz(
+        monkeypatch,
+        tmp_path,
+        show_viewer,
+        wall_type="cylinder",
+        free_bodies=[
+            {"type": "sphere", "pos": (0.05, 0.0, 0.0), "radius": 0.12, "half_length": 0},
+            {"type": "sphere", "pos": (-0.05, 0.1, 0.0), "radius": 0.10, "half_length": 0},
+        ],
+        expected_errno_bits={
+            "cylinder_contact.func_sphere_sphere_contact": ERRNO_CALLED_SPHERE_SPHERE,
+        },
+        label="sphere_sphere",
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_cylinder_sphere_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
+    """Fuzz: one free cylinder + one free sphere in a cylinder-wall arena."""
+    _run_pair_fuzz(
+        monkeypatch,
+        tmp_path,
+        show_viewer,
+        wall_type="cylinder",
+        free_bodies=[
+            {"type": "cylinder", "pos": (0.1, 0.05, 0.0), "euler": (0, 0, 0), "radius": 0.10, "half_length": 0.20},
+            {"type": "sphere", "pos": (-0.05, -0.05, 0.1), "radius": 0.10, "half_length": 0},
+        ],
+        expected_errno_bits={
+            "cylinder_contact.func_cylinder_sphere_contact": ERRNO_CALLED_CYLINDER_SPHERE,
+        },
+        label="cylinder_sphere",
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_capsule_capsule_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
+    """Fuzz: two free capsules in a capsule-wall arena."""
+    _run_pair_fuzz(
+        monkeypatch,
+        tmp_path,
+        show_viewer,
+        wall_type="capsule",
+        free_bodies=[
+            {"type": "capsule", "pos": (0.05, 0.0, 0.0), "euler": (0, 0, 0), "radius": 0.10, "half_length": 0.20},
+            {
+                "type": "capsule",
+                "pos": (-0.05, 0.1, 0.05),
+                "euler": (30, 45, 0),
+                "radius": 0.09,
+                "half_length": 0.18,
+            },
+        ],
+        expected_errno_bits={
+            "capsule_contact.func_capsule_capsule_contact": ERRNO_CALLED_CAPSULE_CAPSULE,
+        },
+        label="capsule_capsule",
+    )
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_sphere_capsule_fuzz(backend, monkeypatch, tmp_path, show_viewer, tol):
+    """Fuzz: one free sphere + one free capsule in a capsule-wall arena."""
+    _run_pair_fuzz(
+        monkeypatch,
+        tmp_path,
+        show_viewer,
+        wall_type="capsule",
+        free_bodies=[
+            {"type": "sphere", "pos": (0.05, 0.0, 0.0), "radius": 0.10, "half_length": 0},
+            {
+                "type": "capsule",
+                "pos": (-0.05, 0.1, 0.05),
+                "euler": (0, 0, 0),
+                "radius": 0.10,
+                "half_length": 0.22,
+            },
+        ],
+        expected_errno_bits={
+            "capsule_contact.func_sphere_capsule_contact": ERRNO_CALLED_SPHERE_CAPSULE,
+        },
+        label="sphere_capsule",
+    )
