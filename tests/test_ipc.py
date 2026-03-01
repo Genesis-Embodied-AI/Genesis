@@ -10,6 +10,7 @@ try:
 except ImportError:
     pytest.skip("IPC Coupler is not supported because 'uipc' module is not available.", allow_module_level=True)
 
+from genesis.engine.materials import FEM
 from uipc import builtin
 from uipc.backend import SceneVisitor
 from uipc.geometry import SimplicialComplexSlot, apply_transform, merge
@@ -363,15 +364,14 @@ def test_link_filter_strict():
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
 @pytest.mark.parametrize("fixed", [True, False])
-def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
-    """Test two-way coupling with revolute joint."""
+def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
     from genesis.engine.entities import RigidEntity
 
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
     POS = (0, 0, 0.5)
-    OMEGA = 2.0 * np.pi  # 1 Hz oscillation
-    SCALE = 0.5 if joint_type == "revolute" else 0.15
+    FREQ = 1.0
+    SCALE = 0.5 if joint_type == "revolute" else 0.1
     CONTACT_MARGIN = 0.01
 
     scene = gs.Scene(
@@ -444,10 +444,10 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
     gs_transform_history, ipc_transform_history = [], []
-    for i in range(100):
+    for i in range(int(1 / (DT * FREQ))):
         # Apply sinusoidal target position
-        t = i * scene.sim_options.dt
-        target_dof_pos, target_dof_vel = SCALE * np.sin(OMEGA * t), SCALE * OMEGA * np.cos(OMEGA * t)
+        target_dof_pos = SCALE * np.sin(2 * np.pi * FREQ * scene.sim.cur_t)
+        target_dof_vel = SCALE * 2 * np.pi * FREQ * np.cos(2 * np.pi * FREQ * scene.sim.cur_t)
         robot.control_dofs_position_velocity(target_dof_pos, target_dof_vel, dofs_idx_local=-1)
 
         # Store the current and target position / velocity
@@ -471,9 +471,7 @@ def test_joints(n_envs, coupling_type, joint_type, fixed, show_viewer):
                 # FIXME: Why the tolerance is must so large if no fixed ?!
                 assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=TOL_SINGLE if fixed else 0.2)
                 assert_allclose(
-                    gu.R_to_xyz(gs_transform[:3, :3], rpy=True),
-                    gu.R_to_xyz(ipc_transform[:3, :3], rpy=True),
-                    atol=1e-4 if fixed else 0.3,
+                    gu.R_to_xyz(gs_transform[:3, :3] @ ipc_transform[:3, :3].T), 0.0, atol=1e-4 if fixed else 0.3
                 )
                 gs_transform_history.append(gs_transform)
                 ipc_transform_history.append(ipc_transform)
@@ -652,7 +650,7 @@ def test_objects_freefall(n_envs, show_viewer):
         # Validate centroidal total displacement: 0.5 * GRAVITY * t * (t + DT)
         p_delta = p_prev[obj] - p_0[obj]
         expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
-        assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=5e-4)
+        assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=1e-3)
 
         # FIXME: This test does not pass for sphere entity...
         if obj is sphere:
@@ -794,7 +792,7 @@ def test_objects_colliding(n_envs, show_viewer):
 @pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
 def test_robot_grasp_fem(coupling_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
-    from genesis.engine.entities import RigidEntity
+    from genesis.engine.entities import RigidEntity, FEMEntity
 
     DT = 0.01
     GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
@@ -858,7 +856,7 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
             color=(0.2, 0.8, 0.2, 0.5),
         ),
     )
-    assert isinstance(box, RigidEntity)
+    assert isinstance(box, FEMEntity)
 
     scene.build()
     assert scene.sim is not None

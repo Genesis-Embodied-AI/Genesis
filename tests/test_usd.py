@@ -945,7 +945,6 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_uv_size_mismatch_no_crash(asset_tmp_path):
     """
     Test that a USD mesh with mismatched UV size does not crash the parser for consistency with Nvidia omniverse.

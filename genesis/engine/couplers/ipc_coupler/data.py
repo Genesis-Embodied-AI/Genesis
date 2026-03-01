@@ -36,7 +36,7 @@ class ABDLinkEntry(NamedTuple):
 class ArticulatedEntityData:
     """Typed container for per-entity articulation coupling data."""
 
-    joints_idx: list[int]
+    joints_child_link: list["RigidLink"]
     joints_q_idx_local: list[int]
 
     joints_geom_slot_by_env: list[list[GeometrySlot]]
@@ -50,10 +50,9 @@ class ArticulatedEntityData:
     qpos_new: np.ndarray
     delta_theta_tilde: np.ndarray
     delta_theta_ipc: np.ndarray
-    delta_theta: np.ndarray
 
     # Previous timestep link transforms for ref_dof_prev computation {(joint, env_idx): transform_matrix_4x4}
-    prev_link_transforms: list[list[np.ndarray | None]]
+    prev_links_transform: list[list[np.ndarray | None]]
 
 
 class IPCCouplingData:

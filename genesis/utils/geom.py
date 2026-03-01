@@ -1847,6 +1847,9 @@ def R_to_rotvec(R: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     :param out: Pre-allocated array into which to store the result. If not provided, a new array is freshly-allocated
                 and returned, which is slower.
     """
+    # The quaternion path (Shepperd + arctan2) is preferred over direct Rodrigues formula theta from arccos of trace)
+    # because the latter is catastrophically imprecise for near-identity rotations in float32 (the trace is ~3.0 and
+    # arccos amplifies rounding).
     return quat_to_rotvec(_np_R_to_quat(R), out=out)
 
 

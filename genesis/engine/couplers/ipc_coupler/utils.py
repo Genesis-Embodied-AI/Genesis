@@ -27,7 +27,7 @@ def find_target_link_for_fixed_merge(link):
     int
         The target link index to merge into
     """
-    entity = link.entity.link_start
+    entity = link.entity
 
     while True:
         # If this is the root link (no parent), stop
@@ -43,6 +43,32 @@ def find_target_link_for_fixed_merge(link):
         link = entity.links[link.parent_idx - entity.link_start]
 
     return link
+
+
+def compute_link_to_link_transform(from_link, to_link):
+    """
+    Compute the relative transform from from_link to to_link.
+
+    Returns
+    -------
+    tuple
+        (pos, quat) transforming points from from_link frame to to_link frame
+    """
+    # Accumulate transforms going up from from_link to common ancestor (to_link)
+    pos = np.array([0.0, 0.0, 0.0], dtype=gs.np_float)
+    quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+
+    assert from_link.entity is to_link.entity
+    entity = from_link.entity
+
+    link = from_link
+    while link is not to_link:
+        if link.parent_idx < 0:
+            gs.raise_exception(f"Cannot compute transform from link {from_link} to {to_link}")
+        pos, quat = gu.transform_pos_quat_by_trans_quat(pos, quat, link.pos, link.quat)
+        link = entity.links[link.parent_idx - entity.link_start]
+
+    return pos, quat
 
 
 def build_ipc_scene_config(options, sim_options):
