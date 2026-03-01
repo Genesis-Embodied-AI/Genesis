@@ -355,9 +355,7 @@ def create_instrumented_narrowphase_file(tmp_path: Path):
             f"INSTRUMENTED: {func_call_pattern} called",
         )
 
-    lines = insert_errno_before_call(
-        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "INSTRUMENTED: GJK called"
-    )
+    lines = insert_errno_before_call(lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "INSTRUMENTED: GJK called")
 
     content = "\n".join(lines)
     for func_name, errno_bit in ANALYTICAL_ERRNO_BITS.items():
@@ -1350,9 +1348,7 @@ def _run_pair_fuzz(
         nc = recorded_contacts[-1]["n"]
         step_forces = []
         if nc > 0:
-            hit_geoms = set(recorded_contacts[-1]["geom_a"].tolist()) | set(
-                recorded_contacts[-1]["geom_b"].tolist()
-            )
+            hit_geoms = set(recorded_contacts[-1]["geom_a"].tolist()) | set(recorded_contacts[-1]["geom_b"].tolist())
         else:
             hit_geoms = set()
 
@@ -1390,9 +1386,9 @@ def _run_pair_fuzz(
         narrowphase_instrumented.func_narrow_phase_convex_vs_convex,
     )
 
-    assert narrowphase.func_narrow_phase_convex_vs_convex is narrowphase_instrumented.func_narrow_phase_convex_vs_convex, (
-        "monkeypatch failed: instrumented kernel not set"
-    )
+    assert (
+        narrowphase.func_narrow_phase_convex_vs_convex is narrowphase_instrumented.func_narrow_phase_convex_vs_convex
+    ), "monkeypatch failed: instrumented kernel not set"
 
     mismatches = []
     total_contacts_gjk = 0
