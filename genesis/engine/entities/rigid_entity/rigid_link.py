@@ -67,7 +67,6 @@ class RigidLink(RBC):
         self._uid = gs.UID()
         self._idx: int = idx
         self._parent_idx: int = parent_idx  # -1 if no parent
-        self._child_idxs: list[int] = list()
 
         # 'is_fixed' attribute specifies whether the link is free to move.
         # In practice, this attributes determines whether the geometry vertices associated with the entity are stored

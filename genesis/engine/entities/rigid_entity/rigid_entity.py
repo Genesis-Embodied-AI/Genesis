@@ -17,7 +17,6 @@ from genesis.engine.materials.base import Material
 from genesis.options.morphs import Morph
 from genesis.options.surfaces import Surface
 from genesis.utils import array_class
-from genesis.utils import linalg as lu
 from genesis.utils import geom as gu
 from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
@@ -812,11 +811,11 @@ class KinematicEntity(Entity):
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_mode == "ipc_only"
+            and self.material.coupling_type == "ipc_only"
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
             gs.raise_exception(
-                "`RigidMaterial.coupling_mode='ipc_only'` only supported by rigid non-articulated objects."
+                "`RigidMaterial.coupling_type='ipc_only'` only supported by rigid non-articulated objects."
             )
 
         # Add (link, joints, geoms) tuples sequentially
@@ -2028,7 +2027,548 @@ class KinematicEntity(Entity):
             gs.raise_exception("Neither `name` nor `uid` is provided.")
 
     @gs.assert_built
-    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None):
+    def get_pos(self, envs_idx=None):
+        """
+        Returns position of the entity's base link.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        pos : torch.Tensor, shape (3,) or (n_envs, 3)
+            The position of the entity's base link.
+        """
+        return self._solver.get_links_pos(self.base_link_idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_quat(self, envs_idx=None):
+        """
+        Returns quaternion of the entity's base link.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        quat : torch.Tensor, shape (4,) or (n_envs, 4)
+            The quaternion of the entity's base link.
+        """
+        return self._solver.get_links_quat(self.base_link_idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_vel(self, envs_idx=None):
+        """
+        Returns linear velocity of the entity's base link.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        vel : torch.Tensor, shape (3,) or (n_envs, 3)
+            The linear velocity of the entity's base link.
+        """
+        return self._solver.get_links_vel(self.base_link_idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_ang(self, envs_idx=None):
+        """
+        Returns angular velocity of the entity's base link.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        ang : torch.Tensor, shape (3,) or (n_envs, 3)
+            The angular velocity of the entity's base link.
+        """
+        return self._solver.get_links_ang(self.base_link_idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_links_pos(
+        self,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+        unsafe=False,
+    ):
+        """
+        Returns the position of a given reference point for all the entity's links.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com"
+            The reference point being used to express the position of each link.
+            * "root_com": center of mass of the sub-entities to which the link belongs. As a reminder, a single
+              kinematic tree (aka. 'RigidEntity') may compromise multiple "physical" entities, i.e. a kinematic tree
+              that may have at most one free joint, at its root.
+
+        Returns
+        -------
+        pos : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The position of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_pos(links_idx, envs_idx, ref=ref)
+
+    @gs.assert_built
+    def get_links_quat(self, links_idx_local=None, envs_idx=None):
+        """
+        Returns quaternion of all the entity's links.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        quat : torch.Tensor, shape (n_links, 4) or (n_envs, n_links, 4)
+            The quaternion of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_quat(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_AABB(self, envs_idx=None, *, allow_fast_approx: bool = False):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the collision
+        geometries associated with this entity.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        allow_fast_approx : bool
+            Whether to allow fast approximation for efficiency if supported, i.e. 'LegacyCoupler' is enabled. In this
+            case, each collision geometry is approximated by their pre-computed AABB in geometry-local frame, which is
+            more efficiency but inaccurate.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
+        """
+        from genesis.engine.couplers import LegacyCoupler
+
+        if self.n_geoms == 0:
+            gs.raise_exception("Entity has no collision geometries.")
+
+        # Already computed internally by the solver. Let's access it directly for efficiency.
+        if allow_fast_approx and isinstance(self.sim.coupler, LegacyCoupler):
+            return self._solver.get_AABB(entities_idx=[self._idx_in_solver], envs_idx=envs_idx)[..., 0, :]
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx.
+        # FIXME: Remove this branch after implementing 'get_verts'.
+        if self._enable_heterogeneous and self._solver.n_envs > 0:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            n_envs = len(envs_idx)
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            for geom in self.geoms:
+                geom_aabb = geom.get_AABB()
+                active_mask = geom.active_envs_mask[envs_idx] if geom.active_envs_mask is not None else ()
+                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], geom_aabb[envs_idx[active_mask], 0])
+                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], geom_aabb[envs_idx[active_mask], 1])
+            return torch.stack((aabb_min, aabb_max), dim=-2)
+
+        # Compute the AABB on-the-fly based on the positions of all the vertices
+        verts = self.get_verts()[envs_idx if envs_idx is not None else ()]
+        return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the entity in world frame by aggregating all the visual
+        geometries associated with this entity.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        aabb : torch.Tensor, shape (2, 3) or (n_envs, 2, 3)
+            The AABB of the entity, where `[:, 0] = min_corner (x_min, y_min, z_min)` and
+            `[:, 1] = max_corner (x_max, y_max, z_max)`.
+        """
+        if self.n_vgeoms == 0:
+            gs.raise_exception("Entity has no visual geometries.")
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
+        if self._enable_heterogeneous:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            n_envs = len(envs_idx)
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            for vgeom in self.vgeoms:
+                vgeom_aabb = vgeom.get_vAABB(envs_idx)
+                active_mask = vgeom.active_envs_mask[envs_idx] if vgeom.active_envs_mask is not None else ()
+                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], vgeom_aabb[active_mask, 0])
+                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], vgeom_aabb[active_mask, 1])
+            return torch.stack((aabb_min, aabb_max), dim=-2)
+
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
+
+    def get_aabb(self):
+        raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
+
+    @gs.assert_built
+    def get_links_vel(
+        self,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com"] = "link_origin",
+        unsafe=False,
+    ):
+        """
+        Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com"
+            The reference point being used to expressed the velocity of each link.
+
+        Returns
+        -------
+        vel : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear velocity of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
+
+    @gs.assert_built
+    def get_links_ang(self, links_idx_local=None, envs_idx=None):
+        """
+        Returns angular velocity of all the entity's links in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        ang : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The angular velocity of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_ang(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_acc(self, links_idx_local=None, envs_idx=None):
+        """
+        Returns true linear acceleration (aka. "classical acceleration") of the specified entity's links expressed at
+        their respective origin in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_acc_ang(self, links_idx_local=None, envs_idx=None):
+        """
+        Returns angular acceleration of the specified entity's links expressed at their respective origin in world
+        coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        acc : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear classical acceleration of the specified entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_acc_ang(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_inertial_mass(self, links_idx_local=None, envs_idx=None):
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_inertial_mass(links_idx, envs_idx)
+
+    @gs.assert_built
+    def get_links_invweight(self, links_idx_local=None, envs_idx=None):
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_invweight(links_idx, envs_idx)
+
+    @gs.assert_built
+    @tracked
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False):
+        """
+        Set position of the entity's base link.
+
+        Parameters
+        ----------
+        pos : array_like
+            The position to set.
+        relative : bool, optional
+            Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
+            False.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        # Throw exception in entity no longer has a "true" base link becaused it has attached
+        if self._is_attached:
+            gs.raise_exception("Impossible to set position of an entity that has been attached.")
+        if zero_velocity:
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
+        self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative)
+
+    @gs.assert_built
+    def set_pos_grad(self, envs_idx, relative, pos_grad):
+        self._solver.set_base_links_pos_grad(self.base_link_idx, envs_idx, relative, pos_grad.data)
+
+    @gs.assert_built
+    @tracked
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
+        """
+        Set quaternion of the entity's base link.
+
+        Parameters
+        ----------
+        quat : array_like
+            The quaternion to set.
+        relative : bool, optional
+            Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
+            False.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        if self._is_attached:
+            gs.raise_exception("Impossible to set position of an entity that has been attached.")
+        if zero_velocity:
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
+        self._solver.set_base_links_quat(quat, self.base_link_idx, envs_idx, relative=relative)
+
+    @gs.assert_built
+    def set_quat_grad(self, envs_idx, relative, quat_grad):
+        self._solver.set_base_links_quat_grad(self.base_link_idx, envs_idx, relative, quat_grad.data)
+
+    @gs.assert_built
+    def get_verts(self):
+        """
+        Get the all vertices of the entity based on collision geometries.
+
+        Returns
+        -------
+        verts : torch.Tensor, shape (n_envs, n_verts, 3)
+            The vertices of the entity.
+        """
+        if self._enable_heterogeneous:
+            gs.raise_exception("This method is not supported by heterogeneous entities.")
+
+        self._solver.update_verts_for_geoms(slice(self.geom_start, self.geom_end))
+
+        n_fixed_verts, n_free_vertices = self._n_fixed_verts, self._n_free_verts
+        tensor = torch.empty((self._solver._B, n_fixed_verts + n_free_vertices, 3), dtype=gs.tc_float, device=gs.device)
+
+        if n_fixed_verts > 0:
+            verts_idx = slice(self._fixed_verts_state_start, self._fixed_verts_state_start + n_fixed_verts)
+            fixed_verts_state = qd_to_torch(self._solver.fixed_verts_state.pos, verts_idx)
+            tensor[:, self._fixed_verts_idx_local] = fixed_verts_state
+        if n_free_vertices > 0:
+            verts_idx = slice(self._free_verts_state_start, self._free_verts_state_start + n_free_vertices)
+            free_verts_state = qd_to_torch(self._solver.free_verts_state.pos, None, verts_idx, transpose=True)
+            tensor[:, self._free_verts_idx_local] = free_verts_state
+
+        if self._solver.n_envs == 0:
+            tensor = tensor[0]
+        return tensor
+
+    @gs.assert_built
+    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False):
+        """
+        Set the entity's qpos.
+
+        Parameters
+        ----------
+        qpos : array_like
+            The qpos to set.
+        qs_idx_local : None | array_like, optional
+            The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
+        """
+        from genesis.engine.couplers import IPCCoupler
+
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
+
+        qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
+        if zero_velocity:
+            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
+        self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
+
+    @gs.assert_built
+    def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the entity's dofs' positional gains for the PD controller.
+
+        Parameters
+        ----------
+        kp : array_like
+            The positional gains to set.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_kp(kp, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_kv(self, kv, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the entity's dofs' velocity gains for the PD controller.
+
+        Parameters
+        ----------
+        kv : array_like
+            The velocity gains to set.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_kv(kv, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the entity's dofs' force range.
+
+        Parameters
+        ----------
+        lower : array_like
+            The lower bounds of the force range.
+        upper : array_like
+            The upper bounds of the force range.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_force_range(lower, upper, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_stiffness(self, stiffness, dofs_idx_local=None, envs_idx=None):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_stiffness(stiffness, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_invweight(self, invweight, dofs_idx_local=None, envs_idx=None):
+        raise DeprecationError(
+            "This method has been removed because dof invweights are supposed to be a by-product of link properties "
+            "(mass, pose, and inertia matrix), joint placements, and dof armatures. Please consider using the "
+            "considering setters instead."
+        )
+
+    @gs.assert_built
+    def set_dofs_armature(self, armature, dofs_idx_local=None, envs_idx=None):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_armature(armature, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_damping(self, damping, dofs_idx_local=None, envs_idx=None):
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_damping(damping, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_frictionloss(self, frictionloss, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the entity's dofs' friction loss.
+        Parameters
+        ----------
+        frictionloss : array_like
+            The friction loss values to set.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_frictionloss(frictionloss, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    @tracked
+    def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):
+        """
+        Set the entity's dofs' velocity.
+
+        Parameters
+        ----------
+        velocity : array_like | None
+            The velocity to set. Zero if not specified.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`, not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_velocity(velocity, dofs_idx, envs_idx, skip_forward=skip_forward)
+
+    @gs.assert_built
+    def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
+        dofs_idx = self._get_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
+
+    @gs.assert_built
+    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):
         """
         Set the entity's dofs' position.
 
@@ -2047,11 +2587,8 @@ class KinematicEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if (
-            isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_mode == "external_articulation"
-        ):
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_mode='external_articulation'`.")
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
+            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
@@ -2346,7 +2883,7 @@ class KinematicEntity(Entity):
         return self._links
 
     @property
-    def joints(self):
+    def joints(self) -> list[RigidJoint]:
         """The list of joints (`RigidJoint`) in the entity."""
         return tuple(chain.from_iterable(self._joints))
 
@@ -2356,12 +2893,12 @@ class KinematicEntity(Entity):
         return self._joints
 
     @property
-    def base_link(self):
+    def base_link(self) -> RigidLink:
         """The base link of the entity"""
         return self._links[0]
 
     @property
-    def base_joint(self):
+    def base_joint(self) -> RigidJoint:
         """The base joint of the entity"""
         return self._joints[0][0]
 

@@ -86,7 +86,12 @@ def parse_prim_geoms(
                 if normals.shape[0] == faces.shape[0]:  # face varying meshes, adjacent faces do not share vertices
                     points_faces_varying = True
                 else:
-                    geom_exception("Mesh", geom_id, morph.file, "Size of normals mismatch")
+                    gs.logger.warning(
+                        f"Normals size mismatch for Mesh {geom_id} in {morph.file}: "
+                        f"expected {points.shape[0]} (vertex) or {faces.shape[0]} (faceVarying), "
+                        f"got {normals.shape[0]}. Discarding normals for this mesh."
+                    )
+                    normals = None
 
             # parse geom subsets
             subset_infos = []
@@ -124,7 +129,12 @@ def parse_prim_geoms(
                         elif uv.shape[0] == 1:
                             uv = None
                         else:
-                            geom_exception("Mesh", geom_id, morph.file, "Size of uvs mismatch")
+                            gs.logger.warning(
+                                f"UV size mismatch for Mesh {geom_id} in {morph.file}: "
+                                f"expected {points.shape[0]} (vertex) or {faces.shape[0]} (faceVarying), "
+                                f"got {uv.shape[0]}. Discarding UV data for this mesh."
+                            )
+                            uv = None
                     uvs[uvname] = uv
 
             # process faces

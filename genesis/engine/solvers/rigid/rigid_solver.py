@@ -273,6 +273,8 @@ class RigidSolver(KinematicSolver):
         self.collider = None
         self.constraint_solver = None
 
+        self.qpos: qd.Field | qd.Ndarray | None = None
+
         self._is_backward: bool = False
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
@@ -2117,6 +2119,7 @@ class RigidSolver(KinematicSolver):
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
+        assert _tensor is not None
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
         ref = self._convert_ref_to_idx(ref)
         kernel_get_links_vel(tensor, links_idx, envs_idx, ref, self.links_state, self._static_rigid_sim_config)
