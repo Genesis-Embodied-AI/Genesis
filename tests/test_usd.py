@@ -12,21 +12,19 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
+try:
+    from pxr import Usd
+except ImportError as e:
+    pytest.skip("USD is not supported because 'pxr' module is not available.", allow_module_level=True)
+
+from pxr import Gf, Sdf, UsdGeom, UsdPhysics
+from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
+
 import genesis as gs
 import genesis.utils.geom as gu
 
 from .utils import assert_allclose, get_hf_dataset
 from .test_mesh import check_gs_meshes, check_gs_surfaces
-
-# Check for USD support
-try:
-    from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
-    from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
-
-    HAS_USD_SUPPORT = True
-except ImportError as e:
-    HAS_USD_SUPPORT = False
-    HAS_OMNIVERSE_KIT_SUPPORT = False
 
 
 # Conversion from .usd to .glb significantly affects precision
@@ -500,7 +498,6 @@ def all_primitives_usd(asset_tmp_path, all_primitives_mjcf: ET.ElementTree):
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["all_primitives_mjcf"])
 @pytest.mark.parametrize("scale", [1.0, 2.0])
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
     """Test that MJCF and USD scenes produce equivalent Genesis entities."""
     mjcf_scene = build_mjcf_scene(xml_path, scale=scale)
@@ -786,7 +783,6 @@ def all_joints_usd(asset_tmp_path, all_joints_mjcf: ET.ElementTree, request):
 @pytest.mark.parametrize(
     "all_joints_usd", [True, False], indirect=True, ids=["with_articulation_root", "without_articulation_root"]
 )
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_joints_mjcf_vs_usd(xml_path, all_joints_usd, scale, tol):
     """
     Test that MJCF and USD scenes with all joint types (prismatic, revolute, spherical, fixed, free)
@@ -804,7 +800,6 @@ def test_joints_mjcf_vs_usd(xml_path, all_joints_usd, scale, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["usd/sneaker_airforce", "usd/RoughnessTest"])
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_visual_parse(model_name, tol):
     glb_asset_path = get_hf_dataset(pattern=f"{model_name}.glb")
     glb_file = os.path.join(glb_asset_path, f"{model_name}.glb")
@@ -819,7 +814,6 @@ def test_usd_visual_parse(model_name, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("usd_file", ["usd/nodegraph.usda"])
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_usd_parse_nodegraph(usd_file):
     asset_path = get_hf_dataset(pattern=usd_file)
     usd_file = os.path.join(asset_path, usd_file)
@@ -839,7 +833,6 @@ def test_usd_parse_nodegraph(usd_file):
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 @pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
 def test_usd_bake(usd_file, tmp_path):
     RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
@@ -881,7 +874,6 @@ def test_usd_bake(usd_file, tmp_path):
 
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [1.0, 2.0])
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
     """
     Test that USD MassAPI with invalid default values produces equivalent results to MJCF.
@@ -953,7 +945,6 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not HAS_USD_SUPPORT, reason="USD support not available")
 def test_uv_size_mismatch_no_crash(asset_tmp_path):
     """
     Test that a USD mesh with mismatched UV size does not crash the parser for consistency with Nvidia omniverse.

@@ -1847,6 +1847,9 @@ def R_to_rotvec(R: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
     :param out: Pre-allocated array into which to store the result. If not provided, a new array is freshly-allocated
                 and returned, which is slower.
     """
+    # The quaternion path (Shepperd + arctan2) is preferred over direct Rodrigues formula theta from arccos of trace)
+    # because the latter is catastrophically imprecise for near-identity rotations in float32 (the trace is ~3.0 and
+    # arccos amplifies rounding).
     return quat_to_rotvec(_np_R_to_quat(R), out=out)
 
 
@@ -2037,7 +2040,7 @@ def default_solver_params():
 
     Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
     """
-    return np.array([0.0, 1.0e00, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0e00])
+    return np.array([0.0, 1.0, 9.0e-01, 9.5e-01, 1.0e-03, 5.0e-01, 2.0])
 
 
 def default_friction():

@@ -72,10 +72,10 @@ def main():
 
     # Add Franka robot
     franka_material_kwargs = dict(
-        ipc_coup_mode=args.coupling_type,
+        coupling_type=args.coupling_type,
     )
     if args.coupling_type == "two_way_soft_constraint":
-        franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")
+        franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda_non_overlap.xml",
@@ -149,7 +149,7 @@ def main():
                 material=gs.materials.Rigid(
                     rho=500,
                     coup_friction=0.5,
-                    ipc_coup_mode="ipc_only",
+                    coupling_type="ipc_only",
                 ),
                 surface=gs.surfaces.Plastic(
                     color=(0.8, 0.3, 0.2, 0.8),
