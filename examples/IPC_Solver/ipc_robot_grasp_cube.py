@@ -1,8 +1,6 @@
 import argparse
 import os
 
-import numpy as np
-
 import genesis as gs
 
 
@@ -46,7 +44,7 @@ def main():
 
     franka_material_kwargs = dict(
         coup_friction=0.8,
-        coupling_mode=args.coupling_type,
+        coupling_type=args.coupling_type,
     )
     if args.coupling_type == "two_way_soft_constraint":
         franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
