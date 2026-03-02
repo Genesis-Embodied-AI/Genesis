@@ -1,3 +1,4 @@
+import math
 from contextlib import nullcontext
 from itertools import permutations
 from typing import TYPE_CHECKING, cast, Any
@@ -444,10 +445,10 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
     gs_transform_history, ipc_transform_history = [], []
-    for i in range(int(1 / (DT * FREQ))):
+    for _ in range(int(1 / (DT * FREQ))):
         # Apply sinusoidal target position
-        target_dof_pos = SCALE * np.sin(2 * np.pi * FREQ * scene.sim.cur_t)
-        target_dof_vel = SCALE * 2 * np.pi * FREQ * np.cos(2 * np.pi * FREQ * scene.sim.cur_t)
+        target_dof_pos = SCALE * np.sin((2 * math.pi * FREQ) * scene.sim.cur_t)
+        target_dof_vel = SCALE * (2 * math.pi * FREQ) * np.cos((2 * math.pi * FREQ) * scene.sim.cur_t)
         robot.control_dofs_position_velocity(target_dof_pos, target_dof_vel, dofs_idx_local=-1)
 
         # Store the current and target position / velocity
@@ -503,6 +504,62 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
         assert_allclose(robot.get_pos(), POS, atol=TOL_SINGLE)
     else:
         assert (dist_min < 1.5 * CONTACT_MARGIN).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("constraint_strength", [1, 100])
+def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
+    from genesis.engine.entities import RigidEntity
+
+    DT = 0.002
+    FREQ = 2.0
+    SCALE = 0.1
+    GRAVITY = np.array([0.0, 0.0, -9.8], dtype=gs.np_float)
+    POS = (0.5, 0.0, 0.0)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=GRAVITY,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            constraint_strength_translation=constraint_strength,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.5, -0.5, 0.3),
+            camera_lookat=(0.25, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=POS),
+        material=gs.materials.Rigid(coupling_type="two_way_soft_constraint"),
+    )
+    assert isinstance(box, RigidEntity)
+
+    scene.build(n_envs=n_envs)
+    assert scene.sim is not None
+
+    box.set_dofs_kp(50000.0)
+    box.set_dofs_kv(500.0)
+
+    z_actual, z_target = [], []
+    for _ in range(int(1 / (DT * FREQ))):
+        t = scene.sim.cur_t
+        target_z = SCALE * math.sin((2 * math.pi * FREQ) * t)
+        target_vz = SCALE * (2 * math.pi * FREQ) * math.cos((2 * math.pi * FREQ) * t)
+        box.control_dofs_position_velocity(target_z, target_vz, dofs_idx_local=2)
+        scene.step()
+        z_target.append(target_z)
+        z_actual.append(tensor_to_array(box.get_pos()[..., 2]))
+
+    z_actual = np.array(z_actual)
+    z_target = np.array(z_target)
+    if z_actual.ndim > 1:
+        z_target = z_target[:, np.newaxis]
+    assert_allclose(z_actual, z_target, atol=0.005)
 
 
 @pytest.mark.required
@@ -648,9 +705,10 @@ def test_objects_freefall(n_envs, show_viewer):
         assert_allclose(ipc_centroid, gs_centroid, atol=TOL_SINGLE)
 
         # Validate centroidal total displacement: 0.5 * GRAVITY * t * (t + DT)
+        # FEM entities (cloth) deform during freefall, causing small centroid drift — use looser tolerance.
         p_delta = p_prev[obj] - p_0[obj]
         expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
-        assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=1e-3)
+        assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=2e-3 if isinstance(obj, FEMEntity) else 1e-3)
 
         # FIXME: This test does not pass for sphere entity...
         if obj is sphere:
