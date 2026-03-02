@@ -1489,3 +1489,97 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
     assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.1)).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("E, rho", [(1e4, 200), (5e4, 400)])
+def test_cloth_gravity_deflection(n_envs, E, rho, show_viewer):
+    """Cloth held at corners sags under gravity. Verify Hencky membrane deflection scaling."""
+    DT = 0.01
+    THICKNESS = 0.001
+    GRAVITY = (0.0, 0.0, -9.8)
+    CLOTH_HALF = 0.5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=GRAVITY,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 0.8),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/IPC/grid20x20.obj",
+            scale=2 * CLOTH_HALF,
+            pos=(0.0, 0.0, 0.0),
+            euler=(90, 0, 0),
+        ),
+        material=gs.materials.FEM.Cloth(
+            E=E,
+            nu=0.49,
+            rho=rho,
+            thickness=THICKNESS,
+            bending_stiffness=None,
+            friction_mu=0.8,
+        ),
+    )
+
+    # ============= REMOVE AFTER FIXING VERTEX SOFT CONSTRAINT BUG =============
+    BOX_SIZE = 0.02
+    GAP = 0.005
+
+    boxes = []
+    for x_sign, y_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+        for z_sign in (+1, -1):
+            box = scene.add_entity(
+                gs.morphs.Box(
+                    size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+                    pos=(
+                        x_sign * (CLOTH_HALF - BOX_SIZE),
+                        y_sign * (CLOTH_HALF - BOX_SIZE),
+                        z_sign * (0.5 * BOX_SIZE + GAP),
+                    ),
+                ),
+                material=gs.materials.Rigid(
+                    coupling_type="two_way_soft_constraint",
+                    coup_friction=0.8,
+                ),
+                surface=gs.surfaces.Plastic(
+                    color=np.random.rand(3),
+                ),
+            )
+            boxes.append(box)
+    # ==========================================================================
+
+    scene.build(n_envs=n_envs)
+
+    # Attach the corner vertices
+    cloth_positions = tensor_to_array(cloth.get_state().pos)
+    verts_idx_local = []
+    for x_sign, y_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+        corner_pos = (x_sign * CLOTH_HALF, y_sign * CLOTH_HALF, 0.0)
+        corner_idx = np.argmin(np.linalg.norm(cloth_positions - corner_pos, axis=-1), axis=-1)
+        verts_idx_local.append(corner_idx)
+    verts_idx_local = np.stack(verts_idx_local, axis=-1)
+    # FIXME: This is not working with IPC for now.
+    # cloth.set_vertex_constraints(verts_idx_local, stiffness=1e4, is_soft_constraint=True)
+
+    # ============= REMOVE AFTER FIXING VERTEX SOFT CONSTRAINT BUG =============
+    for box in boxes:
+        box.set_dofs_kp(2000.0)
+        box.set_dofs_kv(500.0)
+        init_dof = tensor_to_array(box.get_dofs_position())
+        init_dof[..., 2] = 0.0
+        box.control_dofs_position(init_dof)
+    # ==========================================================================
+
+    for _ in range(50):
+        scene.step()
