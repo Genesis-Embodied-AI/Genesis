@@ -34,17 +34,10 @@ class ArticulatedEntityData:
     entity: object
     revolute_joints: list
     prismatic_joints: list
-    joint_geo_slots_by_env: dict
-    articulation_geos_by_env: dict
     articulation_slots_by_env: dict
-    articulation_objects_by_env: dict
     n_joints: int
-    ref_dof_prev: np.ndarray
-    delta_theta_tilde: np.ndarray
-    delta_theta: np.ndarray
     joint_qpos_indices: list
     joint_dof_indices: list
-    mass_matrix: np.ndarray
     has_free_base: bool
     base_link_idx: int
     n_dofs_actual: int = 0

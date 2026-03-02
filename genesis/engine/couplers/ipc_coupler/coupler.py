@@ -1406,8 +1406,8 @@ class IPCCoupler(RBC):
         constitution.apply_to(mesh, [parent_abd_slot], [0], [child_abd_slot], [0], [100.0])
 
         joint_obj = self._ipc_objects.create(f"{jtype}_joint_{i_e}_{i_b}_{joint.name}")
-        slot, _ = joint_obj.geometries().create(mesh)
-        return slot
+        joint_slot, _ = joint_obj.geometries().create(mesh)
+        return joint_slot
 
     def _add_articulation_entities_to_ipc(self):
         """
@@ -1451,11 +1451,7 @@ class IPCCoupler(RBC):
             abrj = AffineBodyRevoluteJoint()
             abpj = AffineBodyPrismaticJoint()
             n_joints = joint_info["n_joints"]
-            joint_geo_slots_by_env = {}
-            articulation_geos_by_env = {}
             articulation_slots_by_env = {}
-            articulation_objects_by_env = {}
-            mass_matrix = np.eye(n_joints, dtype=np.float64) * 1e4  # Default stiffness
 
             # Build one EA geometry set per environment.
             for i_b in range(self.sim._B):
@@ -1491,34 +1487,22 @@ class IPCCoupler(RBC):
                 if self._use_subscenes:
                     self._ipc_scene_subscenes[i_b].apply_to(articulation_geo)
 
-                mass_attr = articulation_geo["joint_joint"].find("mass")
-                mass_view = view(mass_attr)
-                mass_view[:] = mass_matrix.ravel()  # Symmetric, so order doesn't matter
+                mass_view = view(articulation_geo["joint_joint"].find("mass"))
+                mass_view[:] = np.eye(n_joints, dtype=np.float64).ravel()  # placeholder, overwritten each step
 
                 articulation_object = self._ipc_objects.create(f"articulation_entity_{i_e}_{i_b}")
                 articulation_slot, _ = articulation_object.geometries().create(articulation_geo)
-
-                joint_geo_slots_by_env[i_b] = joint_geo_slots
-                articulation_geos_by_env[i_b] = articulation_geo
                 articulation_slots_by_env[i_b] = articulation_slot
-                articulation_objects_by_env[i_b] = articulation_object
 
             # Store articulation data
             self._articulation_entities[i_e] = ArticulatedEntityData(
                 entity=entity,
                 revolute_joints=joint_info["revolute_joints"],
                 prismatic_joints=joint_info["prismatic_joints"],
-                joint_geo_slots_by_env=joint_geo_slots_by_env,
-                articulation_geos_by_env=articulation_geos_by_env,
                 articulation_slots_by_env=articulation_slots_by_env,
-                articulation_objects_by_env=articulation_objects_by_env,
                 n_joints=n_joints,
-                ref_dof_prev=np.zeros(entity.n_dofs, dtype=np.float64),
-                delta_theta_tilde=np.zeros(n_joints, dtype=np.float64),
-                delta_theta=np.zeros(n_joints, dtype=np.float64),
                 joint_qpos_indices=joint_info["joint_qpos_indices"],
                 joint_dof_indices=joint_info["joint_dof_indices"],
-                mass_matrix=mass_matrix,
                 has_free_base=has_free_base,
                 base_link_idx=base_link_idx,
             )
