@@ -151,17 +151,18 @@ def parse_urdf(morph, surface):
                 # One asset may contain multiple meshes (.obj, .glb, ...)
                 mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 tmeshes = geometry.meshes
+                metadatas = [{"mesh_path": mesh_path} for _ in tmeshes]
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
-                    group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, surface)
-                    tmeshes = [mesh.trimesh for mesh in meshes]
+                    meshes = gltf_utils.parse_mesh_glb(
+                        mesh_path, group_by_material=False, scale=None, is_mesh_zup=True, surface=surface
+                    )
+                    tmeshes, metadatas = zip(*[(mesh.trimesh, mesh.metadata) for mesh in meshes])
 
                 # Compute the absolute scale of the geometry
                 scale = float(morph.scale)
                 if geometry.scale is not None:
                     scale *= geometry.scale
 
-                metadata = {"mesh_path": mesh_path}
                 is_mesh_zup = morph.file_meshes_are_zup
             else:
                 if isinstance(geometry, urdfpy.Box):
@@ -189,11 +190,11 @@ def parse_urdf(morph, surface):
                 tmeshes = [tmesh]
 
                 scale = morph.scale
-                metadata = {}
+                metadatas = [{}]
                 is_mesh_zup = True
 
             # Each mesh is one RigidGeom in genesis
-            for tmesh in tmeshes:
+            for tmesh, metadata in zip(tmeshes, metadatas, strict=True):
                 # Overwrite surface color by original color specified in URDF file only if necessary
                 is_urdf_material = False
                 if geom_is_col:
