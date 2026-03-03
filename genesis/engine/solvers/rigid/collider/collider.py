@@ -216,6 +216,10 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
+        # Kernel 1 MPR scratch state, sized for the chunked grid (n_envs * n_chunks)
+        self._kernel1_n_chunks = 5
+        self._kernel1_mpr_state = array_class.get_mpr_state(self._solver._B * self._kernel1_n_chunks)
+
         self.reset()
 
     def _compute_collision_pair_idx(self):
@@ -495,6 +499,27 @@ class Collider:
             narrowphase.func_reset_narrowphase_work_queues(
                 self._collider_state,
             )
+            narrowphase.func_narrowphase_kernel1_contact0(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver.geoms_init_AABB,
+                self._solver.verts_info,
+                self._solver.faces_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+                self._collider_info,
+                self._collider_static_config,
+                self._kernel1_mpr_state,
+                self._mpr._mpr_info,
+                self._support_field._support_field_info,
+                self._solver._errno,
+                self._solver._B,
+                self._kernel1_n_chunks,
+            )
+            # TODO: Implement kernel 2 to replace this single-kernel path
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
