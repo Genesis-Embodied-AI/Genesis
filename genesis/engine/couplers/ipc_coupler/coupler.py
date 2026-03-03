@@ -116,8 +116,8 @@ class IPCCoupler(RBC):
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
-        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / self.sim.dt**2
-        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / self.sim.dt**2
+        self._constraint_strength_translation_scaled = 1.0 #self.options.constraint_strength_translation / self.sim.dt**2
+        self._constraint_strength_rotation_scaled = 1.0 #self.options.constraint_strength_rotation / self.sim.dt**2
 
         # ==== IPC System Infrastructure ====
         self._ipc_engine: Engine | None = None
@@ -1119,22 +1119,6 @@ class IPCCoupler(RBC):
             self._abd_data_by_link[link][env_idx].aim_transform[:] = aim_transform
             self._abd_data_by_link[link][env_idx].velocity[:] = velocities[abd_body_idx]
 
-            # ----------------------------------------------------------------------------------------------------------------------
-            # Debug: difference between Genesis solved transform (FK) and IPC result
-            pos_aim = np.asarray(aim_transform[:3, 3])
-            pos_ipc = np.asarray(transform_matrix[:3, 3])
-            quat_aim = gu.R_to_quat(np.asarray(aim_transform[:3, :3]))
-            quat_ipc = gu.R_to_quat(np.asarray(transform_matrix[:3, :3]))
-            pos_diff = float(np.linalg.norm(pos_ipc - pos_aim))
-            qa = np.ravel(quat_aim) / np.linalg.norm(quat_aim)
-            qi = np.ravel(quat_ipc) / np.linalg.norm(quat_ipc)
-            quat_diff = 1.0 - abs(np.dot(qa, qi).item())
-            gs.logger.info(
-                f"  [coupler] {link.name} env={env_idx}: Genesis(FK) vs IPC pos_diff={pos_diff:.9e} quat_diff={quat_diff:.9e}"
-            )
-            # -----------------------------------------------------------------------------------------------------------------------
-
-
             link_idx_local = self.coupling_data.link_to_idx_local[link]
             self.coupling_data.ipc_transforms[env_idx, link_idx_local] = transform_matrix
             self.coupling_data.aim_transforms[env_idx, link_idx_local] = aim_transform
@@ -1187,20 +1171,6 @@ class IPCCoupler(RBC):
             self.coupling_data.out_forces,
             self.coupling_data.out_torques,
         )
-
-        # ----------------------------------------------------------------------------------------------------------------------
-        # Debug: print force and torque per link (if diff is zero, these should be ~0)
-        links_in_order = [
-            link for link, _ in sorted(self.coupling_data.link_to_idx_local.items(), key=lambda x: x[1])
-        ]
-        for env_idx in range(self.coupling_data.out_forces.shape[0]):
-            for i, link in enumerate(links_in_order):
-                f = self.coupling_data.out_forces[env_idx, i]
-                t = self.coupling_data.out_torques[env_idx, i]
-                gs.logger.info(
-                    f"  [coupler] {link.name} env={env_idx}: force=[{f[0]:.9e} {f[1]:.9e} {f[2]:.9e}] | torque=[{t[0]:.9e} {t[1]:.9e} {t[2]:.9e}]"
-                )
-        # ----------------------------------------------------------------------------------------------------------------------
 
         if np.isnan(self.coupling_data.out_forces).any() or np.isnan(self.coupling_data.out_torques).any():
             gs.raise_exception(
