@@ -176,6 +176,8 @@ class IPCCoupler(RBC):
         self._articulation_non_fixed_base_entities: list["RigidEntity"] = []  # entities with non-fixed base
         self.articulation_data: dict["RigidEntity", ArticulatedEntityData] = {}
 
+        uipc.Logger.set_level(uipc.Logger.Level.Info)
+
     # ============================================================
     # Section 1: Configuration API
     # ============================================================
@@ -454,6 +456,29 @@ class IPCCoupler(RBC):
 
                             meshes.append(mesh)
 
+                    # If this link has no collision geoms, use visual meshes so the link still gets an ABD slot
+                    # (e.g. for external_articulation joints whose child link has only visual geometry).
+                    if not source_link.geoms:
+                        for vgeom in source_link.vgeoms:
+                            if vgeom.n_vverts:
+                                vgeom_verts = gu.transform_by_trans_quat(
+                                    np.asarray(vgeom.init_vverts, dtype=np.float64),
+                                    vgeom.init_pos,
+                                    vgeom.init_quat,
+                                )
+                                if source_link is not target_link:
+                                    vgeom_verts = gu.transform_by_trans_quat(
+                                        vgeom_verts, *merge_transforms[source_link]
+                                    )
+                                try:
+                                    mesh = uipc.geometry.trimesh(
+                                        vgeom_verts.astype(np.float64, copy=False),
+                                        np.asarray(vgeom.init_vfaces, dtype=np.int32),
+                                    )
+                                except RuntimeError as e:
+                                    gs.raise_exception_from(f"Failed to process vgeom {vgeom.idx} for IPC.", e)
+                                meshes.append(mesh)
+
                 if not meshes:
                     continue
 
@@ -489,7 +514,11 @@ class IPCCoupler(RBC):
                     self._ipc_abd = AffineBodyConstitution()
                     self._ipc_constitution_tabular.insert(self._ipc_abd)
 
-                self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho)
+                if(uipc.geometry.is_trimesh_closed(merged_mesh)):
+                    self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho)
+                else:
+                    abd_shell = uipc.constitution.AffineBodyShell()
+                    abd_shell.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho, thickness=0.001)
 
                 # Determine coupling behavior
                 is_ipc_only = entity_coupling_type == COUPLING_TYPE.IPC_ONLY
@@ -1092,6 +1121,22 @@ class IPCCoupler(RBC):
             self._abd_data_by_link[link][env_idx].aim_transform[:] = aim_transform
             self._abd_data_by_link[link][env_idx].velocity[:] = velocities[abd_body_idx]
 
+            # ----------------------------------------------------------------------------------------------------------------------
+            # Debug: difference between Genesis solved transform (FK) and IPC result
+            pos_aim = np.asarray(aim_transform[:3, 3])
+            pos_ipc = np.asarray(transform_matrix[:3, 3])
+            quat_aim = gu.R_to_quat(np.asarray(aim_transform[:3, :3]))
+            quat_ipc = gu.R_to_quat(np.asarray(transform_matrix[:3, :3]))
+            pos_diff = float(np.linalg.norm(pos_ipc - pos_aim))
+            qa = np.ravel(quat_aim) / np.linalg.norm(quat_aim)
+            qi = np.ravel(quat_ipc) / np.linalg.norm(quat_ipc)
+            quat_diff = 1.0 - abs(np.dot(qa, qi).item())
+            gs.logger.info(
+                f"  [coupler] {link.name} env={env_idx}: Genesis(FK) vs IPC pos_diff={pos_diff:.9e} quat_diff={quat_diff:.9e}"
+            )
+            # -----------------------------------------------------------------------------------------------------------------------
+
+
             link_idx_local = self.coupling_data.link_to_idx_local[link]
             self.coupling_data.ipc_transforms[env_idx, link_idx_local] = transform_matrix
             self.coupling_data.aim_transforms[env_idx, link_idx_local] = aim_transform
@@ -1123,14 +1168,8 @@ class IPCCoupler(RBC):
 
     def _apply_abd_coupling_forces(self):
         """
-        Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
-
-        Data has already been populated in data by _retrieve_rigid_states, so this function computes forces and applies
-        the results.
-
-        This ensures action-reaction force consistency:
-        - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
-        - Genesis reaction force: F_genesis = M * (q_ipc^{n+1} - q_genesis^n) = G_ipc
+        Apply coupling from IPC ABD state back to Genesis rigid bodies (two_way_soft_constraint).
+        Computes coupling forces/torques and applies them as external force/torque.
         """
         if (
             not self.options.two_way_coupling
@@ -1150,6 +1189,20 @@ class IPCCoupler(RBC):
             self.coupling_data.out_forces,
             self.coupling_data.out_torques,
         )
+
+        # ----------------------------------------------------------------------------------------------------------------------
+        # Debug: print force and torque per link (if diff is zero, these should be ~0)
+        links_in_order = [
+            link for link, _ in sorted(self.coupling_data.link_to_idx_local.items(), key=lambda x: x[1])
+        ]
+        for env_idx in range(self.coupling_data.out_forces.shape[0]):
+            for i, link in enumerate(links_in_order):
+                f = self.coupling_data.out_forces[env_idx, i]
+                t = self.coupling_data.out_torques[env_idx, i]
+                gs.logger.info(
+                    f"  [coupler] {link.name} env={env_idx}: force=[{f[0]:.9e} {f[1]:.9e} {f[2]:.9e}] | torque=[{t[0]:.9e} {t[1]:.9e} {t[2]:.9e}]"
+                )
+        # ----------------------------------------------------------------------------------------------------------------------
 
         if np.isnan(self.coupling_data.out_forces).any() or np.isnan(self.coupling_data.out_torques).any():
             gs.raise_exception(
