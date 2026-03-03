@@ -671,7 +671,7 @@ class Mesh(FileMorph, TetGenMixin):
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
     merge_submeshes_for_collision : bool, optional
-        Whether to merge submeshes for collision. Defaults to True. **This is only used for RigidEntity.**
+        Whether to merge submeshes for collision. Defaults to False. **This is only used for RigidEntity.**
     visualization : bool, optional
         Whether the entity needs to be visualized. Set it to False if you need a invisible object only for collision
         purposes. Defaults to True. `visualization` and `collision` cannot both be False.
@@ -703,7 +703,7 @@ class Mesh(FileMorph, TetGenMixin):
         The 32-bit integer bitmasks used for contact filtering of contact pairs. When the conaffinity of one geom and
         the contype of the other geom share a common bit set to 1, two geoms can collide. Defaults to 0xFFFF.
     group_by_material : bool, optional
-        Whether to group submeshes by their visual material type defined in the asset file. Defaults to True.
+        Whether to group submeshes by their visual material type defined in the asset file. Defaults to False.
         **This is only used for RigidEntity.**
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
@@ -735,8 +735,8 @@ class Mesh(FileMorph, TetGenMixin):
     fixed: bool = False
     contype: int = 0xFFFF
     conaffinity: int = 0xFFFF
-    group_by_material: bool = True
-    merge_submeshes_for_collision: bool = True
+    group_by_material: bool = False
+    merge_submeshes_for_collision: bool = False
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

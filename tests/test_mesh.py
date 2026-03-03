@@ -299,7 +299,6 @@ def test_mesh_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    glb_geom_y = glb_y.vgeoms[0]
     glb_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z.glb",
@@ -308,7 +307,6 @@ def test_mesh_yup(show_viewer):
             file_meshes_are_zup=True,
         ),
     )
-    glb_geom_z = glb_z.vgeoms[0]
     stl_y = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.stl",
@@ -317,7 +315,6 @@ def test_mesh_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    stl_geom_y = stl_y.vgeoms[0]
     stl_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z_y.stl",
@@ -325,7 +322,6 @@ def test_mesh_yup(show_viewer):
             fixed=True,
         ),
     )
-    stl_geom_z = stl_z.vgeoms[0]
     obj_y = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_y_-z.obj",
@@ -334,7 +330,6 @@ def test_mesh_yup(show_viewer):
             file_meshes_are_zup=False,
         ),
     )
-    obj_geom_y = obj_y.vgeoms[0]
     obj_z = scene.add_entity(
         morph=gs.morphs.Mesh(
             file=f"{asset_path}/yup_zup_coverage/cannon_z_y.obj",
@@ -342,22 +337,29 @@ def test_mesh_yup(show_viewer):
             fixed=True,
         ),
     )
-    obj_geom_z = obj_z.vgeoms[0]
 
     if show_viewer:
         scene.build()
 
-    assert not glb_geom_y.vmesh.metadata["imported_as_zup"]
-    assert not glb_geom_z.vmesh.metadata["imported_as_zup"]
-    assert not stl_geom_y.vmesh.metadata["imported_as_zup"]
-    assert stl_geom_z.vmesh.metadata["imported_as_zup"]
-    assert not obj_geom_y.vmesh.metadata["imported_as_zup"]
-    assert obj_geom_z.vmesh.metadata["imported_as_zup"]
+    assert not glb_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
+    assert not glb_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
+    assert not stl_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
+    assert stl_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
+    assert not obj_y.vgeoms[0].vmesh.metadata["imported_as_zup"]
+    assert obj_z.vgeoms[0].vmesh.metadata["imported_as_zup"]
 
-    for geom in (glb_geom_y, glb_geom_z, stl_geom_y, stl_geom_z, obj_geom_y, obj_geom_z):
-        mesh = geom.vmesh.copy()
-        mesh.apply_transform(gu.trans_quat_to_T(geom.link.pos, geom.link.quat))
-        assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+    bounding_boxes = []
+    for entity in (glb_y, glb_z, stl_y, stl_z, obj_y, obj_z):
+        tmeshes = []
+        for vgeom in entity.vgeoms:
+            tmesh = vgeom.vmesh.trimesh.copy()
+            tmesh.apply_transform(gu.trans_quat_to_T(vgeom.link.pos, vgeom.link.quat))
+            tmeshes.append(tmesh)
+        combined = trimesh.util.concatenate(tmeshes)
+        assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+        bounding_boxes.append(combined.bounding_box.bounds)
+    # FIXME: The STL files are actually different from the glTF...
+    # assert_allclose(np.diff(bounding_boxes, axis=0), 0.0, tol=0.001)
 
 
 @pytest.mark.required
@@ -388,12 +390,17 @@ def test_urdf_yup(mesh_file, file_meshes_are_zup, tmp_path, show_viewer):
             file_meshes_are_zup=file_meshes_are_zup,
         ),
     )
-    mesh = robot.vgeoms[0].vmesh
 
     if show_viewer:
         scene.build()
 
-    assert_allclose(mesh.trimesh.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
+    tmeshes = []
+    for vgeom in robot.vgeoms:
+        tmesh = vgeom.vmesh.trimesh.copy()
+        tmesh.apply_transform(gu.trans_quat_to_T(vgeom.link.pos, vgeom.link.quat))
+        tmeshes.append(tmesh)
+    combined = trimesh.util.concatenate(tmeshes)
+    assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)
 
 
 # ==================== Geometry Parsing Tests ====================

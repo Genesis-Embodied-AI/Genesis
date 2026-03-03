@@ -21,7 +21,7 @@ class Options(BaseModel, RBC):
 
     def __init__(self, **data):
         # make sure input parameters are supported
-        allowed_params = self.model_fields.keys()
+        allowed_params = type(self).model_fields.keys()
         for key in data.keys():
             if key not in allowed_params:
                 gs.raise_exception(f"Unrecognized attribute: {key}")
@@ -34,8 +34,8 @@ class Options(BaseModel, RBC):
             gs.raise_exception(f"Invalid '{errors['loc'][0]}': {errors['msg'].lower()}.")
 
     def copy_attributes_from(self, options, override=False):
-        for field in options.model_fields:
-            if field in self.model_fields:
+        for field in type(options).model_fields:
+            if field in type(self).model_fields:
                 if override or getattr(self, field) is None:
                     setattr(self, field, getattr(options, field))
 
