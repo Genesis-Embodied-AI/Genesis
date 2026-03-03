@@ -218,7 +218,11 @@ class IPCCoupler(RBC):
                 continue
             coupling_type = entity.material.coup_type
             if coupling_type is None:
-                continue
+                # Auto-select based on entity type
+                if entity.n_joints > 0:
+                    coupling_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
+                else:
+                    coupling_type = "ipc_only"
 
             self._coupling_types[entity] = coupling_type = getattr(COUPLING_TYPE, coupling_type.upper())
             if coupling_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:

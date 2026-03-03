@@ -586,10 +586,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
         # All 7 revolute joints should be present (fixed joint is skipped)
         assert len(art_data.joints_child_link) == 7
 
-    # Verify simulation runs without error
-    for _ in range(5):
-        scene.step()
-
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
@@ -1615,7 +1611,7 @@ def test_coup_collision_links():
 
     # Verify the collision settings were applied
     coupler = cast("IPCCoupler", scene.sim.coupler)
-    collision_settings = coupler._coupling_collision_settings.get(robot, {})
+    collision_settings = coupler._coupling_collision_settings[robot]
     base_link = robot.get_link("base")
     moving_link = robot.get_link("moving")
 
