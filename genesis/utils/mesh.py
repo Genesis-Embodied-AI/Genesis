@@ -331,6 +331,8 @@ def postprocess_collision_geoms(
         if tmesh.is_winding_consistent and not tmesh.is_watertight:
             tmesh_repaired = tmesh.copy()
             tmesh_repaired.update_faces(tmesh_repaired.unique_faces())
+            if tmesh_repaired.volume < 0.0:
+                tmesh_repaired.invert()
             if abs(tmesh_repaired.volume) < gs.EPS:
                 continue
             if abs(abs(tmesh.volume / tmesh_repaired.volume) - 1.0) > MESH_REPAIR_ERROR_THRESHOLD:
@@ -361,22 +363,27 @@ def postprocess_collision_geoms(
                 tmesh = tmesh.copy()
                 tmesh.process(validate=True)
 
+            # Fix negative volume by inverting faces
+            if tmesh.volume < 0.0:
+                tmesh = tmesh.copy()
+                tmesh.invert()
+
             # Compute volume approximation error between true geometry and its convex hull conservatively
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
                 must_decompose = not math.isinf(decompose_error_threshold)
-                if len(g_infos) > 1:
+                if not must_decompose and len(g_infos) > 1:
                     gs.logger.warning(
                         f"Winding not consistent for submesh '{mesh.metadata.get('name', i_g)}'. Forcing convex "
                         "decomposition..."
                     )
-            elif tmesh.volume > gs.EPS:
-                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
+            elif abs(tmesh.volume) > gs.EPS:
+                volume_err = abs(cmesh.volume / abs(tmesh.volume) - 1.0)
                 if volume_err > decompose_error_threshold:
                     must_decompose = True
-                    if len(g_infos) > 1:
+                    if not must_decompose and len(g_infos) > 1:
                         gs.logger.warning(
-                            f"Convex hull of submesh '{mesh.metadata.get('name', i_g)}' is not accurate enough for "
+                            f"Convex hull of submesh '{mesh.metadata.get('name') or i_g}' is not accurate enough for "
                             f"collision detection ({volume_err:.3f}). Forcing convex decomposition..."
                         )
 
@@ -397,6 +404,7 @@ def postprocess_collision_geoms(
         # Must apply geometry transform before merge concatenation
         if is_merged:
             tmeshes = []
+            metadata = set(g_infos[0]["mesh"].metadata.items())
             for g_info in g_infos:
                 mesh = g_info["mesh"]
                 tmesh = mesh.trimesh.copy()
@@ -404,8 +412,11 @@ def postprocess_collision_geoms(
                 quat = g_info.get("quat", gu.identity_quat())
                 tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
                 tmeshes.append(tmesh)
+                metadata &= set(mesh.metadata.items())
+
             tmesh = trimesh.util.concatenate(tmeshes)
-            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata={"merged": True})
+            metadata = dict(metadata) | {"merged": True}
+            mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata=metadata)
             g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
         # Try again to convexify then apply convex decomposition if not possible
@@ -443,7 +454,7 @@ def postprocess_collision_geoms(
                 volume_err = 0.0
             else:
                 cmesh = trimesh.convex.convex_hull(tmesh)
-                volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
+                volume_err = abs(cmesh.volume / abs(tmesh.volume) - 1.0)
             if volume_err > decompose_error_threshold:  # Note that 'inf' is not larger than 'inf'
                 tmeshes = convex_decompose(tmesh, coacd_options)
                 meshes = [
