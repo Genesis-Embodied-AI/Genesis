@@ -112,6 +112,12 @@ class Rigid(Material):
         if sdf_min_res > sdf_max_res:
             gs.raise_exception("`sdf_min_res` must be smaller than or equal to `sdf_max_res`.")
 
+        # ipc_only entities have their dynamics fully controlled by IPC (gravity + collision).
+        # Genesis gravity must be disabled to avoid double-counting.
+        if coupling_type == "ipc_only":
+            if abs(gravity_compensation) > gs.EPS:
+                gs.raise_exception("User-specified `gravity_compensation` not supported with coupling_type='ipc_only'.")
+
         self._friction = float(friction) if friction is not None else None
         self._needs_coup = bool(needs_coup)
         self._coup_friction = float(coup_friction)
