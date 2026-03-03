@@ -717,7 +717,7 @@ def _kernel_init_search(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
-# NOTE: decomposed init disabled — causes non-deterministic results on CUDA due to inter-kernel data races
+# FIXME: decomposed init disabled — causes non-deterministic results on CUDA due to inter-kernel data races
 # when multiple @qd.kernel functions write/read shared state (qacc, Ma, Jaref) without synchronization.
 # The monolith init (single kernel) is used instead. See test_box_box_dynamics[gpu-implicitfast-Newton].
 @solver.func_solve_init.register(is_compatible=lambda *args, **kwargs: False)
