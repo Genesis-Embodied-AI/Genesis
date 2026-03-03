@@ -345,7 +345,7 @@ def postprocess_collision_geoms(
     # Check if all the geometries can be convexified without decomposition
     must_decompose = False
     if convexify:
-        for g_info in g_infos:
+        for i_g, g_info in enumerate(g_infos):
             mesh = g_info["mesh"]
             tmesh = mesh.trimesh
 
@@ -365,10 +365,20 @@ def postprocess_collision_geoms(
             if not tmesh.is_winding_consistent:
                 volume_err = float("inf")
                 must_decompose = not math.isinf(decompose_error_threshold)
+                if len(g_infos) > 1:
+                    gs.logger.warning(
+                        f"Winding not consistent for submesh '{mesh.metadata.get('name', i_g)}'. Forcing convex "
+                        "decomposition..."
+                    )
             elif tmesh.volume > gs.EPS:
                 volume_err = cmesh.volume / abs(tmesh.volume) - 1.0
                 if volume_err > decompose_error_threshold:
                     must_decompose = True
+                    if len(g_infos) > 1:
+                        gs.logger.warning(
+                            f"Convex hull of submesh '{mesh.metadata.get('name', i_g)}' is not accurate enough for "
+                            f"collision detection ({volume_err:.3f}). Forcing convex decomposition..."
+                        )
 
     # Check whether merging the geometries is possible, i.e.
     # * They are all meshes

@@ -732,7 +732,6 @@ class RigidEntity(Entity):
                         "geometry."
                     )
                 l_info["inertial_i"] = None
-                l_info["inertial_mass"] = None
                 is_inertia_invalid = True
         if is_inertia_invalid:
             for l_info, link_j_infos in zip(l_infos, links_j_infos):
