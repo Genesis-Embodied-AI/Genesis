@@ -288,7 +288,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
         is fully driven by IPC physics. Defaults to False.
     _show_ipc_gui : bool, optional
         [Dev/debug] Enable the libuipc built-in polyscope GUI viewer for inspecting the IPC scene.
-        Not a public option — prefixed with ``_`` to indicate internal use.
         Defaults to False.
     """
 

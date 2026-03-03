@@ -250,15 +250,6 @@ class Collider:
                 else:
                     ipc_delegated_links.update(entity.links)
 
-        # Links excluded from rigid collision by per-entity collision_links filter
-        collision_excluded_links = set()
-        for entity in self._solver._entities:
-            if entity.material.collision_links is not None:
-                allowed = set(entity.material.collision_links)
-                for link in entity.links:
-                    if link.name not in allowed:
-                        collision_excluded_links.add(link)
-
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
         for geom in self._solver.geoms:
@@ -292,10 +283,6 @@ class Collider:
 
                 # Skip pairs where both links are delegated to IPC
                 if link_a in ipc_delegated_links and link_b in ipc_delegated_links:
-                    continue
-
-                # Skip if either link is excluded by collision_links filter
-                if link_a in collision_excluded_links or link_b in collision_excluded_links:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed

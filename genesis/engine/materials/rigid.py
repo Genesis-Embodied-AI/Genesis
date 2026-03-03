@@ -34,10 +34,6 @@ class Rigid(Material):
             Maximum resolution of the SDF grid. Must be >= sdf_min_res. Default is 128.
         gravity_compensation : float, optional
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
-        collision_links : tuple of str or None, optional
-            Tuple of link names whose geoms participate in rigid solver collision detection.
-            If None, all links participate. When set, geoms belonging to links NOT in this tuple
-            are excluded from rigid solver collision pair computation. Default is None.
         coup_type : str or None, optional
             Coupling mode for this entity. Valid values:
               - None: Entity not processed by coupler. Entity is completely ignored by the coupler.
@@ -77,7 +73,6 @@ class Rigid(Material):
         sdf_min_res=32,
         sdf_max_res=128,
         gravity_compensation=0.0,
-        collision_links=None,
         coup_type=None,
         coup_links=None,
         enable_coup_collision=True,
@@ -145,7 +140,6 @@ class Rigid(Material):
         self._sdf_max_res = int(sdf_max_res)
         self._rho = float(rho)
         self._gravity_compensation = float(gravity_compensation)
-        self._collision_links = tuple(collision_links) if collision_links is not None else None
         self._coup_type = coup_type
         self._coup_links = tuple(coup_links) if coup_links is not None else None
         self._enable_coup_collision = bool(enable_coup_collision)
@@ -156,11 +150,6 @@ class Rigid(Material):
     def gravity_compensation(self) -> float:
         """Gravity compensation factor. 1.0 cancels gravity."""
         return self._gravity_compensation
-
-    @property
-    def collision_links(self) -> tuple[str, ...] | None:
-        """Tuple of link names whose geoms participate in rigid solver collision. None = all links."""
-        return self._collision_links
 
     @property
     def friction(self) -> float | None:

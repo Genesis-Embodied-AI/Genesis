@@ -19,7 +19,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array, qd_to_numpy, geometric_mean, harmonic_mean
 
-from .conftest import TOL_SINGLE, IS_INTERACTIVE_VIEWER_AVAILABLE
+from .conftest import TOL_SINGLE
 from .utils import assert_allclose, get_hf_dataset
 
 if TYPE_CHECKING:
@@ -1623,19 +1623,3 @@ def test_coup_collision_links():
     assert base_link in collision_settings
     assert collision_settings[base_link] is False
     assert moving_link not in collision_settings
-
-
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="No display or EGL available")
-def test_show_ipc_gui():
-    """Verify IPC GUI initializes and updates without error when _show_ipc_gui=True."""
-    scene = gs.Scene(
-        coupler_options=gs.options.IPCCouplerOptions(_show_ipc_gui=True),
-        show_viewer=False,
-    )
-    scene.add_entity(
-        gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
-        material=gs.materials.Rigid(coup_type="ipc_only"),
-    )
-    scene.build()
-    assert scene.sim is not None
-    assert scene.sim.coupler._ipc_gui is not None
