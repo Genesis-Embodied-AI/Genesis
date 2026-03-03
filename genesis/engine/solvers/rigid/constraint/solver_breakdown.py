@@ -772,8 +772,7 @@ def func_solve_init_decomposed(
 
 @solver.func_solve_body.register(
     is_compatible=lambda *args, **kwargs: (
-        gs.backend in {gs.cuda}
-        and not (args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]).requires_grad
+        gs.backend in {gs.cuda} and not (args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]).requires_grad
     )
 )
 def func_solve_decomposed(
