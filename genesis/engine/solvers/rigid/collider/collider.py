@@ -220,6 +220,22 @@ class Collider:
         self._kernel1_n_chunks = 5
         self._kernel1_mpr_state = array_class.get_mpr_state(self._solver._B * self._kernel1_n_chunks)
 
+        # Kernel 2 config: GJK threads first, then MPR threads
+        self._kernel2_n_gjk_threads = 4000
+        self._kernel2_n_total_threads = 40000
+        self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
+
+        class _SolverProxy:
+            def __init__(self, _B, requires_grad):
+                self._B = _B
+                self._requires_grad = requires_grad
+                self._static_rigid_sim_config = type("_", (), {"requires_grad": requires_grad})()
+
+        proxy = _SolverProxy(self._kernel2_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
+        self._kernel2_gjk_state = array_class.get_gjk_state(
+            proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, True
+        )
+
         self.reset()
 
     def _compute_collision_pair_idx(self):
@@ -519,8 +535,7 @@ class Collider:
                 self._solver._B,
                 self._kernel1_n_chunks,
             )
-            # TODO: Implement kernel 2 to replace this single-kernel path
-            narrowphase.func_narrow_phase_convex_vs_convex(
+            narrowphase.func_narrowphase_kernel2_mixed(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
@@ -528,21 +543,21 @@ class Collider:
                 self._solver.geoms_init_AABB,
                 self._solver.verts_info,
                 self._solver.faces_info,
-                self._solver.edges_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
-                self._mpr._mpr_state,
+                self._kernel2_mpr_state,
                 self._mpr._mpr_info,
-                self._gjk._gjk_state,
+                self._kernel2_gjk_state,
                 self._gjk._gjk_info,
                 self._gjk._gjk_static_config,
-                self._sdf._sdf_info,
                 self._support_field._support_field_info,
-                self._gjk._gjk_state.diff_contact_input,
+                self._kernel2_gjk_state.diff_contact_input,
                 self._solver._errno,
+                self._kernel2_n_gjk_threads,
+                self._kernel2_n_total_threads,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
