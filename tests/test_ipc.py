@@ -384,9 +384,11 @@ def test_link_filter_strict():
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("ipc_coup_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize(
+    "ipc_coup_type, fixed",
+    [("two_way_soft_constraint", True), ("two_way_soft_constraint", False), ("external_articulation", True)],
+)
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
-@pytest.mark.parametrize("fixed", [True, False])
 def test_single_joint(n_envs, ipc_coup_type, joint_type, fixed, show_viewer):
     from genesis.engine.entities import RigidEntity
 

@@ -210,10 +210,15 @@ class IPCCoupler(RBC):
                 continue
 
             self._ipc_coup_types[entity] = ipc_coup_type = getattr(COUPLING_TYPE, ipc_coup_type.upper())
-            if ipc_coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION and entity.n_joints == 0:
-                gs.raise_exception(
-                    f"Rigid entity {i_e} has no joint. Coupling type 'external_articulation' is not supported."
-                )
+            if ipc_coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
+                if not entity.base_link.is_fixed:
+                    gs.raise_exception(
+                        f"Rigid entity {i_e} is not fixed. Coupling type 'external_articulation' is not supported."
+                    )
+                if entity.n_joints == 0:
+                    gs.raise_exception(
+                        f"Rigid entity {i_e} has no joint. Coupling type 'external_articulation' is not supported."
+                    )
             gs.logger.debug(f"Rigid entity {i_e}: coupling type '{ipc_coup_type.name.lower()}'")
 
             # Resolve link filter from material
@@ -411,6 +416,11 @@ class IPCCoupler(RBC):
                 # ---- Collect geom meshes ----
                 meshes = []
                 for source_link in source_links:
+                    if not source_link.geoms:
+                        gs.raise_exception(
+                            f"Rigid link {source_link.idx} has no collision geometry. Coupling type "
+                            "'external_articulation' is not supported."
+                        )
                     for geom in source_link.geoms:
                         if geom.type == gs.GEOM_TYPE.PLANE:
                             if entity_ipc_coup_type != COUPLING_TYPE.IPC_ONLY:
