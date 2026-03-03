@@ -505,6 +505,152 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
         assert (dist_min < 1.5 * CONTACT_MARGIN).all()
 
 
+# 12 leg joints for Anymal C (same order as examples IPC_Solver ipc_floating_anymal*.py)
+_ANYMAL_JOINT_NAMES = (
+    "RH_HAA",
+    "LH_HAA",
+    "RF_HAA",
+    "LF_HAA",
+    "RH_HFE",
+    "LH_HFE",
+    "RF_HFE",
+    "LF_HFE",
+    "RH_KFE",
+    "LH_KFE",
+    "RF_KFE",
+    "LF_KFE",
+)
+
+_MAX_STEPS_FLOATING_ANYMAL = 5
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [1])
+@pytest.mark.parametrize(
+    "fixed,coupling_type",
+    [
+        (True, "two_way_soft_constraint"),
+        (True, "external_articulation"),
+        (False, "two_way_soft_constraint"),
+        pytest.param(
+            False,
+            "external_articulation",
+            marks=pytest.mark.skip(reason="external_articulation does not support floating base"),
+        ),
+    ],
+)
+def test_anymal_coupled_vs_pure(n_envs, fixed, coupling_type, show_viewer):
+    """
+    IPC-coupled Anymal vs pure Genesis: same random joint commands; every frame we sync
+    coupled state (qpos, qd) to the pure robot and check error is zero (sync round-trip).
+    Covers fixed base (both coupling types) and floating base (two_way_soft_constraint only).
+    """
+    from genesis.engine.entities import RigidEntity
+
+    np.random.seed(42)
+
+    coupler_opts = gs.options.IPCCouplerOptions(
+        constraint_strength_translation=1.0,
+        constraint_strength_rotation=1.0,
+        enable_rigid_rigid_contact=False,
+        enable_rigid_ground_contact=False,
+        newton_tolerance=1e-10,
+        newton_translation_tolerance=1e-4,
+        linear_system_tolerance=1e-12,
+        newton_semi_implicit_enable=False,
+        enable_rigid_dofs_sync=True,
+        two_way_coupling=True,
+    )
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        coupler_options=coupler_opts,
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.0, 1.5, 1.2),
+            camera_lookat=(0.25, 0.0, 0.5),
+            camera_fov=40,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    # keep them in the same position to compare the results
+    robot_coupled = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/anymal_c/urdf/anymal_c.urdf",
+            pos=(0.0, 0.0, 0.5),
+            fixed=fixed,
+        ),
+        material=gs.materials.Rigid(
+            coupling_type=coupling_type,
+            coup_friction=0.0,
+        ),
+    )
+    robot_pure = scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/anymal_c/urdf/anymal_c.urdf",
+            pos=(0.0, 0.0, 0.5),
+            fixed=fixed,
+        ),
+        material=gs.materials.Rigid(coupling_type=None),
+    )
+    assert isinstance(robot_coupled, RigidEntity)
+    assert isinstance(robot_pure, RigidEntity)
+
+    scene.build(n_envs=n_envs)
+    assert scene.sim is not None
+
+    motors_dof_idx_coupled = [robot_coupled.get_joint(name).dofs_idx_local[0] for name in _ANYMAL_JOINT_NAMES]
+    motors_dof_idx_pure = [robot_pure.get_joint(name).dofs_idx_local[0] for name in _ANYMAL_JOINT_NAMES]
+    robot_coupled.set_dofs_kp(1000.0, dofs_idx_local=motors_dof_idx_coupled)
+    robot_coupled.set_dofs_kv(50.0, dofs_idx_local=motors_dof_idx_coupled)
+    robot_pure.set_dofs_kp(1000.0, dofs_idx_local=motors_dof_idx_pure)
+    robot_pure.set_dofs_kv(50.0, dofs_idx_local=motors_dof_idx_pure)
+
+    n_envs_actual = max(n_envs, 1)
+    low_limit, high_limit = robot_coupled.get_dofs_limit(dofs_idx_local=motors_dof_idx_coupled)
+    low = tensor_to_array(low_limit)
+    high = tensor_to_array(high_limit)
+    default_bounds = (-2.0 * np.pi, 2.0 * np.pi)
+    low = np.where(np.isfinite(low), low, default_bounds[0])
+    high = np.where(np.isfinite(high), high, default_bounds[1])
+    high = np.maximum(high, low)
+    if low.ndim == 1:
+        low = np.broadcast_to(low, (n_envs_actual, len(motors_dof_idx_coupled)))
+        high = np.broadcast_to(high, (n_envs_actual, len(motors_dof_idx_coupled)))
+
+    target_joints = np.random.uniform(low, high, (n_envs_actual, len(motors_dof_idx_coupled))).astype(gs.np_float)
+
+    for _ in range(_MAX_STEPS_FLOATING_ANYMAL):
+        target_joints[:] = np.random.uniform(low, high, (n_envs_actual, len(motors_dof_idx_coupled)))
+        robot_coupled.control_dofs_position(target_joints, dofs_idx_local=motors_dof_idx_coupled)
+        robot_pure.control_dofs_position(target_joints, dofs_idx_local=motors_dof_idx_pure)
+        scene.step()
+        print(f"frame={_}")
+
+        qpos_c = tensor_to_array(robot_coupled.get_qpos())
+        qd_c = tensor_to_array(robot_coupled.get_dofs_velocity())
+        acc_c = tensor_to_array(robot_coupled.get_links_acc())
+        acc_ang_c = tensor_to_array(robot_coupled.get_links_acc_ang())
+
+        qpos_p = tensor_to_array(robot_pure.get_qpos())
+        qd_p = tensor_to_array(robot_pure.get_dofs_velocity())
+        acc_p = tensor_to_array(robot_pure.get_links_acc())
+        acc_ang_p = tensor_to_array(robot_pure.get_links_acc_ang())
+
+        assert_allclose(qpos_p, qpos_c, atol=TOL_SINGLE)
+        assert_allclose(qd_p, qd_c, atol=TOL_SINGLE)
+        assert_allclose(acc_c, acc_p, atol=TOL_SINGLE)
+        assert_allclose(acc_ang_c, acc_ang_p, atol=TOL_SINGLE)
+
+        # Sync coupled result to pure Genesis
+        robot_pure.set_qpos(qpos_c, zero_velocity=False)
+        robot_pure.set_dofs_velocity(qd_c)
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("constraint_strength", [1, 100])
@@ -1489,3 +1635,97 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
     assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.1)).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("E, rho", [(1e4, 200), (5e4, 400)])
+def test_cloth_gravity_deflection(n_envs, E, rho, show_viewer):
+    """Cloth held at corners sags under gravity. Verify Hencky membrane deflection scaling."""
+    DT = 0.01
+    THICKNESS = 0.001
+    GRAVITY = (0.0, 0.0, -9.8)
+    CLOTH_HALF = 0.5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=GRAVITY,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, -1.5, 0.8),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+
+    asset_path = get_hf_dataset(pattern="IPC/grid20x20.obj")
+    cloth = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file=f"{asset_path}/IPC/grid20x20.obj",
+            scale=2 * CLOTH_HALF,
+            pos=(0.0, 0.0, 0.0),
+            euler=(90, 0, 0),
+        ),
+        material=gs.materials.FEM.Cloth(
+            E=E,
+            nu=0.49,
+            rho=rho,
+            thickness=THICKNESS,
+            bending_stiffness=None,
+            friction_mu=0.8,
+        ),
+    )
+
+    # ============= REMOVE AFTER FIXING VERTEX SOFT CONSTRAINT BUG =============
+    BOX_SIZE = 0.02
+    GAP = 0.005
+
+    boxes = []
+    for x_sign, y_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+        for z_sign in (+1, -1):
+            box = scene.add_entity(
+                gs.morphs.Box(
+                    size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+                    pos=(
+                        x_sign * (CLOTH_HALF - BOX_SIZE),
+                        y_sign * (CLOTH_HALF - BOX_SIZE),
+                        z_sign * (0.5 * BOX_SIZE + GAP),
+                    ),
+                ),
+                material=gs.materials.Rigid(
+                    coupling_type="two_way_soft_constraint",
+                    coup_friction=0.8,
+                ),
+                surface=gs.surfaces.Plastic(
+                    color=np.random.rand(3),
+                ),
+            )
+            boxes.append(box)
+    # ==========================================================================
+
+    scene.build(n_envs=n_envs)
+
+    # Attach the corner vertices
+    cloth_positions = tensor_to_array(cloth.get_state().pos)
+    verts_idx_local = []
+    for x_sign, y_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+        corner_pos = (x_sign * CLOTH_HALF, y_sign * CLOTH_HALF, 0.0)
+        corner_idx = np.argmin(np.linalg.norm(cloth_positions - corner_pos, axis=-1), axis=-1)
+        verts_idx_local.append(corner_idx)
+    verts_idx_local = np.stack(verts_idx_local, axis=-1)
+    # FIXME: This is not working with IPC for now.
+    # cloth.set_vertex_constraints(verts_idx_local, stiffness=1e4, is_soft_constraint=True)
+
+    # ============= REMOVE AFTER FIXING VERTEX SOFT CONSTRAINT BUG =============
+    for box in boxes:
+        box.set_dofs_kp(2000.0)
+        box.set_dofs_kv(500.0)
+        init_dof = tensor_to_array(box.get_dofs_position())
+        init_dof[..., 2] = 0.0
+        box.control_dofs_position(init_dof)
+    # ==========================================================================
+
+    for _ in range(50):
+        scene.step()

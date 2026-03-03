@@ -967,7 +967,8 @@ class FEMSolver(Solver):
             from genesis.engine.couplers import IPCCoupler
 
             if isinstance(self.sim._coupler, IPCCoupler):
-                pass  # IPC coupler handles FEM simulation
+                if self._constraints_initialized:
+                    self.apply_soft_constraints(f)
             elif self._use_implicit_solver:
                 self.precompute_material_data(f)
                 self.init_pos_and_inertia(f)

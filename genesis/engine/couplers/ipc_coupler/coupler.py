@@ -454,6 +454,29 @@ class IPCCoupler(RBC):
 
                             meshes.append(mesh)
 
+                    # If this link has no collision geoms, use visual meshes so the link still gets an ABD slot
+                    # (e.g. for external_articulation joints whose child link has only visual geometry).
+                    if not source_link.geoms:
+                        for vgeom in source_link.vgeoms:
+                            if vgeom.n_vverts:
+                                vgeom_verts = gu.transform_by_trans_quat(
+                                    np.asarray(vgeom.init_vverts, dtype=np.float64),
+                                    vgeom.init_pos,
+                                    vgeom.init_quat,
+                                )
+                                if source_link is not target_link:
+                                    vgeom_verts = gu.transform_by_trans_quat(
+                                        vgeom_verts, *merge_transforms[source_link]
+                                    )
+                                try:
+                                    mesh = uipc.geometry.trimesh(
+                                        vgeom_verts.astype(np.float64, copy=False),
+                                        np.asarray(vgeom.init_vfaces, dtype=np.int32),
+                                    )
+                                except RuntimeError as e:
+                                    gs.raise_exception_from(f"Failed to process vgeom {vgeom.idx} for IPC.", e)
+                                meshes.append(mesh)
+
                 if not meshes:
                     continue
 
@@ -489,7 +512,11 @@ class IPCCoupler(RBC):
                     self._ipc_abd = AffineBodyConstitution()
                     self._ipc_constitution_tabular.insert(self._ipc_abd)
 
-                self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho)
+                if(uipc.geometry.is_trimesh_closed(merged_mesh)):
+                    self._ipc_abd.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho)
+                else:
+                    abd_shell = uipc.constitution.AffineBodyShell()
+                    abd_shell.apply_to(merged_mesh, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho, thickness=0.001)
 
                 # Determine coupling behavior
                 is_ipc_only = entity_coupling_type == COUPLING_TYPE.IPC_ONLY
@@ -1123,14 +1150,8 @@ class IPCCoupler(RBC):
 
     def _apply_abd_coupling_forces(self):
         """
-        Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
-
-        Data has already been populated in data by _retrieve_rigid_states, so this function computes forces and applies
-        the results.
-
-        This ensures action-reaction force consistency:
-        - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
-        - Genesis reaction force: F_genesis = M * (q_ipc^{n+1} - q_genesis^n) = G_ipc
+        Apply coupling from IPC ABD state back to Genesis rigid bodies (two_way_soft_constraint).
+        Computes coupling forces/torques and applies them as external force/torque.
         """
         if (
             not self.options.two_way_coupling
