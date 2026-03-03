@@ -152,8 +152,9 @@ def parse_urdf(morph, surface):
                 mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 tmeshes = geometry.meshes
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
-                    group_material = True
-                    meshes = gltf_utils.parse_mesh_glb(mesh_path, group_material, None, True, surface)
+                    meshes = gltf_utils.parse_mesh_glb(
+                        mesh_path, group_by_material=False, scale=None, is_mesh_zup=True, surface=surface
+                    )
                     tmeshes = [mesh.trimesh for mesh in meshes]
 
                 # Compute the absolute scale of the geometry
