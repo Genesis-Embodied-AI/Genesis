@@ -116,8 +116,8 @@ class IPCCoupler(RBC):
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
-        self._constraint_strength_translation_scaled = 1.0 #self.options.constraint_strength_translation / self.sim.dt**2
-        self._constraint_strength_rotation_scaled = 1.0 #self.options.constraint_strength_rotation / self.sim.dt**2
+        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / self.sim.dt**2
+        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / self.sim.dt**2
 
         # ==== IPC System Infrastructure ====
         self._ipc_engine: Engine | None = None
