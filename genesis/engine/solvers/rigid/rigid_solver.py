@@ -472,15 +472,6 @@ class RigidSolver(KinematicSolver):
     def _sanitize_geom_sol_params(self, sol_params):
         return _sanitize_sol_params(sol_params, self._sol_min_timeconst, self._sol_default_timeconst)
 
-    def _check_init_qpos_bounds(self, joints, init_qpos):
-        is_init_qpos_out_of_bounds = False
-        for joint in joints:
-            if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
-                is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
-                is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
-        if is_init_qpos_out_of_bounds:
-            gs.logger.warning("Neutral robot position (qpos0) exceeds joint limits.")
-
     def _init_invweight_and_meaninertia(self, envs_idx=None, *, force_update=True):
         # Early return if no DoFs. This is essential to avoid segfault on CUDA.
         if self._n_dofs == 0:

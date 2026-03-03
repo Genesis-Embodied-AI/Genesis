@@ -202,10 +202,6 @@ class KinematicEntity(Entity):
     def init_ckpt(self):
         pass
 
-    @property
-    def _skip_collision_geoms(self) -> bool:
-        return not isinstance(self.material, gs.materials.Rigid)
-
     def process_input(self):
         """No-op for kinematic entities; overridden in RigidEntity."""
         self._tgt = dict()
@@ -290,7 +286,7 @@ class KinematicEntity(Entity):
                 )
 
             cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(
-                morph, g_infos, False, skip_collision_postprocess=self._skip_collision_geoms
+                morph, g_infos, False, skip_collision_postprocess=not isinstance(self.material, gs.materials.Rigid)
             )
 
             # Compute inertial properties for this variant from collision or visual geometries
@@ -310,7 +306,7 @@ class KinematicEntity(Entity):
                 )
 
             # Add collision geometries
-            if not self._skip_collision_geoms:
+            if isinstance(self.material, gs.materials.Rigid):
                 for g_info in cg_infos:
                     link._add_geom(
                         mesh=g_info["mesh"],
@@ -326,7 +322,7 @@ class KinematicEntity(Entity):
                     )
 
             # Record ranges for this variant
-            n_new_geoms = 0 if self._skip_collision_geoms else len(cg_infos)
+            n_new_geoms = 0 if not isinstance(self.material, gs.materials.Rigid) else len(cg_infos)
             self.variants_link_start.append(self.variants_link_end[-1])
             self.variants_link_end.append(self._link_start + len(self._links))
             self.variants_n_links.append(self.variants_link_end[-1] - self.variants_link_start[-1])
@@ -1043,7 +1039,7 @@ class KinematicEntity(Entity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
             )
 
-        if not self._skip_collision_geoms:
+        if isinstance(self.material, gs.materials.Rigid):
             # Post-process all collision meshes at once.
             # Destroying the original geometries should be avoided if possible as it will change the way objects
             # interact with the world due to only computing one contact point per convex geometry. The idea is to

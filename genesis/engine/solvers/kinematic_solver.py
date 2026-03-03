@@ -255,10 +255,6 @@ class KinematicSolver(Solver):
         """Hook: sanitize geom constraint solver params. No-op in base (no constraints)."""
         return sol_params
 
-    def _check_init_qpos_bounds(self, joints, init_qpos):
-        """Hook: check if initial qpos is within joint limits. No-op in base."""
-        pass
-
     # ------------------------------------------------------------------------------------
     # --------------------------------- init methods -------------------------------------
     # ------------------------------------------------------------------------------------
@@ -354,7 +350,13 @@ class KinematicSolver(Solver):
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
             self.qpos0.from_numpy(init_qpos)
-            self._check_init_qpos_bounds(self.joints, init_qpos)
+            is_init_qpos_out_of_bounds = False
+            for joint in self.joints:
+                if joint.type in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    is_init_qpos_out_of_bounds |= (joint.dofs_limit[0, 0] > init_qpos[joint.q_start]).any()
+                    is_init_qpos_out_of_bounds |= (init_qpos[joint.q_start] > joint.dofs_limit[0, 1]).any()
+            if is_init_qpos_out_of_bounds:
+                gs.logger.warning("Neutral robot position (qpos0) exceeds joint limits.")
             self.qpos.from_numpy(init_qpos)
 
         self.links_T = self._rigid_global_info.links_T
