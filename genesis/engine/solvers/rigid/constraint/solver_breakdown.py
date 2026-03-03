@@ -770,7 +770,12 @@ def func_solve_init_decomposed(
     _kernel_init_search(constraint_state, static_rigid_sim_config)
 
 
-@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
+@solver.func_solve_body.register(
+    is_compatible=lambda *args, **kwargs: (
+        gs.backend in {gs.cuda}
+        and not (args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]).requires_grad
+    )
+)
 def func_solve_decomposed(
     entities_info,
     dofs_info,
