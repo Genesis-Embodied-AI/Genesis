@@ -1368,9 +1368,9 @@ def test_ipc_collision_links():
 
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="No display or EGL available")
 def test_show_ipc_gui():
-    """Verify IPC GUI initializes and updates without error when show_ipc_gui=True."""
+    """Verify IPC GUI initializes and updates without error when _show_ipc_gui=True."""
     scene = gs.Scene(
-        coupler_options=gs.options.IPCCouplerOptions(show_ipc_gui=True),
+        coupler_options=gs.options.IPCCouplerOptions(_show_ipc_gui=True),
         show_viewer=False,
     )
     scene.add_entity(gs.morphs.Plane())

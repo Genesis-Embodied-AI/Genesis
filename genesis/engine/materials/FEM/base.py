@@ -48,7 +48,7 @@ class Base(Material):
         if friction_mu < 0:
             gs.raise_exception("`friction_mu` must be non-negative.")
         if contact_resistance is not None and contact_resistance <= 0:
-            gs.raise_exception("`contact_resistance` must be positive.")
+            gs.raise_exception("`contact_resistance` must be strictly positive.")
 
         self._E = E
         self._nu = nu

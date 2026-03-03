@@ -194,7 +194,7 @@ class IPCCoupler(RBC):
         self._finalize_ipc()
         self._init_accessors()
 
-        if self.options.show_ipc_gui:
+        if self.options._show_ipc_gui:
             self._init_ipc_gui()
 
     def _setup_coupling_config(self):
@@ -243,9 +243,7 @@ class IPCCoupler(RBC):
         """Initialize IPC system components"""
         assert gs.logger is not None
 
-        self._show_debug_info = self.options.show_debug_info or gs.logger.level <= logging.DEBUG
-
-        if self._show_debug_info:
+        if gs.logger.level <= logging.DEBUG:
             uipc.Logger.set_level(uipc.Logger.Level.Info)
             uipc.Timer.enable_all()
         else:
