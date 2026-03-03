@@ -82,10 +82,10 @@ def upload_results_to_wandb(
                 metrics = {}
                 for k in list(params.keys()):
                     try:
-                        metrics[k] = float(params.pop(k))
+                        metrics[k] = float(params[k])
                     except ValueError:
-                        # Keep non-numeric fields as parameters
-                        pass
+                        continue
+                    del params[k]
 
             if not metrics:
                 skipped_count += 1
