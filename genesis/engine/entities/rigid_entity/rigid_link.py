@@ -242,9 +242,8 @@ class RigidLink(RBC):
                         aabb_str.append(f"{name}=({axis_min:0.3f}, {axis_max:0.3f})")
                     gs.logger.warning(
                         f"Link '{self._name}' has dubious center of mass [{', '.join(com_str)}] compared to the "
-                        f"bounding box from geometry [{', '.join(aabb_str)}]. It will be recomputed from geometry."
+                        f"bounding box from geometry [{', '.join(aabb_str)}]."
                     )
-                    self._inertial_pos = None
 
             if self._inertial_mass is not None:
                 if not (hint_mass / INERTIA_RATIO_MAX <= self._inertial_mass <= INERTIA_RATIO_MAX * hint_mass):

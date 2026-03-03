@@ -391,7 +391,7 @@ def postprocess_collision_geoms(
     # * They are all meshes
     # * They belong to the same collision group (same contype and conaffinity)
     # * Their physical properties are the same (friction coef and contact solver parameters)
-    if must_decompose and len(g_infos) > 1:
+    if (must_decompose or not convexify) and len(g_infos) > 1:
         is_merged = all(g_info["type"] == gs.GEOM_TYPE.MESH for g_info in g_infos)
         for name in ("contype", "conaffinity", "friction", "sol_params"):
             if not is_merged:
@@ -407,12 +407,14 @@ def postprocess_collision_geoms(
             metadata = set(g_infos[0]["mesh"].metadata.items())
             for g_info in g_infos:
                 mesh = g_info["mesh"]
-                tmesh = mesh.trimesh.copy()
-                pos = g_info.get("pos", gu.zero_pos())
-                quat = g_info.get("quat", gu.identity_quat())
-                tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
-                tmeshes.append(tmesh)
+                tmesh = mesh.trimesh
+                if "pos" in g_info or "quat" in g_info:
+                    tmesh = tmesh.copy()
+                    pos = g_info.get("pos", gu.zero_pos())
+                    quat = g_info.get("quat", gu.identity_quat())
+                    tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
                 metadata &= set(mesh.metadata.items())
+                tmeshes.append(tmesh)
 
             tmesh = trimesh.util.concatenate(tmeshes)
             metadata = dict(metadata) | {"merged": True}
@@ -420,7 +422,7 @@ def postprocess_collision_geoms(
             g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
 
         # Try again to convexify then apply convex decomposition if not possible
-        if is_merged:
+        if must_decompose and is_merged:
             return postprocess_collision_geoms(
                 g_infos,
                 decimate,

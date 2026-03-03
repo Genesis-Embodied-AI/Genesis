@@ -151,7 +151,7 @@ def parse_urdf(morph, surface):
                 # One asset may contain multiple meshes (.obj, .glb, ...)
                 mesh_path = urdfpy.utils.get_filename(parent_dir, geometry.filename)
                 tmeshes = geometry.meshes
-                metadatas = [{"mesh_path": mesh_path}]
+                metadatas = [{"mesh_path": mesh_path} for _ in tmeshes]
                 if mesh_path.lower().endswith(gs.options.morphs.GLTF_FORMATS):
                     meshes = gltf_utils.parse_mesh_glb(
                         mesh_path, group_by_material=False, scale=None, is_mesh_zup=True, surface=surface
@@ -194,7 +194,7 @@ def parse_urdf(morph, surface):
                 is_mesh_zup = True
 
             # Each mesh is one RigidGeom in genesis
-            for tmesh, metadata in zip(tmeshes, metadatas):
+            for tmesh, metadata in zip(tmeshes, metadatas, strict=True):
                 # Overwrite surface color by original color specified in URDF file only if necessary
                 is_urdf_material = False
                 if geom_is_col:
