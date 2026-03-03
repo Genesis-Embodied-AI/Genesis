@@ -525,42 +525,43 @@ def get_contact_island_state(solver, collider):
 
 
 @DATA_ORIENTED
-class StructNarrowphaseQueueEntry(metaclass=BASE_METACLASS):
-    i_b: V_ANNOTATION
-    i_ga: V_ANNOTATION
-    i_gb: V_ANNOTATION
-    i_pair: V_ANNOTATION
-    contact_pos_0: V_ANNOTATION
-    normal_0: V_ANNOTATION
-    penetration_0: V_ANNOTATION
-
-
-@DATA_ORIENTED
 class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
-    mpr_queue: StructNarrowphaseQueueEntry
-    gjk_queue: StructNarrowphaseQueueEntry
+    mpr_i_b: V_ANNOTATION
+    mpr_i_ga: V_ANNOTATION
+    mpr_i_gb: V_ANNOTATION
+    mpr_i_pair: V_ANNOTATION
+    mpr_contact_pos_0: V_ANNOTATION
+    mpr_normal_0: V_ANNOTATION
+    mpr_penetration_0: V_ANNOTATION
+    gjk_i_b: V_ANNOTATION
+    gjk_i_ga: V_ANNOTATION
+    gjk_i_gb: V_ANNOTATION
+    gjk_i_pair: V_ANNOTATION
+    gjk_contact_pos_0: V_ANNOTATION
+    gjk_normal_0: V_ANNOTATION
+    gjk_penetration_0: V_ANNOTATION
     mpr_queue_size: V_ANNOTATION
     gjk_queue_size: V_ANNOTATION
     mpr_work_counter: V_ANNOTATION
     gjk_work_counter: V_ANNOTATION
 
 
-def get_narrowphase_queue_entry(max_entries):
-    return StructNarrowphaseQueueEntry(
-        i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
-        i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
-        i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
-        i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
-        contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
-        penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
-    )
-
-
 def get_narrowphase_work_queues(max_entries):
     return StructNarrowphaseWorkQueues(
-        mpr_queue=get_narrowphase_queue_entry(max_entries),
-        gjk_queue=get_narrowphase_queue_entry(max_entries),
+        mpr_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
         mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
         gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),

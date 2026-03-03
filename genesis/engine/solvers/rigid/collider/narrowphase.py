@@ -1398,20 +1398,19 @@ def func_narrowphase_kernel2_mixed(
     n_gjk_threads: qd.template(),
     n_total_threads: qd.template(),
 ):
-    wq = collider_state.narrowphase_work_queues
-    max_queue = wq.mpr_queue.i_b.shape[0]
+    max_queue = collider_state.narrowphase_work_queues.mpr_i_b.shape[0]
 
     for i_b in range(n_total_threads):
         if i_b < qd.static(n_gjk_threads):
             # GJK partition: pull from gjk_queue
             for _iter in range(max_queue):
-                idx = qd.atomic_add(wq.gjk_work_counter[0], 1)
-                if idx >= wq.gjk_queue_size[0]:
+                idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_work_counter[0], 1)
+                if idx >= collider_state.narrowphase_work_queues.gjk_queue_size[0]:
                     break
-                i_b_env = wq.gjk_queue.i_b[idx]
-                i_ga = wq.gjk_queue.i_ga[idx]
-                i_gb = wq.gjk_queue.i_gb[idx]
-                i_pair = wq.gjk_queue.i_pair[idx]
+                i_b_env = collider_state.narrowphase_work_queues.gjk_i_b[idx]
+                i_ga = collider_state.narrowphase_work_queues.gjk_i_ga[idx]
+                i_gb = collider_state.narrowphase_work_queues.gjk_i_gb[idx]
+                i_pair = collider_state.narrowphase_work_queues.gjk_i_pair[idx]
 
                 func_kernel2_gjk_full(
                     i_b, i_b_env, i_ga, i_gb, i_pair,
@@ -1424,16 +1423,16 @@ def func_narrowphase_kernel2_mixed(
         else:
             # MPR partition: pull from mpr_queue
             for _iter in range(max_queue):
-                idx = qd.atomic_add(wq.mpr_work_counter[0], 1)
-                if idx >= wq.mpr_queue_size[0]:
+                idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_work_counter[0], 1)
+                if idx >= collider_state.narrowphase_work_queues.mpr_queue_size[0]:
                     break
-                i_b_env = wq.mpr_queue.i_b[idx]
-                i_ga = wq.mpr_queue.i_ga[idx]
-                i_gb = wq.mpr_queue.i_gb[idx]
-                i_pair = wq.mpr_queue.i_pair[idx]
-                contact_pos_0 = wq.mpr_queue.contact_pos_0[idx]
-                normal_0 = wq.mpr_queue.normal_0[idx]
-                penetration_0 = wq.mpr_queue.penetration_0[idx]
+                i_b_env = collider_state.narrowphase_work_queues.mpr_i_b[idx]
+                i_ga = collider_state.narrowphase_work_queues.mpr_i_ga[idx]
+                i_gb = collider_state.narrowphase_work_queues.mpr_i_gb[idx]
+                i_pair = collider_state.narrowphase_work_queues.mpr_i_pair[idx]
+                contact_pos_0 = collider_state.narrowphase_work_queues.mpr_contact_pos_0[idx]
+                normal_0 = collider_state.narrowphase_work_queues.mpr_normal_0[idx]
+                penetration_0 = collider_state.narrowphase_work_queues.mpr_penetration_0[idx]
 
                 func_kernel2_mpr_multicontact(
                     i_b, i_b_env, i_ga, i_gb, i_pair,
@@ -1470,25 +1469,24 @@ def func_enqueue_for_multicontact(
     normal_0: qd.types.vector(3, dtype=gs.qd_float),
     penetration_0,
 ):
-    wq = collider_state.narrowphase_work_queues
     if prefer_gjk:
-        idx = qd.atomic_add(wq.gjk_queue_size[0], 1)
-        wq.gjk_queue.i_b[idx] = i_b
-        wq.gjk_queue.i_ga[idx] = i_ga
-        wq.gjk_queue.i_gb[idx] = i_gb
-        wq.gjk_queue.i_pair[idx] = i_pair
-        wq.gjk_queue.contact_pos_0[idx] = contact_pos_0
-        wq.gjk_queue.normal_0[idx] = normal_0
-        wq.gjk_queue.penetration_0[idx] = penetration_0
+        idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_queue_size[0], 1)
+        collider_state.narrowphase_work_queues.gjk_i_b[idx] = i_b
+        collider_state.narrowphase_work_queues.gjk_i_ga[idx] = i_ga
+        collider_state.narrowphase_work_queues.gjk_i_gb[idx] = i_gb
+        collider_state.narrowphase_work_queues.gjk_i_pair[idx] = i_pair
+        collider_state.narrowphase_work_queues.gjk_contact_pos_0[idx] = contact_pos_0
+        collider_state.narrowphase_work_queues.gjk_normal_0[idx] = normal_0
+        collider_state.narrowphase_work_queues.gjk_penetration_0[idx] = penetration_0
     else:
-        idx = qd.atomic_add(wq.mpr_queue_size[0], 1)
-        wq.mpr_queue.i_b[idx] = i_b
-        wq.mpr_queue.i_ga[idx] = i_ga
-        wq.mpr_queue.i_gb[idx] = i_gb
-        wq.mpr_queue.i_pair[idx] = i_pair
-        wq.mpr_queue.contact_pos_0[idx] = contact_pos_0
-        wq.mpr_queue.normal_0[idx] = normal_0
-        wq.mpr_queue.penetration_0[idx] = penetration_0
+        idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_queue_size[0], 1)
+        collider_state.narrowphase_work_queues.mpr_i_b[idx] = i_b
+        collider_state.narrowphase_work_queues.mpr_i_ga[idx] = i_ga
+        collider_state.narrowphase_work_queues.mpr_i_gb[idx] = i_gb
+        collider_state.narrowphase_work_queues.mpr_i_pair[idx] = i_pair
+        collider_state.narrowphase_work_queues.mpr_contact_pos_0[idx] = contact_pos_0
+        collider_state.narrowphase_work_queues.mpr_normal_0[idx] = normal_0
+        collider_state.narrowphase_work_queues.mpr_penetration_0[idx] = penetration_0
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
