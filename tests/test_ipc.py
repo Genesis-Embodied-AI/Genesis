@@ -547,32 +547,20 @@ def test_anymal_coupled_vs_pure(n_envs, fixed, coupling_type, show_viewer):
     from genesis.engine.entities import RigidEntity
 
     np.random.seed(42)
-    if fixed:
-        coupler_opts = gs.options.IPCCouplerOptions(
-            constraint_strength_translation=10000.0,
-            constraint_strength_rotation=10000.0,
-            enable_rigid_rigid_contact=False,
-            enable_rigid_ground_contact=False,
-            newton_tolerance=1e-8,
-            newton_translation_tolerance=1.0,
-            linear_system_tolerance=1e-8,
-            newton_semi_implicit_enable=False,
-            enable_rigid_dofs_sync=True,
-            two_way_coupling=True,
-        )
-    else:
-        coupler_opts = gs.options.IPCCouplerOptions(
-            constraint_strength_translation=1.0,
-            constraint_strength_rotation=1.0,
-            enable_rigid_rigid_contact=False,
-            enable_rigid_ground_contact=False,
-            newton_tolerance=1e-10,
-            newton_translation_tolerance=1e-4,
-            linear_system_tolerance=1e-12,
-            newton_semi_implicit_enable=False,
-            enable_rigid_dofs_sync=True,
-            two_way_coupling=True,
-        )
+
+    coupler_opts = gs.options.IPCCouplerOptions(
+        constraint_strength_translation=1.0,
+        constraint_strength_rotation=1.0,
+        enable_rigid_rigid_contact=False,
+        enable_rigid_ground_contact=False,
+        newton_tolerance=1e-10,
+        newton_translation_tolerance=1e-4,
+        linear_system_tolerance=1e-12,
+        newton_semi_implicit_enable=False,
+        enable_rigid_dofs_sync=True,
+        two_way_coupling=True,
+    )
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
@@ -634,6 +622,7 @@ def test_anymal_coupled_vs_pure(n_envs, fixed, coupling_type, show_viewer):
     if low.ndim == 1:
         low = np.broadcast_to(low, (n_envs_actual, len(motors_dof_idx_coupled)))
         high = np.broadcast_to(high, (n_envs_actual, len(motors_dof_idx_coupled)))
+
     target_joints = np.random.uniform(low, high, (n_envs_actual, len(motors_dof_idx_coupled))).astype(gs.np_float)
 
     for _ in range(_MAX_STEPS_FLOATING_ANYMAL):
@@ -641,14 +630,22 @@ def test_anymal_coupled_vs_pure(n_envs, fixed, coupling_type, show_viewer):
         robot_coupled.control_dofs_position(target_joints, dofs_idx_local=motors_dof_idx_coupled)
         robot_pure.control_dofs_position(target_joints, dofs_idx_local=motors_dof_idx_pure)
         scene.step()
+        print(f"frame={_}")
 
-        
         qpos_c = tensor_to_array(robot_coupled.get_qpos())
         qd_c = tensor_to_array(robot_coupled.get_dofs_velocity())
+        acc_c = tensor_to_array(robot_coupled.get_links_acc())
+        acc_ang_c = tensor_to_array(robot_coupled.get_links_acc_ang())
+
         qpos_p = tensor_to_array(robot_pure.get_qpos())
         qd_p = tensor_to_array(robot_pure.get_dofs_velocity())
+        acc_p = tensor_to_array(robot_pure.get_links_acc())
+        acc_ang_p = tensor_to_array(robot_pure.get_links_acc_ang())
+
         assert_allclose(qpos_p, qpos_c, atol=TOL_SINGLE)
         assert_allclose(qd_p, qd_c, atol=TOL_SINGLE)
+        assert_allclose(acc_c, acc_p, atol=TOL_SINGLE)
+        assert_allclose(acc_ang_c, acc_ang_p, atol=TOL_SINGLE)
 
         # Sync coupled result to pure Genesis
         robot_pure.set_qpos(qpos_c, zero_velocity=False)
