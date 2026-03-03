@@ -36,7 +36,6 @@ class Rigid(Material):
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
         coup_type : str or None, optional
             Coupling mode for this entity. Valid values:
-              - None: Entity not processed by coupler. Entity is completely ignored by the coupler.
               - 'two_way_soft_constraint': Two-way soft coupling.
               - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
                 the DOF level.
@@ -48,11 +47,11 @@ class Rigid(Material):
             in coupling; other links are excluded. Only supported with needs_coup=True and
             ``two_way_soft_constraint`` type in IPC. Default is None.
         enable_coup_collision : bool, optional
-            Whether coupler collision is enabled for this entity's links.
+            Whether coupler collision is enabled for this entity's links. Only used by the IPC coupler.
             Unlike ``coup_type=None`` (which removes the entity from the coupler entirely), setting this to
             False keeps the entity in the coupler for coupling forces but disables contact response. Default is True.
         coup_collision_links : tuple of str or None, optional
-            Tuple of link names whose geoms participate in coupler collision.
+            Tuple of link names whose geoms participate in coupler collision. Only used by the IPC coupler.
             Only effective when ``enable_coup_collision=True``. If None, all coupled links have collision.
             When set, only the named links get coupler collision; other links are marked no-collision.
             Default is None.

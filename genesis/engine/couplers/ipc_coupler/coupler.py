@@ -429,8 +429,6 @@ class IPCCoupler(RBC):
                 # Inner loop: iterate geoms of all source links
                 meshes = []
                 for source_link in source_links:
-                    if not source_link.geoms:
-                        continue
                     for geom in source_link.geoms:
                         if geom.type == gs.GEOM_TYPE.PLANE:
                             if entity_coupling_type != COUPLING_TYPE.IPC_ONLY:
@@ -659,6 +657,11 @@ class IPCCoupler(RBC):
                     if self.sim.n_envs > 0:
                         self._ipc_subscenes[env_idx].apply_to(mesh)
 
+                    if parent_link not in self._abd_link_to_slot or child_link not in self._abd_link_to_slot:
+                        gs.raise_exception(
+                            "Rigid link has no collision geometry. "
+                            "Coupling type 'external_articulation' is not supported."
+                        )
                     parent_abd_slot = self._abd_link_to_slot[parent_link][env_idx]
                     child_abd_slot = self._abd_link_to_slot[child_link][env_idx]
                     constitution.apply_to(mesh, [parent_abd_slot], [0], [child_abd_slot], [0], [100.0])
