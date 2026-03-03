@@ -149,7 +149,7 @@ class RigidLink(RBC):
                 geom_list = self._vgeoms
 
             # Get material density
-            rho = self.entity.material.rho
+            rho = self.entity.material.rho if isinstance(self.entity.material, gs.materials.Rigid) else 1.0
 
             # Process each geom individually and compose their properties
             for geom in geom_list:
@@ -448,7 +448,7 @@ class RigidLink(RBC):
         Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
         the visual geometries associated with this link (`link.vgeoms`).
         """
-        if self.n_geoms == 0:
+        if self.n_vgeoms == 0:
             gs.raise_exception("Link has no visual geometries.")
 
         # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx

@@ -210,12 +210,7 @@ class KinematicSolver(Solver):
         self._func_update_geoms(self._scene._envs_idx, force_update_fixed_geoms=True)
 
     def _post_build_entities(self):
-        """Disable collision on all entity geoms (kinematic entities have no physics)."""
-        for entity in self._entities:
-            for geom in entity.geoms:
-                geom._contype = 0
-                geom._conaffinity = 0
-                geom._needs_coup = False
+        pass
 
     def _setup_equalities(self):
         self._n_equalities = 0

@@ -53,7 +53,7 @@ def tracked(fun):
     return wrapper
 
 
-def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
+def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho: float | None = None):
     """
     Compute inertial properties (mass, center of mass, inertia tensor) from geometry infos.
 
@@ -67,7 +67,7 @@ def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
     vg_infos : list[dict]
         List of visual geometry info dicts, each containing 'vmesh', 'pos', 'quat'.
         Used as fallback if cg_infos is empty.
-    rho : float
+    rho : float | None
         Material density (kg/m^3) used to compute mass from volume.
 
     Returns
@@ -94,7 +94,7 @@ def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
         if inertia_mesh.volume < -gs.EPS:
             inertia_mesh.invert()
 
-        geom_mass = inertia_mesh.volume * rho
+        geom_mass = inertia_mesh.volume * (rho if rho is not None else 1.0)
         geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
         geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
 
@@ -155,7 +155,6 @@ class KinematicEntity(Entity):
         self._enable_heterogeneous = bool(self._morph_heterogeneous)
 
         super().__init__(idx, scene, morph, solver, material, surface, name=name)
-        self._material_for_loading = self._to_internal_rigid_material(material)
 
         self._idx_in_solver = idx_in_solver
         self._link_start: int = link_start
@@ -193,38 +192,6 @@ class KinematicEntity(Entity):
         self._ckpt = dict()
         self._update_tgt_while_set = self._solver._requires_grad
 
-    @staticmethod
-    def _to_internal_rigid_material(material: Material) -> Material:
-        """
-        Normalize materials for the shared rigid-loading pipeline.
-
-        Kinematic entities still use rigid parsing/loading code paths, so we map
-        `Kinematic` to an internal `Rigid` material with inert defaults. This keeps
-        the public material semantics minimal while preserving loader compatibility.
-        """
-        if not isinstance(material, gs.materials.Kinematic):
-            return material
-
-        rigid_material = gs.materials.Rigid(
-            rho=material.rho,
-            friction=None,
-            needs_coup=False,
-            coup_friction=0.0,
-            coup_softness=0.0,
-            coup_restitution=0.0,
-            sdf_cell_size=0.005,
-            sdf_min_res=32,
-            sdf_max_res=32,
-            gravity_compensation=0.0,
-            coupling_type=None,
-            coupling_link_filter=None,
-        )
-        # NOTE: Mark rigid-only coupling fields as undefined for kinematic materials.
-        rigid_material._coup_friction = np.nan
-        rigid_material._coup_softness = np.nan
-        rigid_material._coup_restitution = np.nan
-        return rigid_material
-
     def _update_tgt(self, key, value):
         # Set [self._tgt] value while keeping the insertion order between keys. When a new key is inserted or an existing
         # key is updated, the new element should be inserted at the end of the dict. This is because we need to keep
@@ -234,6 +201,10 @@ class KinematicEntity(Entity):
 
     def init_ckpt(self):
         pass
+
+    @property
+    def _skip_collision_geoms(self) -> bool:
+        return not isinstance(self.material, gs.materials.Rigid)
 
     def process_input(self):
         """No-op for kinematic entities; overridden in RigidEntity."""
@@ -300,7 +271,9 @@ class KinematicEntity(Entity):
 
         # Compute first variant's inertial properties using stored g_infos
         cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(self._morph, self._first_g_infos, False)
-        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self._material_for_loading.rho)
+        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(
+            cg_infos, vg_infos, rho=self.material.rho if isinstance(self.material, gs.materials.Rigid) else None
+        )
         self.variants_inertial_mass.append(het_mass)
         self.variants_inertial_pos.append(het_pos)
         self.variants_inertial_i.append(het_i)
@@ -316,11 +289,13 @@ class KinematicEntity(Entity):
                     f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
                 )
 
-            cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, False)
+            cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(
+                morph, g_infos, False, skip_collision_postprocess=self._skip_collision_geoms
+            )
 
             # Compute inertial properties for this variant from collision or visual geometries
             het_mass, het_pos, het_i = compute_inertial_from_geom_infos(
-                cg_infos, vg_infos, self._material_for_loading.rho
+                cg_infos, vg_infos, rho=self.material.rho if isinstance(self.material, gs.materials.Rigid) else None
             )
             self.variants_inertial_mass.append(het_mass)
             self.variants_inertial_pos.append(het_pos)
@@ -335,29 +310,28 @@ class KinematicEntity(Entity):
                 )
 
             # Add collision geometries
-            for g_info in cg_infos:
-                friction = self._material_for_loading.friction
-                if friction is None:
-                    friction = g_info.get("friction", gu.default_friction())
-                link._add_geom(
-                    mesh=g_info["mesh"],
-                    init_pos=g_info.get("pos", gu.zero_pos()),
-                    init_quat=g_info.get("quat", gu.identity_quat()),
-                    type=g_info["type"],
-                    friction=friction,
-                    sol_params=g_info["sol_params"],
-                    data=g_info.get("data"),
-                    needs_coup=self._material_for_loading.needs_coup,
-                    contype=g_info["contype"],
-                    conaffinity=g_info["conaffinity"],
-                )
+            if not self._skip_collision_geoms:
+                for g_info in cg_infos:
+                    link._add_geom(
+                        mesh=g_info["mesh"],
+                        init_pos=g_info.get("pos", gu.zero_pos()),
+                        init_quat=g_info.get("quat", gu.identity_quat()),
+                        type=g_info["type"],
+                        friction=self.material.friction or g_info.get("friction", gu.default_friction()),
+                        sol_params=g_info["sol_params"],
+                        data=g_info.get("data"),
+                        needs_coup=self.material.needs_coup,
+                        contype=g_info["contype"],
+                        conaffinity=g_info["conaffinity"],
+                    )
 
             # Record ranges for this variant
+            n_new_geoms = 0 if self._skip_collision_geoms else len(cg_infos)
             self.variants_link_start.append(self.variants_link_end[-1])
             self.variants_link_end.append(self._link_start + len(self._links))
             self.variants_n_links.append(self.variants_link_end[-1] - self.variants_link_start[-1])
             self.variants_geom_start.append(self.variants_geom_end[-1])
-            self.variants_geom_end.append(self.variants_geom_end[-1] + len(cg_infos))
+            self.variants_geom_end.append(self.variants_geom_end[-1] + n_new_geoms)
             self.variants_vgeom_start.append(self.variants_vgeom_end[-1])
             self.variants_vgeom_end.append(self.variants_vgeom_end[-1] + len(vg_infos))
 
@@ -811,6 +785,7 @@ class KinematicEntity(Entity):
         # Make sure that the entity is not object
         if (
             isinstance(self.sim.coupler, IPCCoupler)
+            and isinstance(self.material, gs.materials.Rigid)
             and self.material.coupling_type == "ipc_only"
             and any(l_info["is_robot"] for l_info in l_infos)
         ):
@@ -1060,42 +1035,6 @@ class KinematicEntity(Entity):
             if morph.visualization and not is_col:
                 vg_infos.append(g_info)
 
-        # Post-process all collision meshes at once.
-        # Destroying the original geometries should be avoided if possible as it will change the way objects
-        # interact with the world due to only computing one contact point per convex geometry. The idea is to
-        # check if each geometry can be convexified independently without resorting on convex decomposition.
-        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
-        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
-        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
-        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
-        # both cases, this improves runtime performance, numerical stability and compilation time.
-        if isinstance(morph, gs.options.morphs.FileMorph):
-            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
-            # is associated with a robot.
-            # The rational behind it is that performing convex decomposition for robots is mostly useless because
-            # the non-physical part that is added to the original geometries to convexify them are generally inside
-            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
-            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
-            if l_info["is_robot"]:
-                decompose_error_threshold = morph.decompose_robot_error_threshold
-            else:
-                decompose_error_threshold = morph.decompose_object_error_threshold
-
-            cg_infos = mu.postprocess_collision_geoms(
-                cg_infos,
-                morph.decimate,
-                morph.decimate_face_num,
-                morph.decimate_aggressiveness,
-                morph.convexify,
-                decompose_error_threshold,
-                morph.coacd_options,
-            )
-
-        # Randomize collision mesh colors. The is especially useful to check convex decomposition.
-        for g_info in cg_infos:
-            mesh = g_info["mesh"]
-            mesh.set_color((*np.random.rand(3), 0.7))
-
         # Add visual geometries
         for g_info in vg_infos:
             link._add_vgeom(
@@ -1104,28 +1043,62 @@ class KinematicEntity(Entity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
             )
 
-        # Add collision geometries
-        for g_info in cg_infos:
-            friction = self._material_for_loading.friction
-            if friction is None:
-                friction = g_info.get("friction", gu.default_friction())
-            link._add_geom(
-                mesh=g_info["mesh"],
-                init_pos=g_info.get("pos", gu.zero_pos()),
-                init_quat=g_info.get("quat", gu.identity_quat()),
-                type=g_info["type"],
-                friction=friction,
-                sol_params=g_info["sol_params"],
-                data=g_info.get("data"),
-                needs_coup=self._material_for_loading.needs_coup,
-                contype=g_info["contype"],
-                conaffinity=g_info["conaffinity"],
-            )
+        if not self._skip_collision_geoms:
+            # Post-process all collision meshes at once.
+            # Destroying the original geometries should be avoided if possible as it will change the way objects
+            # interact with the world due to only computing one contact point per convex geometry. The idea is to
+            # check if each geometry can be convexified independently without resorting on convex decomposition.
+            # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
+            # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
+            # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
+            # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
+            # both cases, this improves runtime performance, numerical stability and compilation time.
+            if isinstance(morph, gs.options.morphs.FileMorph):
+                # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
+                # is associated with a robot.
+                # The rational behind it is that performing convex decomposition for robots is mostly useless because
+                # the non-physical part that is added to the original geometries to convexify them are generally inside
+                # the mechanical structure and not interacting directly with the outer world. On top of that, not only
+                # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
+                if l_info["is_robot"]:
+                    decompose_error_threshold = morph.decompose_robot_error_threshold
+                else:
+                    decompose_error_threshold = morph.decompose_object_error_threshold
+
+                cg_infos = mu.postprocess_collision_geoms(
+                    cg_infos,
+                    morph.decimate,
+                    morph.decimate_face_num,
+                    morph.decimate_aggressiveness,
+                    morph.convexify,
+                    decompose_error_threshold,
+                    morph.coacd_options,
+                )
+
+            # Randomize collision mesh colors. The is especially useful to check convex decomposition.
+            for g_info in cg_infos:
+                mesh = g_info["mesh"]
+                mesh.set_color((*np.random.rand(3), 0.7))
+
+            # Add collision geometries
+            for g_info in cg_infos:
+                link._add_geom(
+                    mesh=g_info["mesh"],
+                    init_pos=g_info.get("pos", gu.zero_pos()),
+                    init_quat=g_info.get("quat", gu.identity_quat()),
+                    type=g_info["type"],
+                    friction=self.material.friction or g_info.get("friction", gu.default_friction()),
+                    sol_params=g_info["sol_params"],
+                    data=g_info.get("data"),
+                    needs_coup=self.material.needs_coup,
+                    contype=g_info["contype"],
+                    conaffinity=g_info["conaffinity"],
+                )
 
         return link, joints
 
     @staticmethod
-    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot):
+    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot, skip_collision_postprocess=False):
         """
         Separate collision from visual geometry and post-process collision meshes.
         Used for both normal loading and heterogeneous simulation.
@@ -1139,7 +1112,7 @@ class KinematicEntity(Entity):
                 vg_infos.append(g_info)
 
         # Post-process all collision meshes at once
-        if isinstance(morph, gs.options.morphs.FileMorph):
+        if not skip_collision_postprocess and isinstance(morph, gs.options.morphs.FileMorph):
             if is_robot:
                 decompose_error_threshold = morph.decompose_robot_error_threshold
             else:
@@ -2336,7 +2309,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_pos(self, pos, envs_idx=None, *, relative=False):
         """
         Set position of the entity's base link.
 
@@ -2347,17 +2320,12 @@ class KinematicEntity(Entity):
         relative : bool, optional
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
-            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         # Throw exception in entity no longer has a "true" base link becaused it has attached
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
-        if zero_velocity:
-            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2366,7 +2334,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_quat(self, quat, envs_idx=None, *, relative=False):
         """
         Set quaternion of the entity's base link.
 
@@ -2377,16 +2345,11 @@ class KinematicEntity(Entity):
         relative : bool, optional
             Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
-            sudden change in entity pose.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
-        if zero_velocity:
-            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_base_links_quat(quat, self.base_link_idx, envs_idx, relative=relative)
 
     @gs.assert_built
@@ -2425,7 +2388,7 @@ class KinematicEntity(Entity):
         return tensor
 
     @gs.assert_built
-    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False):
+    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, skip_forward=False):
         """
         Set the entity's qpos.
 
@@ -2438,18 +2401,8 @@ class KinematicEntity(Entity):
             not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
-            sudden change in entity pose.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
-
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
-        if zero_velocity:
-            self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
 
     @gs.assert_built
@@ -2585,11 +2538,6 @@ class KinematicEntity(Entity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
-
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
 
@@ -2796,7 +2744,7 @@ class KinematicEntity(Entity):
     @property
     def gravity_compensation(self):
         """Apply a force to compensate gravity. A value of 1 will make a zero-gravity behavior. Default to 0"""
-        return self._material_for_loading.gravity_compensation
+        return self.material.gravity_compensation if isinstance(self.material, gs.materials.Rigid) else 0.0
 
     @property
     def link_start(self):
@@ -2939,6 +2887,9 @@ class RigidEntity(KinematicEntity):
     Inherits morphology, FK, IK, and DOF position get/set from KinematicEntity.
     Adds physics simulation methods: forces, velocities, contacts, etc.
     """
+
+    if TYPE_CHECKING:
+        material: gs.materials.Rigid
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- control & io ------------------------------------
@@ -3473,10 +3424,7 @@ class RigidEntity(KinematicEntity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if (
-            isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_type == "external_articulation"
-        ):
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
             gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
@@ -3528,10 +3476,7 @@ class RigidEntity(KinematicEntity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if (
-            isinstance(self.sim.coupler, IPCCoupler)
-            and self._material_for_loading.coupling_type == "external_articulation"
-        ):
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coupling_type == "external_articulation":
             gs.raise_exception("This method is not supported by `RigidMaterial.coupling_type='external_articulation'`.")
 
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
