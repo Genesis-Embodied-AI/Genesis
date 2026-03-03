@@ -176,8 +176,6 @@ class IPCCoupler(RBC):
         self._articulation_non_fixed_base_entities: list["RigidEntity"] = []  # entities with non-fixed base
         self.articulation_data: dict["RigidEntity", ArticulatedEntityData] = {}
 
-        uipc.Logger.set_level(uipc.Logger.Level.Info)
-
     # ============================================================
     # Section 1: Configuration API
     # ============================================================
