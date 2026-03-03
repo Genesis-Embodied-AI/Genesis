@@ -492,6 +492,9 @@ class Collider:
             self._solver._errno,
         )
         if self._collider_static_config.has_convex_convex:
+            narrowphase.func_reset_narrowphase_work_queues(
+                self._collider_state,
+            )
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,

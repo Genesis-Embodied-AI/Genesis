@@ -945,6 +945,17 @@ def func_convex_convex_contact(
                         n_con = n_con + 1
 
 
+@qd.kernel
+def func_reset_narrowphase_work_queues(
+    collider_state: array_class.ColliderState,
+):
+    for _i in range(1):
+        collider_state.narrowphase_work_queues.mpr_queue_size[0] = 0
+        collider_state.narrowphase_work_queues.gjk_queue_size[0] = 0
+        collider_state.narrowphase_work_queues.mpr_work_counter[0] = 0
+        collider_state.narrowphase_work_queues.gjk_work_counter[0] = 0
+
+
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,

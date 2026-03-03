@@ -525,6 +525,50 @@ def get_contact_island_state(solver, collider):
 
 
 @DATA_ORIENTED
+class StructNarrowphaseQueueEntry(metaclass=BASE_METACLASS):
+    i_b: V_ANNOTATION
+    i_ga: V_ANNOTATION
+    i_gb: V_ANNOTATION
+    i_pair: V_ANNOTATION
+    contact_pos_0: V_ANNOTATION
+    normal_0: V_ANNOTATION
+    penetration_0: V_ANNOTATION
+
+
+@DATA_ORIENTED
+class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
+    mpr_queue: StructNarrowphaseQueueEntry
+    gjk_queue: StructNarrowphaseQueueEntry
+    mpr_queue_size: V_ANNOTATION
+    gjk_queue_size: V_ANNOTATION
+    mpr_work_counter: V_ANNOTATION
+    gjk_work_counter: V_ANNOTATION
+
+
+def get_narrowphase_queue_entry(max_entries):
+    return StructNarrowphaseQueueEntry(
+        i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
+        i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
+        i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
+        i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
+        contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+    )
+
+
+def get_narrowphase_work_queues(max_entries):
+    return StructNarrowphaseWorkQueues(
+        mpr_queue=get_narrowphase_queue_entry(max_entries),
+        gjk_queue=get_narrowphase_queue_entry(max_entries),
+        mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
+        mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_work_counter=V(dtype=gs.qd_int, shape=(1,)),
+    )
+
+
+@DATA_ORIENTED
 class StructColliderState(metaclass=BASE_METACLASS):
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
@@ -549,6 +593,7 @@ class StructColliderState(metaclass=BASE_METACLASS):
     contact_cache: StructContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
+    narrowphase_work_queues: StructNarrowphaseWorkQueues
 
 
 def get_collider_state(
@@ -602,6 +647,7 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
+        narrowphase_work_queues=get_narrowphase_work_queues(max(max_collision_pairs_broad, 1)),
     )
 
 
