@@ -19,7 +19,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.misc import tensor_to_array, qd_to_numpy, geometric_mean, harmonic_mean
 
-from .conftest import TOL_SINGLE
+from .conftest import TOL_SINGLE, IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import assert_allclose, get_hf_dataset
 
 if TYPE_CHECKING:
@@ -100,7 +100,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     plane = scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
         ),
     )
     rigid_a = scene.add_entity(
@@ -109,7 +109,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.25,
             contact_resistance=9.0,
         ),
@@ -120,7 +120,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.64,
             contact_resistance=16.0,
         ),
@@ -131,7 +131,7 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.16,
             contact_resistance=None,
         ),
@@ -206,7 +206,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.25,
         ),
     )
@@ -219,7 +219,7 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coupling_type="ipc_only",
+                ipc_coup_type="ipc_only",
                 coup_friction=mu,
             ),
         )
@@ -272,7 +272,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
         ),
     )
 
@@ -284,7 +284,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coupling_type="ipc_only",
+                ipc_coup_type="ipc_only",
                 coup_friction=0.0,
                 contact_resistance=resistance,
             ),
@@ -317,7 +317,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_needs_coup():
-    """needs_coup=False takes precedence over coupling_type — entity excluded from IPC."""
+    """needs_coup=False takes precedence over ipc_coup_type — entity excluded from IPC."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
@@ -325,10 +325,10 @@ def test_needs_coup():
     scene.add_entity(gs.morphs.Plane())
     scene.add_entity(
         morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
-        material=gs.materials.Rigid(needs_coup=False, coupling_type="ipc_only"),
+        material=gs.materials.Rigid(needs_coup=False, ipc_coup_type="ipc_only"),
     )
     scene.build()
-    assert scene.sim.coupler._coupling_types == {}
+    assert scene.sim.coupler._ipc_coup_types == {}
     assert not scene.sim.coupler.has_any_rigid_coupling
 
 
@@ -352,8 +352,8 @@ def test_link_filter_strict():
             fixed=True,
         ),
         material=gs.materials.Rigid(
-            coupling_type="two_way_soft_constraint",
-            coupling_link_filter=("moving",),
+            ipc_coup_type="two_way_soft_constraint",
+            coup_links=("moving",),
         ),
     )
     assert isinstance(robot, RigidEntity)
@@ -365,23 +365,29 @@ def test_link_filter_strict():
     base_link = robot.get_link("base")
     moving_link = robot.get_link("moving")
 
-    assert robot in coupler._coupling_link_filters
-    assert coupler._coupling_link_filters[robot] == {moving_link}
+    assert robot in coupler._coup_links
+    assert coupler._coup_links[robot] == {moving_link}
 
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
     assert base_link.idx not in ipc_links_idx
 
-    assert moving_link in coupler._abd_link_to_slot
-    assert base_link not in coupler._abd_link_to_slot
+    assert moving_link in coupler._abd_slots_by_link
+    assert base_link not in coupler._abd_slots_by_link
+
+    # coup_links sets per-geom needs_coup: "moving" geoms → True, "base" geoms → False
+    for geom in robot.get_link("moving").geoms:
+        assert geom.needs_coup
+    for geom in robot.get_link("base").geoms:
+        assert not geom.needs_coup
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize("ipc_coup_type", ["two_way_soft_constraint", "external_articulation"])
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
 @pytest.mark.parametrize("fixed", [True, False])
-def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
+def test_single_joint(n_envs, ipc_coup_type, joint_type, fixed, show_viewer):
     from genesis.engine.entities import RigidEntity
 
     DT = 0.01
@@ -420,7 +426,7 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -432,7 +438,7 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
             fixed=fixed,
         ),
         material=gs.materials.Rigid(
-            coupling_type=coupling_type,
+            ipc_coup_type=ipc_coup_type,
         ),
     )
     assert isinstance(robot, RigidEntity)
@@ -449,12 +455,12 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
     moving_link = robot.get_link("moving")
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
-    assert moving_link in coupler._abd_link_to_slot
-    if coupling_type == "two_way_soft_constraint":
+    assert moving_link in coupler._abd_slots_by_link
+    if ipc_coup_type == "two_way_soft_constraint":
         assert moving_link in coupler._abd_data_by_link
-    elif coupling_type == "external_articulation":
-        art_data = coupler.articulation_data[robot]
-        assert len(art_data.articulation_slots_by_env) == max(scene.n_envs, 1)
+    elif ipc_coup_type == "external_articulation":
+        art_data = coupler._articulation_data_by_entity[robot]
+        assert len(art_data.articulation_slots) == max(scene.n_envs, 1)
         if fixed:
             assert not coupler._abd_data_by_link
 
@@ -481,7 +487,7 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
 
         scene.step()
 
-        if coupling_type == "two_way_soft_constraint" or not fixed:
+        if ipc_coup_type == "two_way_soft_constraint" or not fixed:
             for env_idx in envs_idx:
                 abd_data = coupler._abd_data_by_link[moving_link][env_idx]
                 gs_transform, ipc_transform = abd_data.aim_transform, abd_data.transform
@@ -523,6 +529,73 @@ def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("ipc_coup_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize("merge_fixed_links", [True, False])
+def test_find_target_links(ipc_coup_type, merge_fixed_links, show_viewer):
+    """Test that find_target_link_for_fixed_merge correctly groups ABD bodies."""
+    from genesis.engine.entities import RigidEntity
+    from genesis.engine.couplers.ipc_coupler.utils import find_target_link_for_fixed_merge
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.8)),
+        rigid_options=gs.options.RigidOptions(enable_collision=False),
+        coupler_options=gs.options.IPCCouplerOptions(
+            constraint_strength_translation=1,
+            constraint_strength_rotation=1,
+            enable_rigid_rigid_contact=False,
+            newton_tolerance=1e-2,
+            newton_translation_tolerance=1e-2,
+            two_way_coupling=True,
+        ),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(ipc_coup_type="ipc_only", coup_friction=0.5),
+    )
+
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/panda_bullet/panda_nohand.urdf",
+            pos=(0, 0, 1),
+            fixed=True,
+            merge_fixed_links=merge_fixed_links,
+        ),
+        material=gs.materials.Rigid(ipc_coup_type=ipc_coup_type),
+    )
+    assert isinstance(robot, RigidEntity)
+
+    scene.build()
+    assert scene.sim is not None
+    coupler = cast("IPCCoupler", scene.sim.coupler)
+
+    # panda_nohand has joint8 (fixed: link7 -> attachment).
+    # With merge_fixed_links=True, attachment is merged into link7.
+    # With merge_fixed_links=False, attachment stays separate but IPC should still group them.
+    link7 = robot.get_link("link7")
+    assert link7 in coupler._abd_slots_by_link
+
+    if not merge_fixed_links:
+        attachment = robot.get_link("attachment")
+        # attachment exists as separate link but shares ABD body with link7
+        target = find_target_link_for_fixed_merge(attachment)
+        assert target == link7
+        # attachment should NOT have its own ABD slot — it's merged into link7's ABD body
+        assert attachment not in coupler._abd_slots_by_link
+
+    if ipc_coup_type == "external_articulation":
+        art_data = coupler._articulation_data_by_entity[robot]
+        assert len(art_data.articulation_slots) == 1
+        # All 7 revolute joints should be present (fixed joint is skipped)
+        assert len(art_data.joints_child_link) == 7
+
+    # Verify simulation runs without error
+    for _ in range(5):
+        scene.step()
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("constraint_strength", [1, 100])
 def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
@@ -551,7 +624,7 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
 
     box = scene.add_entity(
         gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=POS),
-        material=gs.materials.Rigid(coupling_type="two_way_soft_constraint"),
+        material=gs.materials.Rigid(ipc_coup_type="two_way_soft_constraint"),
     )
     assert isinstance(box, RigidEntity)
 
@@ -631,7 +704,7 @@ def test_objects_freefall(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=500.0,
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -663,7 +736,7 @@ def test_objects_freefall(n_envs, show_viewer):
 
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert box.base_link_idx in ipc_links_idx
-    assert box.base_link in coupler._abd_link_to_slot
+    assert box.base_link in coupler._abd_slots_by_link
 
     # Verify that geometries are present in IPC for each environment
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
@@ -681,7 +754,7 @@ def test_objects_freefall(n_envs, show_viewer):
         for env_idx in envs_idx:
             assert len(find_ipc_geometries(scene, **obj_kwargs, env_idx=env_idx)) == 1
 
-    # Get initial state
+    # Get initial state.
     p_0 = {obj: get_ipc_positions(scene, **obj_kwargs, envs_idx=envs_idx) for obj, obj_kwargs in objs_kwargs.items()}
     v_0 = {obj: np.zeros_like(p_0[obj]) for obj in objs_kwargs.keys()}
 
@@ -714,19 +787,24 @@ def test_objects_freefall(n_envs, show_viewer):
             assert_allclose(p_i, expected_p, tol=TOL_SINGLE)
 
     for obj in objs_kwargs.keys():
-        # Validate centroid consistency
+        # Validate centroid consistency (IPC positions match Genesis state)
         assert isinstance(obj, (RigidEntity, FEMEntity))
         ipc_centroid = p_prev[obj].mean(axis=-2)
         gs_centroid = obj.get_state().pos.mean(axis=-2)
         assert_allclose(ipc_centroid, gs_centroid, atol=TOL_SINGLE)
 
-        # Validate centroidal total displacement: 0.5 * GRAVITY * t * (t + DT)
+        # Validate centroidal total displacement.
+        # Starting from rest, after N backward-Euler steps:
+        #   displacement = 0.5 * g * N * (N+1) * DT^2
         # FEM entities (cloth) deform during freefall, causing small centroid drift — use looser tolerance.
         p_delta = p_prev[obj] - p_0[obj]
         expected_displacement = 0.5 * GRAVITY * NUM_STEPS * (NUM_STEPS + 1) * DT**2
         assert_allclose(p_delta.mean(axis=-2), expected_displacement, tol=2e-3 if isinstance(obj, FEMEntity) else 1e-3)
 
-        # FIXME: This test does not pass for sphere entity...
+        # FIXME: Sphere's tetrahedral FEM mesh has non-uniform lumped mass and initial
+        # elastic strain from mesh discretization error. Internal elastic forces cause
+        # the arithmetic centroid to deviate from exact freefall (center of mass follows
+        # freefall, but mean(F_internal_i / m_i) != 0 with non-uniform mass).
         if obj is sphere:
             continue
 
@@ -762,7 +840,7 @@ def test_objects_colliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -795,7 +873,7 @@ def test_objects_colliding(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=500.0,
             coup_friction=0.3,
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -863,8 +941,8 @@ def test_objects_colliding(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
-def test_robot_grasp_fem(coupling_type, show_viewer):
+@pytest.mark.parametrize("ipc_coup_type", ["two_way_soft_constraint", "external_articulation"])
+def test_robot_grasp_fem(ipc_coup_type, show_viewer):
     """Verify FEM add/retrieve and that robot lift raises FEM more than 20cm."""
     from genesis.engine.entities import RigidEntity, FEMEntity
 
@@ -894,17 +972,17 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coupling_type="ipc_only",
+            ipc_coup_type="ipc_only",
             coup_friction=0.8,
         ),
     )
 
     material_kwargs: dict[str, Any] = dict(
         coup_friction=0.8,
-        coupling_type=coupling_type,
+        ipc_coup_type=ipc_coup_type,
     )
-    if coupling_type == "two_way_soft_constraint":
-        material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+    if ipc_coup_type == "two_way_soft_constraint":
+        material_kwargs["coup_links"] = ("left_finger", "right_finger")
 
     franka = scene.add_entity(
         gs.morphs.MJCF(
@@ -950,12 +1028,12 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert franka_finger_links_idx.issubset(ipc_links_idx)
     for link_idx in franka_finger_links:
-        assert link_idx in coupler._abd_link_to_slot
+        assert link_idx in coupler._abd_slots_by_link
 
     franka_links_idx = {link.idx for link in franka.links}
     franka_ipc_links_idx = franka_links_idx.intersection(ipc_links_idx)
-    if coupling_type == "two_way_soft_constraint":
-        assert coupler._coupling_link_filters.get(franka) == franka_finger_links
+    if ipc_coup_type == "two_way_soft_constraint":
+        assert coupler._coup_links.get(franka) == franka_finger_links
         assert franka_ipc_links_idx == franka_finger_links_idx
     else:
         assert franka_finger_links_idx.issubset(franka_ipc_links_idx)
@@ -975,10 +1053,10 @@ def test_robot_grasp_fem(coupling_type, show_viewer):
     # Setting initial configuration is not supported by coupling mode "external_articulation"
     # qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos = [-0.9482, 0.6910, 1.2114, -1.6619, -0.6739, 1.8685, 1.1844, 0.0112, 0.0096]
-    with pytest.raises(gs.GenesisException) if coupling_type == "external_articulation" else nullcontext():
+    with pytest.raises(gs.GenesisException) if ipc_coup_type == "external_articulation" else nullcontext():
         franka.set_dofs_position(qpos)
         franka.control_dofs_position(qpos)
-    if coupling_type == "external_articulation":
+    if ipc_coup_type == "external_articulation":
         run_stage(qpos, finger_pos=0.04, duration=2.0)
 
     # Lower the grapper half way to grasping position
@@ -1056,7 +1134,7 @@ def test_momentum_conservation(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=1000,
-            coupling_type="two_way_soft_constraint",
+            ipc_coup_type="two_way_soft_constraint",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),
@@ -1076,7 +1154,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     rigid_link = rigid_cube.base_link
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert rigid_link.idx in ipc_links_idx
-    assert rigid_link in coupler._abd_link_to_slot
+    assert rigid_link in coupler._abd_slots_by_link
 
     cube_mass = rigid_cube.get_mass()
 
@@ -1145,9 +1223,9 @@ def test_momentum_conservation(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("enable_rigid_ground_contact", [True, False])
-@pytest.mark.parametrize("coupling_type", ["ipc_only", "two_way_soft_constraint"])
-def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_contact):
-    """Verify collision pair delegation between IPC and rigid solver based on coupling_type and ground contact."""
+@pytest.mark.parametrize("ipc_coup_type", ["ipc_only", "two_way_soft_constraint"])
+def test_collision_delegation_ipc_vs_rigid(ipc_coup_type, enable_rigid_ground_contact):
+    """Verify collision pair delegation between IPC and rigid solver based on ipc_coup_type and ground contact."""
     from genesis.engine.entities import RigidEntity
 
     scene = gs.Scene(
@@ -1160,7 +1238,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_co
         show_viewer=False,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())  # No coupling_type: stays in rigid solver only
+    plane = scene.add_entity(gs.morphs.Plane())  # No ipc_coup_type: stays in rigid solver only
     assert isinstance(plane, RigidEntity)
 
     # Non-IPC box — always handled by rigid solver
@@ -1173,21 +1251,19 @@ def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_co
     )
     assert isinstance(box, RigidEntity)
 
-    if coupling_type == "two_way_soft_constraint":
+    if ipc_coup_type == "two_way_soft_constraint":
         entity = scene.add_entity(
             gs.morphs.MJCF(
                 file="xml/franka_emika_panda/panda_non_overlap.xml",
             ),
             material=gs.materials.Rigid(
-                coupling_type="two_way_soft_constraint",
-                coupling_link_filter=("left_finger", "right_finger"),
+                ipc_coup_type="two_way_soft_constraint",
+                coup_links=("left_finger", "right_finger"),
             ),
         )
         assert isinstance(entity, RigidEntity)
 
-        ipc_excluded_geoms = {
-            geom.idx for name in entity.material.coupling_link_filter for geom in entity.get_link(name).geoms
-        }
+        ipc_excluded_geoms = {geom.idx for name in entity.material.coup_links for geom in entity.get_link(name).geoms}
     else:
         with pytest.raises(gs.GenesisException):
             entity = scene.add_entity(
@@ -1196,7 +1272,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_co
                     pos=(0.0, 0.0, 1.0),
                 ),
                 material=gs.materials.Rigid(
-                    coupling_type="ipc_only",
+                    ipc_coup_type="ipc_only",
                 ),
             )
 
@@ -1206,7 +1282,7 @@ def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_co
                 pos=(0.0, 0.0, 0.6),
             ),
             material=gs.materials.Rigid(
-                coupling_type="ipc_only",
+                ipc_coup_type="ipc_only",
             ),
         )
         assert isinstance(entity, RigidEntity)
@@ -1233,22 +1309,81 @@ def test_collision_delegation_ipc_vs_rigid(coupling_type, enable_rigid_ground_co
             if i_ga < i_gb:
                 assert pair_idx[i_ga, i_gb] == -1
 
-    # Mixed pairs (IPC-excluded ↔ non-IPC) must be kept in rigid solver
-    for i_ga in ipc_excluded_geoms:
-        for i_gb in box_geoms:
-            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-            assert pair_idx[a, b] >= 0
-
-    # IPC-excluded geom ↔ ground must be kept in rigid solver (ground is not IPC-excluded)
-    for i_ga in ipc_excluded_geoms:
-        for i_gb in ground_geoms:
-            a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-            assert pair_idx[a, b] >= 0
+    if ipc_coup_type == "ipc_only":
+        # ipc_only links are fully pose-controlled by IPC — ALL pairs involving them are skipped
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in box_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] == -1
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in ground_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] == -1
+    else:
+        # two_way_soft_constraint: mixed pairs (IPC ↔ non-IPC) kept in rigid solver
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in box_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] >= 0
+        # IPC-excluded geom ↔ ground kept in rigid solver
+        for i_ga in ipc_excluded_geoms:
+            for i_gb in ground_geoms:
+                a, b = min(i_ga, i_gb), max(i_ga, i_gb)
+                assert pair_idx[a, b] >= 0
 
     # Non-excluded rigid geoms (if any) keep rigid solver ground and self-collision pairs
     if rigid_kept_geoms:
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
         assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
+
+
+def test_ipc_collision_links():
+    """ipc_collision_links whitelists IPC collision; enable_ipc_collision=False disables all."""
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(file="xml/franka_emika_panda/panda_non_overlap.xml"),
+        material=gs.materials.Rigid(
+            ipc_coup_type="two_way_soft_constraint",
+            coup_links=("left_finger", "right_finger"),
+            ipc_collision_links=("left_finger",),
+        ),
+    )
+    scene.build()
+
+    coupler = scene.sim.coupler
+    settings = coupler._coupling_collision_settings.get(franka, {})
+
+    # right_finger excluded (not in ipc_collision_links), left_finger kept
+    assert franka.get_link("right_finger") in settings
+    assert franka.get_link("left_finger") not in settings
+
+    # enable_ipc_collision=False + ipc_collision_links raises
+    with pytest.raises(gs.GenesisException):
+        gs.materials.Rigid(enable_ipc_collision=False, ipc_collision_links=("x",))
+
+
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="No display or EGL available")
+def test_show_ipc_gui():
+    """Verify IPC GUI initializes and updates without error when show_ipc_gui=True."""
+    scene = gs.Scene(
+        coupler_options=gs.options.IPCCouplerOptions(show_ipc_gui=True),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
+        material=gs.materials.Rigid(ipc_coup_type="ipc_only"),
+    )
+    scene.build()
+    assert scene.sim.coupler._ipc_gui is not None
+
+    # Step a few times to exercise the gui update path
+    for _ in range(3):
+        scene.step()
 
 
 @pytest.mark.required
@@ -1312,7 +1447,7 @@ def test_cloth_corner_drag(n_envs, show_viewer):
                 pos=(-BOX_SIZE, z_sign * (0.5 * BOX_SIZE + GAP), -BOX_SIZE),
             ),
             material=gs.materials.Rigid(
-                coupling_type="two_way_soft_constraint",
+                ipc_coup_type="two_way_soft_constraint",
                 coup_friction=0.8,
             ),
             surface=gs.surfaces.Plastic(
@@ -1423,7 +1558,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                     ),
                 ),
                 material=gs.materials.Rigid(
-                    coupling_type="two_way_soft_constraint",
+                    ipc_coup_type="two_way_soft_constraint",
                     coup_friction=0.8,
                 ),
                 surface=gs.surfaces.Plastic(

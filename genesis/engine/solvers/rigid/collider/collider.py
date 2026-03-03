@@ -233,12 +233,17 @@ class Collider:
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_links = set()
+        ipc_only_links = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
             for entity in self._solver._entities:
-                mode = entity.material.coupling_type
+                if not entity.material.needs_coup:
+                    continue
+                mode = entity.material.ipc_coup_type
                 if mode is None:
                     continue
-                link_filter_names = entity.material.coupling_link_filter
+                if mode == "ipc_only":
+                    ipc_only_links.update(entity.links)
+                link_filter_names = entity.material.coup_links
                 if mode == "two_way_soft_constraint" and link_filter_names is not None:
                     for name in link_filter_names:
                         ipc_delegated_links.add(entity.get_link(name=name))
@@ -279,6 +284,10 @@ class Collider:
 
                 # geoms in the same link
                 if link_a is link_b:
+                    continue
+
+                # Skip all pairs involving ipc_only links (IPC fully controls their pose)
+                if link_a in ipc_only_links or link_b in ipc_only_links:
                     continue
 
                 # Skip pairs where both links are delegated to IPC
