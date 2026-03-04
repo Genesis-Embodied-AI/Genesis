@@ -1117,6 +1117,10 @@ def func_kernel2_mpr_multicontact(
     )
 
     n_con = gs.qd_int(1)
+    local_contact_pos = qd.Matrix.zero(gs.qd_float, 5, 3)
+    local_contact_pos[0, 0] = contact_pos_0[0]
+    local_contact_pos[0, 1] = contact_pos_0[1]
+    local_contact_pos[0, 2] = contact_pos_0[2]
 
     for i_detection in range(4):
         i_det = i_detection + 1
@@ -1174,9 +1178,8 @@ def func_kernel2_mpr_multicontact(
             repeated = False
             for i_c in range(n_con):
                 if not repeated:
-                    idx_prev = collider_state.n_contacts[i_b_env] - 1 - i_c
-                    prev_contact = collider_state.contact_data.pos[idx_prev, i_b_env]
-                    if (contact_pos - prev_contact).norm() < tolerance:
+                    prev = qd.Vector([local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]], dt=gs.qd_float)
+                    if (contact_pos - prev).norm() < tolerance:
                         repeated = True
 
             if not repeated:
@@ -1186,6 +1189,9 @@ def func_kernel2_mpr_multicontact(
                         i_ga, i_gb, normal, contact_pos, penetration,
                         i_b_env, geoms_state, geoms_info, collider_state, collider_info, errno,
                     )
+                    local_contact_pos[n_con, 0] = contact_pos[0]
+                    local_contact_pos[n_con, 1] = contact_pos[1]
+                    local_contact_pos[n_con, 2] = contact_pos[2]
                     n_con = n_con + 1
 
 
@@ -1257,6 +1263,7 @@ def func_kernel2_gjk_full(
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
 
     n_con = gs.qd_int(0)
+    local_contact_pos = qd.Matrix.zero(gs.qd_float, 5, 3)
     axis_0 = qd.Vector.zero(gs.qd_float, 3)
     axis_1 = qd.Vector.zero(gs.qd_float, 3)
     qrot = qd.Vector.zero(gs.qd_float, 4)
@@ -1304,6 +1311,9 @@ def func_kernel2_gjk_full(
                     i_ga, i_gb, normal_0, contact_pos_0, penetration_0,
                     i_b_env, geoms_state, geoms_info, collider_state, collider_info, errno,
                 )
+                local_contact_pos[0, 0] = contact_pos_0[0]
+                local_contact_pos[0, 1] = contact_pos_0[1]
+                local_contact_pos[0, 2] = contact_pos_0[2]
                 if multi_contact:
                     axis_0, axis_1 = func_contact_orthogonals(
                         i_ga, i_gb, normal, i_b_env,
@@ -1350,9 +1360,8 @@ def func_kernel2_gjk_full(
             repeated = False
             for i_c in range(n_con):
                 if not repeated:
-                    idx_prev = collider_state.n_contacts[i_b_env] - 1 - i_c
-                    prev_contact = collider_state.contact_data.pos[idx_prev, i_b_env]
-                    if (contact_pos - prev_contact).norm() < tolerance:
+                    prev = qd.Vector([local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]], dt=gs.qd_float)
+                    if (contact_pos - prev).norm() < tolerance:
                         repeated = True
 
             if not repeated:
@@ -1362,6 +1371,9 @@ def func_kernel2_gjk_full(
                         i_ga, i_gb, normal, contact_pos, penetration,
                         i_b_env, geoms_state, geoms_info, collider_state, collider_info, errno,
                     )
+                    local_contact_pos[n_con, 0] = contact_pos[0]
+                    local_contact_pos[n_con, 1] = contact_pos[1]
+                    local_contact_pos[n_con, 2] = contact_pos[2]
                     n_con = n_con + 1
 
 
