@@ -34,7 +34,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--coupling_type",
+        "--coup_type",
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
@@ -72,10 +72,10 @@ def main():
 
     # Add Franka robot
     franka_material_kwargs = dict(
-        coupling_type=args.coupling_type,
+        coup_type=args.coup_type,
     )
-    if args.coupling_type == "two_way_soft_constraint":
-        franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+    if args.coup_type == "two_way_soft_constraint":
+        franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")
     franka = scene.add_entity(
         gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda_non_overlap.xml",
@@ -149,7 +149,7 @@ def main():
                 material=gs.materials.Rigid(
                     rho=500,
                     coup_friction=0.5,
-                    coupling_type="ipc_only",
+                    coup_type="ipc_only",
                 ),
                 surface=gs.surfaces.Plastic(
                     color=(0.8, 0.3, 0.2, 0.8),
@@ -171,7 +171,7 @@ def main():
     franka.set_dofs_kv(50.0, dofs_idx_local=finger_dofs_idx)
 
     # Setting initial configuration is not supported by coupling mode "external_articulation"
-    if args.coupling_type != "external_articulation":
+    if args.coup_type != "external_articulation":
         # qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         qpos = (2.2116, -1.5328, -0.7347, -1.7235, -1.3377, 0.7519, -1.4410, 0.04, 0.04)
         franka.set_qpos(qpos)
