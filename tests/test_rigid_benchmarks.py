@@ -852,18 +852,18 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     ]
 
     hand_configs = [
-        {
-            "pos": (0.19227, -0.00058, 1.31227),
-            "quat": (-0.45215, -0.31265, 0.76087, 0.34480),
-            "dofs": LEFT_DOFS,
-            "urdf": "shadow_hand_left_woarm.urdf",
-        },
-        {
-            "pos": (0.16257, 0.24658, 1.28047),
-            "quat": (0.74525, 0.46466, -0.45186, -0.15660),
-            "dofs": RIGHT_DOFS,
-            "urdf": "shadow_hand_right_woarm.urdf",
-        },
+        dict(
+            pos=(0.19227, -0.00058, 1.31227),
+            quat=(-0.45215, -0.31265, 0.76087, 0.34480),
+            dofs=LEFT_DOFS,
+            urdf="shadow_hand_left_woarm.urdf",
+        ),
+        dict(
+            pos=(0.16257, 0.24658, 1.28047),
+            quat=(0.74525, 0.46466, -0.45186, -0.15660),
+            dofs=RIGHT_DOFS,
+            urdf="shadow_hand_right_woarm.urdf",
+        ),
     ]
 
     coacd_opts = gs.options.misc.CoacdOptions(
