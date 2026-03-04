@@ -765,40 +765,14 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
 @pytest.fixture
 def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     """Two shadow hands manipulating a drill on a table."""
-    import pickle
-
     import quadrants as qd
-    from scipy.spatial.transform import Rotation as R
 
-    asset_path = Path(get_hf_dataset(pattern="dex_hand/**")) / "dex_hand"
+    shadow_hand_path = Path(get_hf_dataset(pattern="shadow_hand/*"))
+    dex_path = Path(get_hf_dataset(pattern="dex/*"))
 
     duration_warmup = 20.0
     duration_record = 5.0
     step_dt = 1 / 16
-
-    LOCAL_FRAME_CORRECTION_L = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=np.float32)
-    LOCAL_FRAME_CORRECTION_R = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]], dtype=np.float32)
-
-    def load_hand_pose(trajectory_path, is_right):
-        with open(trajectory_path, "rb") as f:
-            data = pickle.load(f)
-        hand_traj = data["hand_trajectory"]
-        wrist_pos = list(map(float, hand_traj["wrist_positions"][0]))
-        wrist_rot_aa = hand_traj["wrist_rotations_aa"][0]
-        dof_positions = hand_traj["dof_positions"][0]
-        angle = np.linalg.norm(wrist_rot_aa)
-        R_world = R.from_rotvec(wrist_rot_aa).as_matrix() if angle > 1e-6 else np.eye(3)
-        R_corrected = R_world @ (LOCAL_FRAME_CORRECTION_R if is_right else LOCAL_FRAME_CORRECTION_L)
-        quat_wxyz = list(map(float, R.from_matrix(R_corrected).as_quat(scalar_first=True)))
-        return wrist_pos, quat_wxyz, dof_positions
-
-    left_pos, left_quat, left_dofs = load_hand_pose(asset_path / "shadow_hand_trajectory_retargeted_left_scaled_0.6.pkl", False)
-    left_pos[0] -= 0.2; left_pos[1] += 0.1; left_pos[2] += 0.3
-    extra_rot = R.from_euler("x", -90, degrees=True)
-    left_quat = list(map(float, (extra_rot * R.from_quat(left_quat, scalar_first=True)).as_quat(scalar_first=True)))
-
-    right_pos, right_quat, right_dofs = load_hand_pose(asset_path / "shadow_hand_trajectory_retargeted_right_scaled_0.6.pkl", True)
-    right_pos[0] -= 0.1; right_pos[1] += 0.1; right_pos[2] += 0.3
 
     JOINT_NAMES = [
         "FFJ4", "FFJ3", "FFJ2", "FFJ1",
@@ -806,6 +780,31 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         "RFJ4", "RFJ3", "RFJ2", "RFJ1",
         "LFJ5", "LFJ4", "LFJ3", "LFJ2", "LFJ1",
         "THJ5", "THJ4", "THJ3", "THJ2", "THJ1",
+    ]
+    LEFT_DOFS = [
+        0.34907, 0.24929, 0.54424, 0.65614, 0.21329, 0.08060, 0.19969, 0.66944,
+        1.57080, 0.21846, 0.53605, 0.44963, 0.38350, 0.02379, 0.41705, 0.54773,
+        0.61160, 0.36664, 0.44036, 0.20944, 0.34497, 0.15896,
+    ]
+    RIGHT_DOFS = [
+        0.34907, 0.23328, 0.57399, 0.70467, 0.00000, 0.34907, 0.51778, 0.65078,
+        1.48947, 0.33727, 0.55919, 0.56268, 0.54360, -0.08460, 0.48588, 0.66095,
+        0.73317, 0.13239, 0.45613, 0.20944, 0.19625, 0.00750,
+    ]
+
+    hand_configs = [
+        {
+            "pos": (0.19227, -0.00058, 1.31227),
+            "quat": (-0.45215, -0.31265, 0.76087, 0.34480),
+            "dofs": LEFT_DOFS,
+            "urdf": "shadow_hand_left_woarm.urdf",
+        },
+        {
+            "pos": (0.16257, 0.24658, 1.28047),
+            "quat": (0.74525, 0.46466, -0.45186, -0.15660),
+            "dofs": RIGHT_DOFS,
+            "urdf": "shadow_hand_right_woarm.urdf",
+        },
     ]
 
     coacd_opts = gs.options.misc.CoacdOptions(
@@ -829,21 +828,19 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     )
 
     hands = []
-    for pos, quat, dofs, urdf in [
-        (left_pos, left_quat, left_dofs, "shadow_hand_left_woarm.urdf"),
-        (right_pos, right_quat, right_dofs, "shadow_hand_right_woarm.urdf"),
-    ]:
+    for cfg in hand_configs:
         hand = scene.add_entity(gs.morphs.URDF(
-            file=str(asset_path / "shadow_hand" / urdf), pos=pos, quat=quat, fixed=False,
+            file=str(shadow_hand_path / "shadow_hand" / cfg["urdf"]),
+            pos=cfg["pos"], quat=cfg["quat"], fixed=False,
         ))
-        hands.append((hand, {name: float(dofs[i]) for i, name in enumerate(JOINT_NAMES)}))
+        hands.append((hand, {name: cfg["dofs"][i] for i, name in enumerate(JOINT_NAMES)}))
 
     scene.add_entity(gs.morphs.Mesh(
-        file=str(asset_path / "dex" / "table.glb"),
+        file=str(dex_path / "dex" / "table.glb"),
         pos=(0.1, 0.0, 0.485403), euler=(0, 0, 90), fixed=True, coacd_options=coacd_opts,
     ))
     drill = scene.add_entity(gs.morphs.Mesh(
-        file=str(asset_path / "dex" / "drill_1.glb"),
+        file=str(dex_path / "dex" / "drill_1.glb"),
         pos=(0.15, 0.1, 0.87), euler=(90, 0, 225), fixed=False, coacd_options=coacd_opts,
     ))
 
