@@ -293,19 +293,6 @@ class IPCCoupler(RBC):
         """Add FEM entities to the existing IPC scene (includes both volumetric FEM and cloth)"""
 
         # Create constitutions based on entity types present
-        entities = cast(list["FEMEntity"], self.fem_solver.entities)
-        has_cloth = any(isinstance(e.material, Cloth) for e in entities)
-        has_volumetric = any(not isinstance(e.material, Cloth) for e in entities)
-
-        if has_volumetric:
-            self._ipc_stk = StableNeoHookean()
-            self._ipc_constitution_tabular.insert(self._ipc_stk)
-        if has_cloth:
-            self._ipc_nks = StrainLimitingBaraffWitkinShell()
-            self._ipc_constitution_tabular.insert(self._ipc_nks)
-            self._ipc_dsb = DiscreteShellBending()
-            self._ipc_constitution_tabular.insert(self._ipc_dsb)
-
         entity: "FEMEntity"
         for env_idx in range(self.sim._B):
             for i_e, entity in enumerate(cast(list["FEMEntity"], self.fem_solver.entities)):
@@ -342,13 +329,29 @@ class IPCCoupler(RBC):
 
                 # Apply material constitution based on type
                 if is_cloth:
+                    if self._ipc_nks is None:
+                        self._ipc_nks = StrainLimitingBaraffWitkinShell()
+                        self._ipc_constitution_tabular.insert(self._ipc_nks)
+
+                    # Apply shell material for cloth
                     moduli = ElasticModuli2D.youngs_poisson(entity.material.E, entity.material.nu)
                     self._ipc_nks.apply_to(
                         mesh, moduli=moduli, mass_density=entity.material.rho, thickness=entity.material.thickness
                     )
+
+                    # Apply bending stiffness if specified
                     if entity.material.bending_stiffness is not None:
+                        if self._ipc_dsb is None:
+                            self._ipc_dsb = DiscreteShellBending()
+                            self._ipc_constitution_tabular.insert(self._ipc_dsb)
+
                         self._ipc_dsb.apply_to(mesh, bending_stiffness=entity.material.bending_stiffness)
                 else:
+                    if self._ipc_stk is None:
+                        self._ipc_stk = StableNeoHookean()
+                        self._ipc_constitution_tabular.insert(self._ipc_stk)
+
+                    # Apply volumetric material for FEM
                     moduli = ElasticModuli.youngs_poisson(entity.material.E, entity.material.nu)
                     self._ipc_stk.apply_to(mesh, moduli, mass_density=entity.material.rho)
 
@@ -366,19 +369,6 @@ class IPCCoupler(RBC):
         assert gs.logger is not None
 
         gs.logger.debug(f"Registered entity coupling types: {set(self._coup_type_by_entity.values())}")
-
-        # Create constitutions based on coupling types present
-        coup_types_present = set(self._coup_type_by_entity.values())
-        if coup_types_present:
-            self._ipc_abd = AffineBodyConstitution()
-            self._ipc_constitution_tabular.insert(self._ipc_abd)
-
-        has_soft_constraint = COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT in coup_types_present or (
-            COUPLING_TYPE.EXTERNAL_ARTICULATION in coup_types_present and not self.options.free_base_driven_by_ipc
-        )
-        if has_soft_constraint:
-            self._ipc_stc = SoftTransformConstraint()
-            self._ipc_constitution_tabular.insert(self._ipc_stc)
 
         # ========== Pre-compute link groups (env-independent) ==========
         # Group links by fixed-joint merge target, matching mjcf.py behavior where geoms from fixed-joint children are
@@ -470,9 +460,9 @@ class IPCCoupler(RBC):
                 rigid_link_geom = meshes[0] if len(meshes) == 1 else uipc.geometry.merge(meshes)
                 uipc.geometry.label_surface(rigid_link_geom)
 
-                trans_T = gu.trans_quat_to_T(links_pos[env_idx, target_link.idx], links_quat[env_idx, target_link.idx])
+                link_T = gu.trans_quat_to_T(links_pos[env_idx, target_link.idx], links_quat[env_idx, target_link.idx])
                 trans_view = uipc.view(rigid_link_geom.transforms())
-                trans_view[0] = trans_T
+                trans_view[0] = link_T
 
                 # ---- Determine coupling behavior ----
                 is_ipc_only = entity_coup_type == COUPLING_TYPE.IPC_ONLY
@@ -501,12 +491,21 @@ class IPCCoupler(RBC):
                 else:
                     self._ipc_no_collision_contact.apply_to(rigid_link_geom)
 
+                # Apply ABD constitution
+                if self._ipc_abd is None:
+                    self._ipc_abd = AffineBodyConstitution()
+                    self._ipc_constitution_tabular.insert(self._ipc_abd)
+
                 self._ipc_abd.apply_to(
                     rigid_link_geom, kappa=ABD_KAPPA * uipc.unit.MPa, mass_density=entity.material.rho
                 )
 
                 # Apply SoftTransformConstraint and animator for coupled links
                 if is_soft_constraint_target:
+                    if self._ipc_stc is None:
+                        self._ipc_stc = SoftTransformConstraint()
+                        self._ipc_constitution_tabular.insert(self._ipc_stc)
+
                     constraint_strength = np.array(
                         [
                             self.options.constraint_strength_translation,
@@ -530,7 +529,7 @@ class IPCCoupler(RBC):
                 # For external_articulation, store reference DOF for articulation constraint sync
                 if entity_coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION and self.options.enable_rigid_dofs_sync:
                     ref_dof_prev_attr = rigid_link_geom.instances().create("ref_dof_prev", uipc.Vector12.Zero())
-                    uipc.view(ref_dof_prev_attr)[:] = uipc.geometry.affine_body.transform_to_q(trans_T)
+                    uipc.view(ref_dof_prev_attr)[:] = uipc.geometry.affine_body.transform_to_q(link_T)
 
                 # set metadata attributes
                 meta_attrs = rigid_link_geom.meta()
@@ -702,22 +701,9 @@ class IPCCoupler(RBC):
         assert gs.logger is not None
         assert self._ipc_world is not None
         self._ipc_world.init(self._ipc_scene)
-        self._ipc_world.dump()  # Checkpoint frame 0 so that recover(0) works in reset().
+        # Checkpoint frame 0 so that recover(0) works in reset().
+        self._ipc_world.dump()
         gs.logger.info("IPC world initialized successfully")
-
-    def _init_ipc_gui(self):
-        """Initialize polyscope-based IPC GUI viewer."""
-        try:
-            if not ps.is_initialized():
-                # Use EGL on Linux to match Genesis offscreen renderer and avoid context conflicts.
-                ps.init("openGL3_egl" if sys.platform == "linux" else "")
-            self._ipc_gui = SceneGUI(self._ipc_scene, "split")
-            self._ipc_gui.register()  # also sets up_dir and ground_plane_height from scene
-            ps.show(forFrames=1)
-            gs.logger.info("IPC GUI initialized successfully")
-        except Exception as e:
-            gs.logger.warning(f"IPC GUI unavailable: {e}. Continuing without IPC GUI.")
-            self._ipc_gui = None
 
     def _init_accessors(self):
         assert gs.logger is not None
@@ -766,10 +752,27 @@ class IPCCoupler(RBC):
 
         # Pre-allocate coupling data
         coupling_links = list(self._abd_data_by_link.keys())
-        abd_body_offset = {link: i for i, link in enumerate(abd_links)}
-        self._coupling_data = IPCCouplingData(coupling_links, abd_body_offset, self.sim._B)
+        abd_body_idx_by_link = {
+            link: [env_idx * n_abd_links + abd_links.index(link) for env_idx in range(self.sim._B)]
+            for link in coupling_links
+        }
+        self._coupling_data = IPCCouplingData(coupling_links, abd_body_idx_by_link, self.sim._B)
 
         gs.logger.debug(f"IPC coupling data created: {len(coupling_links)} links.")
+
+    def _init_ipc_gui(self):
+        """Initialize polyscope-based IPC GUI viewer."""
+        try:
+            if not ps.is_initialized():
+                # Use EGL on Linux to match Genesis offscreen renderer and avoid context conflicts.
+                ps.init("openGL3_egl" if sys.platform == "linux" else "")
+            self._ipc_gui = SceneGUI(self._ipc_scene, "split")
+            self._ipc_gui.register()  # also sets up_dir and ground_plane_height from scene
+            ps.show(forFrames=1)
+            gs.logger.info("IPC GUI initialized successfully")
+        except Exception as e:
+            gs.logger.warning(f"IPC GUI unavailable: {e}. Continuing without IPC GUI.")
+            self._ipc_gui = None
 
     # ============================================================
     # Section 2: Core implementation
@@ -1064,17 +1067,12 @@ class IPCCoupler(RBC):
         velocities = vel_attr.view()  # Shape: (num_bodies, 4, 4)
 
         assert self._coupling_data is not None
-        n_abd_links = len(self._abd_slots_by_link)
         for i_link, link in enumerate(self._coupling_data.links):
-            link_offset = self._coupling_data.abd_body_offset[link]
-            for env_idx in range(self.sim._B):
-                abd_body_idx = env_idx * n_abd_links + link_offset
-                transform_matrix = transforms[abd_body_idx]
-
-                self._abd_data_by_link[link][env_idx].transform[:] = transform_matrix
+            for env_idx, abd_body_idx in enumerate(self._coupling_data.abd_body_idx_by_link[link]):
+                self._abd_data_by_link[link][env_idx].transform[:] = transforms[abd_body_idx]
                 self._abd_data_by_link[link][env_idx].velocity[:] = velocities[abd_body_idx]
 
-                self._coupling_data.ipc_transforms[env_idx, i_link] = transform_matrix
+                self._coupling_data.ipc_transforms[env_idx, i_link] = transforms[abd_body_idx]
                 self._coupling_data.aim_transforms[env_idx, i_link] = self._abd_transforms_by_link[link][env_idx]
 
     def _store_gs_rigid_states(self):

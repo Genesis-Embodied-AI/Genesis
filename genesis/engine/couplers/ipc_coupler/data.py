@@ -56,15 +56,16 @@ class IPCCouplingData:
     def __init__(
         self,
         links: list["RigidLink"],
-        abd_body_offset: dict["RigidLink", int],
+        abd_body_idx_by_link: dict["RigidLink", list[int]],
         n_envs: int,
     ):
         n_links = len(links)
+        assert set(abd_body_idx_by_link.keys()) == set(links)
 
         self.links = links
-        self.abd_body_offset = abd_body_offset
+        self.abd_body_idx_by_link = abd_body_idx_by_link
         self.links_idx = [link.idx for link in links]
-        self.idx_by_link = {link: i for i, link in enumerate(links)}
+        self.link_to_idx_local = {link: i for i, link in enumerate(links)}
         self.links_mass = np.array([link.inertial_mass for link in links], dtype=gs.np_float)
         if links:
             self.links_inertia_i = np.stack([link.inertial_i for link in links], axis=0, dtype=gs.np_float)
