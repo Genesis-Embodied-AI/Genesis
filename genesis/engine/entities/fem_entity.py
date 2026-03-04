@@ -890,10 +890,15 @@ class FEMEntity(Entity):
             envs_idx : array_like, optional
                 List of environment indices to apply the constraints to. If None, applies to all environments.
         """
+        from genesis.engine.couplers import IPCCoupler
+
         if self._solver._use_implicit_solver and not self._solver._enable_vertex_constraints:
             gs.raise_exception(
                 "This feature is disabled. Please set 'enable_vertex_constraints=True' when using FEM implicit solver."
             )
+
+        if isinstance(self.sim.coupler, IPCCoupler):
+            gs.raise_exception("This method is only supported by IPC coupler.")
 
         if not self._solver._constraints_initialized:
             self._solver.init_constraints()

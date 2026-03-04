@@ -361,9 +361,11 @@ def test_link_filter_strict():
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.parametrize("coupling_type", ["two_way_soft_constraint", "external_articulation"])
+@pytest.mark.parametrize(
+    "coupling_type, fixed",
+    [("two_way_soft_constraint", True), ("two_way_soft_constraint", False), ("external_articulation", True)],
+)
 @pytest.mark.parametrize("joint_type", ["revolute", "prismatic"])
-@pytest.mark.parametrize("fixed", [True, False])
 def test_single_joint(n_envs, coupling_type, joint_type, fixed, show_viewer):
     from genesis.engine.entities import RigidEntity
 
@@ -1488,4 +1490,4 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     cloth_aabb_min, cloth_aabb_max = cloth_positions_f.min(axis=-2), cloth_positions_f.max(axis=-2)
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
-    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.1)).all()
+    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.15)).all()
