@@ -932,7 +932,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     drill_stiffness = 20
 
     for hand, default_dof in hands:
-        kp = torch.tensor([wrist_stiffness] * 6 + [40.0] * (hand.n_dofs - 6), dtype=torch.float32, device=gs.device)
+        kp = [wrist_stiffness] * 6 + [40.0] * (hand.n_dofs - 6)
         hand.set_dofs_kp(kp)
         hand.set_dofs_kv(2.0 * np.sqrt(kp))
         hand.set_dofs_position(
@@ -948,7 +948,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     }
     base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand, _ in hands}
 
-    drill_xy_kp = torch.tensor([drill_stiffness, drill_stiffness], dtype=torch.float32, device=gs.device)
+    drill_xy_kp = [drill_stiffness, drill_stiffness]
     drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
     drill.set_dofs_kv(2.0 * np.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
     drill_xy_target = drill.get_dofs_position()[:, :2]
