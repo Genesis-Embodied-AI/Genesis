@@ -235,6 +235,7 @@ class Collider:
         # Kernel 2 config (mpr_state only; gjk_state created in __init__ after self._gjk is available)
         self._kernel2_n_gjk_threads = 4000
         self._kernel2_n_total_threads = 40000
+        self._kernel2_max_items_per_thread = 128
         self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
 
     def _compute_collision_pair_idx(self):
@@ -557,6 +558,7 @@ class Collider:
                 self._solver._errno,
                 self._kernel2_n_gjk_threads,
                 self._kernel2_n_total_threads,
+                self._kernel2_max_items_per_thread,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(

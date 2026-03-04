@@ -1397,13 +1397,13 @@ def func_narrowphase_kernel2_mixed(
     errno: array_class.V_ANNOTATION,
     n_gjk_threads: qd.template(),
     n_total_threads: qd.template(),
+    max_items_per_thread: qd.template(),
 ):
-    max_queue = collider_state.narrowphase_work_queues.mpr_i_b.shape[0]
 
     for i_b in range(n_total_threads):
         if i_b < qd.static(n_gjk_threads):
             # GJK partition: pull from gjk_queue
-            for _iter in range(max_queue):
+            for _iter in range(max_items_per_thread):
                 idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_work_counter[0], 1)
                 if idx >= collider_state.narrowphase_work_queues.gjk_queue_size[0]:
                     break
@@ -1422,7 +1422,7 @@ def func_narrowphase_kernel2_mixed(
                 )
         else:
             # MPR partition: pull from mpr_queue
-            for _iter in range(max_queue):
+            for _iter in range(max_items_per_thread):
                 idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_work_counter[0], 1)
                 if idx >= collider_state.narrowphase_work_queues.mpr_queue_size[0]:
                     break
