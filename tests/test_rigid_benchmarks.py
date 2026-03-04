@@ -775,21 +775,76 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     step_dt = 1 / 16
 
     JOINT_NAMES = [
-        "FFJ4", "FFJ3", "FFJ2", "FFJ1",
-        "MFJ4", "MFJ3", "MFJ2", "MFJ1",
-        "RFJ4", "RFJ3", "RFJ2", "RFJ1",
-        "LFJ5", "LFJ4", "LFJ3", "LFJ2", "LFJ1",
-        "THJ5", "THJ4", "THJ3", "THJ2", "THJ1",
+        "FFJ4",
+        "FFJ3",
+        "FFJ2",
+        "FFJ1",
+        "MFJ4",
+        "MFJ3",
+        "MFJ2",
+        "MFJ1",
+        "RFJ4",
+        "RFJ3",
+        "RFJ2",
+        "RFJ1",
+        "LFJ5",
+        "LFJ4",
+        "LFJ3",
+        "LFJ2",
+        "LFJ1",
+        "THJ5",
+        "THJ4",
+        "THJ3",
+        "THJ2",
+        "THJ1",
     ]
     LEFT_DOFS = [
-        0.34907, 0.24929, 0.54424, 0.65614, 0.21329, 0.08060, 0.19969, 0.66944,
-        1.57080, 0.21846, 0.53605, 0.44963, 0.38350, 0.02379, 0.41705, 0.54773,
-        0.61160, 0.36664, 0.44036, 0.20944, 0.34497, 0.15896,
+        0.34907,
+        0.24929,
+        0.54424,
+        0.65614,
+        0.21329,
+        0.08060,
+        0.19969,
+        0.66944,
+        1.57080,
+        0.21846,
+        0.53605,
+        0.44963,
+        0.38350,
+        0.02379,
+        0.41705,
+        0.54773,
+        0.61160,
+        0.36664,
+        0.44036,
+        0.20944,
+        0.34497,
+        0.15896,
     ]
     RIGHT_DOFS = [
-        0.34907, 0.23328, 0.57399, 0.70467, 0.00000, 0.34907, 0.51778, 0.65078,
-        1.48947, 0.33727, 0.55919, 0.56268, 0.54360, -0.08460, 0.48588, 0.66095,
-        0.73317, 0.13239, 0.45613, 0.20944, 0.19625, 0.00750,
+        0.34907,
+        0.23328,
+        0.57399,
+        0.70467,
+        0.00000,
+        0.34907,
+        0.51778,
+        0.65078,
+        1.48947,
+        0.33727,
+        0.55919,
+        0.56268,
+        0.54360,
+        -0.08460,
+        0.48588,
+        0.66095,
+        0.73317,
+        0.13239,
+        0.45613,
+        0.20944,
+        0.19625,
+        0.00750,
     ]
 
     hand_configs = [
@@ -808,11 +863,22 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     ]
 
     coacd_opts = gs.options.misc.CoacdOptions(
-        threshold=0.05, max_convex_hull=20, preprocess_mode="auto",
-        preprocess_resolution=100, resolution=1000, mcts_nodes=20,
-        mcts_iterations=100, mcts_max_depth=3, pca=False, merge=True,
-        decimate=True, max_ch_vertex=256, extrude=False, extrude_margin=0.1,
-        apx_mode="ch", seed=0,
+        threshold=0.05,
+        max_convex_hull=20,
+        preprocess_mode="auto",
+        preprocess_resolution=100,
+        resolution=1000,
+        mcts_nodes=20,
+        mcts_iterations=100,
+        mcts_max_depth=3,
+        pca=False,
+        merge=True,
+        decimate=True,
+        max_ch_vertex=256,
+        extrude=False,
+        extrude_margin=0.1,
+        apx_mode="ch",
+        seed=0,
     )
 
     scene = gs.Scene(
@@ -828,20 +894,34 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
 
     hands = []
     for cfg in hand_configs:
-        hand = scene.add_entity(gs.morphs.URDF(
-            file=str(shadow_hand_path / "shadow_hand" / cfg["urdf"]),
-            pos=cfg["pos"], quat=cfg["quat"], fixed=False,
-        ))
+        hand = scene.add_entity(
+            gs.morphs.URDF(
+                file=str(shadow_hand_path / "shadow_hand" / cfg["urdf"]),
+                pos=cfg["pos"],
+                quat=cfg["quat"],
+                fixed=False,
+            )
+        )
         hands.append((hand, {name: cfg["dofs"][i] for i, name in enumerate(JOINT_NAMES)}))
 
-    scene.add_entity(gs.morphs.Mesh(
-        file=str(dex_path / "dex" / "table.glb"),
-        pos=(0.1, 0.0, 0.485403), euler=(0, 0, 90), fixed=True, coacd_options=coacd_opts,
-    ))
-    drill = scene.add_entity(gs.morphs.Mesh(
-        file=str(dex_path / "dex" / "drill_1.glb"),
-        pos=(0.15, 0.1, 0.87), euler=(90, 0, 225), fixed=False, coacd_options=coacd_opts,
-    ))
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file=str(dex_path / "dex" / "table.glb"),
+            pos=(0.1, 0.0, 0.485403),
+            euler=(0, 0, 90),
+            fixed=True,
+            coacd_options=coacd_opts,
+        )
+    )
+    drill = scene.add_entity(
+        gs.morphs.Mesh(
+            file=str(dex_path / "dex" / "drill_1.glb"),
+            pos=(0.15, 0.1, 0.87),
+            euler=(90, 0, 225),
+            fixed=False,
+            coacd_options=coacd_opts,
+        )
+    )
 
     time_start = time.time()
     scene.build(n_envs=n_envs)
@@ -862,7 +942,10 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         hand.control_dofs_position(torch.clamp(hand.get_dofs_position(), *hand.get_dofs_limit()))
 
     finger_dofs = {hand: list(range(6, hand.n_dofs)) for hand, _ in hands}
-    random_forces = {hand: torch.zeros((n_envs, len(fd)), dtype=gs.tc_float, device=gs.device) for (hand, _), fd in zip(hands, finger_dofs.values())}
+    random_forces = {
+        hand: torch.zeros((n_envs, len(fd)), dtype=gs.tc_float, device=gs.device)
+        for (hand, _), fd in zip(hands, finger_dofs.values())
+    }
     base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand, _ in hands}
 
     drill_xy_kp = torch.tensor([drill_stiffness, drill_stiffness], dtype=torch.float32, device=gs.device)
