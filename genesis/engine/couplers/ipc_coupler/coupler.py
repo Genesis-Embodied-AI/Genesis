@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import tempfile
 import weakref
 from functools import partial
@@ -31,6 +32,7 @@ except ImportError:
     UIPC_AVAILABLE = False
 
 if TYPE_CHECKING or UIPC_AVAILABLE:
+    import polyscope as ps
     from uipc.backend import SceneVisitor
     from uipc.core import Engine, World, Scene, AffineBodyStateAccessorFeature, ContactElement, Object, SubsceneElement
     from uipc.constitution import (
@@ -46,6 +48,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         StrainLimitingBaraffWitkinShell,
     )
     from uipc.geometry import Geometry, GeometrySlot, SimplicialComplex, SimplicialComplexSlot
+    from uipc.gui import SceneGUI
 
     from .data import COUPLING_TYPE, ABDLinkEntry, ArticulatedEntityData, IPCCouplingData
     from .utils import (
@@ -172,6 +175,9 @@ class IPCCoupler(RBC):
         self.coupling_entries: list[tuple[int, "RigidLink", int]] = []
         self.coupling_data: IPCCouplingData | None = None
 
+        # ==== GUI ====
+        self._ipc_gui: SceneGUI | None = None  # polyscope viewer, only when _show_ipc_gui=True
+
         # ==== External Articulation ====
         self._articulation_non_fixed_base_entities: list["RigidEntity"] = []  # entities with non-fixed base
         self.articulation_data: dict["RigidEntity", ArticulatedEntityData] = {}
@@ -199,15 +205,24 @@ class IPCCoupler(RBC):
         self._finalize_ipc()
         self._init_accessors()
 
+        if self.options._show_ipc_gui:
+            self._init_ipc_gui()
+
     def _setup_coupling_config(self):
-        """Read coupling_type, coupling_link_filter, and collision settings from entity materials."""
+        """Read coup_type, coup_links, and collision settings from entity materials."""
         assert gs.logger is not None
 
         entity: "RigidEntity"
         for i_e, entity in enumerate(cast(list["RigidEntity"], self.rigid_solver.entities)):
-            coupling_type = entity.material.coupling_type
-            if coupling_type is None:
+            if not entity.material.needs_coup:
                 continue
+            coupling_type = entity.material.coup_type
+            if coupling_type is None:
+                # Auto-select based on entity type
+                if entity.n_joints > 0:
+                    coupling_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
+                else:
+                    coupling_type = "ipc_only"
 
             self._coupling_types[entity] = coupling_type = getattr(COUPLING_TYPE, coupling_type.upper())
             if coupling_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
@@ -222,20 +237,23 @@ class IPCCoupler(RBC):
             gs.logger.debug(f"Rigid entity {i_e}: coupling type '{coupling_type.name.lower()}'")
 
             # Resolve link filter from material
-            link_filter_names = entity.material.coupling_link_filter
+            link_filter_names = entity.material.coup_links
             if link_filter_names is not None:
                 self._coupling_link_filters[entity] = set(map(entity.get_link, link_filter_names))
                 gs.logger.debug(f"Rigid entity {i_e}: IPC link filter set to {len(link_filter_names)} link(s)")
 
             # Resolve collision settings from material
-            if not entity.material.enable_coupling_collision:
-                collision_link_names = entity.material.coupling_collision_links
-                if collision_link_names is not None:
-                    collision_links = [entity.get_link(name=name) for name in collision_link_names]
-                else:
-                    collision_links = entity.links
-                self._coupling_collision_settings[entity] = {link: False for link in collision_links}
-                gs.logger.debug(f"Rigid entity {i_e}: IPC collision disabled for {len(collision_links)} link(s)")
+            if not entity.material.enable_coup_collision:
+                # Disable collision for all links
+                self._coupling_collision_settings[entity] = {link: False for link in entity.links}
+                gs.logger.debug(f"Rigid entity {i_e}: IPC collision disabled for all links")
+            elif entity.material.coup_collision_links is not None:
+                # Positive filter: only named links get collision, others disabled
+                allowed = set(entity.material.coup_collision_links)
+                self._coupling_collision_settings[entity] = {
+                    link: False for link in entity.links if link.name not in allowed
+                }
+                gs.logger.debug(f"Rigid entity {i_e}: IPC collision limited to {allowed}")
 
         # Categorize entities by coupling type
         for entity, coupling_type in self._coupling_types.items():
@@ -245,10 +263,12 @@ class IPCCoupler(RBC):
         """Initialize IPC system components"""
         assert gs.logger is not None
 
-        # Derive IPC logging level from Genesis logger
-        if gs.logger.level > logging.DEBUG:
+        if gs.logger.level <= logging.DEBUG:
+            uipc.Logger.set_level(uipc.Logger.Level.Info)
+            uipc.Timer.enable_all()
+        else:
             uipc.Logger.set_level(uipc.Logger.Level.Error)
-        uipc.Timer.disable_all()
+            uipc.Timer.disable_all()
 
         # Create workspace directory for IPC output, named after scene UID.
         workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid.full()}")
@@ -413,11 +433,6 @@ class IPCCoupler(RBC):
                 # Inner loop: iterate geoms of all source links
                 meshes = []
                 for source_link in source_links:
-                    if not source_link.geoms:
-                        gs.raise_exception(
-                            f"Rigid link {source_link.idx} has no collision geometry. Coupling type "
-                            "'external_articulation' is not supported."
-                        )
                     for geom in source_link.geoms:
                         if geom.type == gs.GEOM_TYPE.PLANE:
                             if entity_coupling_type != COUPLING_TYPE.IPC_ONLY:
@@ -646,6 +661,11 @@ class IPCCoupler(RBC):
                     if self.sim.n_envs > 0:
                         self._ipc_subscenes[env_idx].apply_to(mesh)
 
+                    if parent_link not in self._abd_link_to_slot or child_link not in self._abd_link_to_slot:
+                        gs.raise_exception(
+                            "Rigid link has no collision geometry. "
+                            "Coupling type 'external_articulation' is not supported."
+                        )
                     parent_abd_slot = self._abd_link_to_slot[parent_link][env_idx]
                     child_abd_slot = self._abd_link_to_slot[child_link][env_idx]
                     constitution.apply_to(mesh, [parent_abd_slot], [0], [child_abd_slot], [0], [100.0])
@@ -802,6 +822,18 @@ class IPCCoupler(RBC):
         self.coupling_data = IPCCouplingData(self.coupling_entries)
 
         gs.logger.debug(f"IPC coupling index mapping created: {len(self.coupling_entries)} entries.")
+
+    def _init_ipc_gui(self):
+        try:
+            if not ps.is_initialized():
+                ps.init("openGL3_egl" if sys.platform == "linux" else "")
+            self._ipc_gui = SceneGUI(self._ipc_scene, "split")
+            self._ipc_gui.register()
+            ps.show(forFrames=1)
+            gs.logger.info("IPC GUI initialized successfully")
+        except Exception as e:
+            gs.logger.warning(f"IPC GUI unavailable: {e}. Continuing without IPC GUI.")
+            self._ipc_gui = None
 
     # ============================================================
     # Section 2: Core implementation
