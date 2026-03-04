@@ -516,13 +516,9 @@ class Collider:
                 self._collider_state,
             )
             narrowphase.func_narrowphase_kernel1_contact0(
-                self._solver.links_state,
-                self._solver.links_info,
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver.faces_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,

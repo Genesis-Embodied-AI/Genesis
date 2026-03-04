@@ -1483,13 +1483,9 @@ def func_enqueue_for_multicontact(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_narrowphase_kernel1_contact0(
-    links_state: array_class.LinksState,
-    links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
