@@ -818,7 +818,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(substeps=25, dt=step_dt, gravity=(0, 0, -9.81)),
         rigid_options=gs.options.RigidOptions(
-            enable_mujoco_compatibility=False,
             enable_self_collision=True,
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
