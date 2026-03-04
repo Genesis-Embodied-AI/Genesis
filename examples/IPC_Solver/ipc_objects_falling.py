@@ -76,7 +76,7 @@ def main():
         ),
         material=gs.materials.Rigid(
             rho=500,
-            coupling_type="ipc_only",
+            coup_type="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),

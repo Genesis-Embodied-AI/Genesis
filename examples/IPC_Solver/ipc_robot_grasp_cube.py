@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--no-ipc", action="store_true", default=False)
     parser.add_argument("-v", "--vis", action="store_true", default=False)
     parser.add_argument(
-        "--coupling_type",
+        "--coup_type",
         type=str,
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
@@ -44,10 +44,10 @@ def main():
 
     franka_material_kwargs = dict(
         coup_friction=0.8,
-        coupling_type=args.coupling_type,
+        coup_type=args.coup_type,
     )
-    if args.coupling_type == "two_way_soft_constraint":
-        franka_material_kwargs["coupling_link_filter"] = ("left_finger", "right_finger")
+    if args.coup_type == "two_way_soft_constraint":
+        franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")
     franka_material = gs.materials.Rigid(**franka_material_kwargs) if not args.no_ipc else None
     franka = scene.add_entity(
         gs.morphs.MJCF(
@@ -85,7 +85,7 @@ def main():
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
 
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
-    if not args.no_ipc or args.coupling_type == "external_articulation":
+    if not args.no_ipc or args.coup_type == "external_articulation":
         franka.control_dofs_position(qpos[motors_dof], dofs_idx_local=motors_dof)
         franka.control_dofs_position(0.04, dofs_idx_local=fingers_dof)
         for _ in range(200 if "PYTEST_VERSION" not in os.environ else 1):

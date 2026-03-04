@@ -231,18 +231,24 @@ class Collider:
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
 
-        excluded_links = set()
+        # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
+        ipc_delegated_links = set()
+        ipc_only_links = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
             for entity in self._solver._entities:
-                mode = entity.material.coupling_type
+                if not entity.material.needs_coup:
+                    continue
+                mode = entity.material.coup_type
                 if mode is None:
                     continue
-                link_filter_names = entity.material.coupling_link_filter
+                if mode == "ipc_only":
+                    ipc_only_links.update(entity.links)
+                link_filter_names = entity.material.coup_links
                 if mode == "two_way_soft_constraint" and link_filter_names is not None:
                     for name in link_filter_names:
-                        excluded_links.add(entity.get_link(name=name))
+                        ipc_delegated_links.add(entity.get_link(name=name))
                 else:
-                    excluded_links.update(entity.links)
+                    ipc_delegated_links.update(entity.links)
 
         # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
         geoms_verts: list[np.ndarray] = []
@@ -271,8 +277,12 @@ class Collider:
                 if link_a is link_b:
                     continue
 
-                # Skip contact links pairs that are handled by IPC
-                if link_a in excluded_links and link_b in excluded_links:
+                # Skip all pairs involving ipc_only links (IPC fully controls their pose)
+                if link_a in ipc_only_links or link_b in ipc_only_links:
+                    continue
+
+                # Skip pairs where both links are delegated to IPC
+                if link_a in ipc_delegated_links and link_b in ipc_delegated_links:
                     continue
 
                 # Filter out right away weld constraint that have been declared statically and cannot be removed
