@@ -74,6 +74,16 @@ def pytorch_profiler(pytestconfig):
         on_trace_ready=trace_handler,
     )
 
+    step_counter = [0]
+    original_step = prof.step
+
+    def counted_step():
+        original_step()
+        step_counter[0] += 1
+
     print(f"PyTorch profiling enabled (wait={wait}, warmup={warmup}, active={active})")
     with prof:
-        yield prof.step
+        yield counted_step
+    if trace_counter[0] == 0:
+        print(f"WARNING: on_trace_ready never fired ({step_counter[0]} steps called). Exporting fallback trace.")
+        prof.export_chrome_trace(f"trace_{ref}_fallback.json")
