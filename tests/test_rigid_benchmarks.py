@@ -894,28 +894,26 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
 
     hands = []
     for cfg in hand_configs:
+        urdf_path = str(shadow_hand_path / "shadow_hand" / cfg["urdf"])
         hand = scene.add_entity(
-            gs.morphs.URDF(
-                file=str(shadow_hand_path / "shadow_hand" / cfg["urdf"]),
-                pos=cfg["pos"],
-                quat=cfg["quat"],
-                fixed=False,
-            )
+            gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"], fixed=False),
         )
         hands.append((hand, {name: cfg["dofs"][i] for i, name in enumerate(JOINT_NAMES)}))
 
+    table_path = str(dex_path / "dex" / "table.glb")
     scene.add_entity(
         gs.morphs.Mesh(
-            file=str(dex_path / "dex" / "table.glb"),
+            file=table_path,
             pos=(0.1, 0.0, 0.485403),
             euler=(0, 0, 90),
             fixed=True,
             coacd_options=coacd_opts,
         )
     )
+    drill_path = str(dex_path / "dex" / "drill_1.glb")
     drill = scene.add_entity(
         gs.morphs.Mesh(
-            file=str(dex_path / "dex" / "drill_1.glb"),
+            file=drill_path,
             pos=(0.15, 0.1, 0.87),
             euler=(90, 0, 225),
             fixed=False,
