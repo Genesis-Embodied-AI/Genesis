@@ -866,13 +866,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         ),
     ]
 
-    coacd_opts = gs.options.misc.CoacdOptions(
-        threshold=0.05,
-        max_convex_hull=20,
-        preprocess_resolution=100,
-        decimate=True,
-    )
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(substeps=25, dt=step_dt),
         rigid_options=gs.options.RigidOptions(
@@ -898,7 +891,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
             pos=(0.1, 0.0, 0.485403),
             euler=(0, 0, 90),
             fixed=True,
-            coacd_options=coacd_opts,
         )
     )
     drill_path = str(dex_path / "dex" / "drill_1.glb")
@@ -907,7 +899,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
             file=drill_path,
             pos=(0.15, 0.1, 0.87),
             euler=(90, 0, 225),
-            coacd_options=coacd_opts,
         )
     )
 
