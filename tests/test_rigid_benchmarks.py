@@ -925,10 +925,9 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         )
         hand.control_dofs_position(torch.clamp(hand.get_dofs_position(), *hand.get_dofs_limit()))
 
-    finger_dofs = {hand: list(range(6, hand.n_dofs)) for hand in hands}
+    finger_dofs = {hand: slice(6, hand.n_dofs) for hand in hands}
     random_forces = {
-        hand: torch.zeros((n_envs, len(fd)), dtype=gs.tc_float, device=gs.device)
-        for hand, fd in zip(hands, finger_dofs.values())
+        hand: torch.zeros((n_envs, hand.n_dofs - 6), dtype=gs.tc_float, device=gs.device) for hand in hands
     }
     base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand in hands}
 
