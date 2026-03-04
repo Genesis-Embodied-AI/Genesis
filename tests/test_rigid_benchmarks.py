@@ -936,16 +936,18 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     drill.set_dofs_kv(2.0 * np.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
     drill_xy_target = drill.get_dofs_position()[:, :2]
 
+    for hand in hands:
+        hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
+    drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
+
     num_steps = 0
     is_recording = False
     qd.sync()
     time_start = time.time()
     while True:
         for hand in hands:
-            hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
             random_forces[hand].uniform_(-FINGER_FORCE, FINGER_FORCE)
             hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
-        drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
         scene.step()
         pytorch_profiler_step()
         time_elapsed = time.time() - time_start
