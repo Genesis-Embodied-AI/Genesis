@@ -807,6 +807,14 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         },
     ]
 
+    coacd_opts = gs.options.misc.CoacdOptions(
+        threshold=0.05, max_convex_hull=20, preprocess_mode="auto",
+        preprocess_resolution=100, resolution=1000, mcts_nodes=20,
+        mcts_iterations=100, mcts_max_depth=3, pca=False, merge=True,
+        decimate=True, max_ch_vertex=256, extrude=False, extrude_margin=0.1,
+        apx_mode="ch", seed=0,
+    )
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(substeps=25, dt=step_dt, gravity=(0, 0, -9.81)),
         rigid_options=gs.options.RigidOptions(
@@ -829,11 +837,11 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
 
     scene.add_entity(gs.morphs.Mesh(
         file=str(dex_path / "dex" / "table.glb"),
-        pos=(0.1, 0.0, 0.485403), euler=(0, 0, 90), fixed=True,
+        pos=(0.1, 0.0, 0.485403), euler=(0, 0, 90), fixed=True, coacd_options=coacd_opts,
     ))
     drill = scene.add_entity(gs.morphs.Mesh(
         file=str(dex_path / "dex" / "drill_1.glb"),
-        pos=(0.15, 0.1, 0.87), euler=(90, 0, 225), fixed=False,
+        pos=(0.15, 0.1, 0.87), euler=(90, 0, 225), fixed=False, coacd_options=coacd_opts,
     ))
 
     time_start = time.time()
