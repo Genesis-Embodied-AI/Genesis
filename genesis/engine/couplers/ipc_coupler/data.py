@@ -8,8 +8,7 @@ from typing import NamedTuple, TYPE_CHECKING
 
 import numpy as np
 
-from uipc.core import Object
-from uipc.geometry import Geometry, GeometrySlot
+from uipc.geometry import GeometrySlot
 
 import genesis as gs
 
@@ -28,7 +27,6 @@ class ABDLinkEntry(NamedTuple):
     """Per-link, per-env ABD state retrieved from IPC after advance."""
 
     transform: np.ndarray  # (4, 4) IPC transform
-    aim_transform: np.ndarray  # (4, 4) Genesis stored transform
     velocity: np.ndarray  # (4, 4) velocity matrix
 
 
@@ -39,10 +37,7 @@ class ArticulatedEntityData:
     joints_child_link: list["RigidLink"]
     joints_q_idx_local: list[int]
 
-    joints_geom_slot_by_env: list[list[GeometrySlot]]
-    articulation_geoms_by_env: list[Geometry]
-    articulation_slots_by_env: list[GeometrySlot]
-    articulation_objects_by_env: list[Object]
+    articulation_slots: list[GeometrySlot]
 
     ref_dof_prev: np.ndarray
     qpos_stored: np.ndarray
@@ -58,15 +53,18 @@ class ArticulatedEntityData:
 class IPCCouplingData:
     """Pre-allocated arrays for coupling force computation."""
 
-    def __init__(self, coupling_entries: list[tuple[int, "RigidLink", int]]):
-        links = list(dict.fromkeys(link for _, link, _ in coupling_entries))
-
+    def __init__(
+        self,
+        links: list["RigidLink"],
+        abd_body_offset: dict["RigidLink", int],
+        n_envs: int,
+    ):
         n_links = len(links)
-        n_envs = len({env_idx for _, _, env_idx in coupling_entries})
-        assert len(coupling_entries) == n_links * n_envs
 
+        self.links = links
+        self.abd_body_offset = abd_body_offset
         self.links_idx = [link.idx for link in links]
-        self.link_to_idx_local = {link: i for i, link in enumerate(links)}
+        self.idx_by_link = {link: i for i, link in enumerate(links)}
         self.links_mass = np.array([link.inertial_mass for link in links], dtype=gs.np_float)
         if links:
             self.links_inertia_i = np.stack([link.inertial_i for link in links], axis=0, dtype=gs.np_float)
