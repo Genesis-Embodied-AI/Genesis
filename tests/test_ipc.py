@@ -317,7 +317,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_needs_coup():
-    """needs_coup=False takes precedence over coup_type — entity excluded from IPC."""
+    """needs_coup=False excludes entity from IPC; coup_type with needs_coup=False raises."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
@@ -325,7 +325,7 @@ def test_needs_coup():
     scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
     scene.add_entity(
         morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
-        material=gs.materials.Rigid(needs_coup=False, coup_type="ipc_only"),
+        material=gs.materials.Rigid(needs_coup=False),
     )
     scene.build()
     assert scene.sim.coupler._coupling_types == {}
