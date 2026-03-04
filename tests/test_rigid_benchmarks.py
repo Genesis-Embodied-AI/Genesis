@@ -770,6 +770,10 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     shadow_hand_path = Path(get_hf_dataset(pattern="shadow_hand/*"))
     dex_path = Path(get_hf_dataset(pattern="dex/*"))
 
+    WRIST_STIFFNESS = 20
+    FINGER_FORCE = 0.6
+    DRILL_STIFFNESS = 20
+
     duration_warmup = 20.0
     duration_record = 5.0
     step_dt = 1 / 16
@@ -925,12 +929,8 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    wrist_stiffness = 20
-    finger_force = 0.6
-    drill_stiffness = 20
-
     for hand, default_dof in hands:
-        kp = [wrist_stiffness] * 6 + [40.0] * (hand.n_dofs - 6)
+        kp = [WRIST_STIFFNESS] * 6 + [40.0] * (hand.n_dofs - 6)
         hand.set_dofs_kp(kp)
         hand.set_dofs_kv(2.0 * np.sqrt(kp))
         hand.set_dofs_position(
@@ -946,7 +946,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     }
     base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand, _ in hands}
 
-    drill_xy_kp = [drill_stiffness, drill_stiffness]
+    drill_xy_kp = [DRILL_STIFFNESS, DRILL_STIFFNESS]
     drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
     drill.set_dofs_kv(2.0 * np.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
     drill_xy_target = drill.get_dofs_position()[:, :2]
@@ -958,7 +958,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     while True:
         for hand, _ in hands:
             hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
-            random_forces[hand].uniform_(-finger_force, finger_force)
+            random_forces[hand].uniform_(-FINGER_FORCE, FINGER_FORCE)
             hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
         drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
         scene.step()
