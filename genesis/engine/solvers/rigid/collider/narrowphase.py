@@ -1013,7 +1013,6 @@ def func_kernel2_run_detection(
         contact_pos = v1 - 0.5 * penetration * normal
         is_col = penetration > 0.0
     else:
-        prefer_gjk = use_gjk
         if qd.static(
             collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
         ):
@@ -1039,15 +1038,8 @@ def func_kernel2_run_detection(
                         )
                         is_mpr_updated = True
 
-                if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                    if penetration > tolerance:
-                        prefer_gjk = not is_mpr_guess_direction_available or (
-                            collider_info.mc_tolerance[None] * penetration
-                            >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                        )
-
         if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-            if prefer_gjk:
+            if use_gjk:
                 if qd.static(not static_rigid_sim_config.requires_grad):
                     gjk.func_gjk_contact(
                         geoms_state=geoms_state,
