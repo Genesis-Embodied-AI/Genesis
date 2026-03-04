@@ -762,6 +762,147 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
+@pytest.fixture
+def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
+    """Two shadow hands manipulating a drill on a table."""
+    import pickle
+
+    import quadrants as qd
+    from scipy.spatial.transform import Rotation as R
+
+    asset_path = Path(get_hf_dataset(pattern="dex_hand/**")) / "dex_hand"
+
+    duration_warmup = 20.0
+    duration_record = 5.0
+    step_dt = 1 / 16
+
+    LOCAL_FRAME_CORRECTION_L = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], dtype=np.float32)
+    LOCAL_FRAME_CORRECTION_R = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]], dtype=np.float32)
+
+    def load_hand_pose(trajectory_path, is_right):
+        with open(trajectory_path, "rb") as f:
+            data = pickle.load(f)
+        hand_traj = data["hand_trajectory"]
+        wrist_pos = list(map(float, hand_traj["wrist_positions"][0]))
+        wrist_rot_aa = hand_traj["wrist_rotations_aa"][0]
+        dof_positions = hand_traj["dof_positions"][0]
+        angle = np.linalg.norm(wrist_rot_aa)
+        R_world = R.from_rotvec(wrist_rot_aa).as_matrix() if angle > 1e-6 else np.eye(3)
+        R_corrected = R_world @ (LOCAL_FRAME_CORRECTION_R if is_right else LOCAL_FRAME_CORRECTION_L)
+        quat_wxyz = list(map(float, R.from_matrix(R_corrected).as_quat(scalar_first=True)))
+        return wrist_pos, quat_wxyz, dof_positions
+
+    left_pos, left_quat, left_dofs = load_hand_pose(asset_path / "shadow_hand_trajectory_retargeted_left_scaled_0.6.pkl", False)
+    left_pos[0] -= 0.2; left_pos[1] += 0.1; left_pos[2] += 0.3
+    extra_rot = R.from_euler("x", -90, degrees=True)
+    left_quat = list(map(float, (extra_rot * R.from_quat(left_quat, scalar_first=True)).as_quat(scalar_first=True)))
+
+    right_pos, right_quat, right_dofs = load_hand_pose(asset_path / "shadow_hand_trajectory_retargeted_right_scaled_0.6.pkl", True)
+    right_pos[0] -= 0.1; right_pos[1] += 0.1; right_pos[2] += 0.3
+
+    JOINT_NAMES = [
+        "FFJ4", "FFJ3", "FFJ2", "FFJ1",
+        "MFJ4", "MFJ3", "MFJ2", "MFJ1",
+        "RFJ4", "RFJ3", "RFJ2", "RFJ1",
+        "LFJ5", "LFJ4", "LFJ3", "LFJ2", "LFJ1",
+        "THJ5", "THJ4", "THJ3", "THJ2", "THJ1",
+    ]
+
+    coacd_opts = gs.options.misc.CoacdOptions(
+        threshold=0.05, max_convex_hull=20, preprocess_mode="auto",
+        preprocess_resolution=100, resolution=1000, mcts_nodes=20,
+        mcts_iterations=100, mcts_max_depth=3, pca=False, merge=True,
+        decimate=True, max_ch_vertex=256, extrude=False, extrude_margin=0.1,
+        apx_mode="ch", seed=0,
+    )
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(substeps=25, dt=step_dt, gravity=(0, 0, -9.81)),
+        rigid_options=gs.options.RigidOptions(
+            enable_mujoco_compatibility=False,
+            enable_self_collision=True,
+            max_collision_pairs=200,
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    hands = []
+    for pos, quat, dofs, urdf in [
+        (left_pos, left_quat, left_dofs, "shadow_hand_left_woarm.urdf"),
+        (right_pos, right_quat, right_dofs, "shadow_hand_right_woarm.urdf"),
+    ]:
+        hand = scene.add_entity(gs.morphs.URDF(
+            file=str(asset_path / "shadow_hand" / urdf), pos=pos, quat=quat, fixed=False,
+        ))
+        hands.append((hand, {name: float(dofs[i]) for i, name in enumerate(JOINT_NAMES)}))
+
+    scene.add_entity(gs.morphs.Mesh(
+        file=str(asset_path / "dex" / "table.glb"),
+        pos=(0.1, 0.0, 0.485403), euler=(0, 0, 90), fixed=True, coacd_options=coacd_opts,
+    ))
+    drill = scene.add_entity(gs.morphs.Mesh(
+        file=str(asset_path / "dex" / "drill_1.glb"),
+        pos=(0.15, 0.1, 0.87), euler=(90, 0, 225), fixed=False, coacd_options=coacd_opts,
+    ))
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    wrist_stiffness = 20
+    finger_force = 0.6
+    drill_stiffness = 20
+
+    for hand, default_dof in hands:
+        kp = torch.tensor([wrist_stiffness] * 6 + [40.0] * (hand.n_dofs - 6), dtype=torch.float32, device=gs.device)
+        hand.set_dofs_kp(kp)
+        hand.set_dofs_kv(2.0 * torch.sqrt(kp))
+        hand.set_dofs_position(
+            tuple(default_dof.values()),
+            dofs_idx_local=[hand.get_joint(name).dofs_idx_local[0] for name in default_dof.keys()],
+        )
+        hand.control_dofs_position(torch.clamp(hand.get_dofs_position(), *hand.get_dofs_limit()))
+
+    finger_dofs = {hand: list(range(6, hand.n_dofs)) for hand, _ in hands}
+    random_forces = {hand: torch.zeros((n_envs, len(fd)), dtype=gs.tc_float, device=gs.device) for (hand, _), fd in zip(hands, finger_dofs.values())}
+    base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand, _ in hands}
+
+    drill_xy_kp = torch.tensor([drill_stiffness, drill_stiffness], dtype=torch.float32, device=gs.device)
+    drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
+    drill.set_dofs_kv(2.0 * torch.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
+    drill_xy_target = drill.get_dofs_position()[:, :2]
+
+    num_steps = 0
+    is_recording = False
+    qd.sync()
+    time_start = time.time()
+    while True:
+        for hand, _ in hands:
+            hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
+            random_forces[hand].uniform_(-finger_force, finger_force)
+            hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
+        drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
+        scene.step()
+        pytorch_profiler_step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > duration_record:
+                qd.sync()
+                time_elapsed = time.time() - time_start
+                break
+        elif time_elapsed > duration_warmup:
+            qd.sync()
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * step_dt
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -792,6 +933,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("dex_hand", None, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):
