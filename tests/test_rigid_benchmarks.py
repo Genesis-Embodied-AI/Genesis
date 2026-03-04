@@ -889,7 +889,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         hand = scene.add_entity(
             gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"]),
         )
-        hands.append((hand, {name: cfg["dofs"][i] for i, name in enumerate(JOINT_NAMES)}))
+        hands.append(hand)
 
     table_path = str(dex_path / "dex" / "table.glb")
     scene.add_entity(
@@ -915,22 +915,22 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    for hand, default_dof in hands:
+    for hand, default_dof in zip(hands, (LEFT_DOFS, RIGHT_DOFS)):
         kp = [WRIST_STIFFNESS] * 6 + [40.0] * (hand.n_dofs - 6)
         hand.set_dofs_kp(kp)
         hand.set_dofs_kv(2.0 * np.sqrt(kp))
         hand.set_dofs_position(
-            tuple(default_dof.values()),
-            dofs_idx_local=[hand.get_joint(name).dofs_idx_local[0] for name in default_dof.keys()],
+            default_dof,
+            dofs_idx_local=[hand.get_joint(name).dofs_idx_local[0] for name in JOINT_NAMES],
         )
         hand.control_dofs_position(torch.clamp(hand.get_dofs_position(), *hand.get_dofs_limit()))
 
-    finger_dofs = {hand: list(range(6, hand.n_dofs)) for hand, _ in hands}
+    finger_dofs = {hand: list(range(6, hand.n_dofs)) for hand in hands}
     random_forces = {
         hand: torch.zeros((n_envs, len(fd)), dtype=gs.tc_float, device=gs.device)
-        for (hand, _), fd in zip(hands, finger_dofs.values())
+        for hand, fd in zip(hands, finger_dofs.values())
     }
-    base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand, _ in hands}
+    base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand in hands}
 
     drill_xy_kp = [DRILL_STIFFNESS, DRILL_STIFFNESS]
     drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
@@ -942,7 +942,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     qd.sync()
     time_start = time.time()
     while True:
-        for hand, _ in hands:
+        for hand in hands:
             hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
             random_forces[hand].uniform_(-FINGER_FORCE, FINGER_FORCE)
             hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
