@@ -139,8 +139,6 @@ def init(
         _use_ndarray = use_ndarray
         if _use_ndarray and is_ndarray_disabled:
             raise_exception("Genesis previous initialized. Quadrants dynamic array mode cannot be disabled anymore.")
-    if _use_ndarray and backend == _gs_backend.metal:
-        raise_exception("Quadrants dynamic array mode is not supported on Apple Metal GPU backend.")
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_fastcache is None:
         _use_fastcache = not is_fastcache_disabled and _use_ndarray
