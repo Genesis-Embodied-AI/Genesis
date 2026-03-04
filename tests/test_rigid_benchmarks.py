@@ -869,26 +869,13 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     coacd_opts = gs.options.misc.CoacdOptions(
         threshold=0.05,
         max_convex_hull=20,
-        preprocess_mode="auto",
         preprocess_resolution=100,
-        resolution=1000,
-        mcts_nodes=20,
-        mcts_iterations=100,
-        mcts_max_depth=3,
-        pca=False,
-        merge=True,
         decimate=True,
-        max_ch_vertex=256,
-        extrude=False,
-        extrude_margin=0.1,
-        apx_mode="ch",
-        seed=0,
     )
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(substeps=25, dt=step_dt, gravity=(0, 0, -9.81)),
+        sim_options=gs.options.SimOptions(substeps=25, dt=step_dt),
         rigid_options=gs.options.RigidOptions(
-            enable_self_collision=True,
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
@@ -900,7 +887,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     for cfg in hand_configs:
         urdf_path = str(shadow_hand_path / "shadow_hand" / cfg["urdf"])
         hand = scene.add_entity(
-            gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"], fixed=False),
+            gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"]),
         )
         hands.append((hand, {name: cfg["dofs"][i] for i, name in enumerate(JOINT_NAMES)}))
 
@@ -920,7 +907,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
             file=drill_path,
             pos=(0.15, 0.1, 0.87),
             euler=(90, 0, 225),
-            fixed=False,
             coacd_options=coacd_opts,
         )
     )
