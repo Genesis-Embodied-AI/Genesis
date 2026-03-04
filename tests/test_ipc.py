@@ -322,7 +322,7 @@ def test_needs_coup():
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
     scene.add_entity(
         morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
         material=gs.materials.Rigid(needs_coup=False, coup_type="ipc_only"),
@@ -1225,7 +1225,7 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         show_viewer=False,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane())  # No coup_type: stays in rigid solver only
+    plane = scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
     assert isinstance(plane, RigidEntity)
 
     # Non-IPC box — always handled by rigid solver
@@ -1234,7 +1234,7 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
             size=(0.05, 0.05, 0.05),
             pos=(1.0, 0.0, 0.2),
         ),
-        material=gs.materials.Rigid(),
+        material=gs.materials.Rigid(needs_coup=False),
     )
     assert isinstance(box, RigidEntity)
 

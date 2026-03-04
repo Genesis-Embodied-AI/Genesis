@@ -18,9 +18,8 @@ class Rigid(Material):
             The density of the material used to compute mass. Default is 200.0.
         friction : float, optional
             Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
-        needs_coup : bool or None, optional
-            Whether the material participates in coupling with other solvers. If None, defaults to
-            True for the legacy coupler and False for the IPC coupler. Default is None.
+        needs_coup : bool, optional
+            Whether the material participates in coupling with other solvers. Default is True.
         coup_friction : float, optional
             Friction used during coupling. Must be non-negative. Default is 0.1.
         coup_softness : float, optional
@@ -68,7 +67,7 @@ class Rigid(Material):
         self,
         rho=200.0,
         friction=None,
-        needs_coup=None,
+        needs_coup=True,
         coup_friction=0.1,
         coup_softness=0.002,
         coup_restitution=0.0,
@@ -84,13 +83,19 @@ class Rigid(Material):
     ):
         super().__init__()
 
-        if coup_type not in (None, "two_way_soft_constraint", "external_articulation", "ipc_only"):
-            gs.raise_exception(
-                f"`coup_type` must be one of None, 'two_way_soft_constraint', "
-                f"'external_articulation', or 'ipc_only', got '{coup_type}'."
-            )
+        if coup_type is not None:
+            if not needs_coup:
+                gs.raise_exception(
+                    "`coup_type` is only supported with needs_coup=True. "
+                    f"Got needs_coup={needs_coup}, coup_type='{coup_type}'."
+                )
+            if coup_type not in ("two_way_soft_constraint", "external_articulation", "ipc_only"):
+                gs.raise_exception(
+                    f"`coup_type` must be one of None, 'two_way_soft_constraint', "
+                    f"'external_articulation', or 'ipc_only', got '{coup_type}'."
+                )
 
-        if coup_links is not None and (needs_coup is False or coup_type not in (None, "two_way_soft_constraint")):
+        if coup_links is not None and (not needs_coup or coup_type not in (None, "two_way_soft_constraint")):
             gs.raise_exception(
                 "`coup_links` is only supported with needs_coup=True and 'two_way_soft_constraint' type in IPC. "
                 f"Got needs_coup={needs_coup}, coup_type='{coup_type}'."
@@ -134,7 +139,7 @@ class Rigid(Material):
                 gs.raise_exception("User-specified `gravity_compensation` not supported with coup_type='ipc_only'.")
 
         self._friction = float(friction) if friction is not None else None
-        self._needs_coup = bool(needs_coup) if needs_coup is not None else None
+        self._needs_coup = bool(needs_coup)
         self._coup_friction = float(coup_friction)
         self._coup_softness = float(coup_softness)
         self._coup_restitution = float(coup_restitution)
@@ -160,8 +165,8 @@ class Rigid(Material):
         return self._friction
 
     @property
-    def needs_coup(self) -> bool | None:
-        """Whether this material requires solver coupling. None means auto (coupler-dependent)."""
+    def needs_coup(self) -> bool:
+        """Whether this material requires solver coupling."""
         return self._needs_coup
 
     @property

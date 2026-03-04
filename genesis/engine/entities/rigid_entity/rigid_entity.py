@@ -298,7 +298,7 @@ class RigidEntity(Entity):
                 friction = self.material.friction
                 if friction is None:
                     friction = g_info.get("friction", gu.default_friction())
-                needs_coup = (self.material.needs_coup is not False) and (coup_links is None or link.name in coup_links)
+                needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
                 link._add_geom(
                     mesh=g_info["mesh"],
                     init_pos=g_info.get("pos", gu.zero_pos()),
@@ -1067,7 +1067,7 @@ class RigidEntity(Entity):
             friction = self.material.friction
             if friction is None:
                 friction = g_info.get("friction", gu.default_friction())
-            needs_coup = (self.material.needs_coup is not False) and (coup_links is None or link.name in coup_links)
+            needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
             link._add_geom(
                 mesh=g_info["mesh"],
                 init_pos=g_info.get("pos", gu.zero_pos()),
