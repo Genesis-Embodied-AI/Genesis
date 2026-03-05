@@ -688,6 +688,7 @@ class ParticleEntity(Entity):
         """
         raise NotImplementedError
 
+    @gs.assert_built
     def get_mass(self, envs_idx=None):
         """
         Return the total mass of the entity.
@@ -695,7 +696,7 @@ class ParticleEntity(Entity):
         Parameters
         ----------
         envs_idx : None | int | array_like, shape (M,), optional
-            The indices of the environments to set. If None, all environments will be considered. Defaults to None.
+            The indices of the environments to query. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
@@ -703,8 +704,8 @@ class ParticleEntity(Entity):
             The computed total mass.
         """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        mass = torch.empty((len(envs_idx),), dtype=gs.tc_float, device=gs.device)
-        self.solver._kernel_get_mass(mass, envs_idx)
+        mass = torch.zeros((len(envs_idx),), dtype=gs.tc_float, device=gs.device)
+        self.solver._kernel_get_mass(self._particle_start, self.n_particles, mass, envs_idx)
         return mass
 
     # ------------------------------------------------------------------------------------
