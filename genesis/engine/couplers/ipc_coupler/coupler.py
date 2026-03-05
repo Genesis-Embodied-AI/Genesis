@@ -1132,13 +1132,6 @@ class IPCCoupler(RBC):
                 if joint.type not in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     continue
                 q_idx = joint.q_start
-                dt = self.rigid_solver.substep_dt
-                k = (
-                    self._constraint_strength_rotation_scaled
-                    if joint.type == gs.JOINT_TYPE.REVOLUTE
-                    else self._constraint_strength_translation_scaled
-                )
-                alpha = min(1.0, k * dt**2)
                 for env_idx in range(self.sim._B):
                     parent_T = self._abd_data_by_link[parent_link][env_idx].transform
                     child_T = self._abd_data_by_link[link][env_idx].transform
@@ -1159,4 +1152,4 @@ class IPCCoupler(RBC):
                         xaxis = gu.transform_by_quat(axis, quat_pre)
                         angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
                     qpos_ipc = qpos0[env_idx, q_idx] + angle_ipc
-                    qpos[env_idx, q_idx] += alpha * (qpos_ipc - qpos[env_idx, q_idx])
+                    qpos[env_idx, q_idx] += qpos_ipc - qpos[env_idx, q_idx]
