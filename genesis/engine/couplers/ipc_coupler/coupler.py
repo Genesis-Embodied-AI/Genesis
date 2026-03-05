@@ -1092,15 +1092,12 @@ class IPCCoupler(RBC):
 
     def _apply_abd_coupling_forces(self):
         """
-        Apply two-way coupling by writing IPC-resolved transforms into qpos for base links.
+        Apply two-way coupling by writing IPC-resolved transforms into qpos.
 
         For each two-way entity's base link (free joint), IPC's resolved transform is written
-        directly into rigid_global_info.qpos. kernel_restore_integrate then back-computes the
-        velocity/acceleration for step_2 to land on IPC's target.
-
-        TODO: For child links of articulated two-way entities, the coupling effect currently
-        propagates only through the base link movement. Per-child-link soft constraint coupling
-        would require Jacobian-based velocity delta or IK.
+        directly into rigid_global_info.qpos. For child links with 1-DOF joints (revolute/prismatic),
+        the joint angle is back-computed from IPC's parent and child transforms and written to qpos.
+        kernel_restore_integrate then back-computes velocity/acceleration for step_2 to land on target.
         """
         if (
             not self.options.two_way_coupling
@@ -1110,18 +1107,56 @@ class IPCCoupler(RBC):
             return
 
         qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
+        qpos0 = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos0, transpose=True)
 
         for link in self._coupling_data.links:
             entity = link.entity
             if self._coup_type_by_entity.get(entity) != COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
                 continue
-            if link is not entity.base_link or entity.base_link.is_fixed:
-                continue
 
-            # Write IPC-resolved base link transform to qpos
-            q_start = entity.q_start
-            for env_idx in range(self.sim._B):
-                abd_entry = self._abd_data_by_link[link][env_idx]
-                trans, quat = gu.T_to_trans_quat(abd_entry.transform)
-                qpos[env_idx, q_start : q_start + 3] = trans
-                qpos[env_idx, q_start + 3 : q_start + 7] = quat
+            if link is entity.base_link and not entity.base_link.is_fixed:
+                # Write IPC-resolved base link transform to qpos (free joint: 3 pos + 4 quat)
+                q_start = entity.q_start
+                for env_idx in range(self.sim._B):
+                    abd_entry = self._abd_data_by_link[link][env_idx]
+                    trans, quat = gu.T_to_trans_quat(abd_entry.transform)
+                    qpos[env_idx, q_start : q_start + 3] = trans
+                    qpos[env_idx, q_start + 3 : q_start + 7] = quat
+            elif link.parent_idx != -1:
+                parent_link = entity.links[link.parent_idx - entity.link_start]
+                if parent_link not in self._abd_data_by_link:
+                    continue
+                # Child link with 1-DOF joint: soft-blend IPC-resolved joint angle into qpos.
+                # Uses constraint_strength to match the old force-based coupling behavior.
+                joint = link.joints[0]
+                if joint.type not in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
+                    continue
+                q_idx = joint.q_start
+                dt = self.rigid_solver.substep_dt
+                k = (
+                    self._constraint_strength_rotation_scaled
+                    if joint.type == gs.JOINT_TYPE.REVOLUTE
+                    else self._constraint_strength_translation_scaled
+                )
+                alpha = min(1.0, k * dt**2)
+                for env_idx in range(self.sim._B):
+                    parent_T = self._abd_data_by_link[parent_link][env_idx].transform
+                    child_T = self._abd_data_by_link[link][env_idx].transform
+                    parent_quat = gu.T_to_trans_quat(parent_T)[1]
+                    quat_pre = gu.transform_quat_by_quat(np.asarray(link.quat, dtype=parent_quat.dtype), parent_quat)
+                    if joint.type == gs.JOINT_TYPE.REVOLUTE:
+                        child_quat = gu.T_to_trans_quat(child_T)[1]
+                        qloc = gu.transform_quat_by_quat(child_quat, gu.inv_quat(quat_pre))
+                        rotvec = gu.quat_to_rotvec(qloc)
+                        axis = np.asarray(joint._dofs_motion_ang[0], dtype=rotvec.dtype)
+                        angle_ipc = float(np.dot(rotvec, axis))
+                    else:  # PRISMATIC
+                        child_pos = child_T[:3, 3]
+                        parent_pos = parent_T[:3, 3]
+                        link_offset_pos = np.asarray(link.pos, dtype=parent_pos.dtype)
+                        pos_pre = parent_pos + gu.transform_by_quat(link_offset_pos, parent_quat)
+                        axis = np.asarray(joint._dofs_motion_vel[0], dtype=pos_pre.dtype)
+                        xaxis = gu.transform_by_quat(axis, quat_pre)
+                        angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
+                    qpos_ipc = qpos0[env_idx, q_idx] + angle_ipc
+                    qpos[env_idx, q_idx] += alpha * (qpos_ipc - qpos[env_idx, q_idx])
