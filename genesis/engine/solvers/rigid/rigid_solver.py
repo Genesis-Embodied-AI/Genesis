@@ -797,6 +797,7 @@ class RigidSolver(Solver):
         # Check if the initial configuration is out-of-bounds
         self.qpos = self._rigid_global_info.qpos
         self.qpos0 = self._rigid_global_info.qpos0
+        self.qpos_prev = self._rigid_global_info.qpos_prev
         is_init_qpos_out_of_bounds = False
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))

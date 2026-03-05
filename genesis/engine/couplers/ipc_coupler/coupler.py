@@ -7,13 +7,14 @@ from functools import partial
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.materials.FEM.cloth import Cloth
 from genesis.options.solvers import IPCCouplerOptions, RigidOptions
 from genesis.repr_base import RBC
-from genesis.utils.misc import geometric_mean, harmonic_mean, qd_to_numpy, tensor_to_array
+from genesis.utils.misc import geometric_mean, harmonic_mean, qd_to_numpy, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
     from genesis.engine.entities import FEMEntity, RigidEntity
@@ -206,13 +207,23 @@ class IPCCoupler(RBC):
                 continue
             coup_type = entity.material.coup_type
             if coup_type is None:
-                # Auto-select based on entity type
-                if entity.n_joints > 0:
-                    coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
-                else:
-                    coup_type = "ipc_only"
+                gs.raise_exception(
+                    f"Rigid entity {i_e} has needs_coup=True but coup_type=None. "
+                    f"Please explicitly set coup_type to one of 'ipc_only', 'two_way_soft_constraint', "
+                    f"or 'external_articulation'."
+                )
 
             self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
+            if coup_type == COUPLING_TYPE.IPC_ONLY:
+                has_constrained_joints = any(
+                    j.type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j in entity.joints
+                )
+                if has_constrained_joints:
+                    gs.raise_exception(
+                        f"Rigid entity {i_e} has constrained joints (revolute, prismatic, etc.). "
+                        f"Coupling type 'ipc_only' is not supported for articulated entities — "
+                        f"use 'external_articulation' or 'two_way_soft_constraint' instead."
+                    )
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 if not entity.base_link.is_fixed:
                     gs.raise_exception(
@@ -411,12 +422,6 @@ class IPCCoupler(RBC):
                 for source_link in source_links:
                     for geom in source_link.geoms:
                         if geom.type == gs.GEOM_TYPE.PLANE:
-                            if entity_coup_type != COUPLING_TYPE.IPC_ONLY:
-                                gs.raise_exception(
-                                    f"Plane entity (solver idx={i_e}) has coup_type='{entity_coup_type}', "
-                                    f"but only 'ipc_only' is supported for plane geoms."
-                                )
-
                             local_normal = geom.data[:3].astype(np.float64, copy=False)
                             normal = gu.transform_by_quat(local_normal, geom.init_quat)
                             normal = normal / np.linalg.norm(normal)
@@ -892,7 +897,7 @@ class IPCCoupler(RBC):
 
         mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=True)
         # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
-        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
+        qpos_prev = qd_to_numpy(self.rigid_solver.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Copy stored qpos (predicted) to articulation_data.qpos_current
@@ -940,9 +945,9 @@ class IPCCoupler(RBC):
         if COUPLING_TYPE.EXTERNAL_ARTICULATION not in self._entities_by_coup_type:
             return
 
-        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
+        qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
         # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
-        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
+        qpos_prev = qd_to_numpy(self.rigid_solver.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Read 'delta_theta_ipc' from IPC
@@ -963,7 +968,8 @@ class IPCCoupler(RBC):
                 for env_idx in range(self.sim._B):
                     qpos_new[env_idx, :3], qpos_new[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry[env_idx].transform)
 
-            qpos[:, entity.q_start : entity.q_end] = qpos_new
+            qs = slice(entity.q_start, entity.q_end)
+            qpos_tc[:, qs] = torch.from_numpy(qpos_new).to(dtype=qpos_tc.dtype, device=qpos_tc.device)
 
             # Store current link transforms to prev_links_transform
             for env_idx in range(self.sim._B):
@@ -981,17 +987,20 @@ class IPCCoupler(RBC):
         if COUPLING_TYPE.IPC_ONLY not in self._entities_by_coup_type:
             return
 
-        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
+        qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
         for entity in self._entities_by_coup_type[COUPLING_TYPE.IPC_ONLY]:
             if entity.base_link.is_fixed:
                 continue
 
+            q_start = entity.q_start
+            envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
             for env_idx in range(self.sim._B):
                 abd_entry = self._abd_data_by_link[entity.base_link][env_idx]
-                trans, quat = gu.T_to_trans_quat(abd_entry.transform)
-                q_start = entity.q_start
-                qpos[env_idx, q_start : q_start + 3] = trans
-                qpos[env_idx, q_start + 3 : q_start + 7] = quat
+                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
+
+            qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(
+                dtype=qpos_tc.dtype, device=qpos_tc.device
+            )
 
     def _retrieve_fem_states(self):
         # IPC world advance/retrieve is handled at Scene level
@@ -1106,8 +1115,8 @@ class IPCCoupler(RBC):
         ):
             return
 
-        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
-        qpos0 = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos0, transpose=True)
+        qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
+        qpos0 = qd_to_numpy(self.rigid_solver.qpos0, transpose=True)
 
         for link in self._coupling_data.links:
             entity = link.entity
@@ -1117,21 +1126,23 @@ class IPCCoupler(RBC):
             if link is entity.base_link and not entity.base_link.is_fixed:
                 # Write IPC-resolved base link transform to qpos (free joint: 3 pos + 4 quat)
                 q_start = entity.q_start
+                envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
                 for env_idx in range(self.sim._B):
                     abd_entry = self._abd_data_by_link[link][env_idx]
-                    trans, quat = gu.T_to_trans_quat(abd_entry.transform)
-                    qpos[env_idx, q_start : q_start + 3] = trans
-                    qpos[env_idx, q_start + 3 : q_start + 7] = quat
+                    envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
+                qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(
+                    dtype=qpos_tc.dtype, device=qpos_tc.device
+                )
             elif link.parent_idx != -1:
                 parent_link = entity.links[link.parent_idx - entity.link_start]
                 if parent_link not in self._abd_data_by_link:
                     continue
-                # Child link with 1-DOF joint: soft-blend IPC-resolved joint angle into qpos.
-                # Uses constraint_strength to match the old force-based coupling behavior.
+                # Child link with 1-DOF joint: write IPC-resolved joint angle to qpos.
                 joint = link.joints[0]
                 if joint.type not in (gs.JOINT_TYPE.REVOLUTE, gs.JOINT_TYPE.PRISMATIC):
                     continue
                 q_idx = joint.q_start
+                envs_q = np.empty((self.sim._B, 1), dtype=gs.np_float)
                 for env_idx in range(self.sim._B):
                     parent_T = self._abd_data_by_link[parent_link][env_idx].transform
                     child_T = self._abd_data_by_link[link][env_idx].transform
@@ -1151,5 +1162,5 @@ class IPCCoupler(RBC):
                         axis = np.asarray(joint._dofs_motion_vel[0], dtype=pos_pre.dtype)
                         xaxis = gu.transform_by_quat(axis, quat_pre)
                         angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
-                    qpos_ipc = qpos0[env_idx, q_idx] + angle_ipc
-                    qpos[env_idx, q_idx] += qpos_ipc - qpos[env_idx, q_idx]
+                    envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
+                qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(dtype=qpos_tc.dtype, device=qpos_tc.device)
