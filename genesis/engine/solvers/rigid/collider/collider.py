@@ -229,9 +229,11 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
-        # Kernel 1 MPR scratch state, sized for the chunked grid (n_envs * n_chunks)
+        # Kernel 1 scratch state, sized for the chunked grid (n_envs * n_chunks)
         self._kernel1_n_chunks = 5
-        self._kernel1_mpr_state = array_class.get_mpr_state(self._solver._B * self._kernel1_n_chunks)
+        self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
+        self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
+        self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
 
         # Kernel 2 config (mpr_state only; gjk_state created in __init__ after self._gjk is available)
         self._kernel2_n_gjk_threads = 4000
@@ -520,6 +522,7 @@ class Collider:
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
+                self._solver.verts_info,
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
@@ -527,6 +530,8 @@ class Collider:
                 self._collider_static_config,
                 self._kernel1_mpr_state,
                 self._mpr._mpr_info,
+                self._kernel1_gjk_state,
+                self._gjk._gjk_info,
                 self._support_field._support_field_info,
                 self._solver._errno,
                 self._solver._B,

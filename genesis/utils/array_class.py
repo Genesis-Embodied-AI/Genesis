@@ -1050,6 +1050,67 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info, is_active):
     )
 
 
+def get_gjk_state_contact_only(_B):
+    """Minimal GJK state for contact detection only (no EPA, no multi-contact).
+
+    Used by kernel 1 to run func_gjk as a boolean overlap test. All EPA polytope,
+    multi-contact, and differentiable fields are allocated at dummy size (1,) since
+    func_gjk never accesses them.
+    """
+
+    class _Proxy:
+        pass
+
+    full = _Proxy()
+    full._B = _B
+    dummy = _Proxy()
+    dummy._B = 1
+
+    return StructGJKState(
+        support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
+        simplex_vertex=get_gjk_simplex_vertex(full, True),
+        simplex_buffer=get_gjk_simplex_buffer(full, True),
+        simplex=get_gjk_simplex(full, True),
+        last_searched_simplex_vertex_id=V(dtype=gs.qd_int, shape=(_B,)),
+        simplex_vertex_intersect=get_gjk_simplex_vertex(full, True),
+        simplex_buffer_intersect=get_gjk_simplex_buffer(full, True),
+        nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
+        # EPA — dummy allocations, never accessed by func_gjk
+        polytope=get_epa_polytope(dummy, True),
+        polytope_verts=StructMDVertex(
+            obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            local_obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            local_obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            id1=V(dtype=gs.qd_int, shape=(1, 1)),
+            id2=V(dtype=gs.qd_int, shape=(1, 1)),
+            mink=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        ),
+        polytope_faces=get_epa_polytope_face(dummy, 1, True),
+        polytope_faces_map=V(dtype=gs.qd_int, shape=(1, 1)),
+        polytope_horizon_data=get_epa_polytope_horizon_data(dummy, 1, True),
+        polytope_horizon_stack=get_epa_polytope_horizon_data(dummy, 1, True),
+        # Multi-contact — dummy
+        contact_faces=get_contact_face(dummy, 1, True),
+        contact_normals=get_contact_normal(dummy, 1, True),
+        contact_halfspaces=get_contact_halfspace(dummy, 1, True),
+        contact_clipped_polygons=V_VEC(3, dtype=gs.qd_float, shape=(1, 2, 1)),
+        multi_contact_flag=V(dtype=gs.qd_bool, shape=(_B,)),
+        # Results — full _B for fields func_gjk writes; dummy for EPA-only fields
+        witness=get_witness(full, 1, True),
+        n_witness=V(dtype=gs.qd_int, shape=(_B,)),
+        n_contacts=V(dtype=gs.qd_int, shape=(1,)),
+        contact_pos=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        normal=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        is_col=V(dtype=gs.qd_bool, shape=(1,)),
+        penetration=V(dtype=gs.qd_float, shape=(1,)),
+        distance=V(dtype=gs.qd_float, shape=(_B,)),
+        diff_contact_input=get_diff_contact_input(dummy, 1, False),
+        n_diff_contact_input=V(dtype=gs.qd_int, shape=(1,)),
+        diff_penetration=V(dtype=gs.qd_float, shape=()),
+    )
+
+
 @DATA_ORIENTED
 class StructGJKInfo(metaclass=BASE_METACLASS):
     max_contacts_per_pair: V_ANNOTATION

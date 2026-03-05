@@ -1657,6 +1657,7 @@ def func_narrowphase_kernel1_contact0(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
+    verts_info: array_class.VertsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
@@ -1664,6 +1665,8 @@ def func_narrowphase_kernel1_contact0(
     collider_static_config: qd.template(),
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
     support_field_info: array_class.SupportFieldInfo,
     errno: array_class.V_ANNOTATION,
     n_envs: qd.template(),
@@ -1780,13 +1783,31 @@ def func_narrowphase_kernel1_contact0(
                 is_col = penetration > 0.0
             else:
                 if qd.static(
-                    collider_static_config.ccd_algorithm
-                    in (
-                        CCD_ALGORITHM_CODE.MPR,
-                        CCD_ALGORITHM_CODE.MJ_MPR,
-                        CCD_ALGORITHM_CODE.GJK,
-                        CCD_ALGORITHM_CODE.MJ_GJK,
+                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
+                ):
+                    gjk.clear_cache(gjk_state, flat_idx)
+                    distance = gjk.func_gjk(
+                        geoms_info,
+                        verts_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        flat_idx,
+                        ga_pos,
+                        ga_quat,
+                        gb_pos,
+                        gb_quat,
+                        False,
                     )
+                    is_col = distance < gjk_info.collision_eps[None]
+
+                if qd.static(
+                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                 ):
                     is_mpr_updated = False
                     normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
