@@ -54,7 +54,6 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         compute_link_to_link_transform,
         find_target_link_for_fixed_merge,
         read_ipc_geometry_metadata,
-        update_coupling_forces,
     )
 
 
@@ -636,7 +635,6 @@ class IPCCoupler(RBC):
                 joints_child_link=[j.link for j, *_ in joints],
                 joints_q_idx_local=[j.qs_idx_local[0] for j, *_ in joints],
                 articulation_slots=articulation_geom_slots,
-                ref_dof_prev=np.zeros((self.sim._B, entity.n_qs), dtype=np.float64),
                 qpos_stored=np.zeros((self.sim._B, entity.n_qs), dtype=np.float64),
                 qpos_current=np.zeros((self.sim._B, entity.n_qs), dtype=np.float64),
                 qpos_new=np.zeros((self.sim._B, entity.n_qs), dtype=np.float64),
@@ -893,14 +891,17 @@ class IPCCoupler(RBC):
             return
 
         mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=True)
+        # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
+        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
-            # Copy stored qpos to articulation_data.qpos_current
+            # Copy stored qpos (predicted) to articulation_data.qpos_current
             ad.qpos_current[:] = ad.qpos_stored
+            entity_qpos_prev = qpos_prev[..., entity.q_start : entity.q_end]
 
-            # Compute delta_theta_tilde = qpos_current - ref_dof_prev (per joint)
+            # Compute delta_theta_tilde = qpos_predicted - qpos_prev (per joint)
             ad.delta_theta_tilde[:] = (
-                ad.qpos_current[..., ad.joints_q_idx_local] - ad.ref_dof_prev[..., ad.joints_q_idx_local]
+                ad.qpos_current[..., ad.joints_q_idx_local] - entity_qpos_prev[..., ad.joints_q_idx_local]
             )
 
             # Update IPC geometry for each articulated entity
@@ -932,10 +933,16 @@ class IPCCoupler(RBC):
     def _post_advance_external_articulation(self):
         """
         Post-advance processing for external_articulation entities.
-        Reads delta_theta from IPC and updates Genesis qpos.
+
+        Reads delta_theta from IPC and writes target qpos into rigid_global_info.qpos (predicted).
+        kernel_restore_integrate will back-compute velocity/acceleration for step_2 to land there.
         """
         if COUPLING_TYPE.EXTERNAL_ARTICULATION not in self._entities_by_coup_type:
             return
+
+        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
+        # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
+        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Read 'delta_theta_ipc' from IPC
@@ -944,30 +951,19 @@ class IPCCoupler(RBC):
                 delta_theta_attr = scene_art_geom["joint"].find("delta_theta")
                 ad.delta_theta_ipc[env_idx] = delta_theta_attr.view()
 
-            # Compute qpos_new: copy ref_dof_prev then scatter joint deltas
-            ad.qpos_new[:] = ad.ref_dof_prev
+            # Compute qpos_new: start from qpos_prev, apply IPC's resolved joint deltas
+            entity_qpos_prev = qpos_prev[..., entity.q_start : entity.q_end]
+            ad.qpos_new[:] = entity_qpos_prev
             ad.qpos_new[..., ad.joints_q_idx_local] += ad.delta_theta_ipc
 
-            # Set qpos for all DOFs.
-            # For non-fixed base robots, apply base link transform from IPC.
+            # Write target qpos directly into rigid_global_info.qpos
             qpos_new = ad.qpos_new.astype(dtype=gs.np_float, copy=(not entity.base_link.is_fixed))
             if not entity.base_link.is_fixed:
                 abd_entry = self._abd_data_by_link[entity.base_link]
                 for env_idx in range(self.sim._B):
                     qpos_new[env_idx, :3], qpos_new[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry[env_idx].transform)
 
-            self.rigid_solver.set_qpos(
-                qpos_new if self.sim.n_envs > 0 else qpos_new[0],
-                qs_idx=slice(entity.q_start, entity.q_end),
-                skip_forward=False,
-            )
-
-            # Set base link velocities from IPC if available
-            if not entity.base_link.is_fixed:
-                self._apply_base_link_velocity_from_ipc(entity)
-
-            # Update ref_dof_prev for next timestep
-            ad.ref_dof_prev[:] = ad.qpos_new
+            qpos[:, entity.q_start : entity.q_end] = qpos_new
 
             # Store current link transforms to prev_links_transform
             for env_idx in range(self.sim._B):
@@ -979,33 +975,23 @@ class IPCCoupler(RBC):
         """
         Post-advance processing for 'ipc_only' entities.
 
-        This method directly sets Genesis transforms from IPC results. It only handles rigid objects.
+        Writes IPC target positions into qpos (predicted). kernel_restore_integrate will
+        back-compute the velocity and acceleration needed for step_2 to land on IPC's target.
         """
         if COUPLING_TYPE.IPC_ONLY not in self._entities_by_coup_type:
             return
 
-        envs_qpos = np.empty((self.sim._B, 7), dtype=gs.np_float)
+        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
         for entity in self._entities_by_coup_type[COUPLING_TYPE.IPC_ONLY]:
             if entity.base_link.is_fixed:
                 continue
 
             for env_idx in range(self.sim._B):
                 abd_entry = self._abd_data_by_link[entity.base_link][env_idx]
-                envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_entry.transform)
-
-            self.rigid_solver.set_qpos(
-                envs_qpos if self.sim.n_envs > 0 else envs_qpos[0],
-                qs_idx=slice(entity.q_start, entity.q_start + 7),
-                skip_forward=True,
-            )
-
-            # FIXME: It is currently necessary to enforce zero velocity to avoid double time integration by Rigid solver
-            # self._apply_base_link_velocity_from_ipc(entity)
-            self.rigid_solver.set_dofs_velocity(
-                velocity=None,
-                dofs_idx=slice(entity.dof_start, entity.dof_start + 6),
-                skip_forward=True,
-            )
+                trans, quat = gu.T_to_trans_quat(abd_entry.transform)
+                q_start = entity.q_start
+                qpos[env_idx, q_start : q_start + 3] = trans
+                qpos[env_idx, q_start + 3 : q_start + 7] = quat
 
     def _retrieve_fem_states(self):
         # IPC world advance/retrieve is handled at Scene level
@@ -1077,12 +1063,15 @@ class IPCCoupler(RBC):
 
     def _store_gs_rigid_states(self):
         """
-        Store current Genesis rigid body states before IPC advance.
+        Store predicted Genesis rigid body states before IPC advance.
 
-        These stored states will be used by:
-        1. Animator: to set aim_transform for IPC soft constraints
-        2. Force computation: to ensure action-reaction force consistency
-        3. User modification detection: to detect if user called set_qpos
+        After kernel_predict_integrate + FK, qpos and links_state contain predicted values.
+        These are used by:
+        1. Animator: aim_transform = predicted link transforms (two-way/ext-art)
+        2. External articulation: qpos_stored = predicted qpos for delta_theta computation
+
+        Note: IPC-only entities have no animator (external_kinetic=0), so stored
+        transforms are unused by IPC for them.
         """
         if not self.rigid_solver.is_active:
             return
@@ -1103,14 +1092,15 @@ class IPCCoupler(RBC):
 
     def _apply_abd_coupling_forces(self):
         """
-        Apply coupling forces from IPC ABD constraint to Genesis rigid bodies.
+        Apply two-way coupling by writing IPC-resolved transforms into qpos for base links.
 
-        Data has already been populated in data by _retrieve_rigid_states, so this function computes forces and applies
-        the results.
+        For each two-way entity's base link (free joint), IPC's resolved transform is written
+        directly into rigid_global_info.qpos. kernel_restore_integrate then back-computes the
+        velocity/acceleration for step_2 to land on IPC's target.
 
-        This ensures action-reaction force consistency:
-        - IPC constraint force: G_ipc = M * (q_ipc^{n+1} - q_genesis^n)
-        - Genesis reaction force: F_genesis = M * (q_ipc^{n+1} - q_genesis^n) = G_ipc
+        TODO: For child links of articulated two-way entities, the coupling effect currently
+        propagates only through the base link movement. Per-child-link soft constraint coupling
+        would require Jacobian-based velocity delta or IK.
         """
         if (
             not self.options.two_way_coupling
@@ -1119,31 +1109,19 @@ class IPCCoupler(RBC):
         ):
             return
 
-        assert self._coupling_data is not None
-        update_coupling_forces(
-            self._coupling_data.ipc_transforms,
-            self._coupling_data.aim_transforms,
-            self._coupling_data.links_mass,
-            self._coupling_data.links_inertia_i,
-            self._constraint_strength_translation_scaled,
-            self._constraint_strength_rotation_scaled,
-            self._coupling_data.out_forces,
-            self._coupling_data.out_torques,
-        )
+        qpos = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos, transpose=True, copy=False)
 
-        if np.isnan(self._coupling_data.out_forces).any() or np.isnan(self._coupling_data.out_torques).any():
-            gs.raise_exception(
-                "Invalid coupling forces/torques causing 'nan'. This indicates numerical instability. Please decrease "
-                "the simulation timestep."
-            )
+        for link in self._coupling_data.links:
+            entity = link.entity
+            if self._coup_type_by_entity.get(entity) != COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
+                continue
+            if link is not entity.base_link or entity.base_link.is_fixed:
+                continue
 
-        self.rigid_solver.apply_links_external_force(
-            self._coupling_data.out_forces if self.sim.n_envs > 0 else self._coupling_data.out_forces[0],
-            links_idx=self._coupling_data.links_idx,
-            local=False,
-        )
-        self.rigid_solver.apply_links_external_torque(
-            self._coupling_data.out_torques if self.sim.n_envs > 0 else self._coupling_data.out_torques[0],
-            links_idx=self._coupling_data.links_idx,
-            local=False,
-        )
+            # Write IPC-resolved base link transform to qpos
+            q_start = entity.q_start
+            for env_idx in range(self.sim._B):
+                abd_entry = self._abd_data_by_link[link][env_idx]
+                trans, quat = gu.T_to_trans_quat(abd_entry.transform)
+                qpos[env_idx, q_start : q_start + 3] = trans
+                qpos[env_idx, q_start + 3 : q_start + 7] = quat

@@ -99,6 +99,7 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
     awake_links: V_ANNOTATION
     qpos0: V_ANNOTATION
     qpos: V_ANNOTATION
+    qpos_prev: V_ANNOTATION
     qpos_next: V_ANNOTATION
     links_T: V_ANNOTATION
     envs_offset: V_ANNOTATION
@@ -153,6 +154,7 @@ def get_rigid_global_info(solver):
         awake_links=V(dtype=gs.qd_int, shape=(solver.n_links_, _B)),
         qpos0=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
         qpos=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B), needs_grad=requires_grad),
+        qpos_prev=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B), needs_grad=requires_grad),
         qpos_next=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B), needs_grad=requires_grad),
         links_T=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(solver.n_links_,)),
         geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_, 8)),

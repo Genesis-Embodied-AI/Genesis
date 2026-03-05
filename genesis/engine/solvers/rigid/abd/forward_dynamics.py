@@ -27,29 +27,126 @@ from .misc import (
 
 
 @qd.kernel
-def update_qacc_from_qvel_delta(
+def kernel_restore_integrate(
     dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     is_backward: qd.template(),
+    restore_qpos: qd.template(),
 ):
     BW = qd.static(is_backward)
 
-    n_dofs = dofs_state.ctrl_mode.shape[0]
     _B = dofs_state.ctrl_mode.shape[1]
 
+    # Phase 1 (when restore_qpos): vel = (qpos - qpos_prev) / dt, then qpos = qpos_prev
+    if qd.static(restore_qpos):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_0, i_b in (
+            (qd.ndrange(1, _B))
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else (qd.ndrange(links_info.root_idx.shape[0], _B))
+        ):
+            for i_1 in (
+                (
+                    range(rigid_global_info.n_awake_links[i_b])
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+                if qd.static(not BW)
+                else (
+                    qd.static(range(static_rigid_sim_config.max_n_awake_links))
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+            ):
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
+                ):
+                    i_l = (
+                        rigid_global_info.awake_links[i_1, i_b]
+                        if qd.static(static_rigid_sim_config.use_hibernation)
+                        else i_0
+                    )
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    if links_info.n_dofs[I_l] > 0:
+                        EPS = rigid_global_info.EPS[None]
+
+                        dof_start = links_info.dof_start[I_l]
+                        q_start = links_info.q_start[I_l]
+                        q_end = links_info.q_end[I_l]
+
+                        i_j = links_info.joint_start[I_l]
+                        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                        joint_type = joints_info.type[I_j]
+
+                        dt = rigid_global_info.substep_dt[None]
+
+                        # Back-compute vel from qpos delta, then restore qpos
+                        if joint_type == gs.JOINT_TYPE.FREE:
+                            for j in qd.static(range(3)):
+                                dofs_state.vel[dof_start + j, i_b] = (
+                                    rigid_global_info.qpos[q_start + j, i_b]
+                                    - rigid_global_info.qpos_prev[q_start + j, i_b]
+                                ) / dt
+                        if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
+                            rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
+                            quat_new = qd.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start + rot_offset + 0, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 1, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 2, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 3, i_b],
+                                ]
+                            )
+                            quat_prev = qd.Vector(
+                                [
+                                    rigid_global_info.qpos_prev[q_start + rot_offset + 0, i_b],
+                                    rigid_global_info.qpos_prev[q_start + rot_offset + 1, i_b],
+                                    rigid_global_info.qpos_prev[q_start + rot_offset + 2, i_b],
+                                    rigid_global_info.qpos_prev[q_start + rot_offset + 3, i_b],
+                                ]
+                            )
+                            qrot = gu.qd_transform_quat_by_quat(quat_new, gu.qd_inv_quat(quat_prev))
+                            ang = gu.qd_quat_to_rotvec(qrot, EPS)
+                            for j in qd.static(range(3)):
+                                dofs_state.vel[dof_start + rot_offset + j, i_b] = ang[j] / dt
+                        else:
+                            for j_ in (
+                                (range(q_end - q_start))
+                                if qd.static(not BW)
+                                else (qd.static(range(static_rigid_sim_config.max_n_qs_per_link)))
+                            ):
+                                j = q_start + j_
+                                if j < q_end:
+                                    dofs_state.vel[dof_start + j_, i_b] = (
+                                        rigid_global_info.qpos[j, i_b] - rigid_global_info.qpos_prev[j, i_b]
+                                    ) / dt
+
+                        # Restore qpos
+                        for j_ in (
+                            (range(q_end - q_start))
+                            if qd.static(not BW)
+                            else (qd.static(range(static_rigid_sim_config.max_n_qs_per_link)))
+                        ):
+                            j = q_start + j_
+                            if j < q_end:
+                                rigid_global_info.qpos[j, i_b] = rigid_global_info.qpos_prev[j, i_b]
+
+    # Phase 2: acc = (vel - vel_prev) / dt; vel = vel_prev
+    n_dofs = dofs_state.ctrl_mode.shape[0]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             (
-                # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
             if qd.static(not BW)
             else (
-                qd.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner loop for backward pass
+                qd.static(range(static_rigid_sim_config.max_n_awake_dofs))
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
@@ -67,29 +164,32 @@ def update_qacc_from_qvel_delta(
 
 
 @qd.kernel
-def update_qvel(
+def kernel_predict_integrate(
     dofs_state: array_class.DofsState,
+    links_info: array_class.LinksInfo,
+    joints_info: array_class.JointsInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     is_backward: qd.template(),
+    update_qpos: qd.template(),
 ):
     BW = qd.static(is_backward)
 
     _B = dofs_state.vel.shape[1]
     n_dofs = dofs_state.vel.shape[0]
 
+    # Phase 1: vel_prev = vel; vel = vel + acc * dt
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             (
-                # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
             if qd.static(not BW)
             else (
-                qd.static(range(static_rigid_sim_config.max_n_awake_dofs))  # Static inner loop for backward pass
+                qd.static(range(static_rigid_sim_config.max_n_awake_dofs))
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
@@ -104,6 +204,113 @@ def update_qvel(
                 dofs_state.vel[i_d, i_b] = (
                     dofs_state.vel[i_d, i_b] + dofs_state.acc[i_d, i_b] * rigid_global_info.substep_dt[None]
                 )
+
+    # Phase 2: qpos_prev = qpos; qpos = qpos + vel * dt (with quaternion handling)
+    if qd.static(update_qpos):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_0, i_b in (
+            (qd.ndrange(1, _B))
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else (qd.ndrange(links_info.root_idx.shape[0], _B))
+        ):
+            for i_1 in (
+                (
+                    range(rigid_global_info.n_awake_links[i_b])
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+                if qd.static(not BW)
+                else (
+                    qd.static(range(static_rigid_sim_config.max_n_awake_links))
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+            ):
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_links[i_b], static_rigid_sim_config.use_hibernation
+                ):
+                    i_l = (
+                        rigid_global_info.awake_links[i_1, i_b]
+                        if qd.static(static_rigid_sim_config.use_hibernation)
+                        else i_0
+                    )
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    if links_info.n_dofs[I_l] > 0:
+                        EPS = rigid_global_info.EPS[None]
+
+                        dof_start = links_info.dof_start[I_l]
+                        q_start = links_info.q_start[I_l]
+                        q_end = links_info.q_end[I_l]
+
+                        i_j = links_info.joint_start[I_l]
+                        I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
+                        joint_type = joints_info.type[I_j]
+
+                        # Save qpos to qpos_prev
+                        for j_ in (
+                            (range(q_end - q_start))
+                            if qd.static(not BW)
+                            else (qd.static(range(static_rigid_sim_config.max_n_qs_per_link)))
+                        ):
+                            j = q_start + j_
+                            if j < q_end:
+                                rigid_global_info.qpos_prev[j, i_b] = rigid_global_info.qpos[j, i_b]
+
+                        # Compute predicted qpos (mirrors func_integrate Phase 2)
+                        if joint_type == gs.JOINT_TYPE.FREE:
+                            pos = qd.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start, i_b],
+                                    rigid_global_info.qpos[q_start + 1, i_b],
+                                    rigid_global_info.qpos[q_start + 2, i_b],
+                                ]
+                            )
+                            vel = qd.Vector(
+                                [
+                                    dofs_state.vel[dof_start, i_b],
+                                    dofs_state.vel[dof_start + 1, i_b],
+                                    dofs_state.vel[dof_start + 2, i_b],
+                                ]
+                            )
+                            pos = pos + vel * rigid_global_info.substep_dt[None]
+                            for j in qd.static(range(3)):
+                                rigid_global_info.qpos[q_start + j, i_b] = pos[j]
+                        if joint_type == gs.JOINT_TYPE.SPHERICAL or joint_type == gs.JOINT_TYPE.FREE:
+                            rot_offset = 3 if joint_type == gs.JOINT_TYPE.FREE else 0
+                            rot0 = qd.Vector(
+                                [
+                                    rigid_global_info.qpos[q_start + rot_offset + 0, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 1, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 2, i_b],
+                                    rigid_global_info.qpos[q_start + rot_offset + 3, i_b],
+                                ]
+                            )
+                            ang = (
+                                qd.Vector(
+                                    [
+                                        dofs_state.vel[dof_start + rot_offset + 0, i_b],
+                                        dofs_state.vel[dof_start + rot_offset + 1, i_b],
+                                        dofs_state.vel[dof_start + rot_offset + 2, i_b],
+                                    ]
+                                )
+                                * rigid_global_info.substep_dt[None]
+                            )
+                            qrot = gu.qd_rotvec_to_quat(ang, EPS)
+                            rot = gu.qd_transform_quat_by_quat(qrot, rot0)
+                            for j in qd.static(range(4)):
+                                rigid_global_info.qpos[q_start + j + rot_offset, i_b] = rot[j]
+                        else:
+                            for j_ in (
+                                (range(q_end - q_start))
+                                if qd.static(not BW)
+                                else (qd.static(range(static_rigid_sim_config.max_n_qs_per_link)))
+                            ):
+                                j = q_start + j_
+                                if j < q_end:
+                                    rigid_global_info.qpos[j, i_b] = (
+                                        rigid_global_info.qpos[j, i_b]
+                                        + dofs_state.vel[dof_start + j_, i_b] * rigid_global_info.substep_dt[None]
+                                    )
 
 
 @qd.kernel(fastcache=gs.use_fastcache)

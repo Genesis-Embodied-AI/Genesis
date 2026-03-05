@@ -39,14 +39,13 @@ class ArticulatedEntityData:
 
     articulation_slots: list[GeometrySlot]
 
-    ref_dof_prev: np.ndarray
     qpos_stored: np.ndarray
     qpos_current: np.ndarray
     qpos_new: np.ndarray
     delta_theta_tilde: np.ndarray
     delta_theta_ipc: np.ndarray
 
-    # Previous timestep link transforms for ref_dof_prev computation {(joint, env_idx): transform_matrix_4x4}
+    # Previous timestep link transforms for IPC ABD ref_dof_prev sync {(joint, env_idx): transform_matrix_4x4}
     prev_links_transform: list[list[np.ndarray | None]]
 
 

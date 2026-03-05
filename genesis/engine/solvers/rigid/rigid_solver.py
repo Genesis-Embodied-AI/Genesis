@@ -111,8 +111,8 @@ from .abd.forward_dynamics import (
     kernel_update_acc,
     kernel_compute_qacc,
     kernel_forward_dynamics_without_qacc,
-    update_qacc_from_qvel_delta,
-    update_qvel,
+    kernel_restore_integrate,
+    kernel_predict_integrate,
 )
 from .abd.accessor import (
     kernel_get_state,
@@ -1114,74 +1114,8 @@ class RigidSolver(Solver):
             self.constraint_solver = ConstraintSolver(self)
 
     def substep(self, f):
-        # from genesis.utils.tools import create_timer
-        from genesis.engine.couplers import SAPCoupler
-
-        if self._requires_grad and f == 0:
-            kernel_save_adjoint_cache(
-                f=f,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                rigid_adjoint_cache=self._rigid_adjoint_cache,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-
-        kernel_step_1(
-            self.links_state,
-            self.links_info,
-            self.joints_state,
-            self.joints_info,
-            self.dofs_state,
-            self.dofs_info,
-            self.geoms_state,
-            self.geoms_info,
-            self.entities_state,
-            self.entities_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
-            self.constraint_solver.contact_island.contact_island_state,
-            self._is_forward_pos_updated,
-            self._is_forward_vel_updated,
-            self._is_backward,
-        )
-
-        if isinstance(self.sim.coupler, SAPCoupler):
-            update_qvel(
-                self.dofs_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-                self._is_backward,
-            )
-        else:
-            self._func_constraint_force()
-            kernel_step_2(
-                self.dofs_state,
-                self.dofs_info,
-                self.links_info,
-                self.links_state,
-                self.joints_info,
-                self.joints_state,
-                self.entities_state,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.collider._collider_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-                self.constraint_solver.contact_island.contact_island_state,
-                self._is_backward,
-                self._errno,
-            )
-            self._is_forward_pos_updated = not self._enable_mujoco_compatibility
-            self._is_forward_vel_updated = not self._enable_mujoco_compatibility
-            if self._requires_grad:
-                kernel_save_adjoint_cache(
-                    f + 1,
-                    self.dofs_state,
-                    self._rigid_global_info,
-                    self._rigid_adjoint_cache,
-                    self._static_rigid_sim_config,
-                )
+        self.substep_pre_coupling(f)
+        self.substep_post_coupling(f)
 
     def get_error_envs_mask(self):
         return qd_to_torch(self._errno) > 0
@@ -1411,18 +1345,79 @@ class RigidSolver(Solver):
         )
 
     def substep_pre_coupling(self, f):
-        if self.is_active:
-            # Skip rigid body computation when using IPCCoupler (IPC handles rigid simulation)
-            from genesis.engine.couplers import IPCCoupler
+        from genesis.engine.couplers import SAPCoupler, IPCCoupler
 
-            if isinstance(self.sim.coupler, IPCCoupler):
-                # If any rigid entity is coupled to IPC, skip pre-coupling rigid simulation
-                # The rigid simulation will be done in post-coupling phase instead
-                if self.sim.coupler.has_any_rigid_coupling:
-                    return
+        if not self.is_active:
+            return
 
-            # Run Genesis rigid simulation step for non-IPC couplers
-            self.substep(f)
+        if self._requires_grad and f == 0:
+            kernel_save_adjoint_cache(
+                f=f,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                rigid_adjoint_cache=self._rigid_adjoint_cache,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
+        kernel_step_1(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            geoms_state=self.geoms_state,
+            geoms_info=self.geoms_info,
+            entities_state=self.entities_state,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            is_forward_pos_updated=self._is_forward_pos_updated,
+            is_forward_vel_updated=self._is_forward_vel_updated,
+            is_backward=self._is_backward,
+        )
+
+        if isinstance(self.sim.coupler, SAPCoupler):
+            kernel_predict_integrate(
+                dofs_state=self.dofs_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
+                update_qpos=False,
+            )
+        elif isinstance(self.sim.coupler, IPCCoupler):
+            self._func_constraint_force()
+            # TODO: Exclude IPC-only entities from predict/FK — IPC fully drives them
+            # (external_kinetic=0, no animator), so predicted poses are unused.
+            kernel_predict_integrate(
+                dofs_state=self.dofs_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
+                update_qpos=True,
+            )
+            # FK on predicted qpos to get predicted link transforms for IPC coupler
+            kernel_forward_kinematics_links_geoms(
+                self._scene._envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+        else:
+            self._func_constraint_force()
 
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
@@ -1599,35 +1594,54 @@ class RigidSolver(Solver):
             return
 
         if isinstance(self.sim.coupler, SAPCoupler):
-            update_qacc_from_qvel_delta(
+            kernel_restore_integrate(
                 dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                is_backward=self._is_backward,
-            )
-            kernel_step_2(
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
                 links_info=self.links_info,
-                links_state=self.links_state,
                 joints_info=self.joints_info,
-                joints_state=self.joints_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                geoms_info=self.geoms_info,
-                geoms_state=self.geoms_state,
-                collider_state=self.collider._collider_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
                 is_backward=self._is_backward,
-                errno=self._errno,
+                restore_qpos=False,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
-            # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
-            # Collision exclusion for IPC-coupled links is handled in the collider at build time.
-            if self.sim.coupler.has_any_rigid_coupling:
-                self.substep(f)
+            kernel_restore_integrate(
+                dofs_state=self.dofs_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=self._is_backward,
+                restore_qpos=True,
+            )
+
+        kernel_step_2(
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            links_info=self.links_info,
+            links_state=self.links_state,
+            joints_info=self.joints_info,
+            joints_state=self.joints_state,
+            entities_state=self.entities_state,
+            entities_info=self.entities_info,
+            geoms_info=self.geoms_info,
+            geoms_state=self.geoms_state,
+            collider_state=self.collider._collider_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island_state=self.constraint_solver.contact_island.contact_island_state,
+            is_backward=self._is_backward,
+            errno=self._errno,
+        )
+        self._is_forward_pos_updated = not self._enable_mujoco_compatibility
+        self._is_forward_vel_updated = not self._enable_mujoco_compatibility
+        if self._requires_grad:
+            kernel_save_adjoint_cache(
+                f=f + 1,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                rigid_adjoint_cache=self._rigid_adjoint_cache,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     def substep_post_coupling_grad(self, f):
         pass
