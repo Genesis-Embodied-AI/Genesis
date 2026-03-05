@@ -822,7 +822,7 @@ class RigidSolver(Solver):
         """
         Process heterogeneous link info: dispatch geoms per environment and compute per-env inertial properties.
         This method is called after _init_link_fields to update the per-environment inertial properties
-        for entities with heterogeneous morphs.
+        for entities with heterogeneous morphs. Supports both single-link and multi-link entities.
         """
         for entity in self._entities:
             # Skip non-heterogeneous entities
@@ -830,7 +830,7 @@ class RigidSolver(Solver):
                 continue
 
             # Get the number of variants for this entity
-            n_variants = len(entity.variants_geom_start)
+            n_variants = len(entity.variants_link_geom_start)
 
             # Distribute variants across environments using balanced block assignment:
             # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
@@ -844,28 +844,43 @@ class RigidSolver(Solver):
                 # Each environment gets a unique variant; variants beyond B are unused
                 variant_idx = np.arange(self._B)
 
-            # Get arrays from entity
-            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
-            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
-            np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
-            np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
-
-            # Process each link in this heterogeneous entity (currently only single-link supported)
+            # Process each link in this heterogeneous entity
             for link in entity.links:
                 i_l = link.idx
+                link_local_idx = i_l - entity.link_start
 
-                # Build per-env arrays for geom/vgeom ranges
+                # Build per-env arrays for geom/vgeom ranges from per-variant-per-link data
+                np_geom_start = np.array(
+                    [entity.variants_link_geom_start[v][link_local_idx] for v in range(n_variants)], dtype=gs.np_int
+                )
+                np_geom_end = np.array(
+                    [entity.variants_link_geom_end[v][link_local_idx] for v in range(n_variants)], dtype=gs.np_int
+                )
+                np_vgeom_start = np.array(
+                    [entity.variants_link_vgeom_start[v][link_local_idx] for v in range(n_variants)], dtype=gs.np_int
+                )
+                np_vgeom_end = np.array(
+                    [entity.variants_link_vgeom_end[v][link_local_idx] for v in range(n_variants)], dtype=gs.np_int
+                )
+
                 links_geom_start = np_geom_start[variant_idx]
                 links_geom_end = np_geom_end[variant_idx]
                 links_vgeom_start = np_vgeom_start[variant_idx]
                 links_vgeom_end = np_vgeom_end[variant_idx]
 
-                # Build per-env arrays for inertial properties
+                # Build per-env arrays for inertial properties from per-variant-per-link data
                 links_inertial_mass = np.array(
-                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
+                    [entity.variants_link_inertial_mass[v][link_local_idx] for v in variant_idx], dtype=gs.np_float
                 )
-                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
+                links_inertial_pos = np.array(
+                    [entity.variants_link_inertial_pos[v][link_local_idx] for v in variant_idx], dtype=gs.np_float
+                )
+                links_inertial_quat = np.array(
+                    [entity.variants_link_inertial_quat[v][link_local_idx] for v in variant_idx], dtype=gs.np_float
+                )
+                links_inertial_i = np.array(
+                    [entity.variants_link_inertial_i[v][link_local_idx] for v in variant_idx], dtype=gs.np_float
+                )
 
                 # Update links_info with per-environment values
                 # Note: when batch_links_info is True, the shape is (n_links, B)
@@ -877,6 +892,7 @@ class RigidSolver(Solver):
                     links_vgeom_end,
                     links_inertial_mass,
                     links_inertial_pos,
+                    links_inertial_quat,
                     links_inertial_i,
                     self.links_info,
                 )

@@ -284,6 +284,7 @@ def kernel_update_heterogeneous_link_info(
     links_vgeom_end: qd.types.ndarray(),
     links_inertial_mass: qd.types.ndarray(),
     links_inertial_pos: qd.types.ndarray(),
+    links_inertial_quat: qd.types.ndarray(),
     links_inertial_i: qd.types.ndarray(),
     # Quadrants variables
     links_info: array_class.LinksInfo,
@@ -300,6 +301,9 @@ def kernel_update_heterogeneous_link_info(
 
         for j in qd.static(range(3)):
             links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+
+        for j in qd.static(range(4)):
+            links_info.inertial_quat[i_l, i_b][j] = links_inertial_quat[i_b, j]
 
         for j1, j2 in qd.static(qd.ndrange(3, 3)):
             links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]

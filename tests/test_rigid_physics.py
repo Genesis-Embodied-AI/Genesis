@@ -4581,6 +4581,232 @@ def test_pick_heterogenous_objects(show_viewer):
 
 
 @pytest.mark.required
+def test_heterogeneous_articulated_simulation(show_viewer, tol):
+    """Test heterogeneous articulated simulation produces correct per-variant dynamics.
+
+    Loads two 2-link revolute URDFs with different geometry/mass as variants and verifies:
+    - Same-variant envs produce identical results (envs 0-1 match, envs 2-3 match)
+    - Different-variant envs produce different results (envs 0 vs 2 differ)
+    Variant assignment uses balanced block: with 4 envs and 2 variants -> [A, A, B, B].
+    """
+    n_steps = 30
+    drop_height = 0.15
+
+    urdf_a = "urdf/simple/two_cube_revolute.urdf"
+    urdf_b = "urdf/simple/two_cube_revolute_small.urdf"
+
+    # Heterogeneous run: both variants, 4 envs with balanced block [A, A, B, B]
+    scene_het = gs.Scene(show_viewer=show_viewer)
+    scene_het.add_entity(gs.morphs.Plane())
+    het_obj = scene_het.add_entity(
+        morph=[
+            gs.morphs.URDF(file=urdf_a, pos=(0, 0, drop_height)),
+            gs.morphs.URDF(file=urdf_b, pos=(0, 0, drop_height)),
+        ]
+    )
+    scene_het.build(n_envs=4)
+    for _ in range(n_steps):
+        scene_het.step()
+    het_pos = tensor_to_array(het_obj.get_pos())
+    het_qpos = tensor_to_array(het_obj.get_qpos())
+
+    # Same-variant envs produce identical results
+    assert_allclose(het_pos[0], het_pos[1], tol=tol)  # variant A envs match
+    assert_allclose(het_pos[2], het_pos[3], tol=tol)  # variant B envs match
+    assert_allclose(het_qpos[0], het_qpos[1], tol=tol)
+    assert_allclose(het_qpos[2], het_qpos[3], tol=tol)
+
+    # Different-variant envs produce different results (different mass/geometry -> different dynamics)
+    assert not np.allclose(het_pos[0], het_pos[2], atol=tol, rtol=tol), "Variant A and B positions should differ"
+    assert not np.allclose(het_qpos[0], het_qpos[2], atol=tol, rtol=tol), "Variant A and B qpos should differ"
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_mass_and_joints(tol):
+    """Test that articulated heterogeneous variants have correct per-env mass and joint structure."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    urdf_a = "urdf/simple/two_cube_revolute.urdf"
+    urdf_b = "urdf/simple/two_cube_revolute_small.urdf"
+
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(file=urdf_a, pos=(0, 0, 0.1)),
+            gs.morphs.URDF(file=urdf_b, pos=(0, 0, 0.1)),
+        ]
+    )
+    scene.build(n_envs=4)
+
+    # Mass: shape (n_envs,), balanced block [A, A, B, B]
+    mass = tensor_to_array(het_obj.get_mass())
+    assert mass.shape == (4,)
+    assert_allclose(mass[0], mass[1], tol=tol)  # Same variant A
+    assert_allclose(mass[2], mass[3], tol=tol)  # Same variant B
+    assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
+
+    # Joint structure: both variants share the same joints (root_joint + joint1)
+    assert len(het_obj.joints) == 2
+    joint_names = {j.name for j in het_obj.joints}
+    assert "root_joint" in joint_names
+    assert "joint1" in joint_names
+    assert len(het_obj.links) == 2
+
+    # Joint state: qpos includes free joint (7) + revolute (1) = 8
+    qpos = het_obj.get_qpos()
+    assert qpos.shape == (4, 8)
+    # Dof velocity: free joint (6) + revolute (1) = 7
+    dofs_vel = het_obj.get_dofs_velocity()
+    assert dofs_vel.shape == (4, 7)
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_ground_contact(tol):
+    """Test that articulated heterogeneous objects settle on ground without penetration."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(file="urdf/simple/two_cube_revolute.urdf", pos=(0, 0, 0.15)),
+            gs.morphs.URDF(file="urdf/simple/two_cube_revolute_small.urdf", pos=(0, 0, 0.15)),
+        ]
+    )
+    scene.build(n_envs=4)
+
+    # Simulate long enough for objects to settle
+    for _ in range(500):
+        scene.step()
+
+    # All objects should be above ground (z > 0)
+    pos = tensor_to_array(het_obj.get_pos())
+    assert np.all(pos[:, 2] > 0.0), f"Objects penetrated ground: z={pos[:, 2]}"
+
+    # Velocity should be near zero (settled)
+    vel = tensor_to_array(het_obj.get_vel())
+    assert_allclose(vel, 0.0, tol=0.05)
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_structure_mismatch():
+    """Test that mismatched joint structure raises an exception."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    # two_cube_revolute has 1 revolute joint; two_link_arm has 2 continuous joints
+    with pytest.raises(gs.GenesisException):
+        scene.add_entity(
+            morph=[
+                gs.morphs.URDF(file="urdf/simple/two_cube_revolute.urdf", pos=(0, 0, 0.1)),
+                gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", pos=(0, 0, 0.1)),
+            ]
+        )
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_same_variant(tol):
+    """Test that using the same URDF for all variants produces identical per-env results."""
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+
+    urdf = "urdf/simple/two_cube_revolute.urdf"
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(file=urdf, pos=(0, 0, 0.15)),
+            gs.morphs.URDF(file=urdf, pos=(0, 0, 0.15)),
+        ]
+    )
+    scene.build(n_envs=4)
+
+    for _ in range(30):
+        scene.step()
+
+    pos = tensor_to_array(het_obj.get_pos())
+    qpos = tensor_to_array(het_obj.get_qpos())
+
+    # All 4 envs should produce identical results
+    assert_allclose(pos[0], pos[1], tol=tol)
+    assert_allclose(pos[0], pos[2], tol=tol)
+    assert_allclose(pos[0], pos[3], tol=tol)
+    assert_allclose(qpos[0], qpos[1], tol=tol)
+    assert_allclose(qpos[0], qpos[2], tol=tol)
+    assert_allclose(qpos[0], qpos[3], tol=tol)
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_uneven_envs(tol):
+    """Test variant assignment with n_envs not evenly divisible by n_variants.
+
+    3 envs / 2 variants -> balanced block [A, A, B] (extra env goes to first variant).
+    """
+    urdf_a = "urdf/simple/two_cube_revolute.urdf"
+    urdf_b = "urdf/simple/two_cube_revolute_small.urdf"
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(file=urdf_a, pos=(0, 0, 0.15)),
+            gs.morphs.URDF(file=urdf_b, pos=(0, 0, 0.15)),
+        ]
+    )
+    scene.build(n_envs=3)
+
+    for _ in range(30):
+        scene.step()
+
+    mass = tensor_to_array(het_obj.get_mass())
+    pos = tensor_to_array(het_obj.get_pos())
+
+    # Envs 0-1 -> variant A, env 2 -> variant B
+    assert_allclose(mass[0], mass[1], tol=tol)
+    assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
+    assert_allclose(pos[0], pos[1], tol=tol)
+    assert not np.allclose(pos[0], pos[2], atol=tol, rtol=tol), "Variant A and B positions should differ"
+
+
+@pytest.mark.required
+def test_heterogeneous_articulated_reset_and_control(tol):
+    """Test reset preserves variant assignment and control works per-variant."""
+    urdf_a = "urdf/simple/two_cube_revolute.urdf"
+    urdf_b = "urdf/simple/two_cube_revolute_small.urdf"
+
+    scene = gs.Scene(show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.URDF(file=urdf_a, pos=(0, 0, 0.15)),
+            gs.morphs.URDF(file=urdf_b, pos=(0, 0, 0.15)),
+        ]
+    )
+    scene.build(n_envs=4)
+
+    # Run, then reset, then run again — should reproduce initial trajectory
+    for _ in range(20):
+        scene.step()
+    pos_before_reset = tensor_to_array(het_obj.get_pos())
+
+    scene.reset()
+    for _ in range(20):
+        scene.step()
+    pos_after_reset = tensor_to_array(het_obj.get_pos())
+
+    assert_allclose(pos_before_reset, pos_after_reset, tol=tol)
+
+    # Control: apply position target on the revolute joint (last dof)
+    scene.reset()
+    revolute_dof_idx = het_obj.joints[-1].dofs_idx_local[0]
+    target = 0.5
+    for _ in range(100):
+        het_obj.control_dofs_position(np.array([target]), dofs_idx_local=[revolute_dof_idx])
+        scene.step()
+
+    dofs_pos = tensor_to_array(het_obj.get_dofs_position())
+    # All envs should reach near the target on the revolute dof
+    assert_allclose(dofs_pos[:, revolute_dof_idx], target, tol=0.1)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("performance_mode", [True])
 def test_hibernation_and_contact_islands(show_viewer):
     """

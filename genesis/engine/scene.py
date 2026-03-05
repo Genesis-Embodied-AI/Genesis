@@ -366,10 +366,20 @@ class Scene(RBC):
             morph_for_checks = morph[0]
             if not isinstance(material, gs.materials.Rigid):
                 gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
+            _het_allowed_types = (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)
             for m in morph:
-                if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
+                if not isinstance(m, _het_allowed_types):
                     gs.raise_exception(
-                        f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
+                        f"Heterogeneous morphs only support Primitive, Mesh, URDF, and MJCF types, "
+                        f"got: {type(m).__name__}."
+                    )
+            # All heterogeneous morphs must be the same type category (all scene-file or all primitive/mesh)
+            _is_scene_morph = isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF))
+            for m in morph[1:]:
+                if isinstance(m, (gs.morphs.URDF, gs.morphs.MJCF)) != _is_scene_morph:
+                    gs.raise_exception(
+                        "All heterogeneous morphs must be the same type category: "
+                        "either all URDF/MJCF or all Primitive/Mesh."
                     )
         else:
             morph_for_checks = morph
@@ -462,10 +472,12 @@ class Scene(RBC):
             gs.raise_exception()
 
         # Set material-dependent default options
-        if isinstance(morph, gs.morphs.FileMorph):
-            # Rigid entities will convexify geom by default
-            if morph.convexify is None:
-                morph.convexify = isinstance(material, gs.materials.Rigid)
+        morphs_to_configure = morph if is_heterogeneous else (morph,)
+        for m in morphs_to_configure:
+            if isinstance(m, gs.morphs.FileMorph):
+                # Rigid entities will convexify geom by default
+                if m.convexify is None:
+                    m.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
