@@ -118,7 +118,6 @@ from .abd.forward_dynamics import (
 from .abd.accessor import (
     kernel_get_state,
     kernel_set_state,
-    kernel_get_state_grad,
     kernel_set_links_pos,
     kernel_set_links_quat,
     kernel_set_links_mass_shift,
@@ -1346,51 +1345,6 @@ class RigidSolver(KinematicSolver):
             # Collision exclusion for IPC-coupled links is handled in the collider at build time.
             if self.sim.coupler.has_any_rigid_coupling:
                 self.substep(f)
-
-    def substep_post_coupling_grad(self, f):
-        pass
-
-    def add_grad_from_state(self, state):
-        if self.is_active:
-            qpos_grad = gs.zeros_like(state.qpos)
-            dofs_vel_grad = gs.zeros_like(state.dofs_vel)
-            links_pos_grad = gs.zeros_like(state.links_pos)
-            links_quat_grad = gs.zeros_like(state.links_quat)
-
-            if state.qpos.grad is not None:
-                qpos_grad = state.qpos.grad
-            if state.dofs_vel.grad is not None:
-                dofs_vel_grad = state.dofs_vel.grad
-            if state.links_pos.grad is not None:
-                links_pos_grad = state.links_pos.grad
-            if state.links_quat.grad is not None:
-                links_quat_grad = state.links_quat.grad
-
-            kernel_get_state_grad(
-                qpos_grad=qpos_grad,
-                vel_grad=dofs_vel_grad,
-                links_pos_grad=links_pos_grad,
-                links_quat_grad=links_quat_grad,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-
-    def collect_output_grads(self):
-        """
-        Collect gradients from downstream queried states.
-        """
-        if self._sim.cur_step_global in self._queried_states:
-            # one step could have multiple states
-            assert len(self._queried_states[self._sim.cur_step_global]) == 1
-            state = self._queried_states[self._sim.cur_step_global][0]
-            self.add_grad_from_state(state)
-
-    def reset_grad(self):
-        for entity in self._entities:
-            entity.reset_grad()
-        self._queried_states.clear()
 
     def get_state(self, f=None):
         s_global = self.sim.cur_step_global

@@ -39,6 +39,7 @@ from .rigid.abd.forward_kinematics import (
 )
 from .rigid.abd.accessor import (
     kernel_get_kinematic_state,
+    kernel_get_state_grad,
     kernel_set_kinematic_state,
     kernel_set_links_pos_grad,
     kernel_set_links_quat_grad,
@@ -228,7 +229,6 @@ class KinematicSolver(Solver):
 
     def _create_data_manager(self):
         self.data_manager = array_class.DataManager(self, kinematic_only=True)
-        self._errno = self.data_manager.errno
         self._rigid_global_info = self.data_manager.rigid_global_info
         self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
 
@@ -492,40 +492,70 @@ class KinematicSolver(Solver):
     # -------------------------------- simulation no-ops ----------------------------------
     # ------------------------------------------------------------------------------------
 
-    def substep(self, f):
-        """No-op: kinematic entities are not simulated."""
-        pass
-
-    def check_errno(self):
-        """No-op: kinematic solver has no error conditions to check."""
-        pass
-
     def substep_pre_coupling(self, f):
-        """No-op: kinematic entities do not participate in coupling."""
         pass
 
     def substep_pre_coupling_grad(self, f):
-        """No-op: kinematic solver does not support gradients."""
         pass
 
     def substep_post_coupling(self, f):
-        """No-op: kinematic entities do not participate in coupling."""
-        pass
+        if not self._is_forward_pos_updated or not self._is_forward_vel_updated:
+            kernel_forward_kinematics(
+                self.scene._envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     def substep_post_coupling_grad(self, f):
-        """No-op: kinematic solver does not support gradients."""
         pass
 
     def add_grad_from_state(self, state):
-        """No-op: kinematic solver does not support gradients."""
-        pass
+        if self.is_active:
+            qpos_grad = gs.zeros_like(state.qpos)
+            dofs_vel_grad = gs.zeros_like(state.dofs_vel)
+            links_pos_grad = gs.zeros_like(state.links_pos)
+            links_quat_grad = gs.zeros_like(state.links_quat)
+
+            if state.qpos.grad is not None:
+                qpos_grad = state.qpos.grad
+            if state.dofs_vel.grad is not None:
+                dofs_vel_grad = state.dofs_vel.grad
+            if state.links_pos.grad is not None:
+                links_pos_grad = state.links_pos.grad
+            if state.links_quat.grad is not None:
+                links_quat_grad = state.links_quat.grad
+
+            kernel_get_state_grad(
+                qpos_grad=qpos_grad,
+                vel_grad=dofs_vel_grad,
+                links_pos_grad=links_pos_grad,
+                links_quat_grad=links_quat_grad,
+                links_state=self.links_state,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
 
     def collect_output_grads(self):
-        """No-op: kinematic solver does not support gradients."""
-        pass
+        """
+        Collect gradients from downstream queried states.
+        """
+        if self._sim.cur_step_global in self._queried_states:
+            # one step could have multiple states
+            assert len(self._queried_states[self._sim.cur_step_global]) == 1
+            state = self._queried_states[self._sim.cur_step_global][0]
+            self.add_grad_from_state(state)
 
     def reset_grad(self):
-        """No-op: kinematic solver does not support gradients."""
+        for entity in self._entities:
+            entity.reset_grad()
         self._queried_states.clear()
 
     # ------------------------------------------------------------------------------------
@@ -581,12 +611,6 @@ class KinematicSolver(Solver):
     def set_state(self, f, state, envs_idx=None):
         if self.is_active:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-
-            if gs.use_zerocopy:
-                errno = qd_to_torch(self._errno, copy=False)
-                errno[envs_idx] = 0
-            else:
-                kernel_set_zero(envs_idx, self._errno)
 
             kernel_set_kinematic_state(
                 envs_idx=envs_idx,
@@ -779,7 +803,6 @@ class KinematicSolver(Solver):
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
         if gs.use_zerocopy:
             data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
-            errno = qd_to_torch(self._errno, copy=False)
             qs_mask = indices_to_mask(qs_idx)
             if (
                 (not qs_mask or isinstance(qs_mask[0], slice))
@@ -793,11 +816,9 @@ class KinematicSolver(Solver):
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
                     torch.where(envs_idx[:, None], qpos, qs_data, out=qs_data)
-                errno.masked_fill_(envs_idx, 0.0)
             else:
                 mask = (0, *qs_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *qs_mask)
                 assign_indexed_tensor(data, mask, qpos)
-                errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
         else:
@@ -807,7 +828,6 @@ class KinematicSolver(Solver):
             if self.n_envs == 0:
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
-            kernel_set_zero(envs_idx, self._errno)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -911,53 +931,37 @@ class KinematicSolver(Solver):
         )
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
-        """Write joint positions. FK is deferred to update_visual_states."""
-        if gs.use_zerocopy and self.n_envs == 0:
-            # Fast path: direct tensor writes, no kernel launch or sanitization.
+        position, dofs_idx, envs_idx = self._sanitize_io_variables(
+            position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
+        )
+        if self.n_envs == 0:
+            position = position[None]
+        kernel_set_dofs_position(
+            position,
+            dofs_idx,
+            envs_idx,
+            self.dofs_state,
+            self.links_info,
+            self.joints_info,
+            self.entities_info,
+            self._rigid_global_info,
+            self._static_rigid_sim_config,
+        )
 
-            # Cache stable tensor views (created once, never change).
-            if not hasattr(self, "_zerocopy_views"):
-                self._zerocopy_views = (
-                    qd_to_torch(self.dofs_state.pos, transpose=True, copy=False),
-                    qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False),
-                )
-            pos_view, qpos_view = self._zerocopy_views
-
-            # Cache dof index mapping, keyed on dofs_idx so it invalidates when dofs_idx changes.
-            cache_key = tuple(int(x) for x in dofs_idx) if dofs_idx is not None else None
-            dof_cache = getattr(self, "_zerocopy_dof_cache", None)
-            if dof_cache is None or dof_cache[0] != cache_key:
-                dofs_idx_t = (
-                    torch.as_tensor(dofs_idx, dtype=torch.long, device=gs.device)
-                    if dofs_idx is not None
-                    else torch.arange(self.n_dofs, dtype=torch.long, device=gs.device)
-                )
-                qs_idx_t = self._build_dof_to_q_map(dofs_idx_t)
-                self._zerocopy_dof_cache = (cache_key, dofs_idx_t, qs_idx_t)
-            _, dofs_idx_t, qs_idx_t = self._zerocopy_dof_cache
-
-            if not isinstance(position, torch.Tensor):
-                position = torch.as_tensor(position, dtype=gs.tc_float, device=gs.device)
-            pos_view[0, dofs_idx_t] = position
-            qpos_view[0, qs_idx_t] = position
-        else:
-            position, dofs_idx, envs_idx = self._sanitize_io_variables(
-                position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
-            )
-            if self.n_envs == 0:
-                position = position[None]
-            kernel_set_dofs_position(
-                position,
-                dofs_idx,
-                envs_idx,
-                self.dofs_state,
-                self.links_info,
-                self.joints_info,
-                self.entities_info,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-            )
-        self._is_forward_pos_updated = False
+        kernel_forward_kinematics(
+            envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        self._is_forward_pos_updated = True
+        self._is_forward_vel_updated = True
 
     @staticmethod
     def _convert_ref_to_idx(ref: Literal["link_origin", "link_com", "root_com"]):

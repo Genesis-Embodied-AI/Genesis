@@ -37,7 +37,7 @@ def main():
     robot = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
-            pos=(0.0, 0.5, 0.42),
+            pos=(0.0, 0.0, 0.42),
         ),
     )
 
@@ -45,7 +45,7 @@ def main():
     ghost = scene.add_entity(
         gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
-            pos=(0.0, -0.5, 0.42),
+            pos=(0.0, 0.0, 0.42),
         ),
         material=gs.materials.Kinematic(),
         surface=gs.surfaces.Default(

@@ -1,17 +1,13 @@
-import math
-
-import torch
 import pytest
 
 import genesis as gs
 
+from genesis.utils.misc import tensor_to_array
 from tests.utils import assert_allclose
 
 
 @pytest.mark.required
-def test_kinematic_entity(show_viewer):
-    """KinematicEntity: no collision geoms, get_vAABB tracks set_pos/set_quat, frozen under stepping."""
-
+def test_setters(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
@@ -20,7 +16,6 @@ def test_kinematic_entity(show_viewer):
     ghost_box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.4, 0.2, 0.1),
-            pos=(0, 0, 0.1),
         ),
         material=gs.materials.Kinematic(),
         surface=gs.surfaces.Default(
@@ -29,8 +24,7 @@ def test_kinematic_entity(show_viewer):
     )
     ghost_robot = scene.add_entity(
         morph=gs.morphs.URDF(
-            file="urdf/simple/two_cube_revolute.urdf",
-            pos=(0, 0, 0.3),
+            file="urdf/simple/two_cube_prismatic.urdf",
             fixed=False,
         ),
         material=gs.materials.Kinematic(),
@@ -41,51 +35,43 @@ def test_kinematic_entity(show_viewer):
 
     scene.build(n_envs=2)
 
-    breakpoint()
+    assert_allclose(ghost_box.get_vAABB(), ((-0.20, -0.10, -0.05), (0.20, 0.10, 0.05)), tol=tol)
+    assert_allclose(ghost_robot.get_vAABB(), ((-0.05, -0.05, -0.05), (0.15, 0.05, 0.05)), tol=tol)
 
-    vaabb = ghost_box.get_vAABB()
-    # assert vaabb.shape == (2, 3)
-    # assert_allclose(vaabb[0], [-0.2, -0.1, 1.95], tol=1e-4)
-    # assert_allclose(vaabb[1], [0.2, 0.1, 2.05], tol=1e-4)
+    ghost_box.set_pos([1.0, 2.0, 3.0])
+    assert_allclose(ghost_box.get_vAABB(), ((0.80, 1.90, 2.95), (1.20, 2.10, 3.05)), tol=tol)
+    ghost_box.set_pos([0.0, 0.0, 0.0])
+    ghost_box.set_quat([[1.0, 1.0, 0.0, 0.0], [1.0, 0.0, 1.0, 0.0]])
+    assert_allclose(ghost_box.get_vAABB()[0], ((-0.20, -0.05, -0.10), (0.20, 0.05, 0.1)), tol=tol)
+    assert_allclose(ghost_box.get_vAABB()[1], ((-0.05, -0.10, -0.2), (0.05, 0.10, 0.2)), tol=tol)
 
-    # ghost.set_pos(torch.tensor([1.0, 2.0, 3.0]))
-    # vaabb = ghost.get_vAABB()
-    # assert_allclose(vaabb[0], [0.8, 1.9, 2.95], tol=1e-4)
-    # assert_allclose(vaabb[1], [1.2, 2.1, 3.05], tol=1e-4)
+    ghost_robot.set_dofs_position([0.1, -0.1], dofs_idx_local=-1)
+    assert_allclose(ghost_robot.get_vAABB()[0], ((-0.05, -0.05, -0.05), (0.25, 0.05, 0.05)), tol=tol)
+    assert_allclose(ghost_robot.get_vAABB()[1], ((-0.05, -0.05, -0.05), (0.05, 0.05, 0.05)), tol=tol)
 
-    # ghost.set_pos(torch.tensor([0.0, 0.0, 0.0]))
-    # angle = math.pi / 2
-    # quat_z90 = torch.tensor([math.cos(angle / 2), 0.0, 0.0, math.sin(angle / 2)])
-    # ghost.set_quat(quat_z90)
-    # vaabb = ghost.get_vAABB()
-    # # After 90° Z rotation: half-extents swap x↔y → [-0.1, -0.2, -0.05] to [0.1, 0.2, 0.05]
-    # assert_allclose(vaabb[0], [-0.1, -0.2, -0.05], tol=1e-3)
-    # assert_allclose(vaabb[1], [0.1, 0.2, 0.05], tol=1e-3)
+    ghost_robot.set_qpos([1.0, 2.0, 3.0, 1.0, 1.0, 0.0, 0.0, 1.0])
+    assert_allclose(ghost_robot.get_vAABB(), ((0.95, 1.95, 2.95), (2.15, 2.05, 3.05)), tol=tol)
 
-    # frozen_vaabb = ghost.get_vAABB()
-    # for _ in range(10):
-    #     scene.step()
-    # assert_allclose(ghost.get_vAABB(), frozen_vaabb, tol=1e-7)
+    frozen_vaabb = [tensor_to_array(entity.get_vAABB()) for entity in scene.entities]
+    for _ in range(5):
+        scene.step()
+    assert_allclose([tensor_to_array(entity.get_vAABB()) for entity in scene.entities], frozen_vaabb, tol=gs.EPS)
 
 
 @pytest.mark.required
-def test_kinematic_ghost_tracks_rigid(show_viewer):
-    """KinematicEntity mirrors RigidEntity when syncing pos/quat, stays frozen when updates stop."""
-
+def test_track_rigid(show_viewer, tol):
     scene = gs.Scene(
         show_viewer=show_viewer,
         show_FPS=False,
     )
 
     scene.add_entity(gs.morphs.Plane())
-
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
             pos=(0, 0.5, 0.42),
         ),
     )
-
     ghost = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/go2/urdf/go2.urdf",
@@ -96,18 +82,16 @@ def test_kinematic_ghost_tracks_rigid(show_viewer):
             color=(0.2, 0.0, 1.0, 0.7),
         ),
     )
+    scene.build(n_envs=2, env_spacing=(0.5, 0.5))
 
-    scene.build()
-
-    for _ in range(10):
+    for _ in range(20):
         scene.step()
         ghost.set_qpos(robot.get_qpos())
-        assert_allclose(ghost.get_vAABB(), robot.get_vAABB(), tol=1e-4)
+        assert_allclose(ghost.get_vAABB(), robot.get_vAABB(), tol=tol)
 
     frozen_ghost_vaabb = ghost.get_vAABB()
     frozen_robot_vaabb = robot.get_vAABB()
-
-    for _ in range(30):
+    for _ in range(20):
         scene.step()
 
     assert_allclose(ghost.get_vAABB(), frozen_ghost_vaabb, tol=gs.EPS)
