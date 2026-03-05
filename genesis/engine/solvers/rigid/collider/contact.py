@@ -367,6 +367,71 @@ def func_rotate_frame(
     return new_pos, new_quat
 
 
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_sort_contacts(
+    collider_state: array_class.ColliderState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Sort contacts within each env by (link_a, link_b) to restore cache-friendly
+    ordering for the constraint solver's Jacobian access pattern.
+
+    Uses insertion sort — O(n^2) worst case but n is small (~200 contacts/env)
+    and the sort runs in parallel across all envs.
+    """
+    _B = collider_state.n_contacts.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        n = collider_state.n_contacts[i_b]
+
+        for i in range(n):
+            if i > 0:
+                tmp_geom_a = collider_state.contact_data.geom_a[i, i_b]
+                tmp_geom_b = collider_state.contact_data.geom_b[i, i_b]
+                tmp_penetration = collider_state.contact_data.penetration[i, i_b]
+                tmp_normal = collider_state.contact_data.normal[i, i_b]
+                tmp_pos = collider_state.contact_data.pos[i, i_b]
+                tmp_friction = collider_state.contact_data.friction[i, i_b]
+                tmp_sol_params = collider_state.contact_data.sol_params[i, i_b]
+                tmp_force = collider_state.contact_data.force[i, i_b]
+                tmp_link_a = collider_state.contact_data.link_a[i, i_b]
+                tmp_link_b = collider_state.contact_data.link_b[i, i_b]
+
+                j = i - 1
+                while j >= 0:
+                    j_link_a = collider_state.contact_data.link_a[j, i_b]
+                    j_link_b = collider_state.contact_data.link_b[j, i_b]
+                    if j_link_a < tmp_link_a or (j_link_a == tmp_link_a and j_link_b <= tmp_link_b):
+                        break
+
+                    # Shift element j to j+1
+                    collider_state.contact_data.geom_a[j + 1, i_b] = collider_state.contact_data.geom_a[j, i_b]
+                    collider_state.contact_data.geom_b[j + 1, i_b] = collider_state.contact_data.geom_b[j, i_b]
+                    collider_state.contact_data.penetration[j + 1, i_b] = collider_state.contact_data.penetration[
+                        j, i_b
+                    ]
+                    collider_state.contact_data.normal[j + 1, i_b] = collider_state.contact_data.normal[j, i_b]
+                    collider_state.contact_data.pos[j + 1, i_b] = collider_state.contact_data.pos[j, i_b]
+                    collider_state.contact_data.friction[j + 1, i_b] = collider_state.contact_data.friction[j, i_b]
+                    collider_state.contact_data.sol_params[j + 1, i_b] = collider_state.contact_data.sol_params[j, i_b]
+                    collider_state.contact_data.force[j + 1, i_b] = collider_state.contact_data.force[j, i_b]
+                    collider_state.contact_data.link_a[j + 1, i_b] = collider_state.contact_data.link_a[j, i_b]
+                    collider_state.contact_data.link_b[j + 1, i_b] = collider_state.contact_data.link_b[j, i_b]
+                    j = j - 1
+
+                # Insert saved element at its sorted position
+                collider_state.contact_data.geom_a[j + 1, i_b] = tmp_geom_a
+                collider_state.contact_data.geom_b[j + 1, i_b] = tmp_geom_b
+                collider_state.contact_data.penetration[j + 1, i_b] = tmp_penetration
+                collider_state.contact_data.normal[j + 1, i_b] = tmp_normal
+                collider_state.contact_data.pos[j + 1, i_b] = tmp_pos
+                collider_state.contact_data.friction[j + 1, i_b] = tmp_friction
+                collider_state.contact_data.sol_params[j + 1, i_b] = tmp_sol_params
+                collider_state.contact_data.force[j + 1, i_b] = tmp_force
+                collider_state.contact_data.link_a[j + 1, i_b] = tmp_link_a
+                collider_state.contact_data.link_b[j + 1, i_b] = tmp_link_b
+
+
 @qd.kernel
 def func_set_upstream_grad(
     dL_dposition: qd.types.ndarray(),

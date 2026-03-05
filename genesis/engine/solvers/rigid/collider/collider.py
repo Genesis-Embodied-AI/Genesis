@@ -42,6 +42,7 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
+    func_sort_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -600,6 +601,11 @@ class Collider:
                 self._sdf._sdf_info,
                 self._solver._errno,
             )
+
+        func_sort_contacts(
+            self._collider_state,
+            self._solver._static_rigid_sim_config,
+        )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed
