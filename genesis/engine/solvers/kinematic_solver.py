@@ -589,6 +589,20 @@ class KinematicSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            kernel_forward_kinematics(
+                envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------

@@ -1475,6 +1475,7 @@ class RigidSolver(KinematicSolver):
                 kernel_set_zero(envs_idx, self._errno)
 
             kernel_set_state(
+                envs_idx=envs_idx,
                 qpos=state.qpos,
                 dofs_vel=state.dofs_vel,
                 dofs_acc=state.dofs_acc,
@@ -1483,7 +1484,6 @@ class RigidSolver(KinematicSolver):
                 i_pos_shift=state.i_pos_shift,
                 mass_shift=state.mass_shift,
                 friction_ratio=state.friction_ratio,
-                envs_idx=envs_idx,
                 links_state=self.links_state,
                 dofs_state=self.dofs_state,
                 geoms_state=self.geoms_state,

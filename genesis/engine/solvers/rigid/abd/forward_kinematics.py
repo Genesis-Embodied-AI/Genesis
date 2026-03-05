@@ -39,7 +39,8 @@ def kernel_forward_kinematics_links_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    for i_b in range(envs_idx.shape[0]):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
         func_update_cartesian_space_batch(
             i_b=i_b,
             links_state=links_state,
@@ -128,7 +129,8 @@ def kernel_forward_kinematics(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    for i_b in range(envs_idx.shape[0]):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
         func_forward_kinematics_batch(
             i_b=i_b,
             links_state=links_state,

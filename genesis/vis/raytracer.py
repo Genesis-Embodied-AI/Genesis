@@ -166,7 +166,7 @@ class Raytracer:
         device_index = options.device_index
         if device_index is None:
             # If no device index has been specified, use Torch GPU device ID if any, 0 otherwise
-            device_index = 0 if gs.device.type == "cpu" else gs.device.index
+            device_index = 0 if gs.device.type == "cpu" else (gs.device.index or 0)
         if backend == "amdgpu":
             # Luisa does not support HIP for AMD GPU: using DirectX on Windows, falling back to CPU otherwise
             if sys.platform == "win32":

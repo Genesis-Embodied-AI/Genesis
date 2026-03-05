@@ -839,8 +839,8 @@ def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: array_class.V_ANNOTATION):
-    for i_b in range(envs_idx.shape[0]):
-        tensor[i_b] = 0
+    for i_b_ in range(envs_idx.shape[0]):
+        tensor[i_b_] = 0
 
 
 @qd.func
