@@ -14,6 +14,7 @@ ALLOW_PATTERNS = {
     "drone/interactive_drone.py",
     "drone/fly_route.py",
     "IPC_Solver/**/*.py",
+    "kinematic/**/*.py",
     "rigid/**/*.py",
     "render_async/**/*.py",
     "sap_coupling/**/*.py",

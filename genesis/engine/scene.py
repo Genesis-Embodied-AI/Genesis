@@ -17,6 +17,7 @@ from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
+    KinematicOptions,
     BaseCouplerOptions,
     LegacyCouplerOptions,
     FEMOptions,
@@ -92,6 +93,7 @@ class Scene(RBC):
         coupler_options: BaseCouplerOptions | None = None,
         tool_options: ToolOptions | None = None,
         rigid_options: RigidOptions | None = None,
+        kinematic_options: KinematicOptions | None = None,
         mpm_options: MPMOptions | None = None,
         sph_options: SPHOptions | None = None,
         fem_options: FEMOptions | None = None,
@@ -112,6 +114,7 @@ class Scene(RBC):
         coupler_options = coupler_options or LegacyCouplerOptions()
         tool_options = tool_options or ToolOptions()
         rigid_options = rigid_options or RigidOptions()
+        kinematic_options = kinematic_options or KinematicOptions()
         mpm_options = mpm_options or MPMOptions()
         sph_options = sph_options or SPHOptions()
         fem_options = fem_options or FEMOptions()
@@ -132,6 +135,7 @@ class Scene(RBC):
             coupler_options,
             tool_options,
             rigid_options,
+            kinematic_options,
             mpm_options,
             sph_options,
             fem_options,
@@ -147,6 +151,7 @@ class Scene(RBC):
         self.coupler_options = coupler_options
         self.tool_options = tool_options
         self.rigid_options = rigid_options
+        self.kinematic_options = kinematic_options
         self.mpm_options = mpm_options
         self.sph_options = sph_options
         self.fem_options = fem_options
@@ -161,6 +166,7 @@ class Scene(RBC):
         # merge options
         self.tool_options.copy_attributes_from(self.sim_options)
         self.rigid_options.copy_attributes_from(self.sim_options)
+        self.kinematic_options.copy_attributes_from(self.sim_options)
         self.mpm_options.copy_attributes_from(self.sim_options)
         self.sph_options.copy_attributes_from(self.sim_options)
         self.fem_options.copy_attributes_from(self.sim_options)
@@ -174,6 +180,7 @@ class Scene(RBC):
             coupler_options=self.coupler_options,
             tool_options=self.tool_options,
             rigid_options=self.rigid_options,
+            kinematic_options=self.kinematic_options,
             mpm_options=self.mpm_options,
             sph_options=self.sph_options,
             fem_options=self.fem_options,
@@ -214,6 +221,7 @@ class Scene(RBC):
         coupler_options: BaseCouplerOptions,
         tool_options: ToolOptions,
         rigid_options: RigidOptions,
+        kinematic_options: KinematicOptions,
         mpm_options: MPMOptions,
         sph_options: SPHOptions,
         fem_options: FEMOptions,
@@ -235,6 +243,9 @@ class Scene(RBC):
 
         if not isinstance(rigid_options, RigidOptions):
             gs.raise_exception("`rigid_options` should be an instance of `RigidOptions`.")
+
+        if not isinstance(kinematic_options, KinematicOptions):
+            gs.raise_exception("`kinematic_options` should be an instance of `KinematicOptions`.")
 
         if not isinstance(mpm_options, MPMOptions):
             gs.raise_exception("`mpm_options` should be an instance of `MPMOptions`.")
@@ -384,7 +395,7 @@ class Scene(RBC):
             surface.smooth = False
 
         if isinstance(morph_for_checks, (gs.morphs.URDF, gs.morphs.MJCF, gs.morphs.USD, gs.morphs.Terrain)):
-            if not isinstance(material, (gs.materials.Rigid, gs.materials.Hybrid)):
+            if not isinstance(material, (gs.materials.Kinematic, gs.materials.Hybrid)):
                 gs.raise_exception(f"Unsupported material for morph: {material} and {morph_for_checks}.")
 
         if surface.double_sided is None:
@@ -393,7 +404,7 @@ class Scene(RBC):
         if vis_mode is not None:
             surface.vis_mode = vis_mode
         # validate and populate default surface.vis_mode considering morph type
-        if isinstance(material, (gs.materials.Rigid, gs.materials.Tool)):
+        if isinstance(material, (gs.materials.Kinematic, gs.materials.Tool)):
             if surface.vis_mode is None:
                 surface.vis_mode = "visual"
 
@@ -1560,6 +1571,11 @@ class Scene(RBC):
     def rigid_solver(self):
         """The scene's `rigid_solver`, managing all the `RigidEntity` in the scene."""
         return self._sim.rigid_solver
+
+    @property
+    def kinematic_solver(self):
+        """The scene's `kinematic_solver`, managing all the kinematic (visualization-only) entities in the scene."""
+        return self._sim.kinematic_solver
 
     @property
     def mpm_solver(self):

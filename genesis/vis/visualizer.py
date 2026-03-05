@@ -230,6 +230,10 @@ class Visualizer(RBC):
 
             self._scene.rigid_solver.update_vgeoms_render_T()
 
+        if self._scene.kinematic_solver.is_active:
+            self._scene.kinematic_solver.update_vgeoms()
+            self._scene.kinematic_solver.update_vgeoms_render_T()
+
         if self._scene.mpm_solver.is_active:
             self._scene.mpm_solver.update_render_fields()
 

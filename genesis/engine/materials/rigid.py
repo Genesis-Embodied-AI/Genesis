@@ -1,9 +1,9 @@
 import genesis as gs
 
-from .base import Material
+from .kinematic import Kinematic
 
 
-class Rigid(Material):
+class Rigid(Kinematic):
     """
     The Rigid class represents a material used in rigid body simulation.
 

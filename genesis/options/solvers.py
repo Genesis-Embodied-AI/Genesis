@@ -346,6 +346,23 @@ Parameters in these solver-specific options will override SimOptions if availabl
 """
 
 
+class KinematicOptions(Options):
+    """
+    Options configuring the KinematicSolver (visualization-only solver).
+
+    KinematicSolver is a lightweight solver for ghost/reference entities that only computes
+    forward kinematics for visualization. No collision, physics integration, or constraint
+    solving is performed.
+
+    Parameters
+    ----------
+    dt : float, optional
+        Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+    """
+
+    dt: Optional[float] = None
+
+
 class ToolOptions(Options):
     """
     Options configuring the ToolSolver.

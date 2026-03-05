@@ -14,7 +14,7 @@ from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
-    from .rigid_entity import RigidEntity
+    from .rigid_entity import KinematicEntity, RigidEntity
     from .rigid_joint import RigidJoint
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
@@ -25,7 +25,403 @@ AABB_EPS = 0.002
 INERTIA_RATIO_MAX = 100.0
 
 
-class RigidLink(RBC):
+class KinematicLink(RBC):
+    """
+    Kinematic class. One KinematicEntity consists of multiple KinematicLinks, each of which is a rigid body and could
+    consist of multiple RigidVisGeoms (`link.vgeoms` for visualization).
+    """
+
+    def __init__(
+        self,
+        entity: "KinematicEntity",
+        name: str,
+        idx: int,
+        joint_start: int,
+        n_joints: int,
+        vgeom_start: int,
+        vvert_start: int,
+        vface_start: int,
+        pos: "np.typing.ArrayLike",
+        quat: "np.typing.ArrayLike",
+        parent_idx: int,
+        root_idx: int | None,
+    ):
+        self._name: str = name
+        self._entity: "KinematicEntity" = entity
+        self._solver: "RigidSolver" = entity.solver
+        self._entity_idx_in_solver = entity._idx_in_solver
+
+        self._uid = gs.UID()
+        self._idx: int = idx
+        self._parent_idx: int = parent_idx  # -1 if no parent
+
+        # 'is_fixed' attribute specifies whether the link is free to move.
+        # In practice, this attributes determines whether the geometry vertices associated with the entity are stored
+        # per batch-element and updated at every simulation step, or computed once at build time and shared among the
+        # entire batch. This affects correct processing of collision detection and sensor raycasting as a side-effect.
+        is_fixed = True
+        link = self
+        while True:
+            is_fixed &= all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints)
+            if link.parent_idx == -1:
+                break
+            link = self.entity.links[link.parent_idx - self.entity.link_start]
+        if root_idx is None:
+            root_idx = link.idx
+        self._root_idx: int = root_idx
+        self._is_fixed: bool = is_fixed
+
+        self._joint_start: int = joint_start
+        self._n_joints: int = n_joints
+
+        self._vgeom_start: int = vgeom_start
+        self._vvert_start: int = vvert_start
+        self._vface_start: int = vface_start
+
+        # Link position & rotation at creation time:
+        self._pos: "np.typing.ArrayLike" = pos
+        self._quat: "np.typing.ArrayLike" = quat
+
+        self._vgeoms: list[RigidVisGeom] = gs.List()
+
+    def _build(self):
+        for vgeom in self._vgeoms:
+            vgeom._build()
+
+    def _add_vgeom(self, vmesh, init_pos, init_quat):
+        vgeom = RigidVisGeom(
+            link=self,
+            idx=self.n_vgeoms + self._vgeom_start,
+            vvert_start=self.n_vverts + self._vvert_start,
+            vface_start=self.n_vfaces + self._vface_start,
+            vmesh=vmesh,
+            init_pos=init_pos,
+            init_quat=init_quat,
+        )
+        self._vgeoms.append(vgeom)
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------- real-time state -----------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @gs.assert_built
+    def get_pos(self, envs_idx=None):
+        """
+        Get the position of the link in the world frame.
+
+        Parameters
+        ----------
+        envs_idx : int or array of int, optional
+            The indices of the environments to get the position. If None, get the position of all environments. Default is None.
+        """
+        return self._solver.get_links_pos(self._idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_quat(self, envs_idx=None):
+        """
+        Get the quaternion of the link in the world frame.
+
+        Parameters
+        ----------
+        envs_idx : int or array of int, optional
+            The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
+        """
+        return self._solver.get_links_quat(self._idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_vel(self, envs_idx=None) -> torch.Tensor:
+        """
+        Get the linear velocity of the link in the world frame.
+
+        Parameters
+        ----------
+        envs_idx : int or array of int, optional
+            The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
+        """
+        return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_ang(self, envs_idx=None) -> torch.Tensor:
+        """
+        Get the angular velocity of the link in the world frame.
+
+        Parameters
+        ----------
+        envs_idx : int or array of int, optional
+            The indices of the environments to get the angular velocity. If None, get the angular velocity of all environments. Default is None.
+        """
+        return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
+
+    @gs.assert_built
+    def get_vAABB(self, envs_idx=None):
+        """
+        Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
+        the visual geometries associated with this link (`link.vgeoms`).
+        """
+        if self.n_vgeoms == 0:
+            gs.raise_exception("Link has no visual geometries.")
+
+        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
+        if self.entity._enable_heterogeneous:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            n_envs = len(envs_idx)
+            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
+            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
+            for vgeom in self.vgeoms:
+                vgeom_aabb = vgeom.get_vAABB(envs_idx)
+                active_mask = vgeom.active_envs_mask[envs_idx] if vgeom.active_envs_mask is not None else ()
+                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], vgeom_aabb[active_mask, 0])
+                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], vgeom_aabb[active_mask, 1])
+            return torch.stack((aabb_min, aabb_max), dim=-2)
+
+        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
+        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------------- properties -------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @property
+    def uid(self):
+        """
+        The unique ID of the link.
+        """
+        return self._uid
+
+    @property
+    def name(self) -> str:
+        """
+        The name of the link.
+        """
+        return self._name
+
+    @property
+    def entity(self) -> "KinematicEntity":
+        """
+        The entity that the link belongs to.
+        """
+        return self._entity
+
+    @property
+    def solver(self) -> "RigidSolver":
+        """
+        The solver that the link belongs to.
+        """
+        return self._solver
+
+    @property
+    def joints(self) -> list["RigidJoint"]:
+        """
+        The sequence of joints that connects the link to its parent link.
+        """
+        return self.entity.joints_by_links[self.idx_local]
+
+    @property
+    def n_joints(self):
+        """
+        Number of the joints that connects the link to its parent link.
+        """
+        return self._n_joints
+
+    @property
+    def joint_start(self):
+        """
+        The start index of the link's joints in the RigidSolver.
+        """
+        return self._joint_start
+
+    @property
+    def joint_end(self):
+        """
+        The end index of the link's joints in the RigidSolver.
+        """
+        return self._joint_start + self.n_joints
+
+    @property
+    def n_dofs(self):
+        """The number of degrees of freedom (DOFs) of the entity."""
+        return sum(joint.n_dofs for joint in self.joints)
+
+    @property
+    def dof_start(self):
+        """The index of the link's first degree of freedom (DOF) in the scene."""
+        if not self.joints:
+            return -1
+        return self.joints[0].dof_start
+
+    @property
+    def dof_end(self):
+        """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
+        if not self.joints:
+            return -1
+        return self.joints[-1].dof_end
+
+    @property
+    def n_qs(self):
+        """Returns the number of `q` variables of the link."""
+        return sum(joint.n_qs for joint in self.joints)
+
+    @property
+    def q_start(self):
+        """Returns the starting index of the `q` variables of the link in the rigid solver."""
+        if not self.joints:
+            return -1
+        return self.joints[0].q_start
+
+    @property
+    def q_end(self):
+        """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
+        if not self.joints:
+            return -1
+        return self.joints[-1].q_end
+
+    @property
+    def idx(self):
+        """
+        The global index of the link in the RigidSolver.
+        """
+        return self._idx
+
+    @property
+    def parent_idx(self):
+        """
+        The global index of the link's parent link in the RigidSolver. If the link is the root link, return -1.
+        """
+        return self._parent_idx
+
+    @property
+    def root_idx(self):
+        """
+        The global index of the link's root link in the RigidSolver.
+        """
+        return self._root_idx
+
+    @property
+    def idx_local(self):
+        """
+        The local index of the link in the entity.
+        """
+        return self._idx - self._entity.link_start
+
+    @property
+    def is_fixed(self):
+        """
+        Whether the link is fixed wrt the world.
+        """
+        return self._is_fixed
+
+    @property
+    def invweight(self):
+        """Inverse weight of the link. Always zero for KinematicLink (infinite mass)."""
+        return np.zeros(2, dtype=gs.np_float)
+
+    @property
+    def pos(self) -> "np.typing.ArrayLike":
+        """
+        The initial position of the link. For real-time position, use `link.get_pos()`.
+        """
+        return self._pos
+
+    @property
+    def quat(self) -> "np.typing.ArrayLike":
+        """
+        The initial quaternion of the link. For real-time quaternion, use `link.get_quat()`.
+        """
+        return self._quat
+
+    @property
+    def inertial_pos(self):
+        """Initial position of the link's inertial frame. Zero for KinematicLink."""
+        return np.zeros(3, dtype=gs.np_float)
+
+    @property
+    def inertial_quat(self):
+        """Initial quaternion of the link's inertial frame. Identity for KinematicLink."""
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+
+    @property
+    def inertial_mass(self):
+        """Mass of the link. Always 0.0 for KinematicLink."""
+        return 0.0
+
+    @property
+    def inertial_i(self):
+        """Inertia matrix of the link. Zero for KinematicLink."""
+        return np.zeros((3, 3), dtype=gs.np_float)
+
+    @property
+    def vgeoms(self) -> list[RigidVisGeom]:
+        """
+        The list of the link's visualization geometries (`RigidVisGeom`).
+        """
+        return self._vgeoms
+
+    @property
+    def geom_start(self) -> int:
+        """Start index of collision geoms. Always 0 for KinematicLink."""
+        return 0
+
+    @property
+    def geom_end(self) -> int:
+        """End index of collision geoms. Always 0 for KinematicLink."""
+        return 0
+
+    @property
+    def n_vgeoms(self) -> int:
+        """
+        Number of the link's visualization geometries (`vgeom`).
+        """
+        return len(self._vgeoms)
+
+    @property
+    def vgeom_start(self) -> int:
+        """
+        The start index of the link's vgeom in the RigidSolver.
+        """
+        return self._vgeom_start
+
+    @property
+    def vgeom_end(self) -> int:
+        """
+        The end index of the link's vgeom in the RigidSolver.
+        """
+        return self._vgeom_start + self.n_vgeoms
+
+    @property
+    def n_verts(self) -> int:
+        """Number of collision vertices. Always 0 for KinematicLink."""
+        return 0
+
+    @property
+    def n_vverts(self) -> int:
+        """
+        Number of vertices of all the link's vgeoms.
+        """
+        return sum([vgeom.n_vverts for vgeom in self._vgeoms])
+
+    @property
+    def n_vfaces(self) -> int:
+        """
+        Number of faces of all the link's vgeoms.
+        """
+        return sum([vgeom.n_vfaces for vgeom in self._vgeoms])
+
+    @property
+    def is_built(self) -> bool:
+        """
+        Whether the entity the link belongs to is built.
+        """
+        return self.entity.is_built
+
+    # ------------------------------------------------------------------------------------
+    # -------------------------------------- repr ----------------------------------------
+    # ------------------------------------------------------------------------------------
+
+    def _repr_brief(self):
+        return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}"
+
+
+class RigidLink(KinematicLink):
     """
     RigidLink class. One RigidEntity consists of multiple RigidLinks, each of which is a rigid body and could consist of
     multiple RigidGeoms (`link.geoms`, for collision) and RigidVisGeoms (`link.vgeoms` for visualization).
@@ -59,38 +455,25 @@ class RigidLink(RBC):
         invweight: float | None,
         visualize_contact: bool,
     ):
-        self._name: str = name
-        self._entity: "RigidEntity" = entity
-        self._solver: "RigidSolver" = entity.solver
-        self._entity_idx_in_solver = entity._idx_in_solver
+        super().__init__(
+            entity,
+            name,
+            idx,
+            joint_start,
+            n_joints,
+            vgeom_start,
+            vvert_start,
+            vface_start,
+            pos,
+            quat,
+            parent_idx,
+            root_idx,
+        )
 
-        self._uid = gs.UID()
-        self._idx: int = idx
-        self._parent_idx: int = parent_idx  # -1 if no parent
-
-        # 'is_fixed' attribute specifies whether the link is free to move.
-        # In practice, this attributes determines whether the geometry vertices associated with the entity are stored
-        # per batch-element and updated at every simulation step, or computed once at build time and shared among the
-        # entire batch. This affects correct processing of collision detection and sensor raycasting as a side-effect.
-        is_fixed = True
-        link = self
-        while True:
-            is_fixed &= all(joint.type is gs.JOINT_TYPE.FIXED for joint in link.joints)
-            if link.parent_idx == -1:
-                break
-            link = self.entity.links[link.parent_idx - self.entity.link_start]
-        if root_idx is None:
-            root_idx = link.idx
-        self._root_idx: int = root_idx
-        self._is_fixed: bool = is_fixed
-
-        if is_fixed and not entity._batch_fixed_verts:
+        if self._is_fixed and not entity._batch_fixed_verts:
             verts_state_start = fixed_verts_state_start
         else:
             verts_state_start = free_verts_state_start
-
-        self._joint_start: int = joint_start
-        self._n_joints: int = n_joints
 
         self._geom_start: int = geom_start
         self._cell_start: int = cell_start
@@ -98,13 +481,7 @@ class RigidLink(RBC):
         self._face_start: int = face_start
         self._edge_start: int = edge_start
         self._verts_state_start: int = verts_state_start
-        self._vgeom_start: int = vgeom_start
-        self._vvert_start: int = vvert_start
-        self._vface_start: int = vface_start
 
-        # Link position & rotation at creation time:
-        self._pos: "np.typing.ArrayLike" = pos
-        self._quat: "np.typing.ArrayLike" = quat
         # Link's center-of-mass position & principal axes frame rotation at creation time:
         if inertial_pos is not None:
             inertial_pos = np.asarray(inertial_pos, dtype=gs.np_float)
@@ -123,14 +500,12 @@ class RigidLink(RBC):
         self._visualize_contact = visualize_contact
 
         self._geoms: list[RigidGeom] = gs.List()
-        self._vgeoms: list[RigidVisGeom] = gs.List()
 
     def _build(self):
+        super()._build()
+
         for geom in self._geoms:
             geom._build()
-
-        for vgeom in self._vgeoms:
-            vgeom._build()
 
         # Estimate the spatial inertia of the link. It will be used as a guess if not specified in morph, or as baseline
         # to proof-check the provided values.
@@ -338,69 +713,9 @@ class RigidLink(RBC):
         )
         self._geoms.append(geom)
 
-    def _add_vgeom(self, vmesh, init_pos, init_quat):
-        vgeom = RigidVisGeom(
-            link=self,
-            idx=self.n_vgeoms + self._vgeom_start,
-            vvert_start=self.n_vverts + self._vvert_start,
-            vface_start=self.n_vfaces + self._vface_start,
-            vmesh=vmesh,
-            init_pos=init_pos,
-            init_quat=init_quat,
-        )
-        self._vgeoms.append(vgeom)
-
     # ------------------------------------------------------------------------------------
     # -------------------------------- real-time state -----------------------------------
     # ------------------------------------------------------------------------------------
-
-    @gs.assert_built
-    def get_pos(self, envs_idx=None):
-        """
-        Get the position of the link in the world frame.
-
-        Parameters
-        ----------
-        envs_idx : int or array of int, optional
-            The indices of the environments to get the position. If None, get the position of all environments. Default is None.
-        """
-        return self._solver.get_links_pos(self._idx, envs_idx)[..., 0, :]
-
-    @gs.assert_built
-    def get_quat(self, envs_idx=None):
-        """
-        Get the quaternion of the link in the world frame.
-
-        Parameters
-        ----------
-        envs_idx : int or array of int, optional
-            The indices of the environments to get the quaternion. If None, get the quaternion of all environments. Default is None.
-        """
-        return self._solver.get_links_quat(self._idx, envs_idx)[..., 0, :]
-
-    @gs.assert_built
-    def get_vel(self, envs_idx=None) -> torch.Tensor:
-        """
-        Get the linear velocity of the link in the world frame.
-
-        Parameters
-        ----------
-        envs_idx : int or array of int, optional
-            The indices of the environments to get the linear velocity. If None, get the linear velocity of all environments. Default is None.
-        """
-        return self._solver.get_links_vel(self._idx, envs_idx)[..., 0, :]
-
-    @gs.assert_built
-    def get_ang(self, envs_idx=None) -> torch.Tensor:
-        """
-        Get the angular velocity of the link in the world frame.
-
-        Parameters
-        ----------
-        envs_idx : int or array of int, optional
-            The indices of the environments to get the angular velocity. If None, get the angular velocity of all environments. Default is None.
-        """
-        return self._solver.get_links_ang(self._idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
     def get_verts(self):
@@ -445,31 +760,6 @@ class RigidLink(RBC):
 
         verts = self.get_verts()
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
-
-    @gs.assert_built
-    def get_vAABB(self, envs_idx=None):
-        """
-        Get the axis-aligned bounding box (AABB) of the link's visual body in the world frame by aggregating all
-        the visual geometries associated with this link (`link.vgeoms`).
-        """
-        if self.n_geoms == 0:
-            gs.raise_exception("Link has no visual geometries.")
-
-        # For heterogeneous entities, compute AABB per-environment respecting active_envs_idx
-        if self.entity._enable_heterogeneous:
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-            n_envs = len(envs_idx)
-            aabb_min = torch.full((n_envs, 3), float("inf"), dtype=gs.tc_float, device=gs.device)
-            aabb_max = torch.full((n_envs, 3), float("-inf"), dtype=gs.tc_float, device=gs.device)
-            for vgeom in self.vgeoms:
-                vgeom_aabb = vgeom.get_vAABB(envs_idx)
-                active_mask = vgeom.active_envs_mask[envs_idx] if vgeom.active_envs_mask is not None else ()
-                aabb_min[active_mask] = torch.minimum(aabb_min[active_mask], vgeom_aabb[active_mask, 0])
-                aabb_max[active_mask] = torch.maximum(aabb_max[active_mask], vgeom_aabb[active_mask, 1])
-            return torch.stack((aabb_min, aabb_max), dim=-2)
-
-        aabbs = torch.stack([vgeom.get_vAABB(envs_idx) for vgeom in self._vgeoms], dim=-3)
-        return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
     def set_mass(self, mass):
@@ -517,140 +807,11 @@ class RigidLink(RBC):
     # ------------------------------------------------------------------------------------
 
     @property
-    def uid(self):
-        """
-        The unique ID of the link.
-        """
-        return self._uid
-
-    @property
-    def name(self) -> str:
-        """
-        The name of the link.
-        """
-        return self._name
-
-    @property
-    def entity(self) -> "RigidEntity":
-        """
-        The entity that the link belongs to.
-        """
-        return self._entity
-
-    @property
-    def solver(self) -> "RigidSolver":
-        """
-        The solver that the link belongs to.
-        """
-        return self._solver
-
-    @property
     def visualize_contact(self) -> bool:
         """
         Whether to visualize the contact of the link.
         """
         return self._visualize_contact
-
-    @property
-    def joints(self) -> list["RigidJoint"]:
-        """
-        The sequence of joints that connects the link to its parent link.
-        """
-        return self.entity.joints_by_links[self.idx_local]
-
-    @property
-    def n_joints(self):
-        """
-        Number of the joints that connects the link to its parent link.
-        """
-        return self._n_joints
-
-    @property
-    def joint_start(self):
-        """
-        The start index of the link's joints in the RigidSolver.
-        """
-        return self._joint_start
-
-    @property
-    def joint_end(self):
-        """
-        The end index of the link's joints in the RigidSolver.
-        """
-        return self._joint_start + self.n_joints
-
-    @property
-    def n_dofs(self):
-        """The number of degrees of freedom (DOFs) of the entity."""
-        return sum(joint.n_dofs for joint in self.joints)
-
-    @property
-    def dof_start(self):
-        """The index of the link's first degree of freedom (DOF) in the scene."""
-        if not self.joints:
-            return -1
-        return self.joints[0].dof_start
-
-    @property
-    def dof_end(self):
-        """The index of the link's last degree of freedom (DOF) in the scene *plus one*."""
-        if not self.joints:
-            return -1
-        return self.joints[-1].dof_end
-
-    @property
-    def n_qs(self):
-        """Returns the number of `q` variables of the link."""
-        return sum(joint.n_qs for joint in self.joints)
-
-    @property
-    def q_start(self):
-        """Returns the starting index of the `q` variables of the link in the rigid solver."""
-        if not self.joints:
-            return -1
-        return self.joints[0].q_start
-
-    @property
-    def q_end(self):
-        """Returns the last index of the `q` variables of the link in the rigid solver *plus one*."""
-        if not self.joints:
-            return -1
-        return self.joints[-1].q_end
-
-    @property
-    def idx(self):
-        """
-        The global index of the link in the RigidSolver.
-        """
-        return self._idx
-
-    @property
-    def parent_idx(self):
-        """
-        The global index of the link's parent link in the RigidSolver. If the link is the root link, return -1.
-        """
-        return self._parent_idx
-
-    @property
-    def root_idx(self):
-        """
-        The global index of the link's root link in the RigidSolver.
-        """
-        return self._root_idx
-
-    @property
-    def idx_local(self):
-        """
-        The local index of the link in the entity.
-        """
-        return self._idx - self._entity.link_start
-
-    @property
-    def is_fixed(self):
-        """
-        Whether the link is fixed wrt the world.
-        """
-        return self._is_fixed
 
     @property
     def invweight(self):
@@ -660,20 +821,6 @@ class RigidLink(RBC):
         if self._invweight is None:
             self._invweight = tensor_to_array(self._solver.get_links_invweight(self._idx))[..., 0, :]
         return self._invweight
-
-    @property
-    def pos(self) -> "np.typing.ArrayLike":
-        """
-        The initial position of the link. For real-time position, use `link.get_pos()`.
-        """
-        return self._pos
-
-    @property
-    def quat(self) -> "np.typing.ArrayLike":
-        """
-        The initial quaternion of the link. For real-time quaternion, use `link.get_quat()`.
-        """
-        return self._quat
 
     @property
     def inertial_pos(self) -> "np.typing.ArrayLike | None":
@@ -711,13 +858,6 @@ class RigidLink(RBC):
         return self._geoms
 
     @property
-    def vgeoms(self) -> list[RigidVisGeom]:
-        """
-        The list of the link's visualization geometries (`RigidVisGeom`).
-        """
-        return self._vgeoms
-
-    @property
     def n_geoms(self) -> int:
         """
         Number of the link's collision geometries.
@@ -739,27 +879,6 @@ class RigidLink(RBC):
         return self._geom_start + self.n_geoms
 
     @property
-    def n_vgeoms(self) -> int:
-        """
-        Number of the link's visualization geometries (`vgeom`).
-        """
-        return len(self._vgeoms)
-
-    @property
-    def vgeom_start(self) -> int:
-        """
-        The start index of the link's vgeom in the RigidSolver.
-        """
-        return self._vgeom_start
-
-    @property
-    def vgeom_end(self) -> int:
-        """
-        The end index of the link's vgeom in the RigidSolver.
-        """
-        return self._vgeom_start + self.n_vgeoms
-
-    @property
     def n_cells(self):
         """
         Number of sdf cells of all the link's geoms.
@@ -774,25 +893,11 @@ class RigidLink(RBC):
         return sum([geom.n_verts for geom in self._geoms])
 
     @property
-    def n_vverts(self) -> int:
-        """
-        Number of vertices of all the link's vgeoms.
-        """
-        return sum([vgeom.n_vverts for vgeom in self._vgeoms])
-
-    @property
     def n_faces(self) -> int:
         """
         Number of faces of all the link's geoms.
         """
         return sum([geom.n_faces for geom in self._geoms])
-
-    @property
-    def n_vfaces(self) -> int:
-        """
-        Number of faces of all the link's vgeoms.
-        """
-        return sum([vgeom.n_vfaces for vgeom in self._vgeoms])
 
     @property
     def n_edges(self) -> int:
@@ -802,19 +907,5 @@ class RigidLink(RBC):
         return sum([geom.n_edges for geom in self._geoms])
 
     @property
-    def is_built(self) -> bool:
-        """
-        Whether the entity the link belongs to is built.
-        """
-        return self.entity.is_built
-
-    @property
     def is_free(self):
         raise DeprecationError("This property has been removed.")
-
-    # ------------------------------------------------------------------------------------
-    # -------------------------------------- repr ----------------------------------------
-    # ------------------------------------------------------------------------------------
-
-    def _repr_brief(self):
-        return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}"
