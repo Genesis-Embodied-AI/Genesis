@@ -10,7 +10,7 @@ from .pbd_entity import (
     PBDFreeParticleEntity,
     PBDParticleEntity,
 )
-from .rigid_entity import RigidEntity
+from .rigid_entity import KinematicEntity, RigidEntity
 from .sph_entity import SPHEntity
 from .sf_entity import SFParticleEntity
 from .tool_entity import ToolEntity

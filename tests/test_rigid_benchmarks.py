@@ -317,7 +317,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _anymal(solver, n_envs, gjk, control, profiler_step):
+def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -339,6 +339,11 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
             )
         ),
     )
+    if with_kinematic:
+        ghost = scene.add_entity(
+            gs.morphs.URDF(file="urdf/anymal_c/urdf/anymal_c.urdf", pos=(0, -0.5, 0.8)),
+            material=gs.materials.Kinematic(),
+        )
     time_start = time.time()
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
@@ -362,6 +367,10 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
             robot.control_dofs_position(
                 torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
             )
+        if with_kinematic:
+            ghost.set_dofs_position(
+                torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
+            )
         scene.step()
         profiler_step()
         time_elapsed = time.time() - time_start
@@ -380,17 +389,22 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
 
 @pytest.fixture
 def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control=None, profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step)
 
 
 @pytest.fixture
 def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step)
 
 
 @pytest.fixture
 def anymal_random(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="per_env", profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step)
+
+
+@pytest.fixture
+def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step)
 
 
 def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
@@ -774,6 +788,8 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
         ("anymal_uniform", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 0, gs.cpu),
+        ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
+        ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
         ("go2", None, True, 4096, gs.gpu),
         ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
         ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),

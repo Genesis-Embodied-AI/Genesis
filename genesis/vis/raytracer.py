@@ -166,7 +166,7 @@ class Raytracer:
         device_index = options.device_index
         if device_index is None:
             # If no device index has been specified, use Torch GPU device ID if any, 0 otherwise
-            device_index = 0 if gs.device.type == "cpu" else gs.device.index
+            device_index = 0 if gs.device.type == "cpu" else (gs.device.index or 0)
         if backend == "amdgpu":
             # Luisa does not support HIP for AMD GPU: using DirectX on Windows, falling back to CPU otherwise
             if sys.platform == "win32":
@@ -246,9 +246,12 @@ class Raytracer:
             light.add_to_render(self)
 
         for entity in self.sim.entities:
-            if isinstance(entity, entities.RigidEntity):
-                for geom in entity.vgeoms + entity.geoms:
+            if isinstance(entity, entities.KinematicEntity):
+                for geom in entity.vgeoms:
                     self.add_surface(str(geom.uid), geom.surface)
+                if isinstance(entity, entities.RigidEntity):
+                    for geom in entity.geoms:
+                        self.add_surface(str(geom.uid), geom.surface)
             else:
                 self.add_surface(str(entity.uid), entity.surface)
 
@@ -276,6 +279,20 @@ class Raytracer:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
+                    self.add_rigid_batch(
+                        name=str(geom.uid),
+                        vertices=mesh.vertices,
+                        triangles=mesh.faces,
+                        normals=mesh.vertex_normals,
+                        uvs=np.array([]) if geom.uvs is None else geom.uvs,
+                    )
+
+        # kinematic entities
+        if self.sim.kinematic_solver.is_active:
+            for kinematic_entity in self.sim.kinematic_solver.entities:
+                assert kinematic_entity.surface.vis_mode == "visual"
+                for geom in kinematic_entity.vgeoms:
+                    mesh = geom.get_trimesh()
                     self.add_rigid_batch(
                         name=str(geom.uid),
                         vertices=mesh.vertices,
@@ -653,15 +670,18 @@ class Raytracer:
                 T = gu.trans_quat_to_T(pos, quat)
                 self.update_rigid(str(tool_entity.uid), T)
 
-        # rigid entities
-        if self.sim.rigid_solver.is_active:
-            for rigid_entity in self.sim.rigid_solver.entities:
-                if rigid_entity.surface.vis_mode == "visual":
-                    geoms = rigid_entity.vgeoms
-                    geoms_T = self.sim.rigid_solver._vgeoms_render_T
+        # rigid-like entities (rigid + kinematic)
+        for solver in (self.sim.rigid_solver, self.sim.kinematic_solver):
+            if not solver.is_active:
+                continue
+
+            for entity in solver.entities:
+                if entity.surface.vis_mode == "visual":
+                    geoms = entity.vgeoms
+                    geoms_T = solver._vgeoms_render_T
                 else:
-                    geoms = rigid_entity.geoms
-                    geoms_T = self.sim.rigid_solver._geoms_render_T
+                    geoms = entity.geoms
+                    geoms_T = solver._geoms_render_T
 
                 for geom in geoms:
                     geom_T = geoms_T[geom.idx]  # TODO: support batching
