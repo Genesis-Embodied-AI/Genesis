@@ -33,15 +33,6 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         print(f"Backend '{backend}' not available on this machine", file=sys.stderr)
         sys.exit(RET_SKIP)
 
-    # Skip test if Quadrants ndarray mode is enabled but not supported by this specific test
-    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_ENABLE_NDARRAY") == "1":
-        print(
-            "Using Quadrants ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
-            "31 kernel parameters, which is not enough for most solvers.",
-            file=sys.stderr,
-        )
-        sys.exit(RET_SKIP)
-
     gs.init(backend=backend, precision="32")
 
     if backend != gs.cpu and gs.backend == gs.cpu:

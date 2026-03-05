@@ -132,7 +132,7 @@ def init(
 
     # Configure Quadrants fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
-    is_ndarray_disabled = (os.environ.get("GS_ENABLE_NDARRAY") or ("0" if backend == _gs_backend.metal else "1")) == "0"
+    is_ndarray_disabled = os.environ.get("GS_ENABLE_NDARRAY", "1") == "0"
     if use_ndarray is None:
         _use_ndarray = not (is_ndarray_disabled or performance_mode)
     else:
