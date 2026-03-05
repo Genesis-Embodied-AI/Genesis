@@ -34,6 +34,7 @@ from .broadphase import (
 from .contact import (
     collider_kernel_reset,
     kernel_collider_clear,
+    kernel_masked_collider_clear,
     collider_kernel_get_contacts,
     func_add_contact,
     func_set_contact,
@@ -459,7 +460,11 @@ class Collider:
 
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        kernel_collider_clear(
+        if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+            fn = kernel_masked_collider_clear
+        else:
+            fn = kernel_collider_clear
+        fn(
             envs_idx,
             self._solver.links_state,
             self._solver.links_info,

@@ -1416,6 +1416,10 @@ class Scene(RBC):
         if self.n_envs == 0:
             gs.raise_exception("`envs_idx` is not supported for non-parallelized scene.")
 
+        # Pass bool masks through in zerocopy mode to avoid blocking GPU sync
+        if gs.use_zerocopy and isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+            return envs_idx
+
         if isinstance(envs_idx, (slice, range)):
             return self._envs_idx[envs_idx]
         if isinstance(envs_idx, (int, np.integer)):

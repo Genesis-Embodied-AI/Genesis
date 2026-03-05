@@ -140,7 +140,11 @@ class ConstraintSolver:
 
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_clear(
+        if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+            fn = constraint_solver_kernel_masked_clear
+        else:
+            fn = constraint_solver_kernel_clear
+        fn(
             envs_idx,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -493,6 +497,30 @@ def constraint_solver_kernel_clear(
         if qd.static(static_rigid_sim_config.sparse_solve):
             for i_c in range(len_constraints):
                 constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def constraint_solver_kernel_masked_clear(
+    envs_mask: qd.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_dofs = constraint_state.qacc_ws.shape[0]
+    len_constraints = constraint_state.jac.shape[0]
+
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            constraint_state.n_constraints[i_b] = 0
+            constraint_state.n_constraints_equality[i_b] = 0
+            constraint_state.n_constraints_frictionloss[i_b] = 0
+            # Reset dynamic equality count to static count to avoid stale constraints after partial reset
+            constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
+            for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
+                constraint_state.jac[i_c, i_d, i_b] = 0.0
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_c in range(len_constraints):
+                    constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
 # ========================================= Register Pre-Defined Constraints ==========================================

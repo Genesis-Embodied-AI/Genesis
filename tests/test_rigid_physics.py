@@ -563,6 +563,86 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
+def test_bool_mask_reset(tol):
+    """Test that scene.reset(envs_idx=bool_mask) produces identical results to int-index reset."""
+    n_envs = 4
+
+    def _build_and_reset(envs_idx_variant):
+        scene = gs.Scene(
+            sim_options=gs.options.SimOptions(dt=0.01),
+            show_viewer=False,
+        )
+        scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+        box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
+        scene.build(n_envs=n_envs)
+
+        init_state = scene.get_state()
+
+        # Let the box fall with gravity to get a non-trivial state
+        for _ in range(50):
+            scene.step()
+
+        # Reset selected envs back to initial state
+        scene.reset(state=init_state, envs_idx=envs_idx_variant)
+
+        # Snapshot the resulting state
+        solver = scene.rigid_solver
+        qpos = qd_to_torch(solver._rigid_global_info.qpos, transpose=True, copy=True)
+        dofs_vel = qd_to_torch(solver.dofs_state.vel, transpose=True, copy=True)
+        links_pos = qd_to_torch(solver.links_state.pos, transpose=True, copy=True)
+        return qpos, dofs_vel, links_pos
+
+    # Reset envs 0 and 2 using int indices
+    int_idx = torch.tensor([0, 2], dtype=gs.tc_int, device=gs.device)
+    qpos_int, vel_int, pos_int = _build_and_reset(int_idx)
+
+    # Reset envs 0 and 2 using bool mask
+    bool_mask = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
+    qpos_bool, vel_bool, pos_bool = _build_and_reset(bool_mask)
+
+    # Both reset methods should produce identical results
+    assert_allclose(qpos_bool, qpos_int, tol=tol)
+    assert_allclose(vel_bool, vel_int, tol=tol)
+    assert_allclose(pos_bool, pos_int, tol=tol)
+
+
+@pytest.mark.required
+def test_bool_mask_reset_selective(tol):
+    """Test that bool mask reset only affects masked environments and leaves others untouched."""
+    n_envs = 4
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.URDF(file="urdf/plane/plane.urdf", fixed=True))
+    box = scene.add_entity(gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)))
+    scene.build(n_envs=n_envs)
+
+    init_state = scene.get_state()
+
+    # Let the box fall to get a diverged state
+    for _ in range(50):
+        scene.step()
+
+    # Snapshot pre-reset positions
+    pre_reset_pos = box.get_pos().clone()
+
+    # RL-style termination: reset envs where box fell below threshold
+    box_height = pre_reset_pos[:, 2]
+    reset_buf = box_height < 0.05
+    scene.reset(state=init_state, envs_idx=reset_buf)
+
+    post_reset_pos = box.get_pos()
+
+    # Reset envs: should be back at initial height (0.5)
+    for i in range(n_envs):
+        if reset_buf[i]:
+            assert_allclose(post_reset_pos[i, 2], torch.tensor(0.5, dtype=gs.tc_float, device=gs.device), tol=tol)
+        else:
+            assert_allclose(post_reset_pos[i], pre_reset_pos[i], tol=tol)
+
+
+@pytest.mark.required
 @pytest.mark.parametrize("xml_path", ["xml/one_ball_joint.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])

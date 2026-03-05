@@ -1725,29 +1725,80 @@ class RigidSolver(Solver):
         if self.is_active:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
-            if gs.use_zerocopy:
-                errno = qd_to_torch(self._errno, copy=False)
-                errno[envs_idx] = 0
-            else:
-                kernel_set_zero(envs_idx, self._errno)
+            if gs.use_zerocopy and isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                # === ZEROCOPY BOOL MASK FAST PATH ===
+                mask = envs_idx  # shape: (n_envs,)
 
-            kernel_set_state(
-                qpos=state.qpos,
-                dofs_vel=state.dofs_vel,
-                dofs_acc=state.dofs_acc,
-                links_pos=state.links_pos,
-                links_quat=state.links_quat,
-                i_pos_shift=state.i_pos_shift,
-                mass_shift=state.mass_shift,
-                friction_ratio=state.friction_ratio,
-                envs_idx=envs_idx,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                geoms_state=self.geoms_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
-            kernel_forward_kinematics_links_geoms(
+                # errno
+                errno = qd_to_torch(self._errno, copy=False)
+                errno.masked_fill_(mask, 0)
+
+                # qpos
+                qpos_dst = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+                torch.where(mask[:, None], state.qpos, qpos_dst, out=qpos_dst)
+
+                # dofs_vel, dofs_acc
+                vel_dst = qd_to_torch(self.dofs_state.vel, transpose=True, copy=False)
+                acc_dst = qd_to_torch(self.dofs_state.acc, transpose=True, copy=False)
+                torch.where(mask[:, None], state.dofs_vel, vel_dst, out=vel_dst)
+                torch.where(mask[:, None], state.dofs_acc, acc_dst, out=acc_dst)
+
+                # zero ctrl_force, set ctrl_mode to FORCE
+                ctrl_force_dst = qd_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
+                ctrl_mode_dst = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+                ctrl_force_dst.masked_fill_(mask[:, None], 0.0)
+                ctrl_mode_dst.masked_fill_(mask[:, None], gs.CTRL_MODE.FORCE)
+
+                # links_pos, links_quat, i_pos_shift (3D fields)
+                pos_dst = qd_to_torch(self.links_state.pos, transpose=True, copy=False)
+                quat_dst = qd_to_torch(self.links_state.quat, transpose=True, copy=False)
+                shift_dst = qd_to_torch(self.links_state.i_pos_shift, transpose=True, copy=False)
+                torch.where(mask[:, None, None], state.links_pos, pos_dst, out=pos_dst)
+                torch.where(mask[:, None, None], state.links_quat, quat_dst, out=quat_dst)
+                torch.where(mask[:, None, None], state.i_pos_shift, shift_dst, out=shift_dst)
+
+                # zero cfrc_applied_vel, cfrc_applied_ang
+                cfrc_vel_dst = qd_to_torch(self.links_state.cfrc_applied_vel, transpose=True, copy=False)
+                cfrc_ang_dst = qd_to_torch(self.links_state.cfrc_applied_ang, transpose=True, copy=False)
+                cfrc_vel_dst.masked_fill_(mask[:, None, None], 0.0)
+                cfrc_ang_dst.masked_fill_(mask[:, None, None], 0.0)
+
+                # mass_shift, friction_ratio (2D fields)
+                mass_dst = qd_to_torch(self.links_state.mass_shift, transpose=True, copy=False)
+                fric_dst = qd_to_torch(self.geoms_state.friction_ratio, transpose=True, copy=False)
+                torch.where(mask[:, None], state.mass_shift, mass_dst, out=mass_dst)
+                torch.where(mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
+            else:
+                # === EXISTING PATH (int indices) ===
+                if gs.use_zerocopy:
+                    errno = qd_to_torch(self._errno, copy=False)
+                    errno[envs_idx] = 0
+                else:
+                    kernel_set_zero(envs_idx, self._errno)
+
+                kernel_set_state(
+                    qpos=state.qpos,
+                    dofs_vel=state.dofs_vel,
+                    dofs_acc=state.dofs_acc,
+                    links_pos=state.links_pos,
+                    links_quat=state.links_quat,
+                    i_pos_shift=state.i_pos_shift,
+                    mass_shift=state.mass_shift,
+                    friction_ratio=state.friction_ratio,
+                    envs_idx=envs_idx,
+                    links_state=self.links_state,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+
+            # FK dispatch — use masked kernel for bool masks
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
                 envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,

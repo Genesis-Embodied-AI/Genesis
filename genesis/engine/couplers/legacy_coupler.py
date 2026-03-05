@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
+import torch
 
 import genesis as gs
 import genesis.utils.sdf as sdf
@@ -112,12 +113,16 @@ class LegacyCoupler(RBC):
         if self._rigid_mpm and self.mpm_solver.enable_CPIC:
             if envs_idx is None:
                 self.mpm_rigid_normal.fill(0)
+            elif isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                self._kernel_masked_reset_mpm(envs_idx)
             else:
                 self._kernel_reset_mpm(envs_idx)
 
         if self._rigid_sph:
             if envs_idx is None:
                 self.sph_rigid_normal.fill(0)
+            elif isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                self._kernel_masked_reset_sph(envs_idx)
             else:
                 self._kernel_reset_sph(envs_idx)
 
@@ -130,6 +135,18 @@ class LegacyCoupler(RBC):
     def _kernel_reset_sph(self, envs_idx: qd.types.ndarray()):
         for i_p, i_g, i_b_ in qd.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_idx.shape[0]):
             self.sph_rigid_normal[i_p, i_g, envs_idx[i_b_]] = 0.0
+
+    @qd.kernel
+    def _kernel_masked_reset_mpm(self, envs_mask: qd.types.ndarray()):
+        for i_p, i_g, i_b in qd.ndrange(self.mpm_solver.n_particles, self.rigid_solver.n_geoms, envs_mask.shape[0]):
+            if envs_mask[i_b]:
+                self.mpm_rigid_normal[i_p, i_g, i_b] = 0.0
+
+    @qd.kernel
+    def _kernel_masked_reset_sph(self, envs_mask: qd.types.ndarray()):
+        for i_p, i_g, i_b in qd.ndrange(self.sph_solver.n_particles, self.rigid_solver.n_geoms, envs_mask.shape[0]):
+            if envs_mask[i_b]:
+                self.sph_rigid_normal[i_p, i_g, i_b] = 0.0
 
     @qd.func
     def _func_collide_with_rigid(
