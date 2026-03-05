@@ -182,48 +182,6 @@ class WandbParser:
         raise NotImplementedError()
 
 
-class WandbParserOldFormat(WandbParser):
-    def __init__(self, metric_keys: tuple[str, ...]) -> None:
-        self.metric_keys = metric_keys
-
-    @property
-    def project(self):
-        return "genesis-benchmarks"
-
-    def __call__(
-        self,
-        benchmark_under_test: "BenchmarkRunUnderTest",
-        records_by_commit_hash: dict[str, dict[frozendict[str, str], dict[str, int | float]]],
-        config,
-        summary,
-        commit_hash: str,
-    ) -> None:
-        # Extract benchmark ID and normalize it to make sure it does not depends on key ordering.
-        # Note that the rigid body benchmark suite is the only one being supported for now.
-        suite_id, config_params_str = config["benchmark_id"].split("-", 1)
-        if suite_id != "rigid_body":
-            return
-
-        # Make sure that stats are valid
-        try:
-            is_valid = True
-            for k in self.metric_keys:
-                v = summary[k]
-                if not isinstance(v, (float, int)) or math.isnan(v):
-                    is_valid = False
-                    break
-            if not is_valid:
-                return
-        except KeyError:
-            return
-
-        # Store all the records into a dict
-        config_params_fdict = config_params_str_to_fdict(config_params_str)
-        records_by_commit_hash.setdefault(commit_hash, {})[config_params_fdict] = {
-            metric: summary[metric] for metric in self.metric_keys
-        }
-
-
 class WandbParserNewFormat(WandbParser):
     @property
     def project(self):
@@ -536,8 +494,8 @@ if __name__ == "__main__":
     if not alarm.dev_skip_speed:
         speed_records_by_commit_hash = alarm.fetch_wandb_data(
             benchmark_under_test=results_under_test_speed,
-            run_name_prefix=None,
-            wandb_parser=WandbParserOldFormat(metric_keys=alarm.speed_metric_keys),
+            run_name_prefix="speed-",
+            wandb_parser=WandbParserNewFormat(),
         )
 
     mem_records_by_commit_hash = alarm.fetch_wandb_data(

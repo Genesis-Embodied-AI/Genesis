@@ -67,7 +67,6 @@ class RigidLink(RBC):
         self._uid = gs.UID()
         self._idx: int = idx
         self._parent_idx: int = parent_idx  # -1 if no parent
-        self._child_idxs: list[int] = list()
 
         # 'is_fixed' attribute specifies whether the link is free to move.
         # In practice, this attributes determines whether the geometry vertices associated with the entity are stored
@@ -253,6 +252,7 @@ class RigidLink(RBC):
                         f"from geometry {hint_mass:0.3f} given material density {rho:0.0f}."
                     )
                 hint_inertia *= self._inertial_mass / hint_mass
+                hint_mass = self._inertial_mass
 
             if self._inertial_i is not None:
                 inertia_diag = np.diag(self._inertial_i)
@@ -282,10 +282,13 @@ class RigidLink(RBC):
                         f"Mass is not specified and collision geoms can not be found for link '{self.name}'. "
                         f"Using visual geoms to compute inertial properties."
                     )
-            self._inertial_mass = hint_mass
-            self._inertial_pos = hint_com
+            if self._inertial_mass is None:
+                self._inertial_mass = hint_mass
+            if self._inertial_pos is None:
+                self._inertial_pos = hint_com
             self._inertial_quat = gu.identity_quat()
-            self._inertial_i = hint_inertia
+            if self._inertial_i is None:
+                self._inertial_i = hint_inertia
 
         # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
         # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.

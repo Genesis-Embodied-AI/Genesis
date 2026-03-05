@@ -286,6 +286,9 @@ class IPCCouplerOptions(BaseCouplerOptions):
         For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
         When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
         is fully driven by IPC physics. Defaults to False.
+    _show_ipc_gui : bool, optional
+        [Dev/debug] Enable the libuipc built-in polyscope GUI viewer for inspecting the IPC scene.
+        Defaults to False.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -331,6 +334,10 @@ class IPCCouplerOptions(BaseCouplerOptions):
     two_way_coupling: bool = True
     enable_rigid_dofs_sync: bool = False
     free_base_driven_by_ipc: bool = False
+
+    def __init__(self, _show_ipc_gui: bool = False, **data):
+        super().__init__(**data)
+        self._show_ipc_gui = bool(_show_ipc_gui)
 
 
 ############################ Solvers inside simulator ############################
