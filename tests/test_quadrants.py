@@ -124,18 +124,18 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
-    from genesis.engine.solvers.rigid.collider import func_narrow_phase_convex_vs_convex
+    from genesis.engine.solvers.rigid.collider import func_narrowphase_kernel1_contact0
 
     assert (
-        func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_key_generated
+        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_key_generated
         == args.expected_use_src_ll_cache
     )
     assert (
-        func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_validated
+        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_validated
         == args.expected_src_ll_cache_hit
     )
     assert (
-        func_narrow_phase_convex_vs_convex._primal.src_ll_cache_observations.cache_loaded
+        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_loaded
         == args.expected_src_ll_cache_hit
     )
 
