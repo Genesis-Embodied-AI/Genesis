@@ -1876,6 +1876,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
+    iterations: int = -1
 
 
 # =========================================== DataManager ===========================================

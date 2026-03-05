@@ -415,6 +415,7 @@ class RigidSolver(Solver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
+            iterations=self._options.iterations,
         )
 
         if self.is_active:
