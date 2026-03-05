@@ -12,30 +12,6 @@ _JV_BLOCK = 32
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_linesearch(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    _B = constraint_state.grad.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_linesearch_and_apply_alpha(
-                i_b,
-                entities_info=entities_info,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-        else:
-            constraint_state.improved[i_b] = False
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_parallel_linesearch_mv(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
@@ -103,37 +79,37 @@ def _kernel_parallel_linesearch_p0(
     _T = qd.static(_P0_BLOCK)
 
     qd.loop_config(block_dim=_T)
-    for i_ in range(_B * _T):
-        tid = i_ % _T
-        i_b = i_ // _T
+    for i_flat in range(_B * _T):
+        tid = i_flat % _T
+        i_b = i_flat // _T
 
         # 6 shared arrays for parallel reductions (reused across phases)
-        sh_a = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_b = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_c = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_d = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_e = qd.simt.block.SharedArray((_T,), gs.qd_float)
-        sh_f = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_snorm_sq = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_qg_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_qg_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_p0_cost = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_constraint_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
+        sh_constraint_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
 
         if constraint_state.n_constraints[i_b] > 0:
             n_dofs = constraint_state.search.shape[0]
 
             # === Phase 1: Fused snorm + quad_gauss, parallel over n_dofs ===
             local_snorm_sq = gs.qd_float(0.0)
-            local_qg1 = gs.qd_float(0.0)
-            local_qg2 = gs.qd_float(0.0)
+            local_qg_grad = gs.qd_float(0.0)
+            local_qg_hess = gs.qd_float(0.0)
 
             i_d = tid
             while i_d < n_dofs:
                 s = constraint_state.search[i_d, i_b]
                 local_snorm_sq += s * s
-                local_qg1 += s * constraint_state.Ma[i_d, i_b] - s * dofs_state.force[i_d, i_b]
-                local_qg2 += 0.5 * s * constraint_state.mv[i_d, i_b]
+                local_qg_grad += s * constraint_state.Ma[i_d, i_b] - s * dofs_state.force[i_d, i_b]
+                local_qg_hess += 0.5 * s * constraint_state.mv[i_d, i_b]
                 i_d += _T
 
-            sh_a[tid] = local_snorm_sq
-            sh_b[tid] = local_qg1
-            sh_c[tid] = local_qg2
+            sh_snorm_sq[tid] = local_snorm_sq
+            sh_qg_grad[tid] = local_qg_grad
+            sh_qg_hess[tid] = local_qg_hess
 
             qd.simt.block.sync()
 
@@ -141,14 +117,14 @@ def _kernel_parallel_linesearch_p0(
             stride = _T // 2
             while stride > 0:
                 if tid < stride:
-                    sh_a[tid] += sh_a[tid + stride]
-                    sh_b[tid] += sh_b[tid + stride]
-                    sh_c[tid] += sh_c[tid + stride]
+                    sh_snorm_sq[tid] += sh_snorm_sq[tid + stride]
+                    sh_qg_grad[tid] += sh_qg_grad[tid + stride]
+                    sh_qg_hess[tid] += sh_qg_hess[tid + stride]
                 qd.simt.block.sync()
                 stride //= 2
 
             # All threads read the reduced snorm
-            snorm = qd.sqrt(sh_a[0])
+            snorm = qd.sqrt(sh_snorm_sq[0])
 
             if snorm < rigid_global_info.EPS[None]:
                 # Converged — only thread 0 writes
@@ -161,20 +137,20 @@ def _kernel_parallel_linesearch_p0(
                 if tid == 0:
                     constraint_state.improved[i_b] = True
                     constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
-                    constraint_state.quad_gauss[1, i_b] = sh_b[0]
-                    constraint_state.quad_gauss[2, i_b] = sh_c[0]
+                    constraint_state.quad_gauss[1, i_b] = sh_qg_grad[0]
+                    constraint_state.quad_gauss[2, i_b] = sh_qg_hess[0]
 
                 # === Phase 2: Constraint cost, parallel over n_constraints ===
                 ne = constraint_state.n_constraints_equality[i_b]
                 nef = ne + constraint_state.n_constraints_frictionloss[i_b]
                 n_con = constraint_state.n_constraints[i_b]
 
-                local_eq0 = gs.qd_float(0.0)
-                local_eq1 = gs.qd_float(0.0)
-                local_eq2 = gs.qd_float(0.0)
-                local_tmp0 = gs.qd_float(0.0)
-                local_total_1 = gs.qd_float(0.0)  # full gradient at alpha=0
-                local_total_2 = gs.qd_float(0.0)  # full hessian/2 at alpha=0
+                local_eq_cost = gs.qd_float(0.0)
+                local_eq_grad = gs.qd_float(0.0)
+                local_eq_hess = gs.qd_float(0.0)
+                local_p0_cost = gs.qd_float(0.0)
+                local_constraint_grad = gs.qd_float(0.0)
+                local_constraint_hess = gs.qd_float(0.0)
 
                 i_c = tid
                 while i_c < n_con:
@@ -187,12 +163,12 @@ def _kernel_parallel_linesearch_p0(
 
                     if i_c < ne:
                         # Equality: always active
-                        local_eq0 += qf_0
-                        local_eq1 += qf_1
-                        local_eq2 += qf_2
-                        local_tmp0 += qf_0
-                        local_total_1 += qf_1
-                        local_total_2 += qf_2
+                        local_eq_cost += qf_0
+                        local_eq_grad += qf_1
+                        local_eq_hess += qf_2
+                        local_p0_cost += qf_0
+                        local_constraint_grad += qf_1
+                        local_constraint_hess += qf_2
                     elif i_c < nef:
                         # Friction: check linear regime at alpha=0
                         f = constraint_state.efc_frictionloss[i_c, i_b]
@@ -204,25 +180,25 @@ def _kernel_parallel_linesearch_p0(
                             qf_0 = linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
                             qf_1 = linear_neg * (-f * jv_c) + linear_pos * (f * jv_c)
                             qf_2 = 0.0
-                        local_tmp0 += qf_0
-                        local_total_1 += qf_1
-                        local_total_2 += qf_2
+                        local_p0_cost += qf_0
+                        local_constraint_grad += qf_1
+                        local_constraint_hess += qf_2
                     else:
                         # Contact: active if Jaref < 0
                         active = Jaref_c < 0
-                        local_tmp0 += qf_0 * active
-                        local_total_1 += qf_1 * active
-                        local_total_2 += qf_2 * active
+                        local_p0_cost += qf_0 * active
+                        local_constraint_grad += qf_1 * active
+                        local_constraint_hess += qf_2 * active
 
                     i_c += _T
 
                 # Reuse shared arrays for Phase 2 reduction
-                sh_a[tid] = local_eq0
-                sh_b[tid] = local_eq1
-                sh_c[tid] = local_eq2
-                sh_d[tid] = local_tmp0
-                sh_e[tid] = local_total_1
-                sh_f[tid] = local_total_2
+                sh_snorm_sq[tid] = local_eq_cost
+                sh_qg_grad[tid] = local_eq_grad
+                sh_qg_hess[tid] = local_eq_hess
+                sh_p0_cost[tid] = local_p0_cost
+                sh_constraint_grad[tid] = local_constraint_grad
+                sh_constraint_hess[tid] = local_constraint_hess
 
                 qd.simt.block.sync()
 
@@ -230,29 +206,28 @@ def _kernel_parallel_linesearch_p0(
                 stride = _T // 2
                 while stride > 0:
                     if tid < stride:
-                        sh_a[tid] += sh_a[tid + stride]
-                        sh_b[tid] += sh_b[tid + stride]
-                        sh_c[tid] += sh_c[tid + stride]
-                        sh_d[tid] += sh_d[tid + stride]
-                        sh_e[tid] += sh_e[tid + stride]
-                        sh_f[tid] += sh_f[tid + stride]
+                        sh_snorm_sq[tid] += sh_snorm_sq[tid + stride]
+                        sh_qg_grad[tid] += sh_qg_grad[tid + stride]
+                        sh_qg_hess[tid] += sh_qg_hess[tid + stride]
+                        sh_p0_cost[tid] += sh_p0_cost[tid + stride]
+                        sh_constraint_grad[tid] += sh_constraint_grad[tid + stride]
+                        sh_constraint_hess[tid] += sh_constraint_hess[tid + stride]
                     qd.simt.block.sync()
                     stride //= 2
 
                 if tid == 0:
-                    constraint_state.eq_sum[0, i_b] = sh_a[0]
-                    constraint_state.eq_sum[1, i_b] = sh_b[0]
-                    constraint_state.eq_sum[2, i_b] = sh_c[0]
+                    constraint_state.eq_sum[0, i_b] = sh_snorm_sq[0]
+                    constraint_state.eq_sum[1, i_b] = sh_qg_grad[0]
+                    constraint_state.eq_sum[2, i_b] = sh_qg_hess[0]
                     constraint_state.ls_it[i_b] = 1
-                    constraint_state.candidates[1, i_b] = constraint_state.gauss[i_b] + sh_d[0]
+                    constraint_state.candidates[1, i_b] = constraint_state.gauss[i_b] + sh_p0_cost[0]
                     # Initialize best alpha, search range, and best-cost tracker for parallel linesearch
                     constraint_state.candidates[0, i_b] = 0.0  # default: no step
 
                     # Use full Newton step (DOF + all constraints) as the range center.
-                    # sh_e[0] = total constraint gradient, sh_f[0] = total constraint hess/2
-                    total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_f[0])
+                    total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
                     if total_hess > 0.0:
-                        total_grad = constraint_state.quad_gauss[1, i_b] + sh_e[0]
+                        total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
                         alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(LS_PARALLEL_MIN_STEP))
                         constraint_state.candidates[2, i_b] = alpha_newton * 1e-2
                         constraint_state.candidates[3, i_b] = alpha_newton * 1e2
@@ -277,9 +252,9 @@ def _kernel_parallel_linesearch_eval(
     _K = qd.static(LS_PARALLEL_K)
 
     qd.loop_config(block_dim=_K)
-    for i_ in range(_B * _K):
-        tid = i_ % _K
-        i_b = i_ // _K
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
 
         # Shared memory for argmin reduction
         sh_cost = qd.simt.block.SharedArray((_K,), gs.qd_float)
@@ -717,10 +692,42 @@ def _kernel_init_search(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
-# FIXME: decomposed init disabled — causes non-deterministic results on CUDA due to inter-kernel data races
-# when multiple @qd.kernel functions write/read shared state (qacc, Ma, Jaref) without synchronization.
-# The monolith init (single kernel) is used instead. See test_box_box_dynamics[gpu-implicitfast-Newton].
-@solver.func_solve_init.register(is_compatible=lambda *args, **kwargs: False)
+@qd.kernel(fastcache=gs.use_fastcache)
+def _kernel_init_update_constraint(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Init-only constraint update — wraps monolith's func_update_constraint for exact FP match."""
+    solver.func_update_constraint(
+        qacc=constraint_state.qacc,
+        Ma=constraint_state.Ma,
+        cost=constraint_state.cost,
+        dofs_state=dofs_state,
+        constraint_state=constraint_state,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def _kernel_init_update_gradient(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Init-only gradient update — wraps monolith's func_update_gradient (dispatches to tiled on GPU)."""
+    solver.func_update_gradient(
+        dofs_state=dofs_state,
+        entities_info=entities_info,
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
+
+
+@solver.func_solve_init.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
 def func_solve_init_decomposed(
     dofs_info,
     dofs_state,
@@ -737,9 +744,9 @@ def func_solve_init_decomposed(
     2. Ma = M @ qacc (ndrange over dofs with entity lookup)
     3. Jaref = -aref + J @ qacc (ndrange over constraints — main optimization)
     4. Set improved flags
-    5. Update constraint (forces / qfrc / cost — reuse decomposed kernels)
+    5. Update constraint (wraps monolith's func_update_constraint for exact FP match)
     6. Newton hessian (Newton only — reuse existing kernel)
-    7. Update gradient (reuse existing kernel)
+    7. Update gradient (wraps monolith's func_update_gradient — uses tiled on GPU)
     8. search = -Mgrad (ndrange over dofs)
     """
     # 1. Warmstart selection
@@ -754,17 +761,17 @@ def func_solve_init_decomposed(
     # 4. Set improved flags (needed by decomposed update_constraint kernels)
     _kernel_init_improved(constraint_state, static_rigid_sim_config)
 
-    # 5. Update constraint (reuse decomposed kernels)
-    _kernel_update_constraint_forces(constraint_state, static_rigid_sim_config)
-    _kernel_update_constraint_qfrc(constraint_state, static_rigid_sim_config)
-    _kernel_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
+    # 5. Update constraint (init-specific: wraps monolith's func_update_constraint for exact FP match)
+    _kernel_init_update_constraint(dofs_state, constraint_state, static_rigid_sim_config)
 
     # 6. Newton hessian (Newton only)
     if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
         _kernel_newton_only_nt_hessian(constraint_state, rigid_global_info, static_rigid_sim_config)
 
-    # 7. Update gradient
-    _kernel_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+    # 7. Update gradient (init-specific: wraps monolith's func_update_gradient, dispatches to tiled on GPU)
+    _kernel_init_update_gradient(
+        entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
 
     # 8. search = -Mgrad
     _kernel_init_search(constraint_state, static_rigid_sim_config)
@@ -791,6 +798,9 @@ def func_solve_decomposed(
     This maximizes kernel granularity, potentially allowing better GPU scheduling
     and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
     """
+    # Read iterations from the Python-side static config instead of rigid_global_info.iterations[None].
+    # The [None] read triggers an implicit GPU→CPU sync that drains the GPU command queue, destroying
+    # async kernel pipelining and causing ~2x slowdown on contact-heavy benchmarks.
     iterations = static_rigid_sim_config.iterations
     for _it in range(iterations):
         _kernel_parallel_linesearch_mv(
@@ -810,6 +820,9 @@ def func_solve_decomposed(
             rigid_global_info,
             static_rigid_sim_config,
         )
+        # Successive refinement: each pass narrows the search range around the best alpha.
+        # Currently N_REFINE=1 is sufficient — no benchmark has shown improvement with more
+        # passes. The loop is kept as an interface for potential future cases.
         for _refine in range(LS_PARALLEL_N_REFINE):
             _kernel_parallel_linesearch_eval(
                 constraint_state,
