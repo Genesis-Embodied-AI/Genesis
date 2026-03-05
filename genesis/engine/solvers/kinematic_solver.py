@@ -25,10 +25,8 @@ from .rigid.abd.misc import (
     kernel_init_vvert_fields,
     kernel_init_vgeom_fields,
     kernel_init_entity_fields,
-    kernel_update_geoms_render_T,
-    kernel_update_heterogeneous_link_info,
+    kernel_update_heterogeneous_links_vgeom,
     kernel_update_vgeoms_render_T,
-    kernel_set_zero,
 )
 from .rigid.abd.forward_kinematics import (
     kernel_forward_kinematics,
@@ -353,6 +351,7 @@ class KinematicSolver(Solver):
     def _process_heterogeneous_link_info(self):
         """
         Process heterogeneous link info: dispatch geoms per environment and compute per-env inertial properties.
+
         This method is called after _init_link_fields to update the per-environment inertial properties
         for entities with heterogeneous morphs.
         """
@@ -362,7 +361,7 @@ class KinematicSolver(Solver):
                 continue
 
             # Get the number of variants for this entity
-            n_variants = len(entity.variants_geom_start)
+            n_variants = len(entity.variants_vgeom_start)
 
             # Distribute variants across environments using balanced block assignment:
             # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
@@ -377,8 +376,6 @@ class KinematicSolver(Solver):
                 variant_idx = np.arange(self._B)
 
             # Get arrays from entity
-            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
-            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
             np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
             np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
 
@@ -386,39 +383,15 @@ class KinematicSolver(Solver):
             for link in entity.links:
                 i_l = link.idx
 
-                # Build per-env arrays for geom/vgeom ranges
-                links_geom_start = np_geom_start[variant_idx]
-                links_geom_end = np_geom_end[variant_idx]
+                # Build per-env arrays for vgeom ranges
                 links_vgeom_start = np_vgeom_start[variant_idx]
                 links_vgeom_end = np_vgeom_end[variant_idx]
 
-                # Build per-env arrays for inertial properties
-                links_inertial_mass = np.array(
-                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
-                )
-                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
-
-                # Update links_info with per-environment values
+                # Update links vgeoms with per-environment values
                 # Note: when batch_links_info is True, the shape is (n_links, B)
-                kernel_update_heterogeneous_link_info(
-                    i_l,
-                    links_geom_start,
-                    links_geom_end,
-                    links_vgeom_start,
-                    links_vgeom_end,
-                    links_inertial_mass,
-                    links_inertial_pos,
-                    links_inertial_i,
-                    self.links_info,
-                )
+                kernel_update_heterogeneous_links_vgeom(i_l, links_vgeom_start, links_vgeom_end, self.links_info)
 
-                # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
-                for geom in link.geoms:
-                    active_envs_mask = (links_geom_start <= geom.idx) & (geom.idx < links_geom_end)
-                    geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                    (geom.active_envs_idx,) = np.where(active_envs_mask)
-
+                # Update active_envs_idx for vgeoms - indicates which environments each geom is active in
                 for vgeom in link.vgeoms:
                     active_envs_mask = (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
                     vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
@@ -561,14 +534,6 @@ class KinematicSolver(Solver):
     # ------------------------------------------------------------------------------------
     # ----------------------------------- render -----------------------------------------
     # ------------------------------------------------------------------------------------
-
-    def update_geoms_render_T(self):
-        kernel_update_geoms_render_T(
-            self._geoms_render_T,
-            geoms_state=self.geoms_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
 
     def update_vgeoms_render_T(self):
         kernel_update_vgeoms_render_T(

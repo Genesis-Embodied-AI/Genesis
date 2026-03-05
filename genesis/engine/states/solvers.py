@@ -102,11 +102,11 @@ class KinematicSolverState:
             "requires_grad": scene.requires_grad,
             "scene": self.scene,
         }
-        self.qpos = gs.zeros((_B, scene.sim.rigid_solver.n_qs), **args)
-        self.dofs_vel = gs.zeros((_B, scene.sim.rigid_solver.n_dofs), **args)
-        self.links_pos = gs.zeros((_B, scene.sim.rigid_solver.n_links, 3), **args)
-        self.links_quat = gs.zeros((_B, scene.sim.rigid_solver.n_links, 4), **args)
-        self.i_pos_shift = gs.zeros((_B, scene.sim.rigid_solver.n_links, 3), **args)
+        self.qpos = gs.zeros((_B, scene.sim.kinematic_solver.n_qs), **args)
+        self.dofs_vel = gs.zeros((_B, scene.sim.kinematic_solver.n_dofs), **args)
+        self.links_pos = gs.zeros((_B, scene.sim.kinematic_solver.n_links, 3), **args)
+        self.links_quat = gs.zeros((_B, scene.sim.kinematic_solver.n_links, 4), **args)
+        self.i_pos_shift = gs.zeros((_B, scene.sim.kinematic_solver.n_links, 3), **args)
 
     def serializable(self):
         self.scene = None
