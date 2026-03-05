@@ -1780,13 +1780,7 @@ def func_narrowphase_kernel1_contact0(
                 is_col = penetration > 0.0
             else:
                 if qd.static(
-                    collider_static_config.ccd_algorithm
-                    in (
-                        CCD_ALGORITHM_CODE.MPR,
-                        CCD_ALGORITHM_CODE.MJ_MPR,
-                        CCD_ALGORITHM_CODE.GJK,
-                        CCD_ALGORITHM_CODE.MJ_GJK,
-                    )
+                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                 ):
                     is_mpr_updated = False
                     normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
@@ -1859,20 +1853,17 @@ def func_narrowphase_kernel1_contact0(
                     )
             elif prefer_gjk:
                 if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                    if is_col:
-                        func_enqueue_for_multicontact(
-                            collider_state,
-                            True,
-                            i_b,
-                            i_ga,
-                            i_gb,
-                            i_pair,
-                            contact_pos,
-                            normal,
-                            penetration,
-                        )
-                    else:
-                        collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                    func_enqueue_for_multicontact(
+                        collider_state,
+                        True,
+                        i_b,
+                        i_ga,
+                        i_gb,
+                        i_pair,
+                        contact_pos,
+                        normal,
+                        penetration,
+                    )
             else:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
