@@ -15,7 +15,7 @@ import trimesh
 
 import genesis as gs
 
-_NO_SORT = os.environ.get("GS_NO_SORT") is not None
+_NO_SORT = os.environ.get("GS_NO_SORT")
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
