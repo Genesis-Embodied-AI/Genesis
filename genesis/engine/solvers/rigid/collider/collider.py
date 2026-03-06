@@ -238,6 +238,13 @@ class Collider:
 
         # Kernel 1 & 2 scratch states only needed when split-kernel narrowphase is active
         if self._collider_static_config.needs_kernel1:
+            n_possible_pairs_ = max(self._n_possible_pairs, 1)
+            max_collision_pairs = min(self._solver.max_collision_pairs, n_possible_pairs_)
+            max_collision_pairs_broad = max_collision_pairs * self._solver._options.multiplier_collision_broad_phase
+            self._narrowphase_work_queues = array_class.get_narrowphase_work_queues(
+                max(max_collision_pairs_broad * self._solver._B, 1)
+            )
+
             self._kernel1_n_chunks = 5
             self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
             self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
@@ -523,7 +530,7 @@ class Collider:
         )
         if self._collider_static_config.needs_kernel1:
             narrowphase.func_reset_narrowphase_work_queues(
-                self._collider_state,
+                self._narrowphase_work_queues,
             )
             narrowphase.func_narrowphase_kernel1_contact0(
                 self._solver.geoms_state,
@@ -541,6 +548,7 @@ class Collider:
                 self._gjk._gjk_info,
                 self._support_field._support_field_info,
                 self._solver._errno,
+                self._narrowphase_work_queues,
                 self._solver._B,
                 self._kernel1_n_chunks,
             )
@@ -565,6 +573,7 @@ class Collider:
                 self._support_field._support_field_info,
                 self._kernel2_gjk_state.diff_contact_input,
                 self._solver._errno,
+                self._narrowphase_work_queues,
                 self._kernel2_n_gjk_threads,
                 self._kernel2_n_total_threads,
                 self._kernel2_max_items_per_thread,
