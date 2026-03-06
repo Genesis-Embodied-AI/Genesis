@@ -106,9 +106,9 @@ class Collider:
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.has_convex_convex:
+        if self._collider_static_config.needs_kernel1:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.has_convex_convex:
+        if self._collider_static_config.has_terrain or self._collider_static_config.needs_kernel1:
             self._support_field.activate()
 
         if gs.use_zerocopy:
@@ -153,7 +153,7 @@ class Collider:
         # Determine which combination of collision detection algorithms must be enabled
         self._n_possible_pairs, self._collision_pair_idx = self._compute_collision_pair_idx()
         has_any_vs_terrain = False
-        has_convex_vs_convex = False
+        needs_kernel1 = False
         has_convex_specialization = False
         has_nonconvex_vs_nonterrain = False
         for i_ga in range(self._solver.n_geoms):
@@ -164,7 +164,16 @@ class Collider:
                 if geom_a.type == gs.GEOM_TYPE.TERRAIN or geom_b.type == gs.GEOM_TYPE.TERRAIN:
                     has_any_vs_terrain = True
                 if geom_a.is_convex and geom_b.is_convex:
-                    has_convex_vs_convex = True
+                    types = {geom_a.type, geom_b.type}
+                    if (
+                        self._solver._options.box_box_detection
+                        and types == {gs.GEOM_TYPE.BOX}
+                    ):
+                        pass
+                    elif types == {gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.BOX}:
+                        pass
+                    else:
+                        needs_kernel1 = True
                 if self._solver._options.box_box_detection:
                     if geom_a.type in (gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX) or geom_b.type in (
                         gs.GEOM_TYPE.TERRAIN,
@@ -186,7 +195,7 @@ class Collider:
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_any_vs_terrain,
-            has_convex_convex=has_convex_vs_convex,
+            needs_kernel1=needs_kernel1,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
@@ -514,7 +523,7 @@ class Collider:
             self._collider_info,
             self._solver._errno,
         )
-        if self._collider_static_config.has_convex_convex:
+        if self._collider_static_config.needs_kernel1:
             narrowphase.func_reset_narrowphase_work_queues(
                 self._collider_state,
             )
@@ -607,10 +616,12 @@ class Collider:
                 self._solver._errno,
             )
 
-        func_sort_contacts(
-            self._collider_state,
-            self._solver._static_rigid_sim_config,
-        )
+        import os
+        if not os.environ.get("GS_NO_SORT"):
+            func_sort_contacts(
+                self._collider_state,
+                self._solver._static_rigid_sim_config,
+            )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
         # Early return if already pre-computed

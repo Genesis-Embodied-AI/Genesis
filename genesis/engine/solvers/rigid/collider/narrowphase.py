@@ -475,6 +475,7 @@ def func_contact_mpr_terrain(
                                             break
 
                                     if valid:
+                                        i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
@@ -482,6 +483,7 @@ def func_contact_mpr_terrain(
                                             contact_pos,
                                             penetration,
                                             i_b,
+                                            i_pair,
                                             geoms_state,
                                             geoms_info,
                                             collider_state,
@@ -791,6 +793,7 @@ def func_convex_convex_contact(
                                             gjk_state.contact_pos[i_b, i_c],
                                             gjk_state.diff_penetration[i_b, i_c],
                                             i_b,
+                                            i_pair,
                                             geoms_state,
                                             geoms_info,
                                             collider_state,
@@ -816,6 +819,7 @@ def func_convex_convex_contact(
                                                     contact_pos,
                                                     penetration,
                                                     i_b,
+                                                    i_pair,
                                                     geoms_state,
                                                     geoms_info,
                                                     collider_state,
@@ -838,6 +842,7 @@ def func_convex_convex_contact(
                         contact_pos_0,
                         penetration_0,
                         i_b,
+                        i_pair,
                         geoms_state,
                         geoms_info,
                         collider_state,
@@ -936,6 +941,7 @@ def func_convex_convex_contact(
                             contact_pos,
                             penetration,
                             i_b,
+                            i_pair,
                             geoms_state,
                             geoms_info,
                             collider_state,
@@ -973,6 +979,7 @@ def func_kernel2_run_detection(
     support_field_info: array_class.SupportFieldInfo,
     i_pair,
     use_gjk,
+    is_initial_detection,
 ):
     """Run one detection (capsule/plane/MPR/GJK) and return (is_col, normal, contact_pos, penetration, used_gjk)."""
     EPS = rigid_global_info.EPS[None]
@@ -1038,7 +1045,7 @@ def func_kernel2_run_detection(
                 for i_mpr in range(2):
                     if i_mpr == 1:
                         if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                            if not is_col and is_mpr_guess_direction_available:
+                            if is_initial_detection and not is_col and is_mpr_guess_direction_available:
                                 normal_ws = qd.Vector.zero(gs.qd_float, 3)
                                 is_mpr_guess_direction_available = False
                                 is_mpr_updated = False
@@ -1200,6 +1207,7 @@ def func_kernel2_mpr_multicontact(
             support_field_info,
             i_pair,
             False,
+            False,
         )
 
         if is_col:
@@ -1253,6 +1261,7 @@ def func_kernel2_mpr_multicontact(
                         contact_pos,
                         penetration,
                         i_b_env,
+                        i_pair,
                         geoms_state,
                         geoms_info,
                         collider_state,
@@ -1377,6 +1386,7 @@ def func_kernel2_gjk_full(
                 support_field_info,
                 i_pair,
                 True,
+                i_detection == 0,
             )
 
             if is_col and _used_gjk:
@@ -1391,6 +1401,7 @@ def func_kernel2_gjk_full(
                                 gjk_state.contact_pos[i_b_scratch, i_c],
                                 penetration,
                                 i_b_env,
+                                i_pair,
                                 geoms_state,
                                 geoms_info,
                                 collider_state,
@@ -1409,6 +1420,7 @@ def func_kernel2_gjk_full(
                     contact_pos_0,
                     penetration_0,
                     i_b_env,
+                    i_pair,
                     geoms_state,
                     geoms_info,
                     collider_state,
@@ -1487,6 +1499,7 @@ def func_kernel2_gjk_full(
                         contact_pos,
                         penetration,
                         i_b_env,
+                        i_pair,
                         geoms_state,
                         geoms_info,
                         collider_state,
@@ -1858,6 +1871,7 @@ def func_narrowphase_kernel1_contact0(
                     contact_pos,
                     penetration,
                     i_b,
+                    i_pair,
                     geoms_state,
                     geoms_info,
                     collider_state,
@@ -2008,6 +2022,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                     penetration * weight,
                     i_b,
                     i_c,
+                    collider_state.contact_data.pair_idx[i_c, i_b],
                     geoms_state,
                     geoms_info,
                     collider_state,
@@ -2036,6 +2051,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                     penetration * weight,
                     i_b,
                     i_c,
+                    collider_state.contact_data.pair_idx[i_c, i_b],
                     geoms_state,
                     geoms_info,
                     collider_state,
@@ -2071,6 +2087,7 @@ def func_narrow_phase_convex_specializations(
                     i_ga,
                     i_gb,
                     i_b,
+                    i_pair,
                     geoms_state,
                     geoms_info,
                     geoms_init_AABB,
@@ -2088,6 +2105,7 @@ def func_narrow_phase_convex_specializations(
                         i_ga,
                         i_gb,
                         i_b,
+                        i_pair,
                         geoms_state,
                         geoms_info,
                         collider_state,
@@ -2225,6 +2243,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     contact_pos_i,
                                     penetration_i,
                                     i_b,
+                                    i_pair,
                                     geoms_state,
                                     geoms_info,
                                     collider_state,
@@ -2339,6 +2358,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                                     contact_pos,
                                                     penetration,
                                                     i_b,
+                                                    i_pair,
                                                     geoms_state,
                                                     geoms_info,
                                                     collider_state,
@@ -2378,6 +2398,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     contact_pos,
                                     penetration,
                                     i_b,
+                                    i_pair,
                                     geoms_state,
                                     geoms_info,
                                     collider_state,

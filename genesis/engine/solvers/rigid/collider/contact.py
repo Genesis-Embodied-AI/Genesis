@@ -170,6 +170,7 @@ def func_add_contact(
     contact_pos: qd.types.vector(3),
     penetration,
     i_b,
+    i_pair,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
@@ -193,6 +194,7 @@ def func_add_contact(
         )
         collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
+        collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
@@ -206,6 +208,7 @@ def func_set_contact(
     penetration,
     i_b,
     i_c,
+    i_pair,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
@@ -228,6 +231,7 @@ def func_set_contact(
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb])
     collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
+    collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
 
 @qd.func
@@ -372,11 +376,13 @@ def func_sort_contacts(
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Sort contacts within each env by (link_a, link_b) to restore cache-friendly
-    ordering for the constraint solver's Jacobian access pattern.
+    """Sort contacts within each env by contact position x-coordinate to
+    approximate the sweep-and-prune spatial ordering that the monolithic
+    narrowphase kernel naturally produces.
 
     Uses insertion sort — O(n^2) worst case but n is small (~200 contacts/env)
-    and the sort runs in parallel across all envs.
+    and the sort runs in parallel across all envs. On already-sorted data the
+    early-out makes this O(n) with minimal memory traffic.
     """
     _B = collider_state.n_contacts.shape[0]
 
@@ -386,6 +392,11 @@ def func_sort_contacts(
 
         for i in range(n):
             if i > 0:
+                curr_key = collider_state.contact_data.pos[i, i_b][0]
+                prev_key = collider_state.contact_data.pos[i - 1, i_b][0]
+                if prev_key <= curr_key:
+                    continue
+
                 tmp_geom_a = collider_state.contact_data.geom_a[i, i_b]
                 tmp_geom_b = collider_state.contact_data.geom_b[i, i_b]
                 tmp_penetration = collider_state.contact_data.penetration[i, i_b]
@@ -396,15 +407,13 @@ def func_sort_contacts(
                 tmp_force = collider_state.contact_data.force[i, i_b]
                 tmp_link_a = collider_state.contact_data.link_a[i, i_b]
                 tmp_link_b = collider_state.contact_data.link_b[i, i_b]
+                tmp_pair_idx = collider_state.contact_data.pair_idx[i, i_b]
 
                 j = i - 1
                 while j >= 0:
-                    j_link_a = collider_state.contact_data.link_a[j, i_b]
-                    j_link_b = collider_state.contact_data.link_b[j, i_b]
-                    if j_link_a < tmp_link_a or (j_link_a == tmp_link_a and j_link_b <= tmp_link_b):
+                    if collider_state.contact_data.pos[j, i_b][0] <= curr_key:
                         break
 
-                    # Shift element j to j+1
                     collider_state.contact_data.geom_a[j + 1, i_b] = collider_state.contact_data.geom_a[j, i_b]
                     collider_state.contact_data.geom_b[j + 1, i_b] = collider_state.contact_data.geom_b[j, i_b]
                     collider_state.contact_data.penetration[j + 1, i_b] = collider_state.contact_data.penetration[
@@ -417,9 +426,9 @@ def func_sort_contacts(
                     collider_state.contact_data.force[j + 1, i_b] = collider_state.contact_data.force[j, i_b]
                     collider_state.contact_data.link_a[j + 1, i_b] = collider_state.contact_data.link_a[j, i_b]
                     collider_state.contact_data.link_b[j + 1, i_b] = collider_state.contact_data.link_b[j, i_b]
+                    collider_state.contact_data.pair_idx[j + 1, i_b] = collider_state.contact_data.pair_idx[j, i_b]
                     j = j - 1
 
-                # Insert saved element at its sorted position
                 collider_state.contact_data.geom_a[j + 1, i_b] = tmp_geom_a
                 collider_state.contact_data.geom_b[j + 1, i_b] = tmp_geom_b
                 collider_state.contact_data.penetration[j + 1, i_b] = tmp_penetration
@@ -430,6 +439,7 @@ def func_sort_contacts(
                 collider_state.contact_data.force[j + 1, i_b] = tmp_force
                 collider_state.contact_data.link_a[j + 1, i_b] = tmp_link_a
                 collider_state.contact_data.link_b[j + 1, i_b] = tmp_link_b
+                collider_state.contact_data.pair_idx[j + 1, i_b] = tmp_pair_idx
 
 
 @qd.kernel

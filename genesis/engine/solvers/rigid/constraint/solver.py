@@ -186,13 +186,33 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        func_solve_body(
-            self._solver.entities_info,
-            self._solver.dofs_state,
-            self.constraint_state,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-        )
+        import os
+        _force = os.environ.get("GS_FORCE_SOLVER")
+        if _force == "monolith":
+            func_solve_body_monolith(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        elif _force == "decomposed":
+            from .solver_breakdown import func_solve_decomposed
+            func_solve_decomposed(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            func_solve_body(
+                self._solver.entities_info,
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+            )
 
         func_update_qacc(
             self._solver.dofs_state,

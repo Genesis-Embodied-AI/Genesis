@@ -363,6 +363,7 @@ class StructContactData(metaclass=BASE_METACLASS):
     force: V_ANNOTATION
     link_a: V_ANNOTATION
     link_b: V_ANNOTATION
+    pair_idx: V_ANNOTATION
 
 
 def get_contact_data(solver, max_contact_pairs, requires_grad):
@@ -380,6 +381,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
         force=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         link_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
+        pair_idx=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
     )
 
 
@@ -708,7 +710,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 @qd.data_oriented
 class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
-    has_convex_convex: bool
+    needs_kernel1: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
     # maximum number of contact pairs per collision pair
