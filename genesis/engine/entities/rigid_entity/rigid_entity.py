@@ -1230,14 +1230,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_ang(self.base_link_idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_links_pos(
-        self,
-        links_idx_local=None,
-        envs_idx=None,
-        *,
-        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
-        unsafe=False,
-    ):
+    def get_links_pos(self, links_idx_local=None, envs_idx=None):
         """
         Returns the position of a given reference point for all the entity's links.
 
@@ -1247,11 +1240,6 @@ class KinematicEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com" | "root_com"
-            The reference point being used to express the position of each link.
-            * "root_com": center of mass of the sub-entities to which the link belongs. As a reminder, a single
-              kinematic tree (aka. 'RigidEntity') may compromise multiple "physical" entities, i.e. a kinematic tree
-              that may have at most one free joint, at its root.
 
         Returns
         -------
@@ -1259,7 +1247,7 @@ class KinematicEntity(Entity):
             The position of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_pos(links_idx, envs_idx, ref=ref)
+        return self._solver.get_links_pos(links_idx, envs_idx)
 
     @gs.assert_built
     def get_links_quat(self, links_idx_local=None, envs_idx=None):
@@ -1318,14 +1306,7 @@ class KinematicEntity(Entity):
         return torch.stack((aabbs[..., 0, :].min(dim=-2).values, aabbs[..., 1, :].max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def get_links_vel(
-        self,
-        links_idx_local=None,
-        envs_idx=None,
-        *,
-        ref: Literal["link_origin", "link_com"] = "link_origin",
-        unsafe=False,
-    ):
+    def get_links_vel(self, links_idx_local=None, envs_idx=None):
         """
         Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
 
@@ -1335,8 +1316,6 @@ class KinematicEntity(Entity):
             The indices of the links. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        ref: "link_origin" | "link_com"
-            The reference point being used to expressed the velocity of each link.
 
         Returns
         -------
@@ -1344,7 +1323,7 @@ class KinematicEntity(Entity):
             The linear velocity of all the entity's links.
         """
         links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
-        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
+        return self._solver.get_links_vel(links_idx, envs_idx)
 
     @gs.assert_built
     def get_links_ang(self, links_idx_local=None, envs_idx=None):
@@ -1800,6 +1779,7 @@ class RigidEntity(KinematicEntity):
 
     if TYPE_CHECKING:
         material: gs.materials.Rigid
+        _solver: "RigidSolver"
 
     def __init__(
         self,
@@ -3175,6 +3155,61 @@ class RigidEntity(KinematicEntity):
 
     def get_aabb(self):
         raise DeprecationError("This method has been removed. Please use 'get_AABB()' instead.")
+
+    @gs.assert_built
+    def get_links_pos(
+        self,
+        links_idx_local=None,
+        envs_idx=None,
+        *,
+        ref: Literal["link_origin", "link_com", "root_com"] = "link_origin",
+    ):
+        """
+        Returns the position of a given reference point for all the entity's links.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com" | "root_com"
+            The reference point being used to express the position of each link.
+            * "root_com": center of mass of the sub-entities to which the link belongs. As a reminder, a single
+              kinematic tree (aka. 'RigidEntity') may compromise multiple "physical" entities, i.e. a kinematic tree
+              that may have at most one free joint, at its root.
+
+        Returns
+        -------
+        pos : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The position of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_pos(links_idx, envs_idx, ref=ref)
+
+    @gs.assert_built
+    def get_links_vel(
+        self, links_idx_local=None, envs_idx=None, *, ref: Literal["link_origin", "link_com"] = "link_origin"
+    ):
+        """
+        Returns linear velocity of all the entity's links expressed at a given reference position in world coordinates.
+
+        Parameters
+        ----------
+        links_idx_local : None | array_like
+            The indices of the links. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        ref: "link_origin" | "link_com"
+            The reference point being used to expressed the velocity of each link.
+
+        Returns
+        -------
+        vel : torch.Tensor, shape (n_links, 3) or (n_envs, n_links, 3)
+            The linear velocity of all the entity's links.
+        """
+        links_idx = self._get_global_idx(links_idx_local, self.n_links, self._link_start, unsafe=True)
+        return self._solver.get_links_vel(links_idx, envs_idx, ref=ref)
 
     @gs.assert_built
     def get_links_acc(self, links_idx_local=None, envs_idx=None):
