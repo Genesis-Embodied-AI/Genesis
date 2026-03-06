@@ -178,6 +178,7 @@ def func_add_contact(
     errno: array_class.V_ANNOTATION,
     use_atomic: qd.template() = False,
 ):
+    i_c = 0
     if qd.static(use_atomic):
         i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
     else:
