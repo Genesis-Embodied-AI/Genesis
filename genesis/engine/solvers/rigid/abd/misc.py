@@ -276,6 +276,22 @@ def kernel_init_link_fields(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
+def kernel_update_heterogeneous_links_vgeom(
+    i_l: qd.i32,
+    links_vgeom_start: qd.types.ndarray(),
+    links_vgeom_end: qd.types.ndarray(),
+    # Quadrants variables
+    links_info: array_class.LinksInfo,
+):
+    """Update per-environment links vgeom for heterogeneous entities."""
+    _B = links_vgeom_start.shape[0]
+
+    for i_b in range(_B):
+        links_info.vgeom_start[i_l, i_b] = links_vgeom_start[i_b]
+        links_info.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_update_heterogeneous_link_info(
     i_l: qd.i32,
     links_geom_start: qd.types.ndarray(),
@@ -823,8 +839,8 @@ def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: array_class.V_ANNOTATION):
-    for i_b in range(envs_idx.shape[0]):
-        tensor[i_b] = 0
+    for i_b_ in range(envs_idx.shape[0]):
+        tensor[i_b_] = 0
 
 
 @qd.func

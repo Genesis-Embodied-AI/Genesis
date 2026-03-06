@@ -1,5 +1,45 @@
 # Genesis Release Note
 
+## 0.4.1
+
+This release mainly improves experimental IPC coupler integration. Avatar entity has been re-introduced after being broken for months. Finally, Quadrants' dynamic arrays are now support on Apple Metal to avoid systematic scene compilation.
+
+### Breaking changes
+
+* More consistent IPC coupler API. (@duburcqa) (#2446)
+
+### New Features
+
+* #2332 Implement Local Offset in Inverse Kinematics (@alexis779) (#2333)
+* Add support of batching to IPC articulated bodies. (@Roushelfy, @duburcqa) (#2448, #2454)
+* Add support per-entity contact friction and resistance to IPC coupler. (@Roushelfy, @duburcqa) (#2473, #2479)
+* Enable Quadrants dynamic array on Apple Metal. (@hughperkins) (#2498)
+* Add avatar (kinematic) entity and refactor rigid entity. (@duburcqa) (#2504, #2508)
+
+### Bug Fixes
+
+* Fix support of Numpy 2.4. (@duburcqa) (#2432, #2433)
+* Fix geometries misclassified as non-convex. (@duburcqa) (#2442)
+* Fix merge fixed links. (@duburcqa, @YilingQiao) (#2441, #2475)
+* Fix wrong type for gs.materials.Rigid.gravity_compensation. (@nimrod-gileadi) (#2469)
+* Fix UV size mismatch causing USD parsing hard failure. (@alanray-tech) (#2480)
+* Fix support of convex decomposition baked in glTF. (@duburcqa) (#2493)
+* Fix mass getter for PBD entities. (@YilingQiao) (#2503)
+* Fix Apple Metal bug causing nan. (@hughperkins) (#2481)
+* Raise exception in case of invalid IPC coupler options. (@duburcqa) (#2450, #2451, #2486, #2492)
+
+### Miscellaneous
+
+* Refactor internal implementation of IPC coupler. (@duburcqa, @ACMLCZH, @Roushelfy) (#2453, #2455, #2462, #2463, #2465, #2478, #2484, #2485, #2495, #2496)
+* More comprehensive IPC coupler unit tests and tune examples. (@duburcqa) (#2444, #2458, #2474, #2488)
+* Add support of unspecified inertia origin in URDF. (@duburcqa) (#2499)
+* Add torch profile integration to performance benchmarks. (@hughperkins) (#2421, #2466)
+* Significantly speedup contact-rich and dynamic simulations. (@hughperkins) (#2406, #2467)
+* More comprehensive performance benchmarks. (@hughperkins) (#2470)
+* Aggregate speed benchmark wandb uploads into a single run. (@hughperkins) (#2482)
+
+## 0.4.1
+
 This release polishes our newly introduced USD parser and external interactive viewer plugin mechanism. Beyond that, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%) and robots using capsule/sphere collision geometries (up to 20%).
 
 ### Breaking changes

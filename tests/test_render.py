@@ -715,7 +715,7 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
             (gs.materials.MPM.Elastic(), particle_mode),
             (gs.materials.PBD.Cloth(), particle_mode),
             (gs.materials.SPH.Liquid(), "particle" if particle_mode == "visual" else particle_mode),
-            # TODO: Add avatar. Currently avatar solver is buggy.
+            (gs.materials.Kinematic(), "visual"),
         )
 
     ducks = []
@@ -746,6 +746,10 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     )
     scene.build()
 
+    # Segmentation count: background(1) + URDF links/entity + duck materials.
+    # Rigid and Kinematic ducks use add_rigid_node (tuple keys at link/geom level),
+    # other ducks use add_static_node (int keys). The URDF has 2 visual links.
+    n_rigid_like = sum(isinstance(m, gs.materials.Kinematic) for m, _ in materials)
     seg_num = len(materials) + (2 if segmentation_level == "entity" else 3)
     idx_dict = scene.segmentation_idx_dict
     assert len(idx_dict) == seg_num
@@ -753,7 +757,8 @@ def test_segmentation_map(segmentation_level, particle_mode, renderer_type, rend
     for seg_key in idx_dict.values():
         if isinstance(seg_key, tuple):
             comp_key += 1
-    assert comp_key == (0 if segmentation_level == "entity" else 3)
+    # At entity level no tuple keys; at link/geom level: 2 URDF links + rigid-like ducks
+    assert comp_key == (0 if segmentation_level == "entity" else 2 + n_rigid_like)
 
     for i in range(2):
         scene.step()
