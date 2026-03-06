@@ -163,13 +163,14 @@ def collider_kernel_get_contacts(
 
 
 @qd.func
-def func_add_contact(
+def _write_contact(
     i_ga,
     i_gb,
     normal: qd.types.vector(3),
     contact_pos: qd.types.vector(3),
     penetration,
     i_b,
+    i_c,
     i_pair,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -177,7 +178,6 @@ def func_add_contact(
     collider_info: array_class.ColliderInfo,
     errno: array_class.V_ANNOTATION,
 ):
-    i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
     if i_c < collider_info.max_contact_pairs[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
@@ -197,6 +197,73 @@ def func_add_contact(
         collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+
+
+@qd.func
+def func_add_contact(
+    i_ga,
+    i_gb,
+    normal: qd.types.vector(3),
+    contact_pos: qd.types.vector(3),
+    penetration,
+    i_b,
+    i_pair,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
+):
+    i_c = collider_state.n_contacts[i_b]
+    _write_contact(
+        i_ga,
+        i_gb,
+        normal,
+        contact_pos,
+        penetration,
+        i_b,
+        i_c,
+        i_pair,
+        geoms_state,
+        geoms_info,
+        collider_state,
+        collider_info,
+        errno,
+    )
+    collider_state.n_contacts[i_b] = i_c + 1
+
+
+@qd.func
+def func_add_contact_atomic(
+    i_ga,
+    i_gb,
+    normal: qd.types.vector(3),
+    contact_pos: qd.types.vector(3),
+    penetration,
+    i_b,
+    i_pair,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
+):
+    i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
+    _write_contact(
+        i_ga,
+        i_gb,
+        normal,
+        contact_pos,
+        penetration,
+        i_b,
+        i_c,
+        i_pair,
+        geoms_state,
+        geoms_info,
+        collider_state,
+        collider_info,
+        errno,
+    )
 
 
 @qd.func

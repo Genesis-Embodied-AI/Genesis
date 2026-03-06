@@ -22,6 +22,7 @@ from .box_contact import (
 )
 from .contact import (
     func_add_contact,
+    func_add_contact_atomic,
     func_add_diff_contact_input,
     func_compute_tolerance,
     func_contact_orthogonals,
@@ -1866,7 +1867,7 @@ def func_narrowphase_kernel1_contact0(
 
             # Write contact 0 and enqueue for multi-contact
             if not prefer_gjk and is_col:
-                func_add_contact(
+                func_add_contact_atomic(
                     i_ga,
                     i_gb,
                     normal,
@@ -2238,7 +2239,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col_i:
-                                func_add_contact(
+                                func_add_contact_atomic(
                                     i_ga,
                                     i_gb,
                                     normal_i,
@@ -2353,7 +2354,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         if not repeated:
                                             if penetration > -tolerance:
                                                 penetration = qd.max(penetration, 0.0)
-                                                func_add_contact(
+                                                func_add_contact_atomic(
                                                     i_ga,
                                                     i_gb,
                                                     normal,
@@ -2393,7 +2394,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col:
-                                func_add_contact(
+                                func_add_contact_atomic(
                                     i_ga,
                                     i_gb,
                                     normal,
