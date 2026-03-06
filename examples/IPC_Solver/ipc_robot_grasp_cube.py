@@ -85,9 +85,9 @@ def main():
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
 
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
+    qpos[fingers_dof] = 0.04
     if not args.no_ipc or args.coup_type == "external_articulation":
-        franka.control_dofs_position(qpos[motors_dof], dofs_idx_local=motors_dof)
-        franka.control_dofs_position(0.04, dofs_idx_local=fingers_dof)
+        franka.control_dofs_position(qpos)
         for _ in range(200 if "PYTEST_VERSION" not in os.environ else 1):
             scene.step()
     else:

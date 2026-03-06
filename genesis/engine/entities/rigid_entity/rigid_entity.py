@@ -2637,13 +2637,13 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
-
         qs_idx = self._get_global_idx(qs_idx_local, self.n_qs, self._q_start, unsafe=True)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_qpos(qpos, qs_idx, envs_idx, skip_forward=skip_forward)
+
+        if isinstance(self.sim.coupler, IPCCoupler):
+            self.sim.coupler.set_qpos_changed(self)
 
     @gs.assert_built
     def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
@@ -2780,13 +2780,13 @@ class RigidEntity(Entity):
         """
         from genesis.engine.couplers import IPCCoupler
 
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
-
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
         self._solver.set_dofs_position(position, dofs_idx, envs_idx)
+
+        if isinstance(self.sim.coupler, IPCCoupler):
+            self.sim.coupler.set_qpos_changed(self)
 
     @gs.assert_built
     def control_dofs_force(self, force, dofs_idx_local=None, envs_idx=None):

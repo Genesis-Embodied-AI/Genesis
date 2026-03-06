@@ -39,6 +39,7 @@ def main():
         default="two_way_soft_constraint",
         choices=["two_way_soft_constraint", "external_articulation"],
     )
+    parser.add_argument("--vis_ipc", action="store_true", default=False, help="Show IPC GUI")
     args = parser.parse_args()
 
     scene = gs.Scene(
@@ -58,6 +59,7 @@ def main():
             enable_rigid_rigid_contact=True,
             contact_d_hat=0.001,
             contact_resistance=1e7,
+            _show_ipc_gui=args.vis_ipc,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, -1.0, 1.5),
