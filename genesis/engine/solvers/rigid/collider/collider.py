@@ -15,6 +15,8 @@ import trimesh
 
 import genesis as gs
 
+# GS_NO_SORT: None (default) = sort contacts after narrowphase;
+#              any value (e.g. "1") = skip contact sorting
 _NO_SORT = os.environ.get("GS_NO_SORT")
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
