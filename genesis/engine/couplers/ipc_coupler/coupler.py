@@ -946,10 +946,13 @@ class IPCCoupler(RBC):
         pass
 
     def reset(self, envs_idx=None):
-        """Reset coupling state"""
+        """Reset coupling state. Per-env reset is not supported by libuipc; envs_idx must cover all envs."""
         assert gs.logger is not None
         assert self._ipc_world is not None
-        assert envs_idx is None
+        if envs_idx is not None:
+            all_envs = set(range(max(self.sim._B, 1)))
+            envs_set = set(int(x) for x in envs_idx) if hasattr(envs_idx, "__iter__") else {int(envs_idx)}
+            assert envs_set == all_envs, f"IPC coupler only supports full reset, got envs_idx={envs_idx}"
 
         gs.logger.debug("Resetting IPC coupler state")
         self._abd_dirty_entities.clear()
