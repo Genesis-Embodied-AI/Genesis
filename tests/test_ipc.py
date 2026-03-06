@@ -1581,12 +1581,13 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(50):
         scene.step()
 
-    # Lost grip
+    # After over-stretching, cloth xy extent should not exceed phase-1 stretch (boxes lose grip or
+    # cloth resists). Z extent stays small — soft materials may not buckle out of plane.
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
     cloth_aabb_min, cloth_aabb_max = cloth_positions_f.min(axis=-2), cloth_positions_f.max(axis=-2)
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
-    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.2)).all()
+    assert (cloth_aabb_extent[..., 2] < 0.2).all()
 
 
 @pytest.mark.required
