@@ -745,6 +745,7 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 @qd.data_oriented
 class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
+    has_convex_convex: bool
     needs_kernel1: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool

@@ -56,6 +56,7 @@ from .narrowphase import (
     func_plane_box_contact,
     func_convex_convex_contact,
     func_box_box_contact,
+    func_narrow_phase_convex_vs_convex,
     func_narrow_phase_diff_convex_vs_convex,
     func_narrow_phase_convex_specializations,
     func_narrow_phase_any_vs_terrain,
@@ -107,9 +108,9 @@ class Collider:
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.needs_kernel1:
+        if self._collider_static_config.has_convex_convex:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.needs_kernel1:
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_convex_convex:
             self._support_field.activate()
 
         if gs.use_zerocopy:
@@ -154,6 +155,7 @@ class Collider:
         # Determine which combination of collision detection algorithms must be enabled
         self._n_possible_pairs, self._collision_pair_idx = self._compute_collision_pair_idx()
         has_any_vs_terrain = False
+        has_convex_vs_convex = False
         needs_kernel1 = False
         has_convex_specialization = False
         has_nonconvex_vs_nonterrain = False
@@ -165,10 +167,11 @@ class Collider:
                 if geom_a.type == gs.GEOM_TYPE.TERRAIN or geom_b.type == gs.GEOM_TYPE.TERRAIN:
                     has_any_vs_terrain = True
                 if geom_a.is_convex and geom_b.is_convex:
+                    has_convex_vs_convex = True
                     types = {geom_a.type, geom_b.type}
                     if self._solver._options.box_box_detection and types == {gs.GEOM_TYPE.BOX}:
                         pass
-                    elif types == {gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.BOX}:
+                    elif gs.GEOM_TYPE.PLANE in types:
                         pass
                     else:
                         needs_kernel1 = True
@@ -193,6 +196,7 @@ class Collider:
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_any_vs_terrain,
+            has_convex_convex=has_convex_vs_convex,
             needs_kernel1=needs_kernel1,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
@@ -577,6 +581,31 @@ class Collider:
                 self._kernel2_n_gjk_threads,
                 self._kernel2_n_total_threads,
                 self._kernel2_max_items_per_thread,
+            )
+        elif self._collider_static_config.has_convex_convex:
+            func_narrow_phase_convex_vs_convex(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver.geoms_init_AABB,
+                self._solver.verts_info,
+                self._solver.faces_info,
+                self._solver.edges_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+                self._collider_info,
+                self._collider_static_config,
+                self._mpr._mpr_state,
+                self._mpr._mpr_info,
+                self._gjk._gjk_state,
+                self._gjk._gjk_info,
+                self._gjk._gjk_static_config,
+                self._sdf._sdf_info,
+                self._support_field._support_field_info,
+                self._gjk._gjk_state.diff_contact_input,
+                self._solver._errno,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
