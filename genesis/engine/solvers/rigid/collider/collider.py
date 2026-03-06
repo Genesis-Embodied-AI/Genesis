@@ -100,17 +100,18 @@ class Collider:
         self._gjk = gjk.GJK(rigid_solver)
         self._support_field = support_field.SupportField(rigid_solver)
 
-        # Kernel 2 GJK state (needs self._gjk to be initialized first)
-        class _SolverProxy:
-            def __init__(self, _B, requires_grad):
-                self._B = _B
-                self._requires_grad = requires_grad
-                self._static_rigid_sim_config = type("_", (), {"requires_grad": requires_grad})()
+        if self._collider_static_config.needs_kernel1:
+            # Kernel 2 GJK state (needs self._gjk to be initialized first)
+            class _SolverProxy:
+                def __init__(self, _B, requires_grad):
+                    self._B = _B
+                    self._requires_grad = requires_grad
+                    self._static_rigid_sim_config = type("_", (), {"requires_grad": requires_grad})()
 
-        proxy = _SolverProxy(self._kernel2_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
-        self._kernel2_gjk_state = array_class.get_gjk_state(
-            proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, True
-        )
+            proxy = _SolverProxy(self._kernel2_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
+            self._kernel2_gjk_state = array_class.get_gjk_state(
+                proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, True
+            )
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
@@ -243,17 +244,17 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
-        # Kernel 1 scratch state, sized for the chunked grid (n_envs * n_chunks)
-        self._kernel1_n_chunks = 5
-        self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
-        self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
-        self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
+        # Kernel 1 & 2 scratch states only needed when split-kernel narrowphase is active
+        if self._collider_static_config.needs_kernel1:
+            self._kernel1_n_chunks = 5
+            self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
+            self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
+            self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
 
-        # Kernel 2 config (mpr_state only; gjk_state created in __init__ after self._gjk is available)
-        self._kernel2_n_gjk_threads = 4000
-        self._kernel2_n_total_threads = 40000
-        self._kernel2_max_items_per_thread = 128
-        self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
+            self._kernel2_n_gjk_threads = 4000
+            self._kernel2_n_total_threads = 40000
+            self._kernel2_max_items_per_thread = 128
+            self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
 
     def _compute_collision_pair_idx(self):
         """
