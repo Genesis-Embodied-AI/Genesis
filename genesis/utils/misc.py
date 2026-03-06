@@ -61,7 +61,7 @@ class redirect_libc_stderr:
     def __enter__(self):
         try:
             self.stderr_fileno = sys.stderr.fileno()
-        except io.UnsupportedOperation:
+        except (io.UnsupportedOperation, AttributeError):
             # Do nothing is not a real OS-level file descriptor but rather some IO buffer
             return self
 

@@ -1136,19 +1136,12 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             force = force[None]
 
-        if ref == "root_com":
-            if local:
-                raise ValueError("'local=True' not compatible with ref='root_com'.")
-            ref = 0
-        elif ref == "link_com":
-            ref = 1
-        elif ref == "link_origin":
-            ref = 2
-        else:
-            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+        if ref == "root_com" and local:
+            raise ValueError("'local=True' not compatible with ref='root_com'.")
+        ref_idx = self._convert_ref_to_idx(ref)
 
         kernel_apply_links_external_force(
-            force, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
+            force, links_idx, envs_idx, ref_idx, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
 
     def apply_links_external_torque(
@@ -1186,19 +1179,12 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0:
             torque = torque[None]
 
-        if ref == "root_com":
-            if local:
-                raise ValueError("'local=True' not compatible with ref='root_com'.")
-            ref = 0
-        elif ref == "link_com":
-            ref = 1
-        elif ref == "link_origin":
-            ref = 2
-        else:
-            raise ValueError("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+        if ref == "root_com" and local:
+            raise ValueError("'local=True' not compatible with ref='root_com'.")
+        ref_idx = self._convert_ref_to_idx(ref)
 
         kernel_apply_links_external_torque(
-            torque, links_idx, envs_idx, ref, 1 if local else 0, self.links_state, self._static_rigid_sim_config
+            torque, links_idx, envs_idx, ref_idx, 1 if local else 0, self.links_state, self._static_rigid_sim_config
         )
 
     def substep_pre_coupling(self, f):
@@ -2109,18 +2095,72 @@ class RigidSolver(KinematicSolver):
             tensor = qd_to_torch(self.geoms_info.sol_params, geoms_idx, transpose=True, copy=True)
         return tensor
 
+    @staticmethod
+    def _convert_ref_to_idx(ref: Literal["link_origin", "link_com", "root_com"]):
+        if ref == "root_com":
+            return 0
+        elif ref == "link_com":
+            return 1
+        elif ref == "link_origin":
+            return 2
+        else:
+            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+    def get_links_pos(
+        self, links_idx=None, envs_idx=None, *, ref: Literal["link_origin", "link_com", "root_com"] = "link_origin"
+    ):
+        if not gs.use_zerocopy:
+            _, links_idx, envs_idx = self._sanitize_io_variables(
+                None, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
+            )
+
+        ref_idx = self._convert_ref_to_idx(ref)
+        if ref_idx == 0:
+            tensor = qd_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True, copy=True)
+        elif ref_idx == 1:
+            i_pos = qd_to_torch(self.links_state.i_pos, envs_idx, links_idx, transpose=True)
+            root_COM = qd_to_torch(self.links_state.root_COM, envs_idx, links_idx, transpose=True)
+            tensor = i_pos + root_COM
+        elif ref_idx == 2:
+            tensor = qd_to_torch(self.links_state.pos, envs_idx, links_idx, transpose=True, copy=True)
+        else:
+            gs.raise_exception("'ref' must be either 'link_origin', 'link_com', or 'root_com'.")
+
+        return tensor[0] if self.n_envs == 0 else tensor
+
+    def get_links_vel(
+        self, links_idx=None, envs_idx=None, *, ref: Literal["link_origin", "link_com", "root_com"] = "link_origin"
+    ):
+        if gs.use_zerocopy:
+            mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
+            cd_vel = qd_to_torch(self.links_state.cd_vel, transpose=True)
+            if ref == "root_com":
+                return cd_vel[mask]
+            cd_ang = qd_to_torch(self.links_state.cd_ang, transpose=True)
+            if ref == "link_com":
+                i_pos = qd_to_torch(self.links_state.i_pos, transpose=True)
+                delta = i_pos[mask]
+            else:
+                pos = qd_to_torch(self.links_state.pos, transpose=True)
+                root_COM = qd_to_torch(self.links_state.root_COM, transpose=True)
+                delta = pos[mask] - root_COM[mask]
+            return cd_vel[mask] + cd_ang[mask].cross(delta, dim=-1)
+
+        _tensor, links_idx, envs_idx = self._sanitize_io_variables(
+            None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
+        )
+        assert _tensor is not None
+        tensor = _tensor[None] if self.n_envs == 0 else _tensor
+        ref_idx = self._convert_ref_to_idx(ref)
+        kernel_get_links_vel(tensor, links_idx, envs_idx, ref_idx, self.links_state, self._static_rigid_sim_config)
+        return _tensor
+
     def get_links_acc(self, links_idx=None, envs_idx=None):
         _tensor, links_idx, envs_idx = self._sanitize_io_variables(
             None, links_idx, self.n_links, "links_idx", envs_idx, (3,)
         )
         tensor = _tensor[None] if self.n_envs == 0 else _tensor
-        kernel_get_links_acc(
-            tensor,
-            links_idx,
-            envs_idx,
-            self.links_state,
-            self._static_rigid_sim_config,
-        )
+        kernel_get_links_acc(tensor, links_idx, envs_idx, self.links_state, self._static_rigid_sim_config)
         return _tensor
 
     def get_links_acc_ang(self, links_idx=None, envs_idx=None):
