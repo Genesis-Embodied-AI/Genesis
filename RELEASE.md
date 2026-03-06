@@ -10,7 +10,7 @@ This release mainly improves experimental IPC coupler integration. Avatar entity
 
 ### New Features
 
-* #2332 Implement Local Offset in Inverse Kinematics (@alexis779) (#2333)
+* Implement Local Offset in Inverse Kinematics (@alexis779) (#2333)
 * Add support of batching to IPC articulated bodies. (@Roushelfy, @duburcqa) (#2448, #2454)
 * Add support per-entity contact friction and resistance to IPC coupler. (@Roushelfy, @duburcqa) (#2473, #2479)
 * Enable Quadrants dynamic array on Apple Metal. (@hughperkins) (#2498)
