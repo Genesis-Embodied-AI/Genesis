@@ -980,8 +980,8 @@ def func_kernel2_run_detection(
     gjk_static_config: qd.template(),
     support_field_info: array_class.SupportFieldInfo,
     i_pair,
-    use_gjk,
-    is_initial_detection,
+    use_gjk: qd.template(),
+    is_initial_detection: qd.template(),
 ):
     """Run one detection (capsule/plane/MPR/GJK) and return (is_col, normal, contact_pos, penetration, used_gjk)."""
     EPS = rigid_global_info.EPS[None]
