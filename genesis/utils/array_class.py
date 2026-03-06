@@ -687,7 +687,9 @@ def get_collider_state(
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
-        narrowphase_work_queues=get_narrowphase_work_queues(max(max_collision_pairs_broad * _B, 1)),
+        narrowphase_work_queues=get_narrowphase_work_queues(
+            max(max_collision_pairs_broad * _B, 1) if collider_static_config.needs_kernel1 else 1
+        ),
     )
 
 
