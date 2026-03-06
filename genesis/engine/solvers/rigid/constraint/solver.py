@@ -1,3 +1,4 @@
+import enum
 import os
 from typing import TYPE_CHECKING
 
@@ -8,7 +9,14 @@ from frozendict import frozendict
 
 import genesis as gs
 
-_FORCE_SOLVER = os.environ.get("GS_FORCE_SOLVER")
+
+class _ForceSolver(enum.Enum):
+    NONE = "none"
+    MONOLITH = "monolith"
+    DECOMPOSED = "decomposed"
+
+
+_FORCE_SOLVER = _ForceSolver(os.environ.get("GS_FORCE_SOLVER", "none"))
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
@@ -188,7 +196,7 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        if _FORCE_SOLVER == "monolith":
+        if _FORCE_SOLVER is _ForceSolver.MONOLITH:
             func_solve_body_monolith(
                 self._solver.entities_info,
                 self._solver.dofs_state,
@@ -196,7 +204,7 @@ class ConstraintSolver:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
             )
-        elif _FORCE_SOLVER == "decomposed":
+        elif _FORCE_SOLVER is _ForceSolver.DECOMPOSED:
             from .solver_breakdown import func_solve_decomposed
 
             func_solve_decomposed(
