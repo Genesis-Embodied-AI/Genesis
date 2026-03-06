@@ -163,10 +163,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # relying on this mechanism is fragile.
     os.environ.setdefault("QD_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
 
-    # Disable Quadrants dynamic array mode by default on MacOS because it is not supported by Metal
-    if sys.platform == "darwin":
-        os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
-
     # Enforce special environment variable before importing test modules if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
     if worker_id and worker_id.startswith("gw"):
@@ -381,7 +377,7 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_setup(item):
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
-    dtype = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY") == "1" else "field"
+    dtype = "field" if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else "ndarray"
     test_name = test_name[:-1] + f"-{dtype}]"
 
     setproctitle.setproctitle(f"pytest: {test_name}")
@@ -624,11 +620,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         if sys.platform == "darwin" and backend != gs.cpu:
             if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip("Apple Metal GPU does not support 64bits precision.")
-            if os.environ.get("GS_ENABLE_NDARRAY") == "1":
-                pytest.skip(
-                    "Using Quadrants dynamic array type is not supported on Apple Metal GPU because this backend only "
-                    "supports up to 31 kernel parameters, which is not enough for most solvers."
-                )
 
         gs.init(
             backend=backend,

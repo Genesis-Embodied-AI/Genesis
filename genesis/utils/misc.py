@@ -470,8 +470,8 @@ def qd_to_python(
                     value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
 
-        # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
-        if is_field and gs.backend == gs.metal:
+        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+        if gs.backend == gs.metal:
             qd.sync()
 
         if copy:
@@ -634,8 +634,8 @@ def qd_to_torch(
     if gs.use_zerocopy:
         try:
             tensor = value._T_tc if transpose else value._tc
-            # FIXME: DLPack may return old values on Apple Metal for field if sync is not systematically called manually
-            if isinstance(value, qd.Field) and gs.backend == gs.metal:
+            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+            if gs.backend == gs.metal:
                 qd.sync()
             if copy:
                 tensor = tensor.clone()

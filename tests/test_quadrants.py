@@ -33,15 +33,6 @@ def _initialize_genesis(backend: gs.constants.backend | str):
         print(f"Backend '{backend}' not available on this machine", file=sys.stderr)
         sys.exit(RET_SKIP)
 
-    # Skip test if Quadrants ndarray mode is enabled but not supported by this specific test
-    if sys.platform == "darwin" and backend != gs.cpu and os.environ.get("GS_ENABLE_NDARRAY") == "1":
-        print(
-            "Using Quadrants ndarray on Mac OS with gpu backend is unreliable, because Apple Metal only supports up to "
-            "31 kernel parameters, which is not enough for most solvers.",
-            file=sys.stderr,
-        )
-        sys.exit(RET_SKIP)
-
     gs.init(backend=backend, precision="32")
 
     if backend != gs.cpu and gs.backend == gs.cpu:
@@ -385,6 +376,47 @@ def test_ndarray_no_compile(
             print("-" * 100)
             print(proc.stderr)
         assert return_code == RET_SUCCESS
+
+
+@pytest.mark.parametrize("n_dofs", [32, 62, 64, 92])
+def test_linear_to_lower_tri(n_dofs):
+    """Verify that the sqrt-based triangular index formula produces correct results.
+
+    Metal's GPU sqrt can return slightly-below-exact results for perfect squares
+    (e.g. sqrt(11881) -> ~108.999 instead of 109), which broke the original
+    formula. The post-correction in linear_to_lower_tri fixes this.
+    """
+    import quadrants as qd
+    from genesis.engine.solvers.rigid.constraint.solver import linear_to_lower_tri
+
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+    result_row = qd.field(dtype=qd.i32, shape=(n_lower_tri,))
+    result_col = qd.field(dtype=qd.i32, shape=(n_lower_tri,))
+
+    @qd.kernel
+    def compute_indices():
+        for i_pair in range(n_lower_tri):
+            i_d1, i_d2 = linear_to_lower_tri(i_pair)
+            result_row[i_pair] = i_d1
+            result_col[i_pair] = i_d2
+
+    compute_indices()
+    qd.sync()
+
+    rows = result_row.to_numpy()
+    cols = result_col.to_numpy()
+
+    expected_row = np.zeros(n_lower_tri, dtype=np.int32)
+    expected_col = np.zeros(n_lower_tri, dtype=np.int32)
+    idx = 0
+    for r in range(n_dofs):
+        for c in range(r + 1):
+            expected_row[idx] = r
+            expected_col[idx] = c
+            idx += 1
+
+    np.testing.assert_array_equal(rows, expected_row)
+    np.testing.assert_array_equal(cols, expected_col)
 
 
 # The following lines are critical for the test to work
