@@ -115,6 +115,8 @@ class IPCCoupler(RBC):
         self.sim = simulator
         self.options = options
 
+        assert gs.use_zerocopy, "IPC coupler requires gs.use_zerocopy=True (qd_to_torch with copy=False)."
+
         # Define some proxies for convenience
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
@@ -218,16 +220,6 @@ class IPCCoupler(RBC):
                 )
 
             self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
-            if coup_type == COUPLING_TYPE.IPC_ONLY:
-                has_constrained_joints = any(
-                    j.type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j in entity.joints
-                )
-                if has_constrained_joints:
-                    gs.raise_exception(
-                        f"Rigid entity {i_e} has constrained joints (revolute, prismatic, etc.). "
-                        f"Coupling type 'ipc_only' is not supported for articulated entities — "
-                        f"use 'external_articulation' or 'two_way_soft_constraint' instead."
-                    )
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 if not entity.base_link.is_fixed:
                     gs.raise_exception(
@@ -1050,7 +1042,7 @@ class IPCCoupler(RBC):
 
         mass_matrix = qd_to_numpy(self.rigid_solver.mass_mat, transpose=True)
         # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
-        qpos_prev = qd_to_numpy(self.rigid_solver.qpos_prev, transpose=True)
+        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Copy stored qpos (predicted) to articulation_data.qpos_current
@@ -1100,7 +1092,7 @@ class IPCCoupler(RBC):
 
         qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
         # qpos_prev = original qpos before prediction (saved by kernel_predict_integrate)
-        qpos_prev = qd_to_numpy(self.rigid_solver.qpos_prev, transpose=True)
+        qpos_prev = qd_to_numpy(self.rigid_solver._rigid_global_info.qpos_prev, transpose=True)
 
         for entity, ad in self._articulation_data_by_entity.items():
             # Read 'delta_theta_ipc' from IPC

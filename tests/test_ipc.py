@@ -321,10 +321,20 @@ def test_needs_coup():
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
     )
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
     scene.add_entity(
-        morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0, 0, 0.5)),
-        material=gs.materials.Rigid(needs_coup=False),
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        ),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
     )
     scene.build()
     assert scene.sim.coupler._coup_type_by_entity == {}
@@ -493,9 +503,11 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     cur_dof_pos_history = np.stack(cur_dof_pos_history, axis=-1)
     target_dof_pos_history = np.stack(target_dof_pos_history, axis=-1)
 
+    # Non-fixed two-way prismatic: ground bouncing with weak coupling perturbs tracking
+    corr_tol = 1e-2 if (not fixed and coup_type == "two_way_soft_constraint" and joint_type == "prismatic") else 5e-3
     for env_idx in envs_idx if scene.n_envs > 0 else (slice(None),):
         corr = np.corrcoef(cur_dof_pos_history[env_idx], target_dof_pos_history)[0, 1]
-        assert corr > 1.0 - 1e-2
+        assert corr > 1.0 - corr_tol
     assert_allclose(
         cur_dof_pos_history - cur_dof_pos_history[..., [0]],
         target_dof_pos_history - target_dof_pos_history[..., [0]],
@@ -1217,7 +1229,12 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
         show_viewer=False,
     )
 
-    plane = scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(needs_coup=False))
+    plane = scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            needs_coup=False,
+        ),
+    )
     assert isinstance(plane, RigidEntity)
 
     # Non-IPC box — always handled by rigid solver
@@ -1472,7 +1489,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             nu=nu,
             rho=200.0,
             thickness=THICKNESS,
-            bending_stiffness=None,
+            bending_stiffness=9,  # Use large stiffness to avoid cloth edge falling
             friction_mu=0.8,
         ),
     )
@@ -1492,7 +1509,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                 ),
                 material=gs.materials.Rigid(
                     coup_type="two_way_soft_constraint",
-                    coup_friction=1.2,
+                    coup_friction=0.8,
                 ),
                 surface=gs.surfaces.Plastic(
                     color=np.random.rand(3),
@@ -1515,8 +1532,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(20):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    assert_allclose(cloth_positions_f, cloth_positions_0, atol=0.005)
-    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=5e-3)
+    assert_allclose(cloth_positions_f, cloth_positions_0, atol=5e-3)
 
     # Stretch: phase one
     for box in boxes:
@@ -1526,7 +1542,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(80):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=1e-2)
+    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=5e-3)
 
     # Extract X/Y forces while making sure observed forces are consistent
     box_forces_xy = []
@@ -1534,7 +1550,6 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for box in boxes:
         dofs_idx = slice(box.dof_start, box.dof_end)
         box_forces = applied_forces[..., dofs_idx]
-        # assert_allclose(box_forces[..., 3:], 0.0, tol=0.02)
         assert_allclose(np.abs(box_forces[..., 0]), np.abs(box_forces[..., 1]), tol=0.02)
         box_forces_xy.append(box_forces[..., :2])
 
@@ -1547,14 +1562,16 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     assert_allclose(grid[..., 0], -grid_flipped_y[..., 0], atol=0.01)
     assert_allclose(grid[..., 1], grid_flipped_y[..., 1], atol=0.01)
 
-    # Check that deformation is consistent with applied forces based on material properties.
-    # Each corner bears the load from half the reference edge length (by symmetry,
-    # 2 corners per edge). Use reference length since stress is in reference config.
-    strain_GL = 0.5 * (STRETCH_RATIO_1**2 - 1.0)  # Green–Lagrange strain
-    expected_stress = E * strain_GL / (1.0 - nu)  # Equal biaxial plane stress (2nd Piola–Kirchhoff)
-    expected_force_per_box = expected_stress * THICKNESS * CLOTH_HALF
-    # FIXME: The estimated force is not very accurate. Is it possible to do better?
-    # assert_allclose(np.abs(box_forces_xy), expected_force_per_box, tol=1e4 / E)
+    # Force in xy is transmitted through frictional contact (sandwich grip), not direct elastic
+    # coupling, so it is bounded by μ·F_normal rather than the constitutive stress. We can only
+    # verify that xy forces are consistent across boxes (symmetry) and proportional to z forces.
+    box_forces_z = []
+    for box in boxes:
+        dofs_idx = slice(box.dof_start, box.dof_end)
+        box_forces_z.append(np.abs(applied_forces[..., dofs_idx][..., 2]))
+    avg_force_xy = np.mean(np.abs(box_forces_xy))
+    avg_force_z = np.mean(box_forces_z)
+    assert avg_force_xy < 0.8 * avg_force_z  # friction-limited: F_xy < μ·F_z
 
     # Stretch: phase two
     for box in boxes:

@@ -156,6 +156,7 @@ def get_rigid_global_info(solver, kinematic_only):
             awake_links=V(dtype=gs.qd_int, shape=(solver.n_links_, _B)),
             qpos0=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
             qpos=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
+            qpos_prev=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
             qpos_next=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
             links_T=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(solver.n_links_,)),
             geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=()),

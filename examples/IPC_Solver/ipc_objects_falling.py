@@ -36,7 +36,12 @@ def main():
     )
 
     # Ground plane
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            coup_type="ipc_only",
+        ),
+    )
 
     # Cloth using Cloth material
     # Note: Using coarse grid mesh to avoid IPC thickness violations

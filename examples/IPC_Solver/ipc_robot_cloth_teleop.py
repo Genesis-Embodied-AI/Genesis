@@ -70,7 +70,12 @@ def main():
     )
 
     # Add flat floor
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            coup_type="ipc_only",
+        ),
+    )
 
     # Add Franka robot
     franka_material_kwargs = dict(

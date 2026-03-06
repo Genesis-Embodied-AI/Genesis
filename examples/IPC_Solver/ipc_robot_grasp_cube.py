@@ -40,7 +40,12 @@ def main():
         show_viewer=args.vis,
     )
 
-    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid(coup_type="ipc_only"))
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            coup_type="ipc_only",
+        ),
+    )
 
     franka_material_kwargs = dict(
         coup_friction=0.8,
