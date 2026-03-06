@@ -115,20 +115,18 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
-    from genesis.engine.solvers.rigid.collider import func_narrowphase_kernel1_contact0
+    if scene.rigid_solver.collider._collider_static_config.needs_kernel1:
+        from genesis.engine.solvers.rigid.collider import func_narrowphase_kernel1_contact0
 
-    assert (
-        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_key_generated
-        == args.expected_use_src_ll_cache
-    )
-    assert (
-        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_validated
-        == args.expected_src_ll_cache_hit
-    )
-    assert (
-        func_narrowphase_kernel1_contact0._primal.src_ll_cache_observations.cache_loaded
-        == args.expected_src_ll_cache_hit
-    )
+        kernel_to_check = func_narrowphase_kernel1_contact0
+    else:
+        from genesis.engine.solvers.rigid.collider import func_narrow_phase_convex_specializations
+
+        kernel_to_check = func_narrow_phase_convex_specializations
+
+    assert kernel_to_check._primal.src_ll_cache_observations.cache_key_generated == args.expected_use_src_ll_cache
+    assert kernel_to_check._primal.src_ll_cache_observations.cache_validated == args.expected_src_ll_cache_hit
+    assert kernel_to_check._primal.src_ll_cache_observations.cache_loaded == args.expected_src_ll_cache_hit
 
     sys.exit(RET_SUCCESS)
 
