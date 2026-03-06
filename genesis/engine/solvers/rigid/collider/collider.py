@@ -621,7 +621,7 @@ class Collider:
                 self._solver._errno,
             )
 
-        if _SORT is not False:
+        if _SORT is True or (_SORT is None and self._collider_static_config.needs_kernel1):
             func_sort_contacts(
                 self._collider_state,
                 self._solver._static_rigid_sim_config,
