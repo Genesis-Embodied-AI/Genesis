@@ -485,6 +485,8 @@ class KinematicSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
 
     def substep_post_coupling_grad(self, f):
         pass
