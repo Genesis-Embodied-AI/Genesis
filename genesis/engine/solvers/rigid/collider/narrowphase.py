@@ -1269,6 +1269,7 @@ def func_kernel2_mpr_multicontact(
                         collider_state,
                         collider_info,
                         errno,
+                        use_atomic=True,
                     )
                     local_contact_pos[n_con, 0] = contact_pos[0]
                     local_contact_pos[n_con, 1] = contact_pos[1]
@@ -1409,6 +1410,7 @@ def func_kernel2_gjk_full(
                                 collider_state,
                                 collider_info,
                                 errno,
+                                use_atomic=True,
                             )
                     break
 
@@ -1428,6 +1430,7 @@ def func_kernel2_gjk_full(
                     collider_state,
                     collider_info,
                     errno,
+                    use_atomic=True,
                 )
                 local_contact_pos[0, 0] = contact_pos_0[0]
                 local_contact_pos[0, 1] = contact_pos_0[1]
@@ -1507,6 +1510,7 @@ def func_kernel2_gjk_full(
                         collider_state,
                         collider_info,
                         errno,
+                        use_atomic=True,
                     )
                     local_contact_pos[n_con, 0] = contact_pos[0]
                     local_contact_pos[n_con, 1] = contact_pos[1]
@@ -1879,6 +1883,7 @@ def func_narrowphase_kernel1_contact0(
                     collider_state,
                     collider_info,
                     errno,
+                    use_atomic=True,
                 )
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal

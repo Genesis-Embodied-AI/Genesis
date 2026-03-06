@@ -176,8 +176,12 @@ def func_add_contact(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     errno: array_class.V_ANNOTATION,
+    use_atomic: qd.template() = False,
 ):
-    i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
+    if qd.static(use_atomic):
+        i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
+    else:
+        i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_contact_pairs[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
@@ -195,6 +199,9 @@ def func_add_contact(
         collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
         collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
+
+        if not qd.static(use_atomic):
+            collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
