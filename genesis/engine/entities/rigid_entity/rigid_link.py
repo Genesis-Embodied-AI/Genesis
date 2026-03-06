@@ -659,11 +659,18 @@ class RigidLink(KinematicLink):
                     )
             if self._inertial_mass is None:
                 self._inertial_mass = hint_mass
-            if self._inertial_pos is None:
+            if self._inertial_pos is None or self._inertial_i is None:
+                if self._inertial_pos is not None and self._inertial_i is None:
+                    gs.logger.warning(
+                        f"Ignoring center of mass of link '{self.name}' because inertia matrix is not specified."
+                    )
+                elif self._inertial_pos is None and self._inertial_i is not None:
+                    gs.logger.warning(
+                        f"Ignoring inertia matrix of link '{self.name}' because center of mass is not specified."
+                    )
                 self._inertial_pos = hint_com
-            self._inertial_quat = gu.identity_quat()
-            if self._inertial_i is None:
                 self._inertial_i = hint_inertia
+            self._inertial_quat = gu.identity_quat()
 
         # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
         # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.

@@ -127,17 +127,18 @@ def parse_urdf(morph, surface):
         # we compute urdf's invweight later
         l_info["invweight"] = np.full((2,), fill_value=-1.0)
 
-        if link.inertial is None:
-            l_info["inertial_pos"] = gu.zero_pos()
-            l_info["inertial_quat"] = gu.identity_quat()
-            l_info["inertial_i"] = None
-            l_info["inertial_mass"] = None
-
-        else:
-            l_info["inertial_pos"] = link.inertial.origin[:3, 3]
-            l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
-            l_info["inertial_i"] = link.inertial.inertia
-            l_info["inertial_mass"] = link.inertial.mass
+        l_info["inertial_pos"] = None
+        l_info["inertial_quat"] = gu.identity_quat()
+        l_info["inertial_i"] = None
+        l_info["inertial_mass"] = None
+        if link.inertial is not None:
+            if link.inertial.origin is not None:
+                l_info["inertial_pos"] = link.inertial.origin[:3, 3]
+                l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
+            if link.inertial.inertia is not None:
+                l_info["inertial_i"] = link.inertial.inertia
+            if link.inertial.mass is not None:
+                l_info["inertial_mass"] = link.inertial.mass
 
         for geom_prop in (*link.collisions, *link.visuals):
             geometry = geom_prop.geometry.geometry
@@ -348,16 +349,14 @@ def parse_urdf(morph, surface):
     # Apply scaling factor
     for l_info, link_j_infos, link_g_infos in zip(l_infos, links_j_infos, links_g_infos):
         l_info["pos"] *= morph.scale
-        l_info["inertial_pos"] *= morph.scale
-
+        if l_info["inertial_pos"] is not None:
+            l_info["inertial_pos"] *= morph.scale
         if l_info["inertial_mass"] is not None:
             l_info["inertial_mass"] *= morph.scale**3
         if l_info["inertial_i"] is not None:
             l_info["inertial_i"] *= morph.scale**5
-
         for j_info in link_j_infos:
             j_info["pos"] *= morph.scale
-
         for g_info in link_g_infos:
             g_info["pos"] *= morph.scale
 
@@ -478,22 +477,23 @@ def merge_inertia(link1, link2):
     """Combine two links with fixed joint."""
     if link2.inertial is None:
         return
+    elif link2.inertial.origin is None:
+        link2.inertial.origin = np.eye(4, dtype=np.float64)
 
     if link1.inertial is None:
         link1.inertial = link2.inertial
         return
+    elif link1.inertial.origin is None:
+        link1.inertial.origin = np.eye(4, dtype=np.float64)
 
     m1 = link1.inertial.mass
     m2 = link2.inertial.mass
 
-    com1 = link1.inertial.origin[:3, 3]
-    com2 = link2.inertial.origin[:3, 3]
-
-    R1 = link1.inertial.origin[:3, :3]
-    R2 = link2.inertial.origin[:3, :3]
+    com1, R1 = link1.inertial.origin[:3, 3], link1.inertial.origin[:3, :3]
+    com2, R2 = link2.inertial.origin[:3, 3], link2.inertial.origin[:3, :3]
 
     combined_mass = m1 + m2
-    if combined_mass > 0:
+    if combined_mass > gs.EPS:
         combined_com = (m1 * com1 + m2 * com2) / combined_mass
     else:
         combined_com = com1
@@ -533,12 +533,12 @@ def update_subtree(links, joints, root_name, transform):
 
     # Apply the transformation to the current link
     if current_link.inertial is not None:
-        current_link.inertial.origin = transform @ current_link.inertial.origin
+        if current_link.inertial.origin is None:
+            current_link.inertial.origin = transform
+        else:
+            current_link.inertial.origin = transform @ current_link.inertial.origin
 
-    for geom in current_link.visuals:
-        geom.origin = transform @ geom.origin
-
-    for geom in current_link.collisions:
+    for geom in (*current_link.visuals, *current_link.collisions):
         geom.origin = transform @ geom.origin
 
     for joint in joints:
