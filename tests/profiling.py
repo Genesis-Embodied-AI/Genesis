@@ -70,6 +70,7 @@ def pytorch_profiler(pytestconfig):
             f.write(f"=== Kernel Summary (sorted by {sort_by}) ===\n")
             f.write(table + "\n")
         import sys
+
         print(f"Exported trace to {trace_path}, summary to {summary_path}", file=sys.stderr, flush=True)
 
     prof = torch.profiler.profile(
@@ -94,7 +95,12 @@ def pytorch_profiler(pytestconfig):
         yield counted_step
     if trace_counter[0] == 0:
         import sys
-        print(f"WARNING: on_trace_ready never fired ({step_counter[0]} steps called). Exporting fallback.", file=sys.stderr, flush=True)
+
+        print(
+            f"WARNING: on_trace_ready never fired ({step_counter[0]} steps called). Exporting fallback.",
+            file=sys.stderr,
+            flush=True,
+        )
         prof.export_chrome_trace(f"trace_{ref}_fallback.json")
 
         sort_by = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"

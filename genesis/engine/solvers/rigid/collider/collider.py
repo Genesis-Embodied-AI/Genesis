@@ -165,10 +165,7 @@ class Collider:
                     has_any_vs_terrain = True
                 if geom_a.is_convex and geom_b.is_convex:
                     types = {geom_a.type, geom_b.type}
-                    if (
-                        self._solver._options.box_box_detection
-                        and types == {gs.GEOM_TYPE.BOX}
-                    ):
+                    if self._solver._options.box_box_detection and types == {gs.GEOM_TYPE.BOX}:
                         pass
                     elif types == {gs.GEOM_TYPE.PLANE, gs.GEOM_TYPE.BOX}:
                         pass
@@ -617,6 +614,7 @@ class Collider:
             )
 
         import os
+
         if not os.environ.get("GS_NO_SORT"):
             func_sort_contacts(
                 self._collider_state,

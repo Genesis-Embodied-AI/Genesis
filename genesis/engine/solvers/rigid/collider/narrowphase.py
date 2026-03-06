@@ -475,7 +475,9 @@ def func_contact_mpr_terrain(
                                             break
 
                                     if valid:
-                                        i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
+                                        i_pair = collider_info.collision_pair_idx[
+                                            (i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)
+                                        ]
                                         func_add_contact(
                                             i_ga,
                                             i_gb,

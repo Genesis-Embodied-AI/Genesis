@@ -186,7 +186,6 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        import os
         _force = os.environ.get("GS_FORCE_SOLVER")
         if _force == "monolith":
             func_solve_body_monolith(
@@ -198,6 +197,7 @@ class ConstraintSolver:
             )
         elif _force == "decomposed":
             from .solver_breakdown import func_solve_decomposed
+
             func_solve_decomposed(
                 self._solver.entities_info,
                 self._solver.dofs_state,
