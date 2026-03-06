@@ -613,9 +613,7 @@ class Collider:
                 self._solver._errno,
             )
 
-        import os
-
-        if not os.environ.get("GS_NO_SORT"):
+        if self._collider_static_config.needs_kernel1:
             func_sort_contacts(
                 self._collider_state,
                 self._solver._static_rigid_sim_config,
