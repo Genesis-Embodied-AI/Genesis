@@ -15,9 +15,12 @@ import trimesh
 
 import genesis as gs
 
-# None = GS_NO_SORT not set, sort contacts after narrowphase (default)
-# True = GS_NO_SORT set, skip contact sorting
-_NO_SORT: bool | None = True if os.environ.get("GS_NO_SORT") is not None else None
+# None = GS_SORT not set, sort contacts after narrowphase (default)
+# True = GS_SORT=1, sort contacts after narrowphase
+# False = GS_SORT=0, skip contact sorting
+_SORT: bool | None = None
+if os.environ.get("GS_SORT") is not None:
+    _SORT = os.environ.get("GS_SORT", "").lower() in ("1", "true", "yes")
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
@@ -618,7 +621,7 @@ class Collider:
                 self._solver._errno,
             )
 
-        if not _NO_SORT:
+        if _SORT is not False:
             func_sort_contacts(
                 self._collider_state,
                 self._solver._static_rigid_sim_config,
