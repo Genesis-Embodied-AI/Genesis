@@ -16,8 +16,6 @@ from .utils import (
 )
 
 
-REPORT_FILE = "speed_test.txt"
-
 STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
@@ -197,8 +195,8 @@ def get_file_morph_options(**kwargs):
 
 
 @pytest.fixture(scope="session")
-def stream_writers(printer_session):
-    report_path = Path(REPORT_FILE)
+def stream_writers(printer_session, request):
+    report_path = Path(request.config.getoption("--speed-test-filepath"))
 
     # Delete old unrelated worker-specific reports
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
