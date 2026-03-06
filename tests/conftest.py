@@ -414,6 +414,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
+    parser.addoption("--ref", type=str, default=None, help="Label added to benchmark output filenames.")
     if os.environ.get("GS_PROFILING", "0") == "1":
         profiling.parser_add_options(parser)
 

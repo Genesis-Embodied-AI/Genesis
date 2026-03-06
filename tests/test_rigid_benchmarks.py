@@ -197,8 +197,12 @@ def get_file_morph_options(**kwargs):
 
 
 @pytest.fixture(scope="session")
-def stream_writers(printer_session):
-    report_path = Path(REPORT_FILE)
+def stream_writers(printer_session, pytestconfig):
+    ref = pytestconfig.getoption("--ref")
+    stem = REPORT_FILE.removesuffix(".txt")
+    if ref:
+        stem = f"{stem}-{ref}"
+    report_path = Path(f"{stem}.txt")
 
     # Delete old unrelated worker-specific reports
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
