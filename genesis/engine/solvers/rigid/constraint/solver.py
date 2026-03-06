@@ -7,6 +7,8 @@ import torch
 from frozendict import frozendict
 
 import genesis as gs
+
+_FORCE_SOLVER = os.environ.get("GS_FORCE_SOLVER")
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
@@ -186,8 +188,7 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-        _force = os.environ.get("GS_FORCE_SOLVER")
-        if _force == "monolith":
+        if _FORCE_SOLVER == "monolith":
             func_solve_body_monolith(
                 self._solver.entities_info,
                 self._solver.dofs_state,
@@ -195,7 +196,7 @@ class ConstraintSolver:
                 self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
             )
-        elif _force == "decomposed":
+        elif _FORCE_SOLVER == "decomposed":
             from .solver_breakdown import func_solve_decomposed
 
             func_solve_decomposed(

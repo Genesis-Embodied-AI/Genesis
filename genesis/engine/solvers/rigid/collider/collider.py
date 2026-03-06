@@ -6,6 +6,7 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,6 +14,8 @@ import torch
 import trimesh
 
 import genesis as gs
+
+_NO_SORT = bool(os.environ.get("GS_NO_SORT"))
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
@@ -613,9 +616,7 @@ class Collider:
                 self._solver._errno,
             )
 
-        import os
-
-        if not os.environ.get("GS_NO_SORT"):
+        if not _NO_SORT:
             func_sort_contacts(
                 self._collider_state,
                 self._solver._static_rigid_sim_config,
