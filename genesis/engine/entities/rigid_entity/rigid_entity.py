@@ -3223,12 +3223,6 @@ class RigidEntity(KinematicEntity):
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
-            gs.raise_exception(
-                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
-            )
         super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative)
 
     @gs.assert_built
@@ -3254,12 +3248,6 @@ class RigidEntity(KinematicEntity):
             Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
-            gs.raise_exception(
-                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
-            )
         super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative)
 
     @gs.assert_built
@@ -3300,31 +3288,6 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
     # --------------------------------- qpos get/set -------------------------------------
     # ------------------------------------------------------------------------------------
-
-    @gs.assert_built
-    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False):
-        """
-        Set the entity's qpos.
-
-        Parameters
-        ----------
-        qpos : array_like
-            The qpos to set.
-        qs_idx_local : None | array_like, optional
-            The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`,
-            not the scene-level one. Defaults to None.
-        envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be considered. Defaults to None.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
-            sudden change in entity pose.
-        """
-        from genesis.engine.couplers import IPCCoupler
-
-        super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
-
-        if isinstance(self.sim.coupler, IPCCoupler):
-            self.sim.coupler.set_qpos_changed(self)
 
     @gs.assert_built
     def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
@@ -3423,34 +3386,26 @@ class RigidEntity(KinematicEntity):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------- DOF property setters ---------------------------------
-    # ------------------------------------------------------------------------------------
-
     @gs.assert_built
-    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):
+    def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):
         """
-        Set the entity's dofs' position.
+        Set the entity's dofs' velocity.
 
         Parameters
         ----------
-        position : array_like
-            The position to set.
+        velocity : array_like | None
+            The velocity to set. Zero if not specified.
         dofs_idx_local : None | array_like, optional
             The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`,
             not the scene-level one. Defaults to None.
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
-        zero_velocity : bool, optional
-            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
-            sudden change in entity pose.
         """
         from genesis.engine.couplers import IPCCoupler
 
-        super().set_dofs_position(position, dofs_idx_local, envs_idx, zero_velocity=zero_velocity)
-
-        if isinstance(self.sim.coupler, IPCCoupler):
-            self.sim.coupler.set_qpos_changed(self)
+        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "ipc_only":
+            gs.raise_exception("This method is not supported for `coup_type='ipc_only'` entities.")
+        super().set_dofs_velocity(velocity, dofs_idx_local, envs_idx, skip_forward=skip_forward)
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- PD control --------------------------------------

@@ -349,7 +349,6 @@ def test_link_filter_strict():
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
-            two_way_coupling=True,
         ),
         show_viewer=False,
     )
@@ -381,8 +380,8 @@ def test_link_filter_strict():
     assert moving_link.idx in ipc_links_idx
     assert base_link.idx not in ipc_links_idx
 
-    assert moving_link in coupler._abd_slots_by_link
-    assert base_link not in coupler._abd_slots_by_link
+    assert moving_link in coupler._abd_data_by_link
+    assert base_link not in coupler._abd_data_by_link
 
 
 @pytest.mark.required
@@ -417,7 +416,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             newton_translation_tolerance=1e-2,
             linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
-            two_way_coupling=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),
@@ -455,14 +453,15 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     moving_link = robot.get_link("moving")
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
-    assert moving_link in coupler._abd_slots_by_link
+    assert moving_link in coupler._abd_data_by_link
     if coup_type == "two_way_soft_constraint":
-        assert moving_link in coupler._abd_data_by_link
+        assert coupler._abd_data_by_link[moving_link].ipc_transforms is not None
     elif coup_type == "external_articulation":
         art_data = coupler._articulation_data_by_entity[robot]
-        assert len(art_data.articulation_slots) == max(scene.n_envs, 1)
+        assert len(art_data.slots) == max(scene.n_envs, 1)
         if fixed:
-            assert not coupler._abd_data_by_link
+            # Fixed-base ext_art: links are in IPC but not coupling targets
+            assert coupler._abd_data_by_link[moving_link].ipc_transforms is None
 
     dist_min = np.array(float("inf"))
     cur_dof_pos_history, target_dof_pos_history = [], []
@@ -486,15 +485,15 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
 
         scene.step()
 
-        if coup_type == "two_way_soft_constraint" or not fixed:
+        abd_data = coupler._abd_data_by_link[moving_link]
+        if abd_data.ipc_transforms is not None:
             links_pos = qd_to_numpy(scene.rigid_solver.links_state.pos, transpose=True)
             links_quat = qd_to_numpy(scene.rigid_solver.links_state.quat, transpose=True)
             for env_idx in envs_idx:
-                abd_data = coupler._abd_data_by_link[moving_link][env_idx]
                 gs_transform = gu.trans_quat_to_T(
                     links_pos[env_idx, moving_link.idx], links_quat[env_idx, moving_link.idx]
                 )
-                ipc_transform = abd_data.transform.copy()
+                ipc_transform = abd_data.ipc_transforms[env_idx].copy()
                 # Non-fixed tolerance is large: child link transform diverges from IPC's soft constraint target
                 assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=TOL_SINGLE)
                 assert_allclose(gu.R_to_xyz(gs_transform[:3, :3] @ ipc_transform[:3, :3].T), 0.0, atol=1e-4)
@@ -549,7 +548,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             enable_rigid_rigid_contact=False,
             newton_tolerance=1e-2,
             newton_translation_tolerance=1e-2,
-            two_way_coupling=True,
         ),
         show_viewer=show_viewer,
     )
@@ -578,19 +576,19 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     # With merge_fixed_links=True, attachment is merged into link7.
     # With merge_fixed_links=False, attachment stays separate but IPC should still group them.
     link7 = robot.get_link("link7")
-    assert link7 in coupler._abd_slots_by_link
+    assert link7 in coupler._abd_data_by_link
 
     if not merge_fixed_links:
         attachment = robot.get_link("attachment")
         # attachment exists as separate link but shares ABD body with link7
         target = find_target_link_for_fixed_merge(attachment)
         assert target == link7
-        # attachment is NOT in _abd_slots_by_link — only the target link gets a slot entry
-        assert attachment not in coupler._abd_slots_by_link
+        # attachment is NOT in _abd_data_by_link — only the target link gets a slot entry
+        assert attachment not in coupler._abd_data_by_link
 
     if coup_type == "external_articulation":
         art_data = coupler._articulation_data_by_entity[robot]
-        assert len(art_data.articulation_slots) == 1
+        assert len(art_data.slots) == 1
         # All 7 revolute joints should be present (fixed joint is skipped)
         assert len(art_data.joints_child_link) == 7
 
@@ -668,7 +666,6 @@ def test_objects_freefall(n_envs, show_viewer):
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=0.01,
             enable_rigid_rigid_contact=False,
-            two_way_coupling=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.2, 3.2, 1.5),
@@ -736,7 +733,7 @@ def test_objects_freefall(n_envs, show_viewer):
 
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert box.base_link_idx in ipc_links_idx
-    assert box.base_link in coupler._abd_slots_by_link
+    assert box.base_link in coupler._abd_data_by_link
 
     # Verify that geometries are present in IPC for each environment
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
@@ -823,7 +820,6 @@ def test_objects_colliding(n_envs, show_viewer):
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
             enable_rigid_rigid_contact=False,
-            two_way_coupling=True,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 2.0, 0.1),
@@ -1023,7 +1019,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert franka_finger_links_idx.issubset(ipc_links_idx)
     for link_idx in franka_finger_links:
-        assert link_idx in coupler._abd_slots_by_link
+        assert link_idx in coupler._abd_data_by_link
 
     franka_links_idx = {link.idx for link in franka.links}
     franka_ipc_links_idx = franka_links_idx.intersection(ipc_links_idx)
@@ -1145,7 +1141,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     rigid_link = rigid_cube.base_link
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert rigid_link.idx in ipc_links_idx
-    assert rigid_link in coupler._abd_slots_by_link
+    assert rigid_link in coupler._abd_data_by_link
 
     cube_mass = rigid_cube.get_mass()
 
@@ -1598,7 +1594,6 @@ def test_coup_collision_links():
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
-            two_way_coupling=True,
         ),
         show_viewer=False,
     )

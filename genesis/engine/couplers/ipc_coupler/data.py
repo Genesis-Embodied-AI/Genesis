@@ -4,7 +4,7 @@ Data classes for IPC coupler.
 
 from enum import IntEnum
 from dataclasses import dataclass
-from typing import NamedTuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -23,55 +23,36 @@ class COUPLING_TYPE(IntEnum):
     NONE = 3
 
 
-class ABDLinkEntry(NamedTuple):
-    """Per-link, per-env ABD state retrieved from IPC after advance."""
+@dataclass
+class ABDLinkData:
+    """Per-link ABD data across all envs."""
 
-    transform: np.ndarray  # (4, 4) IPC transform
-    velocity: np.ndarray  # (4, 4) velocity matrix
+    # Build-time (set in _add_rigid_entities_to_ipc)
+    slots: list[GeometrySlot]  # per env
+
+    # Per-step inputs (populated by _store_gs_rigid_states)
+    aim_transforms: np.ndarray | None = None  # (B, 4, 4)
+
+    # Per-step outputs (populated by _retrieve_ipc_rigid_states); only for coupling links
+    ipc_transforms: np.ndarray | None = None  # (B, 4, 4)
+    ipc_velocities: np.ndarray | None = None  # (B, 4, 4)
 
 
 @dataclass
 class ArticulatedEntityData:
     """Typed container for per-entity articulation coupling data."""
 
+    # Topology (set at build time, ext-art always has fixed base)
+    slots: list[GeometrySlot]
+    q_slice: slice  # slice into global qpos array
+    dof_slice: slice  # slice into global dofs array
     joints_child_link: list["RigidLink"]
-    joints_q_idx_local: list[int]
+    joints_qs_idx_local: list[int]
 
-    articulation_slots: list[GeometrySlot]
+    # Per-step inputs (populated by _store_gs_rigid_states)
+    delta_theta_tilde: np.ndarray | None = None  # (B, n_joints)
+    prev_qpos: np.ndarray | None = None  # (B, n_qs)
+    mass_matrix: np.ndarray | None = None  # (B, n_dofs, n_dofs)
 
-    qpos_stored: np.ndarray
-    qpos_current: np.ndarray
-    qpos_new: np.ndarray
-    delta_theta_tilde: np.ndarray
-    delta_theta_ipc: np.ndarray
-
-    # Previous timestep link transforms for IPC ABD ref_dof_prev sync {(joint, env_idx): transform_matrix_4x4}
-    prev_links_transform: list[list[np.ndarray | None]]
-
-
-class IPCCouplingData:
-    """Pre-allocated arrays for coupling force computation."""
-
-    def __init__(
-        self,
-        links: list["RigidLink"],
-        abd_body_idx_by_link: dict["RigidLink", list[int]],
-        n_envs: int,
-    ):
-        n_links = len(links)
-        assert set(abd_body_idx_by_link.keys()) == set(links)
-
-        self.links = links
-        self.abd_body_idx_by_link = abd_body_idx_by_link
-        self.links_idx = [link.idx for link in links]
-        self.link_to_idx_local = {link: i for i, link in enumerate(links)}
-        self.links_mass = np.array([link.inertial_mass for link in links], dtype=gs.np_float)
-        if links:
-            self.links_inertia_i = np.stack([link.inertial_i for link in links], axis=0, dtype=gs.np_float)
-        else:
-            self.links_inertia_i = np.empty((0, 0, 3, 3), dtype=gs.np_float)
-
-        self.ipc_transforms = np.empty((n_envs, n_links, 4, 4), dtype=gs.np_float)
-        self.aim_transforms = np.empty((n_envs, n_links, 4, 4), dtype=gs.np_float)
-        self.out_forces = np.empty((n_envs, n_links, 3), dtype=gs.np_float)
-        self.out_torques = np.empty((n_envs, n_links, 3), dtype=gs.np_float)
+    # Per-step outputs (populated by _post_advance_external_articulation)
+    ipc_qpos: np.ndarray | None = None  # (B, n_qs)
