@@ -437,9 +437,9 @@ class IPCCoupler(RBC):
 
             # Cache merged world-frame mesh for env 0 (used by neutral overlap check)
             link_T_0 = gu.trans_quat_to_T(links_pos[0, target_link.idx], links_quat[0, target_link.idx])
-            local_verts = np.asarray(rigid_link_geom.positions().view(), dtype=np.float64)
+            local_verts = np.asarray(rigid_link_geom.positions().view(), dtype=np.float64)[..., 0]
             world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
-            faces = rigid_link_geom.triangles().topo().view().astype(np.int32)
+            faces = rigid_link_geom.triangles().topo().view()[..., 0].astype(np.int32)
             self._abd_merged_verts_faces[target_link] = (world_verts, faces)
 
             # ---- Determine coupling behavior ----

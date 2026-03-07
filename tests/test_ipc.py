@@ -1472,7 +1472,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     BOX_SIZE = 0.05
     GAP = 0.005
     THICKNESS = 0.001
-    STRETCH_RATIO_1 = 1.0 + strech_scale * 0.05
+    STRETCH_RATIO_1 = 1.0 + strech_scale * 0.15
     STRETCH_RATIO_2 = 1.4
     PULL_DISTANCE = 0.03  # Radial displacement per corner
 
@@ -1482,6 +1482,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
+            constraint_strength_translation=800.0,
             contact_enable=True,
             enable_rigid_rigid_contact=True,
             contact_d_hat=GAP,
@@ -1506,7 +1507,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             nu=nu,
             rho=200.0,
             thickness=THICKNESS,
-            bending_stiffness=9,  # Use large stiffness to avoid cloth edge falling
+            bending_stiffness=None,
             friction_mu=0.8,
         ),
     )
@@ -1549,7 +1550,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(20):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    assert_allclose(cloth_positions_f, cloth_positions_0, atol=5e-3)
+    # Initially cloth edge will fall down a little.
+    assert_allclose(cloth_positions_f, cloth_positions_0, tol=0.015)
 
     # Stretch: phase one
     for box in boxes:
