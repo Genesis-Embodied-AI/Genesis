@@ -971,10 +971,10 @@ class FEMEntity(Entity):
     @qd.kernel
     def _kernel_get_verts_pos(self, f: qd.i32, pos: qd.types.ndarray(), verts_idx: qd.types.ndarray()):
         # get current position of vertices
-        for i_v, i_b in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
-            i_global = verts_idx[i_v, i_b] + self.v_start
+        for i_b, i_v_ in qd.ndrange(verts_idx.shape[0], verts_idx.shape[1]):
+            i_v = verts_idx[i_b, i_v_] + self.v_start
             for j in qd.static(range(3)):
-                pos[i_b, i_v, j] = self._solver.elements_v[f, i_global, i_b].pos[j]
+                pos[i_b, i_v_, j] = self._solver.elements_v[f, i_v, i_b].pos[j]
 
     def get_el2v(self):
         """

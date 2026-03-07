@@ -22,7 +22,7 @@ class ViewerPlugin:
     """
 
     def __init__(self):
-        self.viewer = None
+        self.viewer: "Viewer | None" = None
         self.camera: "Node | None" = None
         self.scene: "Scene | None" = None
         self._camera_yfov: float = 0.0
