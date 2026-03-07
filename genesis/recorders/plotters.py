@@ -19,6 +19,7 @@ from genesis.options.recorders import (
     PyQtLinePlot as PyQtLinePlotterOptions,
     MPLLinePlot as MPLLinePlotterOptions,
     MPLImagePlot as MPLImagePlotterOptions,
+    MPLVectorFieldPlot as MPLVectorFieldPlotterOptions,
 )
 from genesis.utils import has_display, tensor_to_array
 
@@ -631,3 +632,136 @@ class MPLImagePlotter(BaseMPLPlotter):
         self.ax = None
         self.image_plot = None
         self.background = None
+
+
+def _project_to_plane(
+    positions: np.ndarray, vectors: np.ndarray, normal: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Project 3D positions and vectors onto the plane perpendicular to normal. Returns (xy, uv, magnitudes)."""
+    n = normal / np.linalg.norm(normal)
+    up = np.array([0.0, 0.0, 1.0], dtype=float)
+    if np.abs(np.dot(n, up)) > 0.99:
+        up = np.array([1.0, 0.0, 0.0], dtype=float)
+    u = np.cross(n, up)
+    u /= np.linalg.norm(u)
+    v = np.cross(n, u)
+    v /= np.linalg.norm(v)
+    xy = positions @ np.stack([u, v], axis=1)
+    uv = vectors @ np.stack([u, v], axis=1)
+    magnitudes = np.linalg.norm(vectors, axis=1)
+    return xy, uv, magnitudes
+
+
+@register_recording(MPLVectorFieldPlotterOptions)
+class MPLVectorFieldPlotter(BaseMPLPlotter):
+    """
+    Live 3D vector field viewer: projects positions and vectors onto a 2D plane and plots arrows colored by magnitude.
+
+    The data_func should return an array of shape (N, 3) with the 3D vector at each position given in options.
+    """
+
+    def build(self):
+        super().build()
+
+        import matplotlib.pyplot as plt
+
+        opts = self._options
+        positions = np.array(opts.positions, dtype=float)
+        if positions.ndim != 2 or positions.shape[1] != 3:
+            gs.raise_exception(f"[{type(self).__name__}] positions must have shape (N, 3), got {positions.shape}.")
+        normal = np.array(opts.normal, dtype=float)
+        n_norm = np.linalg.norm(normal)
+        if normal.size != 3 or n_norm < gs.EPS:
+            gs.raise_exception(f"[{type(self).__name__}] normal must be a non-zero 3D vector.")
+        normal = normal / n_norm
+
+        xy, _, _ = _project_to_plane(positions, np.zeros_like(positions), normal)
+        margin = max(np.ptp(xy[:, 0]), np.ptp(xy[:, 1]), 1e-6) * 0.1
+        x_min, x_max = xy[:, 0].min() - margin, xy[:, 0].max() + margin
+        y_min, y_max = xy[:, 1].min() - margin, xy[:, 1].max() + margin
+
+        self.fig, self.ax = plt.subplots(figsize=self.figsize)
+        self.fig.suptitle(opts.title)
+        self.ax.set_xlim(x_min, x_max)
+        self.ax.set_ylim(y_min, y_max)
+        self.ax.set_aspect("equal")
+        self.ax.set_axis_off()
+
+        self._positions = positions
+        self._normal = normal
+        self._scale_factor = opts.scale_factor
+        self._max_magnitude = opts.max_magnitude
+        n = len(xy)
+        self._scatter = self.ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            s=8,
+            c=np.zeros(n),
+            cmap="plasma",
+            vmin=0,
+            vmax=self._max_magnitude,
+            zorder=0,
+        )
+        self._quiver = self.ax.quiver(
+            xy[:, 0],
+            xy[:, 1],
+            np.zeros_like(xy[:, 0]),
+            np.zeros_like(xy[:, 1]),
+            np.zeros(len(xy)),
+            cmap="plasma",
+            clim=(0, self._max_magnitude),
+            zorder=1,
+            scale_units="xy",
+            scale=1,
+        )
+        self.fig.colorbar(self._quiver, ax=self.ax, label="Magnitude")
+        self.fig.canvas.draw()
+        self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        self._show_fig()
+
+        self.fig.canvas.mpl_connect("resize_event", self.on_resize)
+
+    def on_resize(self, event):
+        self._lock.acquire()
+        try:
+            if self.fig is not None and self.ax is not None:
+                self.fig.canvas.draw()
+                self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+        finally:
+            self._lock.release()
+
+    def process(self, data, cur_time):
+        """Process new vector data and update the quiver plot."""
+        if isinstance(data, torch.Tensor):
+            vectors = tensor_to_array(data)
+        else:
+            vectors = np.asarray(data, dtype=float)
+        if vectors.ndim != 2 or vectors.shape[1] != 3:
+            return
+        if vectors.shape[0] != len(self._positions):
+            return
+        xy, uv, magnitudes = _project_to_plane(self._positions, vectors, self._normal)
+        scale = self._scale_factor
+        if self._background is not None:
+            self._lock.acquire()
+            self._scatter.set_offsets(xy)
+            self._scatter.set_array(magnitudes)
+            self._quiver.set_offsets(xy)
+            self._quiver.set_UVC(uv[:, 0] * scale, uv[:, 1] * scale)
+            self._quiver.set_array(magnitudes)
+            self.fig.canvas.restore_region(self._background)
+            self.ax.draw_artist(self._scatter)
+            self.ax.draw_artist(self._quiver)
+            self.fig.canvas.blit(self.ax.bbox)
+            self.fig.canvas.flush_events()
+            self._lock.release()
+
+    def cleanup(self):
+        super().cleanup()
+        self._scatter = None
+        self._quiver = None
+        self._positions = None
+        self._normal = None
+        self._scale_factor = None
+        self._max_magnitude = None
+        self._background = None

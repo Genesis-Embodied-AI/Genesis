@@ -1,9 +1,23 @@
 import enum
 
+from pydantic import conlist
 
 # dynamic loading
 ACTIVE = 1
 INACTIVE = 0
+
+# type aliases
+NumericType = int | float | bool
+NumArrayType = conlist(NumericType, min_length=1)
+Vec3FType = conlist(float, min_length=3, max_length=3)
+Vec4FType = conlist(float, min_length=4, max_length=4)
+Vec3FArrayType = conlist(Vec3FType, min_length=1)
+FArrayType = conlist(float, min_length=1)
+Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
+MaybeNumArrayType = NumericType | conlist(NumericType, min_length=1)
+MaybeVec3FType = float | Vec3FType
+MaybeVec3FArrayType = Vec3FType | conlist(Vec3FType, min_length=1)
+MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 
 class IntEnum(enum.IntEnum):

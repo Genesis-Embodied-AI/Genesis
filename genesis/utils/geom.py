@@ -1,14 +1,14 @@
 import math
 from typing import Literal
 
-import numpy as np
 import numba as nb
+import numpy as np
+import quadrants as qd
 import torch
 import torch.nn.functional as F
 
-import quadrants as qd
-
 import genesis as gs
+from genesis.constants import Vec3FType
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
@@ -2006,6 +2006,89 @@ def random_quaternion(batch_size):
     q3 = np.sqrt(u1) * np.sin(2 * np.pi * u3)
     q4 = np.sqrt(u1) * np.cos(2 * np.pi * u3)
     return np.stack((q1, q2, q3, q4), axis=1)
+
+
+def generate_grid_points_on_plane(
+    lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int
+) -> tuple[np.ndarray, float, float]:
+    """
+    Build an nx-by-ny grid of points on the plane defined by the bounds and normal.
+
+    Parameters
+    ----------
+    lo: array-like[float, float, float]
+        Lower bound of the plane
+    hi: array-like[float, float, float]
+        Upper bound of the plane
+    normal: array-like[float, float, float]
+        Normal of the plane
+    nx: int
+        Number of grid points in x direction
+    ny: int
+        Number of grid points in y direction
+
+    Returns
+    -------
+    grid: np.ndarray, shape (nx * ny, 3)
+        Grid points on the plane
+    """
+    lo = np.asarray(lo, dtype=np.float64)
+    hi = np.asarray(hi, dtype=np.float64)
+    normal = np.asarray(normal, dtype=np.float64)
+
+    n_norm = float(np.linalg.norm(normal))
+    if n_norm < gs.EPS:
+        gs.raise_exception(f"normal must be non-zero, got: {normal}")
+    n = normal / n_norm
+
+    # First tangent axis: projection of canonical axes onto the plane.
+    ex = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    ey = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    ez = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    t0 = ex - n * np.dot(n, ex)
+    t0_norm = float(np.linalg.norm(t0))
+    if t0_norm < gs.EPS:
+        t0 = ey - n * np.dot(n, ey)
+        t0_norm = float(np.linalg.norm(t0))
+        if t0_norm < gs.EPS:
+            t0 = ez - n * np.dot(n, ez)
+            t0_norm = float(np.linalg.norm(t0))
+            if t0_norm < gs.EPS:
+                gs.raise_exception(f"failed to build tangent basis from normal: {normal}")
+    t0 = t0 / t0_norm
+
+    t1 = np.cross(n, t0)
+    t1_norm = float(np.linalg.norm(t1))
+    if t1_norm < gs.EPS:
+        gs.raise_exception(f"failed to build orthogonal tangent axis from normal: {normal}")
+    t1 = t1 / t1_norm
+
+    lo_u = float(np.dot(lo, t0))
+    lo_v = float(np.dot(lo, t1))
+    lo_w = float(np.dot(lo, n))
+    hi_u = float(np.dot(hi, t0))
+    hi_v = float(np.dot(hi, t1))
+    hi_w = float(np.dot(hi, n))
+
+    if abs(hi_w - lo_w) > 1e-6:
+        gs.raise_exception(
+            f"bounds must lie on a single plane orthogonal to normal; normal-axis mismatch={abs(hi_w - lo_w):.6e}"
+        )
+    plane_w = 0.5 * (lo_w + hi_w)
+
+    du = (hi_u - lo_u) / (nx - 1) if nx > 1 else 0.0
+    dv = (hi_v - lo_v) / (ny - 1) if ny > 1 else 0.0
+
+    u_vals = np.array([lo_u], dtype=np.float64) if nx == 1 else np.linspace(lo_u, hi_u, num=nx, dtype=np.float64)
+    v_vals = np.array([lo_v], dtype=np.float64) if ny == 1 else np.linspace(lo_v, hi_v, num=ny, dtype=np.float64)
+    uu, vv = np.meshgrid(u_vals, v_vals, indexing="ij")  # (nx, ny), first dim=x, second dim=y
+    grid_xy = (
+        t0.reshape(1, 1, 3) * np.expand_dims(uu, axis=-1)
+        + t1.reshape(1, 1, 3) * np.expand_dims(vv, axis=-1)
+        + n.reshape(1, 1, 3) * plane_w
+    )
+    # flatten with ix + iy*nx: (nx, ny, 3) -> (ny, nx, 3) -> (nx*ny, 3)
+    return grid_xy.transpose(1, 0, 2)
 
 
 # ------------------------------------------------------------------------------------

@@ -1,20 +1,13 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import Field, conlist
+from pydantic import Field
 
 import genesis as gs
+from genesis.constants import FArrayType, MaybeMatrix3x3Type, MaybeVec3FType, Vec3FArrayType, Vec3FType, Vec4FType
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
-
-Vec3FType = conlist(float, min_length=3, max_length=3)
-Vec4FType = conlist(float, min_length=4, max_length=4)
-Vec3FArrayType = conlist(Vec3FType, min_length=1)
-FArrayType = conlist(float, min_length=1)
-MaybeVec3FType = float | Vec3FType
-Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -176,71 +169,6 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
         if self.resolution is not None and not (isinstance(self.resolution, float) or len(self.resolution) == 3):
             gs.raise_exception(f"resolution must be a float or array-like of 3 floats, got: {self.resolution}")
-
-
-class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
-    """
-    A tactile sensor which queries contact depth relative to given probe normals and within the radius of the probe
-    positions along a rigid entity link.
-
-    The returned force is an spring-like (kinematic) estimate based on contact depth, computed as
-    F = stiffness * penetration * probe_normal, as opposed to the actual impulse force on the link from the contact
-    obtained from the physics solver.
-
-    Note
-    ----
-    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
-
-    Parameters
-    ----------
-    probe_local_pos : array-like[array-like[float, float, float]]
-        Probe positions in link-local frame. One (x, y, z) per probe.
-    probe_local_normal : array-like[array-like[float, float, float]]
-        Probe sensing directions in link-local frame. Penetration is measured along this axis.
-    radius : float | array-like[float]
-        Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
-    stiffness : float
-        User-defined coefficient for force estimation. Default: 1000.0.
-    """
-
-    probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
-    radius: float | FArrayType = 0.005
-    stiffness: float = 1000.0
-
-    debug_sphere_color: Vec4FType = (1.0, 0.5, 0.0, 0.4)
-    debug_contact_color: Vec4FType = (1.0, 0.2, 0.0, 0.8)
-
-    def model_post_init(self, _):
-        if np.any(np.array(self.radius) < 0):
-            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
-        if self.stiffness < 0:
-            gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
-
-        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
-        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
-        norms = np.linalg.norm(probe_local_normal, axis=1)
-        if np.any(norms < gs.EPS):
-            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {probe_local_normal}")
-
-        if len(probe_local_pos) != len(probe_local_normal):
-            gs.raise_exception(
-                "probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
-            )
-        if not isinstance(self.radius, float) and len(self.radius) != len(probe_local_pos):
-            gs.raise_exception(
-                "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
-            )
-
-    def _validate_probe_arrays(self, values: Vec3FArrayType) -> np.ndarray:
-        array = np.array(values, dtype=float)
-        if array.ndim != 2 or array.shape[1] != 3:
-            gs.raise_exception(f"Probe locals array must have shape (N, 3), got: {array.shape}")
-        if array.shape[0] == 0:
-            gs.raise_exception("Probe locals array must have at least one entry")
-        return array
 
 
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
