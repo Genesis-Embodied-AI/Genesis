@@ -131,7 +131,8 @@ class IPCCoupler(RBC):
 
         # ==== Entity Coupling Configuration ====
         self._coup_type_by_entity: dict["RigidEntity", COUPLING_TYPE] = {}
-        self._coup_links: dict["RigidEntity", set["RigidLink"]] = {}  # Used for "two_way_soft_constraint"
+        # Link filter for two_way_soft_constraint coupling
+        self._coup_links: dict["RigidEntity", set["RigidLink"]] = {}
         self._coupling_collision_settings: dict["RigidEntity", dict["RigidLink", bool]] = {}
         self._entities_by_coup_type: dict[COUPLING_TYPE, list["RigidEntity"]] = {}
 
@@ -295,7 +296,6 @@ class IPCCoupler(RBC):
             else:
                 mesh = uipc.geometry.tetmesh(tensor_to_array(entity.init_positions), entity.elems)
             uipc.geometry.label_surface(mesh)
-            uipc.geometry.mesh_partition(mesh)
 
             # ---- Apply constitutions (env-independent) ----
             # Apply per-entity contact element
@@ -354,7 +354,8 @@ class IPCCoupler(RBC):
         # ========== Pre-compute link groups (env-independent) ==========
         # Group links by fixed-joint merge target, matching mjcf.py behavior where geoms from fixed-joint children are
         # merged into the parent body's mesh.
-        target_groups: dict["RigidLink", list["RigidLink"]] = {}  # target_link_idx -> [source_link_idx, ...]
+        # target_link -> [source_links that merge into it via fixed joints]
+        target_groups: dict["RigidLink", list["RigidLink"]] = {}
         merge_transforms: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {
             # source_link_idx -> (R, t) relative to target frame
         }
@@ -800,7 +801,8 @@ class IPCCoupler(RBC):
             if not ps.is_initialized():
                 ps.init()
             self._ipc_gui = SceneGUI(self._ipc_scene, "split")
-            self._ipc_gui.register()  # also sets up_dir and ground_plane_height from scene
+            # Also sets up_dir and ground_plane_height from scene
+            self._ipc_gui.register()
 
             # Match polyscope camera to Genesis viewer options
             viewer_opts = self.sim.scene.viewer_options
@@ -1005,11 +1007,13 @@ class IPCCoupler(RBC):
 
         # Get all transforms at once (array view)
         trans_attr = self._abd_state_geom.instances().find(uipc.builtin.transform)
-        transforms = trans_attr.view()  # Shape: (num_bodies, 4, 4)
+        # Shape: (num_bodies, 4, 4)
+        transforms = trans_attr.view()
 
         # Get velocities (4x4 matrix representing transform derivative)
         vel_attr = self._abd_state_geom.instances().find(uipc.builtin.velocity)
-        velocities = vel_attr.view()  # Shape: (num_bodies, 4, 4)
+        # Shape: (num_bodies, 4, 4)
+        velocities = vel_attr.view()
 
         for i_link, (link, abd_data) in enumerate(self._abd_data_by_link.items()):
             if abd_data.ipc_transforms is None:

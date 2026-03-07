@@ -406,7 +406,9 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             dt=DT,
             gravity=GRAVITY,
         ),
-        rigid_options=gs.options.RigidOptions(),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
             constraint_strength_translation=1,
@@ -529,7 +531,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         corr = np.corrcoef(actual[corr_mask], target_dof_pos_history[corr_mask])[0, 1]
         assert corr > 1.0 - corr_tol
     assert_allclose(
-        (cur_dof_pos_history - cur_dof_pos_history[..., [0]])[corr_mask],
+        (cur_dof_pos_history - cur_dof_pos_history[..., [0]])[..., corr_mask],
         (target_dof_pos_history - target_dof_pos_history[..., [0]])[corr_mask],
         tol=0.03,
     )
@@ -1412,7 +1414,6 @@ def test_cloth_corner_drag(n_envs, show_viewer):
             material=gs.materials.Rigid(
                 coup_type="two_way_soft_constraint",
                 coup_friction=0.8,
-                gravity_compensation=1.0,
             ),
             surface=gs.surfaces.Plastic(
                 color=(1.0, 0.0, 0.0, 1.0) if z_sign > 0 else (0.0, 1.0, 0.0, 1.0),
