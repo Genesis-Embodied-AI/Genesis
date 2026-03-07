@@ -415,6 +415,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
     parser.addoption("--ref", type=str, default=None, help="Label added to benchmark output filenames.")
+    parser.addoption(
+        "--speed-test-filepath",
+        type=str,
+        default="speed_test.txt",
+        help="Base filepath for speed test reports (default: speed_test.txt).",
+    )
     if os.environ.get("GS_PROFILING", "0") == "1":
         profiling.parser_add_options(parser)
 

@@ -1100,12 +1100,12 @@ class Collision(URDFType):
 
     @origin.setter
     def origin(self, value):
-        self._origin = configure_origin(value)
+        self._origin = configure_origin(value, default=True)
 
     @classmethod
     def _from_xml(cls, node, root, path):
         kwargs = cls._parse(node, root, path)
-        kwargs["origin"] = parse_origin(node)
+        kwargs["origin"] = parse_origin(node, default=True)
         return Collision(**kwargs)
 
     def _to_xml(self, parent, path):
@@ -1196,7 +1196,7 @@ class Visual(URDFType):
 
     @origin.setter
     def origin(self, value):
-        self._origin = configure_origin(value)
+        self._origin = configure_origin(value, default=True)
 
     @property
     def material(self):
@@ -1213,7 +1213,7 @@ class Visual(URDFType):
     @classmethod
     def _from_xml(cls, node, root, path):
         kwargs = cls._parse(node, root, path)
-        kwargs["origin"] = parse_origin(node)
+        kwargs["origin"] = parse_origin(node, default=True)
         return Visual(**kwargs)
 
     def _to_xml(self, parent, path):
@@ -1296,11 +1296,11 @@ class Inertial(URDFType):
 
     @origin.setter
     def origin(self, value):
-        self._origin = configure_origin(value)
+        self._origin = configure_origin(value, default=False)
 
     @classmethod
     def _from_xml(cls, node, root, path):
-        origin = parse_origin(node)
+        origin = parse_origin(node, default=False)
         mass = float(node.find("mass").attrib["value"])
         n = node.find("inertia")
         xx = float(n.attrib["ixx"])
@@ -1314,7 +1314,8 @@ class Inertial(URDFType):
 
     def _to_xml(self, parent, path):
         node = ET.Element("inertial")
-        node.append(unparse_origin(self.origin))
+        if self.origin is not None:
+            node.append(unparse_origin(self.origin))
         mass = ET.Element("mass")
         mass.attrib["value"] = str(self.mass)
         node.append(mass)
@@ -2226,7 +2227,7 @@ class Joint(URDFType):
 
     @origin.setter
     def origin(self, value):
-        self._origin = configure_origin(value)
+        self._origin = configure_origin(value, default=True)
 
     @property
     def limit(self):
@@ -2436,7 +2437,7 @@ class Joint(URDFType):
         if axis is not None:
             axis = np.fromstring(axis.attrib["xyz"], sep=" ")
         kwargs["axis"] = axis
-        kwargs["origin"] = parse_origin(node)
+        kwargs["origin"] = parse_origin(node, default=True)
         return Joint(**kwargs)
 
     def _to_xml(self, parent, path):

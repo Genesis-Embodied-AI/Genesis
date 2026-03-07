@@ -88,6 +88,10 @@ def test_track_rigid(show_viewer, tol):
         scene.step()
         ghost.set_qpos(robot.get_qpos())
         assert_allclose(ghost.get_vAABB(), robot.get_vAABB(), tol=tol)
+    assert_allclose(ghost.get_links_pos(), robot.get_links_pos(), tol=tol)
+
+    ghost.set_dofs_velocity(robot.get_dofs_velocity())
+    assert_allclose(ghost.get_links_vel(), robot.get_links_vel(), tol=tol)
 
     frozen_ghost_vaabb = ghost.get_vAABB()
     frozen_robot_vaabb = robot.get_vAABB()
