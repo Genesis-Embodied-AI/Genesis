@@ -103,6 +103,8 @@ class KinematicSolver(Solver):
         self.constraint_solver = None
 
         self.qpos = None
+        self.qpos0 = None
+        self.qpos_prev = None
 
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
@@ -334,6 +336,7 @@ class KinematicSolver(Solver):
         # Set initial qpos
         self.qpos = self._rigid_global_info.qpos
         self.qpos0 = self._rigid_global_info.qpos0
+        self.qpos_prev = self._rigid_global_info.qpos_prev
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
             self.qpos0.from_numpy(init_qpos)

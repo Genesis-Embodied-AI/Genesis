@@ -34,9 +34,8 @@ def find_target_link_for_fixed_merge(link):
         if link.parent_idx < 0:
             break
 
-        # Check if there is any non-fixed joint
+        # Stop if the link has any non-fixed joint (non-fixed joints define separate bodies)
         if any(joint.type != gs.JOINT_TYPE.FIXED for joint in link.joints):
-            # Found a link with non-FIXED joint, this is our target
             break
 
         # All joints are FIXED, move up to parent

@@ -36,14 +36,12 @@ class Rigid(Kinematic):
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
         coup_type : str or None, optional
             Coupling mode for this entity. Only used by the IPC coupler. Requires ``needs_coup=True``.
-            If None, auto-selected based on entity type: ``'external_articulation'`` for fixed-base
-            articulated robots, ``'two_way_soft_constraint'`` for floating-base robots, and
-            ``'ipc_only'`` for non-articulated objects. Valid values:
+            Must be explicitly set when ``needs_coup=True``. Valid values:
               - 'two_way_soft_constraint': Two-way soft coupling.
               - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
                 the DOF level.
-              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only supported by rigid
-                non-articulated objects.
+              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Not supported for
+                articulated robots (with revolute, prismatic, etc. joints).
             Default is None.
         coup_links : tuple of str or None, optional
             Tuple of link names to include in coupling. When set, only the named links participate

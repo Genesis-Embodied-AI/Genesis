@@ -275,20 +275,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
         Whether to enable contact detection between rigid bodies (ABD objects) in the IPC system.
         When False, only soft-soft and soft-rigid collisions are detected by IPC; rigid-rigid
         collisions within IPC are skipped. Defaults to True.
-    two_way_coupling : bool, optional
-        Whether to apply coupling forces/torques from IPC back to Genesis rigid bodies. Defaults to True.
-    enable_rigid_dofs_sync : bool, optional
-        Whether to synchronize the IPC reference DOF state with Genesis each step for
-        external_articulation entities. When True, IPC gets tighter coupling with Genesis joint
-        state but may amplify small divergences. When False, IPC uses its own DOF reference
-        without per-step updates. Defaults to False.
-    free_base_driven_by_ipc : bool, optional
-        For external_articulation with non-fixed base: whether base link is fully driven by IPC physics.
-        When False, base link uses SoftTransformConstraint controlled by Genesis. When True, base link
-        is fully driven by IPC physics. Defaults to False.
-    _show_ipc_gui : bool, optional
-        [Dev/debug] Enable the libuipc built-in polyscope GUI viewer for inspecting the IPC scene.
-        Defaults to False.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -331,13 +317,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
     constraint_strength_rotation: float = 100.0
     enable_rigid_ground_contact: bool = True
     enable_rigid_rigid_contact: bool = True
-    two_way_coupling: bool = True
-    enable_rigid_dofs_sync: bool = False
-    free_base_driven_by_ipc: bool = False
-
-    def __init__(self, _show_ipc_gui: bool = False, **data):
-        super().__init__(**data)
-        self._show_ipc_gui = bool(_show_ipc_gui)
 
 
 ############################ Solvers inside simulator ############################
