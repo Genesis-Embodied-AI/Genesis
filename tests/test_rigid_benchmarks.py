@@ -878,6 +878,8 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         ),
     ]
 
+    # Note: screenshots on effect of coacd_options on how the drill and table look
+    # at https://github.com/Genesis-Embodied-AI/Genesis/pull/2500#discussion_r2900243286
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(substeps=25, dt=step_dt),
         rigid_options=gs.options.RigidOptions(
