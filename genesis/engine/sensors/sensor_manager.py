@@ -136,7 +136,7 @@ class SensorManager:
 
     @property
     def sensors(self):
-        return tuple([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
+        return gs.List([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
 
 
 def register_sensor(

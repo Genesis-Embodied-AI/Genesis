@@ -284,7 +284,7 @@ class Viewer(RBC):
             self.set_camera_pose(pos=camera_pos, lookat=self._follow_lookat)
 
     @gs.assert_built
-    def register_keybinds(self, *keybinds: Keybind) -> None:
+    def register_keybinds(self, /, *keybinds: Keybind, overwrite: bool = False) -> None:
         """
         Register a callback function to be called when a key is pressed.
 
@@ -293,7 +293,7 @@ class Viewer(RBC):
         keybinds : Keybind
             One or more Keybind objects to register. See Keybind documentation for usage.
         """
-        self._pyrender_viewer.register_keybinds(*keybinds)
+        self._pyrender_viewer.register_keybinds(*keybinds, overwrite=overwrite)
 
     @gs.assert_built
     def remap_keybind(

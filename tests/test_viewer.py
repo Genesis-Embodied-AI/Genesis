@@ -148,7 +148,14 @@ def test_default_viewer_plugin():
     with pytest.raises(ValueError):
         scene.viewer.register_keybinds(
             Keybind(name="conflicting_keybind", key=Key._2, key_action=KeyAction.PRESS, callback=lambda: None),
+            overwrite=False,
         )
+
+    # Force overwrite
+    scene.viewer.register_keybinds(
+        Keybind(name="conflicting_keybind", key=Key._2, key_action=KeyAction.PRESS, callback=lambda: None),
+        overwrite=True,
+    )
 
 
 @pytest.mark.required
