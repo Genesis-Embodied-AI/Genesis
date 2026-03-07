@@ -119,6 +119,11 @@ render = [
     "pybind11[global]",
     "open3d",
 ]
+webrtc = [
+    "aiortc",
+    "aiohttp",
+    "av",
+]
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",

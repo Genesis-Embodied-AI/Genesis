@@ -184,6 +184,8 @@ The examples will be accessible from `/workspace/examples`. Note: AMD users shou
 
 Comprehensive documentation is available in [English](https://genesis-world.readthedocs.io/en/latest/user_guide/index.html), [Chinese](https://genesis-world.readthedocs.io/zh-cn/latest/user_guide/index.html), and [Japanese](https://genesis-world.readthedocs.io/ja/latest/user_guide/index.html). This includes detailed installation steps, tutorials, and API references.
 
+For headless browser viewing over WebRTC, see [`WEBRTC_STREAMING.md`](WEBRTC_STREAMING.md).
+
 ## Contributing to Genesis
 
 The Genesis project is an open and collaborative effort. We welcome all forms of contributions from the community, including:
