@@ -91,12 +91,9 @@ def main():
 
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     qpos[fingers_dof] = 0.04
-    if not args.no_ipc or args.coup_type == "external_articulation":
-        franka.control_dofs_position(qpos)
-        for _ in range(200 if "PYTEST_VERSION" not in os.environ else 1):
-            scene.step()
-    else:
-        franka.set_dofs_position(qpos)
+    franka.control_dofs_position(qpos)
+    for _ in range(200 if "PYTEST_VERSION" not in os.environ else 1):
+        scene.step()
 
     # Lower the grapper half way to grasping position
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.25], quat=[0.0, 1.0, 0.0, 0.0])

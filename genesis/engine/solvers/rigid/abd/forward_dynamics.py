@@ -36,6 +36,16 @@ def kernel_restore_integrate(
     is_backward: qd.template(),
     restore_qpos: qd.template(),
 ):
+    """Restore qpos from IPC-written values and back-compute vel/acc.
+
+    When restore_qpos is True:
+      Phase 1: Back-compute vel from qpos delta (vel = (qpos_ipc - qpos_prev) / dt),
+               then restore qpos to qpos_prev so that step_2 integration lands on qpos_ipc.
+    Always:
+      Phase 2: acc = (vel - vel_prev) / dt; vel = vel_prev.
+               This undoes the velocity update from step_1, storing the acceleration delta
+               so that the subsequent step_2 re-integrates correctly.
+    """
     BW = qd.static(is_backward)
 
     _B = dofs_state.ctrl_mode.shape[1]
@@ -140,11 +150,13 @@ def kernel_restore_integrate(
     for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             (
+                # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
             if qd.static(not BW)
+            # Static inner loop for backward pass
             else (
                 qd.static(range(static_rigid_sim_config.max_n_awake_dofs))
                 if qd.static(static_rigid_sim_config.use_hibernation)
@@ -173,6 +185,12 @@ def kernel_predict_integrate(
     is_backward: qd.template(),
     update_qpos: qd.template(),
 ):
+    """Predict velocity and optionally integrate qpos for IPC coupling.
+
+    Phase 1: vel_prev = vel; vel = vel + acc * dt (predict next velocity).
+    Phase 2 (when update_qpos): qpos_prev = qpos; qpos = qpos + vel * dt (predict next position).
+    Used before IPC advance so that IPC sees the predicted rigid state.
+    """
     BW = qd.static(is_backward)
 
     _B = dofs_state.vel.shape[1]
@@ -183,11 +201,13 @@ def kernel_predict_integrate(
     for i_0, i_b in qd.ndrange(1, _B) if qd.static(static_rigid_sim_config.use_hibernation) else qd.ndrange(n_dofs, _B):
         for i_1 in (
             (
+                # Dynamic inner loop for forward pass
                 range(rigid_global_info.n_awake_dofs[i_b])
                 if qd.static(static_rigid_sim_config.use_hibernation)
                 else qd.static(range(1))
             )
             if qd.static(not BW)
+            # Static inner loop for backward pass
             else (
                 qd.static(range(static_rigid_sim_config.max_n_awake_dofs))
                 if qd.static(static_rigid_sim_config.use_hibernation)

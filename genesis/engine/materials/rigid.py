@@ -41,7 +41,7 @@ class Rigid(Kinematic):
               - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
                 the DOF level.
               - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Not supported for
-                entities with constrained joints (revolute, prismatic, etc.).
+                articulated robots (with revolute, prismatic, etc. joints).
             Default is None.
         coup_links : tuple of str or None, optional
             Tuple of link names to include in coupling. When set, only the named links participate

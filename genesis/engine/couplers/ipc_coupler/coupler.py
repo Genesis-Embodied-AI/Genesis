@@ -91,7 +91,10 @@ class IPCCoupler(RBC):
         self.sim = simulator
         self.options = options
 
-        assert gs.use_zerocopy, "IPC coupler requires gs.use_zerocopy=True (qd_to_torch with copy=False)."
+        assert gs.use_zerocopy, (
+            "IPC coupler requires zero-copy, which is not supported on this platform. "
+            "Make sure Torch and Quadrants are sharing the same device."
+        )
 
         # Define some proxies for convenience
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
@@ -121,10 +124,10 @@ class IPCCoupler(RBC):
 
         # ==== IPC Contact Elements ====
         self._ipc_no_collision_contact: ContactElement = self._ipc_contact_tabular.create("no_collision_contact")
-        self._ipc_fem_contacts: dict["FEMEntity", ContactElement] = {}
-        self._ipc_cloth_contacts: dict["FEMEntity", ContactElement] = {}
-        self._ipc_abd_link_contacts: dict["RigidLink", ContactElement] = {}
-        self._ipc_ground_contacts: dict["RigidEntity", ContactElement] = {}
+        self._ipc_fems_contact: dict["FEMEntity", ContactElement] = {}
+        self._ipc_clothes_contact: dict["FEMEntity", ContactElement] = {}
+        self._ipc_abd_links_contact: dict["RigidLink", ContactElement] = {}
+        self._ipc_grounds_contact: dict["RigidEntity", ContactElement] = {}
 
         # ==== Entity Coupling Configuration ====
         self._coup_type_by_entity: dict["RigidEntity", COUPLING_TYPE] = {}
@@ -133,21 +136,19 @@ class IPCCoupler(RBC):
         self._entities_by_coup_type: dict[COUPLING_TYPE, list["RigidEntity"]] = {}
 
         # ==== ABD Geometry & State ====
-        self._abd_merged_verts_faces: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {}  # for neutral check
+        # Cached merged world-frame meshes per link, used for neutral-pose overlap check
+        self._abd_merged_verts_faces: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {}
         self._abd_state_feature: AffineBodyStateAccessorFeature | None = None
-        self._abd_state_geom: SimplicialComplex | None = None  # Geometry for batch data transfer
-
-        # ==== Two-Way Coupling State ====
-        self._abd_data_by_link: dict["RigidLink", ABDLinkData] = {}
-
-        # ==== GUI ====
-        self._ipc_gui: SceneGUI | None = None  # polyscope viewer, enabled via GS_ENABLE_IPC_GUI=1
-
-        # ==== ABD State Sync ====
+        self._abd_state_geom: SimplicialComplex | None = None
+        # Set to True when set_qpos/set_dofs_position is called; triggers IPC state sync before next advance
         self._abd_dirty: bool = False
 
-        # ==== External Articulation ====
+        # ==== Input/Output Data ====
+        self._abd_data_by_link: dict["RigidLink", ABDLinkData] = {}
         self._articulation_data_by_entity: dict["RigidEntity", ArticulatedEntityData] = {}
+
+        # ==== GUI ====
+        self._ipc_gui: SceneGUI | None = None
 
     # ============================================================
     # Section 1: Configuration API
@@ -299,11 +300,11 @@ class IPCCoupler(RBC):
             # ---- Apply constitutions (env-independent) ----
             # Apply per-entity contact element
             if is_cloth:
-                self._ipc_cloth_contacts[entity] = self._ipc_contact_tabular.create(f"cloth_contact_{i_e}")
-                self._ipc_cloth_contacts[entity].apply_to(mesh)
+                self._ipc_clothes_contact[entity] = self._ipc_contact_tabular.create(f"cloth_contact_{i_e}")
+                self._ipc_clothes_contact[entity].apply_to(mesh)
             else:
-                self._ipc_fem_contacts[entity] = self._ipc_contact_tabular.create(f"fem_contact_{i_e}")
-                self._ipc_fem_contacts[entity].apply_to(mesh)
+                self._ipc_fems_contact[entity] = self._ipc_contact_tabular.create(f"fem_contact_{i_e}")
+                self._ipc_fems_contact[entity].apply_to(mesh)
 
             # Apply material constitution based on type
             if is_cloth:
@@ -397,10 +398,10 @@ class IPCCoupler(RBC):
                         height = np.dot(geom.init_pos, normal)
                         plane_geom = uipc.geometry.ground(height, normal)
 
-                        if entity not in self._ipc_ground_contacts:
+                        if entity not in self._ipc_grounds_contact:
                             plane_contact = self._ipc_contact_tabular.create(f"ground_contact_{i_e}")
-                            self._ipc_ground_contacts[entity] = plane_contact
-                        self._ipc_ground_contacts[entity].apply_to(plane_geom)
+                            self._ipc_grounds_contact[entity] = plane_contact
+                        self._ipc_grounds_contact[entity].apply_to(plane_geom)
 
                         for env_idx in range(self._B):
                             plane_obj = self._ipc_objects.create(f"rigid_plane_{geom.idx}_{env_idx}")
@@ -435,9 +436,9 @@ class IPCCoupler(RBC):
 
             # Cache merged world-frame mesh for env 0 (used by neutral overlap check)
             link_T_0 = gu.trans_quat_to_T(links_pos[0, target_link.idx], links_quat[0, target_link.idx])
-            local_verts = np.array(rigid_link_geom.positions().view(), dtype=np.float64).reshape(-1, 3)
+            local_verts = np.asarray(rigid_link_geom.positions().view(), dtype=np.float64)
             world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
-            faces = np.array(rigid_link_geom.triangles().topo().view(), dtype=np.int32).reshape(-1, 3)
+            faces = rigid_link_geom.triangles().topo().view().astype(np.int32)
             self._abd_merged_verts_faces[target_link] = (world_verts, faces)
 
             # ---- Determine coupling behavior ----
@@ -448,10 +449,10 @@ class IPCCoupler(RBC):
 
             # Apply per-link contact element or no-collision marker
             if self._coupling_collision_settings.get(entity, {}).get(target_link, True):
-                if target_link not in self._ipc_abd_link_contacts:
+                if target_link not in self._ipc_abd_links_contact:
                     abd_contact = self._ipc_contact_tabular.create(f"abd_link_contact_{target_link.idx}")
-                    self._ipc_abd_link_contacts[target_link] = abd_contact
-                self._ipc_abd_link_contacts[target_link].apply_to(rigid_link_geom)
+                    self._ipc_abd_links_contact[target_link] = abd_contact
+                self._ipc_abd_links_contact[target_link].apply_to(rigid_link_geom)
             else:
                 self._ipc_no_collision_contact.apply_to(rigid_link_geom)
 
@@ -671,14 +672,14 @@ class IPCCoupler(RBC):
 
         # Collect non-ABD contact infos (FEM, cloth)
         non_abd_infos: list[tuple[ContactElement, float, float]] = []
-        for entity, elem in (*self._ipc_cloth_contacts.items(), *self._ipc_fem_contacts.items()):
+        for entity, elem in (*self._ipc_clothes_contact.items(), *self._ipc_fems_contact.items()):
             friction = entity.material.friction_mu
             resistance = entity.material.contact_resistance or self.options.contact_resistance
             non_abd_infos.append((elem, friction, resistance))
 
         # Collect ABD link contact infos
         abd_link_infos: list[tuple[ContactElement, "RigidLink", float, float]] = []
-        for link, elem in self._ipc_abd_link_contacts.items():
+        for link, elem in self._ipc_abd_links_contact.items():
             friction = link.entity.material.coup_friction
             resistance = link.entity.material.contact_resistance or self.options.contact_resistance
             abd_link_infos.append((elem, link, friction, resistance))
@@ -742,7 +743,7 @@ class IPCCoupler(RBC):
             all_contact_infos.append((elem, friction, resistance, True))
 
         # Register per-plane ground contact pairs
-        for entity, ground_elem in self._ipc_ground_contacts.items():
+        for entity, ground_elem in self._ipc_grounds_contact.items():
             plane_friction = entity.material.coup_friction
             plane_resistance = entity.material.contact_resistance or self.options.contact_resistance
             for elem, friction, resistance, is_abd in all_contact_infos:
