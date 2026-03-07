@@ -1751,7 +1751,7 @@ class KinematicEntity(Entity):
     @property
     def joints(self) -> list[RigidJoint]:
         """The list of joints (`RigidJoint`) in the entity."""
-        return tuple(chain.from_iterable(self._joints))
+        return gs.List(chain.from_iterable(self._joints))
 
     @property
     def joints_by_links(self):
