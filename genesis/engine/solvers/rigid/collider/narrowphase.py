@@ -1906,26 +1906,13 @@ def func_narrowphase_kernel1_contact0(
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
-                if multi_contact:
-                    # Enqueue for kernel2 — kernel2 will write all contacts
-                    # (including contact 0) contiguously via a single atomic reservation.
-                    if prefer_gjk:
-                        if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                            func_enqueue_for_multicontact(
-                                collider_state,
-                                True,
-                                i_b,
-                                i_ga,
-                                i_gb,
-                                i_pair,
-                                contact_pos,
-                                normal,
-                                penetration,
-                            )
-                    else:
+                if prefer_gjk:
+                    # GJK algorithm: always enqueue to GJK queue — kernel2
+                    # runs full GJK detection regardless of multi_contact.
+                    if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         func_enqueue_for_multicontact(
                             collider_state,
-                            False,
+                            True,
                             i_b,
                             i_ga,
                             i_gb,
@@ -1934,6 +1921,20 @@ def func_narrowphase_kernel1_contact0(
                             normal,
                             penetration,
                         )
+                elif multi_contact:
+                    # Enqueue for kernel2 — kernel2 will write all contacts
+                    # (including contact 0) contiguously via a single atomic reservation.
+                    func_enqueue_for_multicontact(
+                        collider_state,
+                        False,
+                        i_b,
+                        i_ga,
+                        i_gb,
+                        i_pair,
+                        contact_pos,
+                        normal,
+                        penetration,
+                    )
                 else:
                     func_add_contact(
                         i_ga,
