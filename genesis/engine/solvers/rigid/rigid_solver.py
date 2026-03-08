@@ -1569,7 +1569,7 @@ class RigidSolver(KinematicSolver):
         from genesis.engine.couplers import IPCCoupler
 
         if isinstance(self.sim.coupler, IPCCoupler):
-            self.sim.coupler.mark_abd_dirty()
+            self.sim.coupler.mark_is_abd_updated()
 
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")

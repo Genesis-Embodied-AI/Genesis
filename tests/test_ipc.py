@@ -1550,8 +1550,9 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(20):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    # Initially cloth edge will fall down a little.
-    assert_allclose(cloth_positions_f, cloth_positions_0, tol=0.015)
+    # Sandwich boxes compress the cloth slightly in z due to SoftTransformConstraint strength.
+    assert_allclose(cloth_positions_f[..., :2], cloth_positions_0[..., :2], atol=0.006)
+    assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=0.015)
 
     # Stretch: phase one
     for box in boxes:
@@ -1561,6 +1562,10 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(80):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
+    for box in boxes:
+        init_dof = tensor_to_array(box.get_dofs_position())
+        dist_vertices = np.linalg.norm(cloth_positions_f[..., :2] - init_dof[..., None, :2], axis=-1).min(axis=-1)
+        assert_allclose(dist_vertices, 0.0, atol=0.04)
     assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=5e-3)
 
     # Extract X/Y forces while making sure observed forces are consistent
@@ -1573,17 +1578,22 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         box_forces_xy.append(box_forces[..., :2])
 
     # Check that deformation is roughly symmetric (sanity check)
+    # 180° rotational symmetry (mesh triangulation may break mirror symmetry)
     grid = cloth_positions_f.reshape((-1, 20, 20, 3))
-    grid_flipped_x = np.flip(grid, axis=-3)
-    assert_allclose(grid[..., 0], grid_flipped_x[..., 0], atol=0.01)
-    assert_allclose(grid[..., 1], -grid_flipped_x[..., 1], atol=0.01)
-    grid_flipped_y = np.flip(grid, axis=-2)
-    assert_allclose(grid[..., 0], -grid_flipped_y[..., 0], atol=0.01)
-    assert_allclose(grid[..., 1], grid_flipped_y[..., 1], atol=0.01)
+    grid_rot180 = np.flip(np.flip(grid, axis=-3), axis=-2)
+    assert_allclose(grid[..., :2], -grid_rot180[..., :2], atol=0.01)
 
-    # Force in xy is transmitted through frictional contact (sandwich grip), not direct elastic
-    # coupling, so it is bounded by μ·F_normal rather than the constitutive stress. We can only
-    # verify that xy forces are consistent across boxes (symmetry) and proportional to z forces.
+    # Check that deformation is consistent with applied forces based on material properties.
+    # Each corner bears the load from half the reference edge length (by symmetry,
+    # 2 corners per edge). Use reference length since stress is in reference config.
+    # NOTE: qf_applied only reflects PD controller forces here (coupling is via qpos overwrite,
+    # not force feedback), so the constitutive stress check uses a looser tolerance.
+    strain_GL = 0.5 * (STRETCH_RATIO_1**2 - 1.0)  # Green–Lagrange strain
+    expected_stress = E * strain_GL / (1.0 - nu)  # Equal biaxial plane stress (2nd Piola–Kirchhoff)
+    expected_force_per_box = expected_stress * THICKNESS * CLOTH_HALF
+
+    # Force in xy is transmitted through frictional contact (sandwich grip). Verify forces are
+    # consistent across boxes (symmetry) and bounded by friction: F_xy < μ·F_z.
     box_forces_z = []
     for box in boxes:
         dofs_idx = slice(box.dof_start, box.dof_end)
@@ -1600,13 +1610,12 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(50):
         scene.step()
 
-    # After over-stretching, cloth xy extent should not exceed phase-1 stretch (boxes lose grip or
-    # cloth resists). Z extent stays small — soft materials may not buckle out of plane.
+    # Lost grip
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
     cloth_aabb_min, cloth_aabb_max = cloth_positions_f.min(axis=-2), cloth_positions_f.max(axis=-2)
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
-    assert (cloth_aabb_extent[..., 2] < 0.2).all()
+    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.2)).all()
 
 
 @pytest.mark.required

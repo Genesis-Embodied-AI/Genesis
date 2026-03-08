@@ -72,6 +72,18 @@ NEUTRAL_COLLISION_RES_ABS = 0.01
 NEUTRAL_COLLISION_RES_REL = 0.05
 
 
+def are_links_adjacent(link_a, link_b) -> bool:
+    """Check if two links are adjacent (parent-child, walking through fixed joints)."""
+    a, b = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
+    while b.parent_idx != -1:
+        if b.parent_idx == a.idx:
+            return True
+        if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in b.joints):
+            break
+        b = b.entity.solver.links[b.parent_idx]
+    return False
+
+
 class Collider:
     def __init__(self, rigid_solver: "RigidSolver"):
         self._solver = rigid_solver
@@ -230,6 +242,8 @@ class Collider:
         # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
+        from genesis.engine.couplers.ipc_coupler.data import COUPLING_TYPE
+        from genesis.utils.mesh import are_meshes_overlapping
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_links = set()
@@ -240,11 +254,17 @@ class Collider:
                     continue
                 mode = entity.material.coup_type
                 if mode is None:
-                    continue
-                if mode == "ipc_only":
+                    # Auto-infer coupling type (mirrors IPCCoupler._setup_coupling_config)
+                    is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
+                    if is_robot:
+                        mode = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
+                    else:
+                        mode = "ipc_only"
+                coup_type = COUPLING_TYPE[mode.upper()]
+                if coup_type == COUPLING_TYPE.IPC_ONLY:
                     ipc_only_links.update(entity.links)
                 link_filter_names = entity.material.coup_links
-                if mode == "two_way_soft_constraint" and link_filter_names is not None:
+                if coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT and link_filter_names is not None:
                     for name in link_filter_names:
                         ipc_delegated_links.add(entity.get_link(name=name))
                 else:
@@ -310,18 +330,8 @@ class Collider:
                         continue
 
                     # adjacent links
-                    # FIXME: Links should be considered adjacent if connected by only fixed joints.
                     if not self._solver._enable_adjacent_collision:
-                        is_adjacent = False
-                        link_a_, link_b_ = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
-                        while link_b_.parent_idx != -1:
-                            if link_b_.parent_idx == link_a_.idx:
-                                is_adjacent = True
-                                break
-                            if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
-                                break
-                            link_b_ = self._solver.links[link_b_.parent_idx]
-                        if is_adjacent:
+                        if are_links_adjacent(link_a, link_b):
                             continue
 
                     # active in neutral configuration (qpos0)
@@ -331,20 +341,10 @@ class Collider:
                         mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
                         verts_b = geoms_verts[i_gb][i_b]
                         mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
-                        bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
-                        if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
-                            voxels_a = mesh_a.voxelized(
-                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
-                            )
-                            voxels_b = mesh_b.voxelized(
-                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
-                            )
-                            coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
-                            coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
-                            if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
-                                is_self_colliding = True
-                                self_colliding_pairs.append((i_ga, i_gb))
-                                break
+                        if are_meshes_overlapping(mesh_a, mesh_b, NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL):
+                            is_self_colliding = True
+                            self_colliding_pairs.append((i_ga, i_gb))
+                            break
                     if is_self_colliding:
                         continue
 

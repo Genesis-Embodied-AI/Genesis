@@ -406,6 +406,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     if IS_INTERACTIVE_VIEWER_AVAILABLE:
         parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    parser.addoption("--record", action="store_true", default=False, help="Record test videos to test_recordings/.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
     supported, _reason = is_mem_monitoring_supported()
     help_text = (
@@ -438,6 +439,71 @@ def pytorch_profiler_step(pytestconfig):
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
     return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
+
+
+@pytest.fixture(autouse=True)
+def _auto_record_video(request, initialize_genesis):
+    """Auto-record video when --record is passed. No test code changes needed.
+
+    Patches Scene.__init__ to add a camera before build, and Scene.build to
+    start recording and patch step() for auto-rendering.
+    Depends on initialize_genesis so teardown runs before gs.destroy().
+    """
+    if not request.config.getoption("--record", False):
+        yield
+        return
+
+    from genesis.engine.scene import Scene
+
+    cameras: list = []
+    original_init = Scene.__init__
+    original_build = Scene.build
+
+    def patched_init(scene_self, *args, **kwargs):
+        original_init(scene_self, *args, **kwargs)
+        viewer_opts = scene_self.viewer_options
+        scene_self._record_cam = scene_self.add_camera(
+            res=(1280, 960),
+            pos=viewer_opts.camera_pos if viewer_opts else (2, 2, 2),
+            lookat=viewer_opts.camera_lookat if viewer_opts else (0, 0, 0),
+            fov=viewer_opts.camera_fov if viewer_opts else 40,
+        )
+
+    def patched_build(scene_self, *args, **kwargs):
+        result = original_build(scene_self, *args, **kwargs)
+        cam = getattr(scene_self, "_record_cam", None)
+        if cam is None:
+            return result
+
+        cam.start_recording()
+        cameras.append(cam)
+
+        original_step = scene_self.step
+
+        def step_and_render(*a, **kw):
+            ret = original_step(*a, **kw)
+            cam.render()
+            return ret
+
+        scene_self.step = step_and_render
+
+        return result
+
+    Scene.__init__ = patched_init
+    Scene.build = patched_build
+    try:
+        yield
+    finally:
+        # Save recordings before Genesis teardown destroys the logger
+        if cameras:
+            out_dir = Path("test_recordings")
+            out_dir.mkdir(exist_ok=True)
+            name = request.node.name.replace("/", "_").replace("::", "_")
+            for i, cam in enumerate(cameras):
+                suffix = f"_{i}" if len(cameras) > 1 else ""
+                cam.stop_recording(save_to_filename=str(out_dir / f"{name}{suffix}.mp4"), fps=30)
+        Scene.__init__ = original_init
+        Scene.build = original_build
 
 
 @pytest.fixture(scope="session")

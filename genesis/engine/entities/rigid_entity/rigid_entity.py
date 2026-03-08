@@ -3325,6 +3325,26 @@ class RigidEntity(KinematicEntity):
     # ------------------------------------------------------------------------------------
 
     @gs.assert_built
+    def set_qpos(self, qpos, qs_idx_local=None, envs_idx=None, *, zero_velocity=True, skip_forward=False):
+        """
+        Set the entity's qpos.
+
+        Parameters
+        ----------
+        qpos : array_like
+            The qpos to set.
+        qs_idx_local : None | array_like, optional
+            The indices of the qpos to set. If None, all qpos will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
+        """
+        super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
+
+    @gs.assert_built
     def set_dofs_kp(self, kp, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' positional gains for the PD controller.
@@ -3420,6 +3440,30 @@ class RigidEntity(KinematicEntity):
     def set_dofs_velocity_grad(self, dofs_idx_local, envs_idx, velocity_grad):
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_velocity_grad(dofs_idx, envs_idx, velocity_grad.data)
+
+    # ------------------------------------------------------------------------------------
+    # ----------------------------- DOF property setters ---------------------------------
+    # ------------------------------------------------------------------------------------
+
+    @gs.assert_built
+    def set_dofs_position(self, position, dofs_idx_local=None, envs_idx=None, *, zero_velocity=True):
+        """
+        Set the entity's dofs' position.
+
+        Parameters
+        ----------
+        position : array_like
+            The position to set.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        zero_velocity : bool, optional
+            Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
+            sudden change in entity pose.
+        """
+        super().set_dofs_position(position, dofs_idx_local, envs_idx, zero_velocity=zero_velocity)
 
     @gs.assert_built
     def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):

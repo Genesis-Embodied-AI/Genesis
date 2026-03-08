@@ -57,7 +57,8 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     )
 
 
-ABD_KAPPA = 100.0  # MPa unit
+# Affine body stiffness in MPa
+ABD_KAPPA = 100.0
 # TODO: consider deriving from Genesis joint properties instead of hardcoding.
 JOINT_STRENGTH_RATIO = 100.0
 
@@ -137,12 +138,12 @@ class IPCCoupler(RBC):
         self._entities_by_coup_type: dict[COUPLING_TYPE, list["RigidEntity"]] = {}
 
         # ==== ABD Geometry & State ====
-        # Cached merged world-frame meshes per link, used for neutral-pose overlap check
-        self._abd_merged_verts_faces: dict["RigidLink", tuple[np.ndarray, np.ndarray]] = {}
+        # Cached merged world-frame trimesh per link for neutral-pose overlap check
+        self._abd_merged_meshes = {}
         self._abd_state_feature: AffineBodyStateAccessorFeature | None = None
         self._abd_state_geom: SimplicialComplex | None = None
         # Set to True when set_qpos/set_dofs_position is called; triggers IPC state sync before next advance
-        self._abd_dirty: bool = False
+        self._is_abd_updated: bool = False
 
         # ==== Input/Output Data ====
         self._abd_data_by_link: dict["RigidLink", ABDLinkData] = {}
@@ -188,28 +189,27 @@ class IPCCoupler(RBC):
             if not entity.material.needs_coup:
                 continue
             coup_type = entity.material.coup_type
+            is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
             if coup_type is None:
-                gs.raise_exception(
-                    f"Rigid entity {i_e} has needs_coup=True but coup_type=None. "
-                    f"Please explicitly set coup_type to one of 'ipc_only', 'two_way_soft_constraint', "
-                    f"or 'external_articulation'."
-                )
+                # Auto-select: robots get articulation coupling, objects get ipc_only
+                if is_robot:
+                    coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
+                else:
+                    coup_type = "ipc_only"
 
             self._coup_type_by_entity[entity] = coup_type = getattr(COUPLING_TYPE, coup_type.upper())
-            # Non-fixed joints = joints that actually move (exclude FREE base and FIXED).
-            movable_joints = [j for j in entity.joints if j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED)]
             if coup_type == COUPLING_TYPE.EXTERNAL_ARTICULATION:
                 if not entity.base_link.is_fixed:
                     gs.raise_exception(
                         f"Rigid entity {i_e} has a non-fixed base. "
                         f"Use 'two_way_soft_constraint' instead of 'external_articulation'."
                     )
-                if not movable_joints:
+                if not is_robot:
                     gs.raise_exception(
                         f"Rigid entity {i_e} has no articulated joints. Use 'ipc_only' instead of 'external_articulation'."
                     )
             elif coup_type == COUPLING_TYPE.IPC_ONLY:
-                if movable_joints:
+                if is_robot:
                     gs.raise_exception(
                         f"Rigid entity {i_e} has articulated joints. Use 'external_articulation' instead of 'ipc_only'."
                     )
@@ -435,12 +435,18 @@ class IPCCoupler(RBC):
             uipc.geometry.label_surface(rigid_link_geom)
             is_open_mesh = not uipc.geometry.is_trimesh_closed(rigid_link_geom)
 
-            # Cache merged world-frame mesh for env 0 (used by neutral overlap check)
+            # Cache merged world-frame trimesh for env 0 (used by neutral overlap check)
+            import trimesh
+
             link_T_0 = gu.trans_quat_to_T(links_pos[0, target_link.idx], links_quat[0, target_link.idx])
-            local_verts = np.asarray(rigid_link_geom.positions().view(), dtype=np.float64)[..., 0]
+            local_verts = np.asarray(rigid_link_geom.positions().view())[..., 0]
             world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
-            faces = rigid_link_geom.triangles().topo().view()[..., 0].astype(np.int32)
-            self._abd_merged_verts_faces[target_link] = (world_verts, faces)
+            faces = rigid_link_geom.triangles().topo().view()[..., 0]
+            self._abd_merged_meshes[target_link] = trimesh.Trimesh(
+                vertices=world_verts,
+                faces=faces,
+                process=False,
+            )
 
             # ---- Determine coupling behavior ----
             is_ipc_only = entity_coup_type == COUPLING_TYPE.IPC_ONLY
@@ -473,8 +479,7 @@ class IPCCoupler(RBC):
                     [
                         self.options.constraint_strength_translation,
                         self.options.constraint_strength_rotation,
-                    ],
-                    dtype=np.float64,
+                    ]
                 )
                 self._ipc_stc.apply_to(rigid_link_geom, constraint_strength)
 
@@ -511,12 +516,11 @@ class IPCCoupler(RBC):
 
             # ---- Store link data ----
             needs_ipc_state = is_ipc_only or is_soft_constraint_target
-            B = self._B
             self._abd_data_by_link[target_link] = ABDLinkData(
                 slots=abd_geom_slots,
-                aim_transforms=np.tile(np.eye(4, dtype=gs.np_float), (B, 1, 1)),
-                ipc_transforms=np.tile(np.eye(4, dtype=gs.np_float), (B, 1, 1)) if needs_ipc_state else None,
-                ipc_velocities=np.zeros((B, 4, 4), dtype=gs.np_float) if needs_ipc_state else None,
+                aim_transforms=np.tile(np.eye(4, dtype=gs.np_float), (self._B, 1, 1)),
+                ipc_transforms=np.tile(np.eye(4, dtype=gs.np_float), (self._B, 1, 1)) if needs_ipc_state else None,
+                ipc_velocities=np.zeros((self._B, 4, 4), dtype=gs.np_float) if needs_ipc_state else None,
             )
 
     def _add_articulation_entities_to_ipc(self) -> None:
@@ -602,61 +606,20 @@ class IPCCoupler(RBC):
                 articulation_geom_slots.append(articulation_geom_slot)
 
             # Store articulation data with pre-allocated per-step arrays
-            n_qs = entity.q_end - entity.q_start
-            n_dofs = entity.dof_end - entity.dof_start
             n_joints = len(joints)
-            B = self._B
             self._articulation_data_by_entity[entity] = ArticulatedEntityData(
                 slots=articulation_geom_slots,
                 q_slice=slice(entity.q_start, entity.q_end),
                 dof_slice=slice(entity.dof_start, entity.dof_end),
                 joints_child_link=[j.link for j, *_ in joints],
                 joints_qs_idx_local=[j.qs_idx_local[0] for j, *_ in joints],
-                delta_theta_tilde=np.zeros((B, n_joints), dtype=np.float64),
-                prev_qpos=np.zeros((B, n_qs), dtype=np.float64),
-                mass_matrix=np.zeros((B, n_dofs, n_dofs), dtype=np.float64),
-                ipc_qpos=np.zeros((B, n_qs), dtype=gs.np_float),
+                delta_theta_tilde=np.zeros((self._B, n_joints), dtype=np.float64),
+                prev_qpos=np.zeros((self._B, entity.n_qs), dtype=np.float64),
+                mass_matrix=np.zeros((self._B, entity.n_dofs, entity.n_dofs), dtype=np.float64),
+                ipc_qpos=np.zeros((self._B, entity.n_qs), dtype=gs.np_float),
             )
 
             gs.logger.debug(f"Successfully added articulated rigid entity {i_e} to IPC.")
-
-    @staticmethod
-    def _are_links_adjacent(link_a: "RigidLink", link_b: "RigidLink") -> bool:
-        """Check if two links are adjacent (parent-child, walking through fixed joints)."""
-        a, b = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
-        while b.parent_idx != -1:
-            if b.parent_idx == a.idx:
-                return True
-            if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in b.joints):
-                break
-            b = b.entity.solver.links[b.parent_idx]
-        return False
-
-    def _are_links_overlapping_at_neutral(self, link_a: "RigidLink", link_b: "RigidLink") -> bool:
-        """Check if two links' merged collision meshes overlap at qpos0 (neutral configuration).
-
-        Uses cached merged world-frame meshes from _add_rigid_geoms_to_ipc (env 0).
-        """
-        import trimesh
-
-        NEUTRAL_RES_ABS = 0.01
-        NEUTRAL_RES_REL = 0.05
-
-        vf_a = self._abd_merged_verts_faces.get(link_a)
-        vf_b = self._abd_merged_verts_faces.get(link_b)
-        if vf_a is None or vf_b is None:
-            return False
-
-        mesh_a = trimesh.Trimesh(vertices=vf_a[0], faces=vf_a[1], process=False)
-        mesh_b = trimesh.Trimesh(vertices=vf_b[0], faces=vf_b[1], process=False)
-        bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
-        if (bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any():
-            return False
-        voxels_a = mesh_a.voxelized(pitch=min(NEUTRAL_RES_ABS, NEUTRAL_RES_REL * max(mesh_a.extents)))
-        voxels_b = mesh_b.voxelized(pitch=min(NEUTRAL_RES_ABS, NEUTRAL_RES_REL * max(mesh_b.extents)))
-        coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
-        coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
-        return bool(voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any())
 
     def _register_contact_pairs(self) -> None:
         """Register pairwise contact models for all contact elements.
@@ -665,6 +628,9 @@ class IPCCoupler(RBC):
         Rigid link self-collision filtering mirrors the RigidSolver collider:
         ``enable_self_collision``, ``enable_adjacent_collision``, ``enable_neutral_collision``.
         """
+        from genesis.engine.solvers.rigid.collider.collider import are_links_adjacent
+        from genesis.utils.mesh import are_meshes_overlapping
+
         assert gs.logger is not None
 
         enable_self_collision = self.rigid_solver._enable_self_collision
@@ -725,11 +691,18 @@ class IPCCoupler(RBC):
                         )
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
-                    if not enable_adjacent_collision and self._are_links_adjacent(link_i, link_j):
+                    if not enable_adjacent_collision and are_links_adjacent(link_i, link_j):
                         gs.logger.debug(f"IPC: disable adjacent-coll {link_i.name} <-> {link_j.name}")
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
-                    if not enable_neutral_collision and self._are_links_overlapping_at_neutral(link_i, link_j):
+                    mesh_i = self._abd_merged_meshes.get(link_i)
+                    mesh_j = self._abd_merged_meshes.get(link_j)
+                    if (
+                        not enable_neutral_collision
+                        and mesh_i is not None
+                        and mesh_j is not None
+                        and are_meshes_overlapping(mesh_i, mesh_j)
+                    ):
                         gs.logger.debug(f"IPC: disable neutral-coll {link_i.name} <-> {link_j.name}")
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
@@ -882,13 +855,13 @@ class IPCCoupler(RBC):
             assert envs_set == all_envs, f"IPC coupler only supports full reset, got envs_idx={envs_idx}"
 
         gs.logger.debug("Resetting IPC coupler state")
-        self._abd_dirty = False
+        self._is_abd_updated = False
         self._ipc_world.recover(0)
         self._ipc_world.retrieve()
 
-    def mark_abd_dirty(self):
+    def mark_is_abd_updated(self):
         """Mark all coupled entities as needing IPC ABD state sync after position changes."""
-        self._abd_dirty = True
+        self._is_abd_updated = True
 
     def cache_pre_prediction_transforms(self):
         """
@@ -899,7 +872,7 @@ class IPCCoupler(RBC):
         prediction overwrites them. ABD bodies are set to these poses so IPC can
         resolve collisions on the path toward the predicted target.
         """
-        if not self._abd_dirty or self._abd_state_feature is None:
+        if not self._is_abd_updated or self._abd_state_feature is None:
             return
 
         assert self._abd_state_geom is not None
@@ -918,7 +891,7 @@ class IPCCoupler(RBC):
                 transforms[abd_body_idx] = links_transform[env_idx, link.idx]
 
         self._abd_state_feature.copy_from(self._abd_state_geom)
-        self._abd_dirty = False
+        self._is_abd_updated = False
 
     @property
     def is_active(self) -> bool:
@@ -1106,9 +1079,7 @@ class IPCCoupler(RBC):
             envs_qpos = np.empty((self._B, 7), dtype=gs.np_float)
             for env_idx in range(self._B):
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_data.ipc_transforms[env_idx])
-            qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(
-                dtype=qpos_tc.dtype, device=qpos_tc.device
-            )
+            qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos)
 
         # ---- Step 2a: Two-way child links — back-compute joint angles from IPC transforms ----
         if COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT in self._entities_by_coup_type:
@@ -1160,7 +1131,7 @@ class IPCCoupler(RBC):
                         xaxis = gu.transform_by_quat(axis, child_quat_pre)
                         angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
                     envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
-                qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(dtype=qpos_tc.dtype, device=qpos_tc.device)
+                qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q)
 
         # ---- Step 2b: External articulation — read delta_theta, write joint qpos ----
         for ad in self._articulation_data_by_entity.values():
@@ -1175,6 +1146,4 @@ class IPCCoupler(RBC):
             # Base link qpos[0:7] already handled in Step 1 for non-fixed base;
             # only write joint DOFs here.
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
-            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(
-                dtype=qpos_tc.dtype, device=qpos_tc.device
-            )
+            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local])
