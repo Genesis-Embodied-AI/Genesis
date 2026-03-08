@@ -581,6 +581,7 @@ class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
     gjk_penetration_0: V_ANNOTATION
     mpr_queue_size: V_ANNOTATION
     gjk_queue_size: V_ANNOTATION
+    gjk_queue_size_k2: V_ANNOTATION
     mpr_work_counter: V_ANNOTATION
     gjk_work_counter: V_ANNOTATION
 
@@ -603,6 +604,7 @@ def get_narrowphase_work_queues(max_entries):
         gjk_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
         mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
         gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_queue_size_k2=V(dtype=gs.qd_int, shape=(1,)),
         mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),
         gjk_work_counter=V(dtype=gs.qd_int, shape=(1,)),
     )

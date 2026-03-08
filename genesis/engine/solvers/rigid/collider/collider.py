@@ -505,6 +505,33 @@ class Collider:
             self._collider_state,
         )
 
+    def _call_kernel2_mixed(self):
+        narrowphase.func_narrowphase_kernel2_mixed(
+            self._solver.links_state,
+            self._solver.links_info,
+            self._solver.geoms_state,
+            self._solver.geoms_info,
+            self._solver.geoms_init_AABB,
+            self._solver.verts_info,
+            self._solver.faces_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._collider_state,
+            self._collider_info,
+            self._collider_static_config,
+            self._kernel2_mpr_state,
+            self._mpr._mpr_info,
+            self._kernel2_gjk_state,
+            self._gjk._gjk_info,
+            self._gjk._gjk_static_config,
+            self._support_field._support_field_info,
+            self._kernel2_gjk_state.diff_contact_input,
+            self._solver._errno,
+            self._kernel2_n_gjk_threads,
+            self._kernel2_n_total_threads,
+            self._kernel2_max_items_per_thread,
+        )
+
     def detection(self) -> None:
         rigid_solver.kernel_update_geom_aabbs(
             self._solver.geoms_state,
@@ -552,31 +579,9 @@ class Collider:
                 self._solver._B,
                 self._kernel1_n_chunks,
             )
-            narrowphase.func_narrowphase_kernel2_mixed(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
-                self._solver.geoms_init_AABB,
-                self._solver.verts_info,
-                self._solver.faces_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._collider_state,
-                self._collider_info,
-                self._collider_static_config,
-                self._kernel2_mpr_state,
-                self._mpr._mpr_info,
-                self._kernel2_gjk_state,
-                self._gjk._gjk_info,
-                self._gjk._gjk_static_config,
-                self._support_field._support_field_info,
-                self._kernel2_gjk_state.diff_contact_input,
-                self._solver._errno,
-                self._kernel2_n_gjk_threads,
-                self._kernel2_n_total_threads,
-                self._kernel2_max_items_per_thread,
-            )
+            self._call_kernel2_mixed()
+            narrowphase.func_prepare_gjk_rerun(self._collider_state)
+            self._call_kernel2_mixed()
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._solver.geoms_state,
