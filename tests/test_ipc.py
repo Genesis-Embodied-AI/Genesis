@@ -84,6 +84,17 @@ def get_ipc_rigid_links_idx(scene, env_idx):
     return links_idx
 
 
+def assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, atol):
+    """Assert IPC-side and Genesis-side link transforms match within tolerance."""
+    abd_data = coupler._abd_data_by_link.get(link)
+    if abd_data is None or abd_data.ipc_transforms is None:
+        return
+    ipc_pos, ipc_quat = gu.T_to_trans_quat(abd_data.ipc_transforms[env_idx])
+    assert_allclose(gs_pos, ipc_pos, atol=atol)
+    rot_diff = gu.quat_to_rotvec(gu.transform_quat_by_quat(gs.inv_quat(gs_quat), ipc_quat))
+    assert_allclose(rot_diff, 0.0, atol=atol)
+
+
 @pytest.mark.parametrize("enable_rigid_rigid_contact", [False, True])
 def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
     from genesis.engine.entities import RigidEntity, FEMEntity
@@ -503,15 +514,11 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             for env_idx in envs_idx:
                 gs_pos = links_pos[env_idx, link.idx]
                 gs_quat = links_quat[env_idx, link.idx]
-                ipc_transform = abd_data.ipc_transforms[env_idx].copy()
-                ipc_pos, ipc_quat = gu.T_to_trans_quat(ipc_transform)
-                assert_allclose(gs_pos, ipc_pos, atol=transform_tol)
-                rot_diff = gu.quat_to_rotvec(gu.transform_quat_by_quat(gs.inv_quat(gs_quat), ipc_quat))
-                assert_allclose(rot_diff, 0.0, atol=transform_tol)
+                assert_ipc_genesis_transform_close(coupler, link, env_idx, gs_pos, gs_quat, atol=transform_tol)
                 if link is moving_link:
                     gs_transform = gu.trans_quat_to_T(gs_pos, gs_quat)
                     gs_transform_history.append(gs_transform)
-                    ipc_transform_history.append(ipc_transform)
+                    ipc_transform_history.append(abd_data.ipc_transforms[env_idx].copy())
     cur_dof_pos_history = np.stack(cur_dof_pos_history, axis=-1)
     target_dof_pos_history = np.stack(target_dof_pos_history, axis=-1)
 
@@ -1403,6 +1410,7 @@ def test_cloth_corner_drag(n_envs, show_viewer):
     boxes = []
     for z_sign in (+1, -1):
         box = scene.add_entity(
+            # Center box on cloth corner (0,0,0) so predicted-pose coupling covers it
             gs.morphs.Box(
                 size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
                 pos=(-BOX_SIZE / 2, z_sign * (0.5 * BOX_SIZE + GAP), -BOX_SIZE / 2),
@@ -1454,6 +1462,8 @@ def test_cloth_corner_drag(n_envs, show_viewer):
                 (x - BOX_SIZE / 2, y, z - BOX_SIZE / 2), (dx, dy, dz), dofs_idx_local=slice(0, 3)
             )
         scene.step()
+        # two_way_soft_constraint targets the predicted position (current + velocity * dt),
+        # so after stepping the cloth corner lands at the predicted pos, not the control pos.
         assert_allclose(
             cloth.get_state().pos[range(scene.sim._B), corner_idx], (x + dx * DT, y + dy * DT, z + dz * DT), tol=0.01
         )
@@ -1612,6 +1622,158 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
     assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.2)).all()
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "ipc_only"])
+def test_set_object_qpos(coup_type):
+    """Verify set_qpos and set_dofs_position on a free rigid object with IPC coupling."""
+    from genesis.engine.entities import RigidEntity
+
+    DT = 0.01
+    INIT_POS = np.array([0.0, 0.0, 0.5], dtype=gs.np_float)
+    TARGET_POS = np.array([0.3, -0.2, 0.8], dtype=gs.np_float)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            enable_rigid_rigid_contact=False,
+        ),
+        show_viewer=False,
+    )
+
+    box = scene.add_entity(
+        gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=INIT_POS),
+        material=gs.materials.Rigid(coup_type=coup_type),
+    )
+    assert isinstance(box, RigidEntity)
+    scene.build()
+
+    coupler = cast("IPCCoupler", scene.sim.coupler)
+
+    # Verify initial position
+    pos0 = tensor_to_array(box.get_pos()).flatten()
+    assert_allclose(pos0, INIT_POS, atol=1e-4)
+
+    # --- Test set_qpos ---
+    # Free joint qpos: [x, y, z, qw, qx, qy, qz]
+    target_qpos = np.array([*TARGET_POS, 1.0, 0.0, 0.0, 0.0], dtype=gs.np_float)
+    box.set_qpos(target_qpos)
+    pos_after_set = tensor_to_array(box.get_pos()).flatten()
+    assert_allclose(pos_after_set, TARGET_POS, atol=1e-4)
+
+    # Velocity should be zeroed (default zero_velocity=True for RigidEntity)
+    vel_after_set = tensor_to_array(box.get_dofs_velocity()).flatten()
+    assert_allclose(vel_after_set, np.zeros(6), atol=1e-6)
+
+    # Step and verify IPC stays in sync (no crash, position doesn't jump back)
+    for _ in range(5):
+        scene.step()
+    pos_after_step = tensor_to_array(box.get_pos()).flatten()
+    assert_allclose(pos_after_step, TARGET_POS, atol=0.01)
+    gs_quat = tensor_to_array(box.get_quat()).flatten()
+    assert_ipc_genesis_transform_close(coupler, box.base_link, 0, pos_after_step, gs_quat, atol=0.01)
+
+    # --- Test set_dofs_position ---
+    box.set_dofs_position(INIT_POS, dofs_idx_local=[0, 1, 2])
+    pos_after_dof_set = tensor_to_array(box.get_pos()).flatten()
+    assert_allclose(pos_after_dof_set, INIT_POS, atol=1e-4)
+
+    # Step again to verify IPC sync
+    for _ in range(5):
+        scene.step()
+    pos_final = tensor_to_array(box.get_pos()).flatten()
+    assert_allclose(pos_final, INIT_POS, atol=0.01)
+    gs_quat = tensor_to_array(box.get_quat()).flatten()
+    assert_ipc_genesis_transform_close(coupler, box.base_link, 0, pos_final, gs_quat, atol=0.01)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("coup_type", ["two_way_soft_constraint", "external_articulation"])
+def test_set_robot_qpos(coup_type):
+    """Verify set_qpos and set_dofs_position on an articulated robot with IPC coupling."""
+    from genesis.engine.entities import RigidEntity
+
+    DT = 0.01
+    TARGET_JOINT_POS = 0.5
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            enable_collision=False,
+        ),
+        coupler_options=gs.options.IPCCouplerOptions(
+            enable_rigid_rigid_contact=False,
+        ),
+        show_viewer=False,
+    )
+
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/simple/two_cube_revolute.urdf",
+            pos=(0, 0, 0.5),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(coup_type=coup_type),
+    )
+    assert isinstance(robot, RigidEntity)
+    scene.build()
+
+    coupler = cast("IPCCoupler", scene.sim.coupler)
+    moving_link = robot.get_link("moving")
+
+    # --- Test set_qpos ---
+    robot.set_qpos([TARGET_JOINT_POS])
+    qpos_after = tensor_to_array(robot.get_qpos()).flatten()
+    assert_allclose(qpos_after, [TARGET_JOINT_POS], atol=1e-4)
+
+    # Velocity should be zeroed
+    vel_after = tensor_to_array(robot.get_dofs_velocity()).flatten()
+    assert_allclose(vel_after, np.zeros(robot.n_dofs), atol=1e-6)
+
+    # Step and verify IPC-Genesis consistency
+    for _ in range(5):
+        scene.step()
+    qpos_after_step = tensor_to_array(robot.get_qpos()).flatten()
+    assert_allclose(qpos_after_step, [TARGET_JOINT_POS], atol=0.05)
+
+    links_pos = qd_to_numpy(scene.rigid_solver.links_state.pos, transpose=True)
+    links_quat = qd_to_numpy(scene.rigid_solver.links_state.quat, transpose=True)
+    assert_ipc_genesis_transform_close(
+        coupler,
+        moving_link,
+        0,
+        links_pos[0, moving_link.idx],
+        links_quat[0, moving_link.idx],
+        atol=0.05,
+    )
+
+    # --- Test set_dofs_position ---
+    robot.set_dofs_position([0.0])
+    qpos_reset = tensor_to_array(robot.get_qpos()).flatten()
+    assert_allclose(qpos_reset, [0.0], atol=1e-4)
+
+    for _ in range(5):
+        scene.step()
+    qpos_final = tensor_to_array(robot.get_qpos()).flatten()
+    assert_allclose(qpos_final, [0.0], atol=0.05)
+
+    links_pos = qd_to_numpy(scene.rigid_solver.links_state.pos, transpose=True)
+    links_quat = qd_to_numpy(scene.rigid_solver.links_state.quat, transpose=True)
+    assert_ipc_genesis_transform_close(
+        coupler,
+        moving_link,
+        0,
+        links_pos[0, moving_link.idx],
+        links_quat[0, moving_link.idx],
+        atol=0.05,
+    )
 
 
 @pytest.mark.required

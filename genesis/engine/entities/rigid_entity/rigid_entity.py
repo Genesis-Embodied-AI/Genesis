@@ -3480,10 +3480,6 @@ class RigidEntity(KinematicEntity):
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "ipc_only":
-            gs.raise_exception("This method is not supported for `coup_type='ipc_only'` entities.")
         super().set_dofs_velocity(velocity, dofs_idx_local, envs_idx, skip_forward=skip_forward)
 
     # ------------------------------------------------------------------------------------

@@ -439,6 +439,9 @@ class IPCCoupler(RBC):
             local_verts = np.asarray(rigid_link_geom.positions().view())[..., 0]
             world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
             faces = rigid_link_geom.triangles().topo().view()[..., 0]
+            # Shrink 0.1% toward centroid to match rigid collider's neutral overlap check
+            centroid = world_verts.mean(axis=0, keepdims=True)
+            world_verts = centroid + (1.0 - 1e-3) * (world_verts - centroid)
             self._abd_merged_meshes[target_link] = trimesh.Trimesh(
                 vertices=world_verts,
                 faces=faces,
@@ -1071,7 +1074,7 @@ class IPCCoupler(RBC):
             envs_qpos = np.empty((self._B, 7), dtype=gs.np_float)
             for env_idx in range(self._B):
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_data.ipc_transforms[env_idx])
-            qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos)
+            qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(qpos_tc.device)
 
         # ---- Step 2a: Two-way child links — back-compute joint angles from IPC transforms ----
         if COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT in self._entities_by_coup_type:
@@ -1123,7 +1126,7 @@ class IPCCoupler(RBC):
                         xaxis = gu.transform_by_quat(axis, child_quat_pre)
                         angle_ipc = float(np.dot(child_pos - pos_pre, xaxis))
                     envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
-                qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q)
+                qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(qpos_tc.device)
 
         # ---- Step 2b: External articulation — read delta_theta, write joint qpos ----
         for ad in self._articulation_data_by_entity.values():
@@ -1138,4 +1141,4 @@ class IPCCoupler(RBC):
             # Base link qpos[0:7] already handled in Step 1 for non-fixed base;
             # only write joint DOFs here.
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
-            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local])
+            qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(qpos_tc.device)
