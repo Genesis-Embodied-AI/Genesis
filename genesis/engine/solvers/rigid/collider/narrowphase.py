@@ -1895,66 +1895,45 @@ def func_narrowphase_kernel1_contact0(
 
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                         if penetration > tolerance:
-                            prefer_gjk = not is_mpr_guess_direction_available or (
+                            # Contact 0's normal always provides a warmstart for
+                            # contacts 1-4, so only prefer GJK when penetration is
+                            # genuinely large — not merely because the cache is cold.
+                            prefer_gjk = (
                                 collider_info.mc_tolerance[None] * penetration
                                 >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                             )
 
             # Enqueue for kernel2 — kernel2 will write all contacts
             # (including contact 0) contiguously via a single atomic reservation.
-            if not prefer_gjk and is_col:
+            if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
-                func_enqueue_for_multicontact(
-                    collider_state,
-                    False,
-                    i_b,
-                    i_ga,
-                    i_gb,
-                    i_pair,
-                    contact_pos,
-                    normal,
-                    penetration,
-                )
-            elif prefer_gjk:
-                if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                    if is_col:
-                        penetration_is_huge = (
-                            collider_info.mc_tolerance[None] * penetration
-                            >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
+                if prefer_gjk:
+                    if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
+                        func_enqueue_for_multicontact(
+                            collider_state,
+                            True,
+                            i_b,
+                            i_ga,
+                            i_gb,
+                            i_pair,
+                            contact_pos,
+                            normal,
+                            penetration,
                         )
-                        if penetration_is_huge:
-                            func_enqueue_for_multicontact(
-                                collider_state,
-                                True,
-                                i_b,
-                                i_ga,
-                                i_gb,
-                                i_pair,
-                                contact_pos,
-                                normal,
-                                penetration,
-                            )
-                        else:
-                            if qd.static(
-                                collider_static_config.ccd_algorithm
-                                in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
-                            ):
-                                collider_state.contact_cache.normal[i_pair, i_b] = normal
-                            func_enqueue_for_multicontact(
-                                collider_state,
-                                False,
-                                i_b,
-                                i_ga,
-                                i_gb,
-                                i_pair,
-                                contact_pos,
-                                normal,
-                                penetration,
-                            )
-                    else:
-                        collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            else:
+                else:
+                    func_enqueue_for_multicontact(
+                        collider_state,
+                        False,
+                        i_b,
+                        i_ga,
+                        i_gb,
+                        i_pair,
+                        contact_pos,
+                        normal,
+                        penetration,
+                    )
+            elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
