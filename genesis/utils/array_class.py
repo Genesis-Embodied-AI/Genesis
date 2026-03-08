@@ -636,6 +636,8 @@ class StructColliderState(metaclass=BASE_METACLASS):
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
     narrowphase_work_queues: StructNarrowphaseWorkQueues
+    contact_sort_key: V_ANNOTATION
+    contact_sort_idx: V_ANNOTATION
 
 
 def get_collider_state(
@@ -692,6 +694,8 @@ def get_collider_state(
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad * _B, 1) if collider_static_config.needs_kernel1 else 1
         ),
+        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
+        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
     )
 
 
