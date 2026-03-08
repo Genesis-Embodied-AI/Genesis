@@ -1478,6 +1478,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     BOX_SIZE = 0.05
     GAP = 0.005
     THICKNESS = 0.001
+    CUBE_FRICTION = 0.8
+    CLOTH_FRICTION = 0.8
     STRETCH_RATIO_1 = 1.0 + strech_scale * 0.15
     STRETCH_RATIO_2 = 1.4
     PULL_DISTANCE = 0.03  # Radial displacement per corner
@@ -1513,7 +1515,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             rho=200.0,
             thickness=THICKNESS,
             bending_stiffness=None,
-            friction_mu=0.8,
+            friction_mu=CLOTH_FRICTION,
         ),
     )
 
@@ -1532,7 +1534,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                 ),
                 material=gs.materials.Rigid(
                     coup_type="two_way_soft_constraint",
-                    coup_friction=0.8,
+                    coup_friction=CUBE_FRICTION,
                     coup_stiffness=(800.0, 100.0),
                 ),
                 surface=gs.surfaces.Plastic(
@@ -1581,6 +1583,9 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
         dofs_idx = slice(box.dof_start, box.dof_end)
         box_forces = applied_forces[..., dofs_idx]
         assert_allclose(np.abs(box_forces[..., 0]), np.abs(box_forces[..., 1]), tol=0.02)
+        # FIXME: Rotational forces should be zero by symmetry, but mesh triangulation
+        # and asymmetric contact point distribution cause small residual torques.
+        # assert_allclose(box_forces[..., 3:], 0.0, tol=0.02)
         box_forces_xy.append(box_forces[..., :2])
 
     # Check that deformation is roughly symmetric (sanity check)
@@ -1598,15 +1603,17 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     expected_stress = E * strain_GL / (1.0 - nu)  # Equal biaxial plane stress (2nd Piola–Kirchhoff)
     expected_force_per_box = expected_stress * THICKNESS * CLOTH_HALF
 
-    # Force in xy is transmitted through frictional contact (sandwich grip). Verify forces are
-    # consistent across boxes (symmetry) and bounded by friction: F_xy < μ·F_z.
+    # Verify xy forces stay within the friction cone: F_xy < μ·F_z
+    contact_friction = geometric_mean(CUBE_FRICTION, CLOTH_FRICTION)
     box_forces_z = []
     for box in boxes:
         dofs_idx = slice(box.dof_start, box.dof_end)
         box_forces_z.append(np.abs(applied_forces[..., dofs_idx][..., 2]))
     avg_force_xy = np.mean(np.abs(box_forces_xy))
     avg_force_z = np.mean(box_forces_z)
-    assert avg_force_xy < 0.8 * avg_force_z  # friction-limited: F_xy < μ·F_z
+    assert avg_force_xy < contact_friction * avg_force_z
+    # FIXME: The estimated force is not very accurate. Is it possible to do better?
+    # assert_allclose(np.abs(box_forces_xy), expected_force_per_box, tol=1e4 / E)
 
     # Stretch: phase two
     for box in boxes:
