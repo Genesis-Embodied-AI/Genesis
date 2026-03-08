@@ -101,9 +101,6 @@ class IPCCoupler(RBC):
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
-        self._constraint_strength_translation_scaled = self.options.constraint_strength_translation / self.sim.dt**2
-        self._constraint_strength_rotation_scaled = self.options.constraint_strength_rotation / self.sim.dt**2
-
         # ==== IPC System Infrastructure ====
         self._ipc_engine: Engine | None = None
         self._ipc_world: World | None = None
@@ -347,6 +344,8 @@ class IPCCoupler(RBC):
 
     def _add_rigid_geoms_to_ipc(self) -> None:
         """Add rigid geoms to the IPC scene as ABD objects, merging geoms by link."""
+        import trimesh
+
         assert gs.logger is not None
 
         gs.logger.debug(f"Registered entity coupling types: {set(self._coup_type_by_entity.values())}")
@@ -436,8 +435,6 @@ class IPCCoupler(RBC):
             is_open_mesh = not uipc.geometry.is_trimesh_closed(rigid_link_geom)
 
             # Cache merged world-frame trimesh for env 0 (used by neutral overlap check)
-            import trimesh
-
             link_T_0 = gu.trans_quat_to_T(links_pos[0, target_link.idx], links_quat[0, target_link.idx])
             local_verts = np.asarray(rigid_link_geom.positions().view())[..., 0]
             world_verts = (link_T_0[:3, :3] @ local_verts.T).T + link_T_0[:3, 3]
@@ -475,12 +472,7 @@ class IPCCoupler(RBC):
                     self._ipc_stc = SoftTransformConstraint()
                     self._ipc_constitution_tabular.insert(self._ipc_stc)
 
-                constraint_strength = np.array(
-                    [
-                        self.options.constraint_strength_translation,
-                        self.options.constraint_strength_rotation,
-                    ]
-                )
+                constraint_strength = np.array(entity.material.coup_stiffness)
                 self._ipc_stc.apply_to(rigid_link_geom, constraint_strength)
 
             # Set geometry attributes (env-independent)

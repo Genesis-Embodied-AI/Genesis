@@ -2,17 +2,19 @@
 Data classes for IPC coupler.
 """
 
-from enum import IntEnum
+from __future__ import annotations
+
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from uipc.geometry import GeometrySlot
-
 import genesis as gs
 
 if TYPE_CHECKING:
+    from uipc.geometry import GeometrySlot
+
     from genesis.engine.entities.rigid_entity import RigidLink
 
 

@@ -21,8 +21,6 @@ def main():
     coupler_options = None
     if not args.no_ipc:
         coupler_options = gs.options.IPCCouplerOptions(
-            constraint_strength_translation=10.0,
-            constraint_strength_rotation=10.0,
             enable_rigid_rigid_contact=False,
             enable_rigid_ground_contact=False,
             newton_translation_tolerance=10.0,
@@ -50,6 +48,7 @@ def main():
     franka_material_kwargs = dict(
         coup_friction=0.8,
         coup_type=args.coup_type,
+        coup_stiffness=(10.0, 10.0),
     )
     if args.coup_type == "two_way_soft_constraint":
         franka_material_kwargs["coup_links"] = ("left_finger", "right_finger")

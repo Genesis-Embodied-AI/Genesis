@@ -260,14 +260,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
 
     Genesis Coupling Options
     ------------------------
-    constraint_strength_translation : float, optional
-        Translation strength for IPC soft transform constraint coupling.
-        Higher values create stiffer position coupling between Genesis rigid bodies and IPC ABD objects.
-        Defaults to 100.0.
-    constraint_strength_rotation : float, optional
-        Rotation strength for IPC soft transform constraint coupling.
-        Higher values create stiffer orientation coupling between Genesis rigid bodies and IPC ABD objects.
-        Defaults to 100.0.
     enable_rigid_ground_contact : bool, optional
         Whether to enable ground contact in IPC system. When False, objects in IPC will not collide
         with the ground plane. Defaults to True.
@@ -313,8 +305,6 @@ class IPCCouplerOptions(BaseCouplerOptions):
     sanity_check_enable: bool = None
 
     # Genesis coupling options
-    constraint_strength_translation: float = 100.0
-    constraint_strength_rotation: float = 100.0
     enable_rigid_ground_contact: bool = True
     enable_rigid_rigid_contact: bool = True
 

@@ -411,8 +411,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
-            constraint_strength_translation=1,
-            constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
             newton_tolerance=1e-2,
             newton_translation_tolerance=1e-2,
@@ -442,6 +440,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         ),
         material=gs.materials.Rigid(
             coup_type=coup_type,
+            coup_stiffness=(1.0, 1.0),
         ),
     )
     assert isinstance(robot, RigidEntity)
@@ -565,8 +564,6 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
         sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.8)),
         rigid_options=gs.options.RigidOptions(enable_collision=False),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=1,
-            constraint_strength_rotation=1,
             enable_rigid_rigid_contact=False,
             newton_tolerance=1e-2,
             newton_translation_tolerance=1e-2,
@@ -586,7 +583,7 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             fixed=True,
             merge_fixed_links=merge_fixed_links,
         ),
-        material=gs.materials.Rigid(coup_type=coup_type),
+        material=gs.materials.Rigid(coup_type=coup_type, coup_stiffness=(1.0, 1.0)),
     )
     assert isinstance(robot, RigidEntity)
 
@@ -632,9 +629,7 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
             dt=DT,
             gravity=GRAVITY,
         ),
-        coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=constraint_strength,
-        ),
+        coupler_options=gs.options.IPCCouplerOptions(),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, -0.5, 0.3),
             camera_lookat=(0.25, 0.0, 0.0),
@@ -644,7 +639,10 @@ def test_apply_forces_base_link(n_envs, constraint_strength, show_viewer):
 
     box = scene.add_entity(
         gs.morphs.Box(size=(0.05, 0.05, 0.05), pos=POS),
-        material=gs.materials.Rigid(coup_type="two_way_soft_constraint"),
+        material=gs.materials.Rigid(
+            coup_type="two_way_soft_constraint",
+            coup_stiffness=(constraint_strength, 100.0),
+        ),
     )
     assert isinstance(box, RigidEntity)
 
@@ -969,8 +967,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
             gravity=GRAVITY,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=10.0,
-            constraint_strength_rotation=10.0,
             newton_translation_tolerance=10.0,
             enable_rigid_rigid_contact=False,
             enable_rigid_ground_contact=False,
@@ -993,6 +989,7 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     material_kwargs: dict[str, Any] = dict(
         coup_friction=0.8,
         coup_type=coup_type,
+        coup_stiffness=(10.0, 10.0),
     )
     if coup_type == "two_way_soft_constraint":
         material_kwargs["coup_links"] = ("left_finger", "right_finger")
@@ -1111,8 +1108,6 @@ def test_momentum_conservation(n_envs, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
-            constraint_strength_translation=1,
-            constraint_strength_rotation=1,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),
@@ -1144,6 +1139,7 @@ def test_momentum_conservation(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=1000,
             coup_type="two_way_soft_constraint",
+            coup_stiffness=(1.0, 1.0),
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),
@@ -1482,7 +1478,6 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=800.0,
             contact_enable=True,
             enable_rigid_rigid_contact=True,
             contact_d_hat=GAP,
@@ -1528,6 +1523,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                 material=gs.materials.Rigid(
                     coup_type="two_way_soft_constraint",
                     coup_friction=0.8,
+                    coup_stiffness=(800.0, 100.0),
                 ),
                 surface=gs.surfaces.Plastic(
                     color=np.random.rand(3),
