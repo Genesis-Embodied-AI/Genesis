@@ -1903,16 +1903,29 @@ def func_narrowphase_kernel1_contact0(
                                 >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                             )
 
-            # Enqueue for kernel2 — kernel2 will write all contacts
-            # (including contact 0) contiguously via a single atomic reservation.
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
-                if prefer_gjk:
-                    if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
+                if multi_contact:
+                    # Enqueue for kernel2 — kernel2 will write all contacts
+                    # (including contact 0) contiguously via a single atomic reservation.
+                    if prefer_gjk:
+                        if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
+                            func_enqueue_for_multicontact(
+                                collider_state,
+                                True,
+                                i_b,
+                                i_ga,
+                                i_gb,
+                                i_pair,
+                                contact_pos,
+                                normal,
+                                penetration,
+                            )
+                    else:
                         func_enqueue_for_multicontact(
                             collider_state,
-                            True,
+                            False,
                             i_b,
                             i_ga,
                             i_gb,
@@ -1922,16 +1935,20 @@ def func_narrowphase_kernel1_contact0(
                             penetration,
                         )
                 else:
-                    func_enqueue_for_multicontact(
-                        collider_state,
-                        False,
-                        i_b,
+                    func_add_contact(
                         i_ga,
                         i_gb,
-                        i_pair,
-                        contact_pos,
                         normal,
+                        contact_pos,
                         penetration,
+                        i_b,
+                        i_pair,
+                        geoms_state,
+                        geoms_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                        use_atomic=True,
                     )
             elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
