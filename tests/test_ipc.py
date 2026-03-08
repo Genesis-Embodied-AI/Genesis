@@ -462,6 +462,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
 
     envs_idx = range(max(scene.n_envs, 1))
 
+    # kp=900 (raised from 500) to improve trajectory tracking with predicted-position coupling
     robot.set_dofs_kp(900.0, dofs_idx_local=-1)
     robot.set_dofs_kv(50.0, dofs_idx_local=-1)
 
@@ -1558,7 +1559,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for _ in range(20):
         scene.step()
     cloth_positions_f = tensor_to_array(cloth.get_state().pos)
-    # Sandwich boxes compress the cloth slightly in z due to SoftTransformConstraint strength.
+    # Sandwich boxes compress the cloth slightly in z due to SoftTransformConstraint coupling.
+    # Tolerances relaxed from (0.005, 5e-3) to (0.006, 0.015) to account for predicted-position coupling.
     assert_allclose(cloth_positions_f[..., :2], cloth_positions_0[..., :2], atol=0.006)
     assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=0.015)
 
@@ -1573,6 +1575,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     for box in boxes:
         init_dof = tensor_to_array(box.get_dofs_position())
         dist_vertices = np.linalg.norm(cloth_positions_f[..., :2] - init_dof[..., None, :2], axis=-1).min(axis=-1)
+        # Tolerance relaxed from 0.02 to 0.04: predicted-position coupling shifts the box target
+        # by velocity*dt, so steady-state box position deviates slightly from the cloth corner.
         assert_allclose(dist_vertices, 0.0, atol=0.04)
     assert_allclose(cloth_positions_f[..., 2], cloth_positions_0[..., 2], tol=5e-3)
 
@@ -1597,8 +1601,8 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     # Check that deformation is consistent with applied forces based on material properties.
     # Each corner bears the load from half the reference edge length (by symmetry,
     # 2 corners per edge). Use reference length since stress is in reference config.
-    # NOTE: qf_applied only reflects PD controller forces here (coupling is via qpos overwrite,
-    # not force feedback), so the constitutive stress check uses a looser tolerance.
+    # NOTE: qf_applied only reflects PD controller effort (kp·position_error + kv·velocity_error),
+    # not the actual IPC contact force, so the constitutive stress check uses a looser tolerance.
     strain_GL = 0.5 * (STRETCH_RATIO_1**2 - 1.0)  # Green–Lagrange strain
     expected_stress = E * strain_GL / (1.0 - nu)  # Equal biaxial plane stress (2nd Piola–Kirchhoff)
     expected_force_per_box = expected_stress * THICKNESS * CLOTH_HALF
@@ -1612,7 +1616,10 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     avg_force_xy = np.mean(np.abs(box_forces_xy))
     avg_force_z = np.mean(box_forces_z)
     assert avg_force_xy < contact_friction * avg_force_z
-    # FIXME: The estimated force is not very accurate. Is it possible to do better?
+    # FIXME: qf_applied measures PD controller effort, not the actual contact force.
+    # At steady state, PD force ≈ cloth reaction (F = kp·Δx), but tracking error (Δx = F/kp)
+    # and coupling stiffness limit accuracy. Increasing kp or coup_stiffness improves correlation
+    # but may cause instability.
     # assert_allclose(np.abs(box_forces_xy), expected_force_per_box, tol=1e4 / E)
 
     # Stretch: phase two
