@@ -251,8 +251,18 @@ class Collider:
             self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
             self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
 
-            self._kernel2_n_gjk_threads = 4000
-            self._kernel2_n_total_threads = 40000
+            gpu_props = torch.cuda.get_device_properties(gs.device)
+            gpu_cuda_cores = gpu_props.multi_processor_count * 128
+            gjk_only = self._collider_static_config.ccd_algorithm in (
+                CCD_ALGORITHM_CODE.GJK,
+                CCD_ALGORITHM_CODE.MJ_GJK,
+            )
+            if gjk_only:
+                self._kernel2_n_gjk_threads = gpu_cuda_cores * 4
+                self._kernel2_n_total_threads = self._kernel2_n_gjk_threads
+            else:
+                self._kernel2_n_gjk_threads = 4000
+                self._kernel2_n_total_threads = 40000
             self._kernel2_max_items_per_thread = 128
             self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
 
