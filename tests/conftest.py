@@ -529,6 +529,9 @@ def merge_fixed_links(request):
 
 @pytest.fixture
 def multi_contact(request):
+    # Support indirect parametrize (e.g. @pytest.mark.parametrize("multi_contact", [...], indirect=True))
+    if hasattr(request, "param"):
+        return request.param
     multi_contact = None
     for mark in request.node.iter_markers("multi_contact"):
         if mark.args:
