@@ -430,8 +430,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @pytest.fixture(scope="function")
 def pytorch_profiler_step(pytestconfig, request):
     if os.environ.get("GS_PROFILING", "0") == "1":
-        test_name = profiling._sanitize_test_name(request.node.nodeid)
-        for res in profiling.pytorch_profiler(pytestconfig, test_name):
+        for res in profiling.pytorch_profiler(pytestconfig, request):
             yield res
     else:
         noop = lambda: None  # noqa: E731

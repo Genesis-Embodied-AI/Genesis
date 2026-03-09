@@ -53,7 +53,7 @@ def _sanitize_test_name(node_id: str) -> str:
     return re.sub(r"[^\w\-.]", "_", name)
 
 
-def pytorch_profiler(pytestconfig, test_name: str):
+def pytorch_profiler(pytestconfig, request):
     """Per-test fixture providing a PyTorch profiler step function.
 
     Activated by env var GS_PROFILING=1. Yields a step_fn that must be called
@@ -67,6 +67,8 @@ def pytorch_profiler(pytestconfig, test_name: str):
 
     import torch
     from torch.profiler import ProfilerActivity
+
+    test_name = _sanitize_test_name(request.node.nodeid)
 
     wait = pytestconfig.getoption("--profile-wait")
     warmup = pytestconfig.getoption("--profile-warmup")
