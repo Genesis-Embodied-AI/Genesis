@@ -145,12 +145,17 @@ def func_solve_decomposed(
     and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
     """
 <<<<<<< HEAD
+<<<<<<< HEAD
     # _n_iterations is a Python-native int to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
     for _it in range(_n_iterations):
 =======
     # Use Python-native _n_iterations to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
     for _it in range(rigid_global_info._n_iterations):
 >>>>>>> 577844e (fix reading field in python scope avoiding gpu-cpu sync)
+=======
+    # _n_iterations is a Python-native int to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
+    for _it in range(_n_iterations):
+>>>>>>> abdcd74 (update)
         _kernel_linesearch(
             entities_info,
             dofs_state,
