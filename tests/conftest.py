@@ -30,11 +30,13 @@ try:
     has_tkinter = True
 except ImportError:
     tkinter = type(sys)("tkinter")
+    tkinter.filedialog = lambda *arg, **kwargs: None
+    tkinter.mainloop = type(sys)("mainloop")
+    tkinter.mainloop.__code__ = ""
     tkinter.Tk = type(sys)("Tk")
-    tkinter.filedialog = type(sys)("filedialog")
+    tkinter.Misc = type(sys)("Misc")
+    tkinter.Misc.mainloop = tkinter.mainloop
     sys.modules["tkinter"] = tkinter
-    sys.modules["tkinter.Tk"] = tkinter.Tk
-    sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 # Determine whether a screen is available
 if has_tkinter:
