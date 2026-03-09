@@ -31,7 +31,7 @@ class ConstraintSolver:
         self._para_level = rigid_solver._para_level
 
         self._solver_type = rigid_solver._options.constraint_solver
-        self._n_iterations = (
+        self._n_iterations = int(
             rigid_solver._options.iterations
         )  # Python-native; passed to Python-scope functions to avoid CPU-GPU sync
         self.tolerance = rigid_solver._options.tolerance
