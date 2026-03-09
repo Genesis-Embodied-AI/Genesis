@@ -1,18 +1,20 @@
 import logging
 import os
-import sys
 import tempfile
+import weakref
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.materials.FEM.cloth import Cloth
 from genesis.options.solvers import IPCCouplerOptions, RigidOptions
 from genesis.repr_base import RBC
+from genesis.utils.mesh import are_meshes_overlapping
 from genesis.utils.misc import geometric_mean, harmonic_mean, qd_to_numpy, qd_to_torch, tensor_to_array
 
 if TYPE_CHECKING:
@@ -136,7 +138,7 @@ class IPCCoupler(RBC):
 
         # ==== ABD Geometry & State ====
         # Cached merged world-frame trimesh per link for neutral-pose overlap check
-        self._abd_merged_meshes = {}
+        self._abd_merged_meshes: dict["RigidLink", trimesh.Trimesh] = {}
         self._abd_state_feature: AffineBodyStateAccessorFeature | None = None
         self._abd_state_geom: SimplicialComplex | None = None
         # Set to True when set_qpos/set_dofs_position is called; triggers IPC state sync before next advance
@@ -203,7 +205,8 @@ class IPCCoupler(RBC):
                     )
                 if not is_robot:
                     gs.raise_exception(
-                        f"Rigid entity {i_e} has no articulated joints. Use 'ipc_only' instead of 'external_articulation'."
+                        f"Rigid entity {i_e} has no articulated joints. Use 'ipc_only' instead of "
+                        "'external_articulation'."
                     )
             elif coup_type == COUPLING_TYPE.IPC_ONLY:
                 if is_robot:
@@ -344,8 +347,6 @@ class IPCCoupler(RBC):
 
     def _add_rigid_geoms_to_ipc(self) -> None:
         """Add rigid geoms to the IPC scene as ABD objects, merging geoms by link."""
-        import trimesh
-
         assert gs.logger is not None
 
         gs.logger.debug(f"Registered entity coupling types: {set(self._coup_type_by_entity.values())}")
@@ -442,11 +443,7 @@ class IPCCoupler(RBC):
             # Shrink 0.1% toward centroid to match rigid collider's neutral overlap check
             centroid = world_verts.mean(axis=0, keepdims=True)
             world_verts = centroid + (1.0 - 1e-3) * (world_verts - centroid)
-            self._abd_merged_meshes[target_link] = trimesh.Trimesh(
-                vertices=world_verts,
-                faces=faces,
-                process=False,
-            )
+            self._abd_merged_meshes[target_link] = trimesh.Trimesh(vertices=world_verts, faces=faces, process=False)
 
             # ---- Determine coupling behavior ----
             is_ipc_only = entity_coup_type == COUPLING_TYPE.IPC_ONLY
@@ -507,7 +504,9 @@ class IPCCoupler(RBC):
 
                 # Register animator for coupled links (env-specific: needs abd_obj and env_idx)
                 if is_soft_constraint_target:
-                    self._ipc_animator.insert(abd_obj, partial(self._animate_rigid_link, target_link, env_idx))
+                    self._ipc_animator.insert(
+                        abd_obj, partial(self._animate_rigid_link, weakref.ref(self), target_link, env_idx)
+                    )
 
             # ---- Store link data ----
             needs_ipc_state = is_ipc_only or is_soft_constraint_target
@@ -624,7 +623,6 @@ class IPCCoupler(RBC):
         ``enable_self_collision``, ``enable_adjacent_collision``, ``enable_neutral_collision``.
         """
         from genesis.engine.solvers.rigid.collider.collider import are_links_adjacent
-        from genesis.utils.mesh import are_meshes_overlapping
 
         assert gs.logger is not None
 
@@ -909,18 +907,27 @@ class IPCCoupler(RBC):
     # ============================================================
     # Section 3: Helpers
     # ============================================================
-    def _animate_rigid_link(self, link, env_idx, info):
-        """Animator callback for a soft-transform-constrained rigid link."""
+    @staticmethod
+    def _animate_rigid_link(coupler_ref, link, env_idx, info):
+        """Animator callback for a soft-constraint coupled rigid link.
+
+        Uses a weakref to the coupler to avoid preventing garbage collection.
+        """
+        coupler = coupler_ref()
+        if coupler is None:
+            gs.raise_exception("IPCCoupler was garbage collected while animator callback is still active.")
+
         geom_slots = info.geo_slots()
         if not geom_slots:
             return
         geom = geom_slots[0].geometry()
 
+        # Enable constraint and set target transform (q_genesis^n)
         is_constrained_attr = geom.instances().find(uipc.builtin.is_constrained)
         aim_transform_attr = geom.instances().find(uipc.builtin.aim_transform)
         assert is_constrained_attr and aim_transform_attr
         uipc.view(is_constrained_attr)[0] = 1
-        uipc.view(aim_transform_attr)[:] = self._abd_data_by_link[link].aim_transforms[env_idx]
+        uipc.view(aim_transform_attr)[:] = coupler._abd_data_by_link[link].aim_transforms[env_idx]
 
     def _retrieve_ipc_fem_states(self):
         # IPC world advance/retrieve is handled at Scene level
@@ -933,8 +940,9 @@ class IPCCoupler(RBC):
         visitor = SceneVisitor(self._ipc_scene)
 
         # Collect FEM and cloth geometries using metadata
+        fem_entities = cast(list["FEMEntity"], self.fem_solver.entities)
         fem_positions_by_entity: dict["FEMEntity", list[np.ndarray]] = {
-            entity: [np.array([]) for _ in range(self._B)] for entity in self.fem_solver.entities
+            entity: [np.array([]) for _ in range(self._B)] for entity in fem_entities
         }
         for fem_geom_slot in visitor.geometries():
             if not isinstance(fem_geom_slot, SimplicialComplexSlot):

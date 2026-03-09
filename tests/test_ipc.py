@@ -487,7 +487,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         target_dof_pos = SCALE * np.sin((2 * math.pi * FREQ) * scene.sim.cur_t)
         target_dof_vel = SCALE * (2 * math.pi * FREQ) * np.cos((2 * math.pi * FREQ) * scene.sim.cur_t)
         robot.control_dofs_position_velocity(target_dof_pos, target_dof_vel, dofs_idx_local=-1)
-        # robot.control_dofs_position(target_dof_pos, dofs_idx_local=-1)
 
         # Store the current and target position / velocity
         cur_dof_pos = tensor_to_array(robot.get_dofs_position(dofs_idx_local=-1)[..., 0])
@@ -581,7 +580,10 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 
     scene.add_entity(
         gs.morphs.Plane(),
-        material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.5),
+        material=gs.materials.Rigid(
+            coup_type="ipc_only",
+            coup_friction=0.5,
+        ),
     )
 
     robot = scene.add_entity(
@@ -591,7 +593,10 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
             fixed=True,
             merge_fixed_links=merge_fixed_links,
         ),
-        material=gs.materials.Rigid(coup_type=coup_type, coup_stiffness=(1.0, 1.0)),
+        material=gs.materials.Rigid(
+            coup_type=coup_type,
+            coup_stiffness=(1.0, 1.0),
+        ),
     )
     assert isinstance(robot, RigidEntity)
 

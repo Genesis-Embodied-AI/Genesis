@@ -15,7 +15,6 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.engine.materials.rigid import Rigid
 from genesis.utils.misc import tensor_to_array, qd_to_torch, qd_to_numpy
 from genesis.utils.sdf import SDF
 
