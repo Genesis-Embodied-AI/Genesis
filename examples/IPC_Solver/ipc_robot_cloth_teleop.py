@@ -55,7 +55,7 @@ def main():
             newton_semi_implicit_enable=False,  # Must be false to avoid time stealing artifact
             linear_system_tolerance=1e-3,
             contact_enable=True,
-            enable_rigid_rigid_contact=True,
+            enable_rigid_rigid_contact=False,
             contact_d_hat=0.001,
             contact_resistance=1e7,
         ),

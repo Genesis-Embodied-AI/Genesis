@@ -99,9 +99,6 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
 
     plane = scene.add_entity(
         gs.morphs.Plane(),
-        material=gs.materials.Rigid(
-            coup_type="ipc_only",
-        ),
     )
     rigid_a = scene.add_entity(
         gs.morphs.Box(
@@ -109,7 +106,6 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.25,
             contact_resistance=9.0,
         ),
@@ -120,7 +116,6 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.64,
             contact_resistance=16.0,
         ),
@@ -131,7 +126,6 @@ def test_contact_pair_friction_resistance(enable_rigid_rigid_contact):
             size=(0.05, 0.05, 0.05),
         ),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.16,
             contact_resistance=None,
         ),
@@ -206,7 +200,6 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.25,
         ),
     )
@@ -219,7 +212,6 @@ def test_rigid_ground_sliding(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coup_type="ipc_only",
                 coup_friction=mu,
             ),
         )
@@ -271,9 +263,6 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
 
     scene.add_entity(
         gs.morphs.Plane(),
-        material=gs.materials.Rigid(
-            coup_type="ipc_only",
-        ),
     )
 
     cubes = []
@@ -284,7 +273,6 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
-                coup_type="ipc_only",
                 coup_friction=0.0,
                 contact_resistance=resistance,
             ),
@@ -422,7 +410,6 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -549,7 +536,7 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
 
     scene.add_entity(
         gs.morphs.Plane(),
-        material=gs.materials.Rigid(coup_type="ipc_only", coup_friction=0.5),
+        material=gs.materials.Rigid(coup_friction=0.5),
     )
 
     robot = scene.add_entity(
@@ -697,7 +684,6 @@ def test_objects_freefall(n_envs, show_viewer):
         ),
         material=gs.materials.Rigid(
             rho=500.0,
-            coup_type="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -828,7 +814,6 @@ def test_objects_colliding(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.5,
         ),
     )
@@ -861,7 +846,6 @@ def test_objects_colliding(n_envs, show_viewer):
         material=gs.materials.Rigid(
             rho=500.0,
             coup_friction=0.3,
-            coup_type="ipc_only",
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.3, 0.2, 0.8),
@@ -960,7 +944,6 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
-            coup_type="ipc_only",
             coup_friction=0.8,
         ),
     )

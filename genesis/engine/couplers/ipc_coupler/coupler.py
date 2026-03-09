@@ -207,8 +207,9 @@ class IPCCoupler(RBC):
                 continue
             coup_type = entity.material.coup_type
             if coup_type is None:
-                # Auto-select based on entity type
-                if entity.n_joints > 0:
+                # Auto-select based on entity type (only movable joints count as articulated)
+                has_movable_joints = any(j.type not in (gs.JOINT_TYPE.FIXED, gs.JOINT_TYPE.FREE) for j in entity.joints)
+                if has_movable_joints:
                     coup_type = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
                 else:
                     coup_type = "ipc_only"
