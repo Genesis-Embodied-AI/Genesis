@@ -492,7 +492,7 @@ def _get_model_mappings(
 
 
 def build_mujoco_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, native_ccd
+    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, native_ccd
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG
