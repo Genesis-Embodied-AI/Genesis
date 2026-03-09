@@ -440,9 +440,6 @@ class RigidSolver(KinematicSolver):
         self._errno = self.data_manager.errno
 
         self._rigid_global_info = self.data_manager.rigid_global_info
-        self._rigid_global_info._n_iterations = (
-            self._options.iterations
-        )  # Python-native mirror to avoid CPU-GPU sync in Python-scope functions
         self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
         if self._use_hibernation:
             self.n_awake_dofs = self._rigid_global_info.n_awake_dofs
