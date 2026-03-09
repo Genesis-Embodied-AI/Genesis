@@ -144,8 +144,13 @@ def func_solve_decomposed(
     This maximizes kernel granularity, potentially allowing better GPU scheduling
     and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
     """
+<<<<<<< HEAD
     # _n_iterations is a Python-native int to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
     for _it in range(_n_iterations):
+=======
+    # Use Python-native _n_iterations to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
+    for _it in range(rigid_global_info._n_iterations):
+>>>>>>> 577844e (fix reading field in python scope avoiding gpu-cpu sync)
         _kernel_linesearch(
             entities_info,
             dofs_state,
