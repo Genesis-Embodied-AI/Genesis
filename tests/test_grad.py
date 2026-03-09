@@ -263,6 +263,7 @@ def test_diff_solver(monkeypatch):
         )
         func_solve_body(
             entities_info=rigid_solver.entities_info,
+            dofs_info=rigid_solver.dofs_info,
             dofs_state=rigid_solver.dofs_state,
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,

@@ -219,6 +219,7 @@ class ConstraintSolver:
 
         func_solve_body(
             self._solver.entities_info,
+            self._solver.dofs_info,
             self._solver.dofs_state,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -2355,6 +2356,12 @@ def update_bracket_no_eval_local(
 
 
 @qd.func
+def _log_scale(min_value: gs.qd_float, max_value: gs.qd_float, num_values: qd.i32, i: qd.i32) -> gs.qd_float:
+    step = (qd.log(max_value) - qd.log(min_value)) / qd.max(1.0, gs.qd_float(num_values - 1))
+    return qd.exp(qd.log(min_value) + gs.qd_float(i) * step)
+
+
+@qd.func
 def func_linesearch_and_apply_alpha(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -3105,6 +3112,7 @@ def func_solve_iter(
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3117,6 +3125,7 @@ def func_solve_body(
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
