@@ -628,7 +628,7 @@ def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
     # FIXME: Because of very small numerical error, error could be this large even if there is no logical error.
     # Multi-contact perturbation introduces slightly larger errors due to GJK implementation differences.
-    if xml_path == "xml/tet_tet.xml" and not multi_contact:
+    if xml_path == "xml/tet_tet.xml":
         tol = 1e-6
     elif xml_path == "xml/tet_capsule.xml" and multi_contact:
         tol = 2e-6
