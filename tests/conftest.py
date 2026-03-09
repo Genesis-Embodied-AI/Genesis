@@ -529,9 +529,6 @@ def merge_fixed_links(request):
 
 @pytest.fixture
 def multi_contact(request):
-    # Support indirect parametrize (e.g. @pytest.mark.parametrize("multi_contact", [...], indirect=True))
-    if hasattr(request, "param"):
-        return request.param
     multi_contact = None
     for mark in request.node.iter_markers("multi_contact"):
         if mark.args:
@@ -658,9 +655,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
 
 @pytest.fixture
-def mj_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, gjk_collision
-):
+def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, gjk_collision):
     from .utils import build_mujoco_sim
 
     return build_mujoco_sim(
@@ -670,7 +665,6 @@ def mj_sim(
         merge_fixed_links,
         multi_contact,
         adjacent_collision,
-        dof_damping,
         gjk_collision,
     )
 
