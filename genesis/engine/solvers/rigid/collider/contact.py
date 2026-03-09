@@ -262,6 +262,34 @@ def func_add_diff_contact_input(
 
 
 @qd.func
+def func_compute_geom_rbound(
+    i_g,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+):
+    """Compute the bounding sphere radius for a geom, matching MuJoCo's geom_rbound."""
+    geom_type = geoms_info.type[i_g]
+    rbound = gs.qd_float(0.0)
+    if geom_type == gs.GEOM_TYPE.SPHERE:
+        rbound = geoms_info.data[i_g][0]
+    elif geom_type == gs.GEOM_TYPE.CAPSULE:
+        # radius + half_length (MuJoCo stores size as [radius, half_length])
+        # Genesis stores data as [radius, full_length], so half_length = 0.5 * data[1]
+        rbound = geoms_info.data[i_g][0] + 0.5 * geoms_info.data[i_g][1]
+    elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+        rbound = qd.max(geoms_info.data[i_g][0], qd.max(geoms_info.data[i_g][1], geoms_info.data[i_g][2]))
+    elif geom_type == gs.GEOM_TYPE.BOX:
+        d0 = geoms_info.data[i_g][0]
+        d1 = geoms_info.data[i_g][1]
+        d2 = geoms_info.data[i_g][2]
+        rbound = qd.sqrt(d0 * d0 + d1 * d1 + d2 * d2)
+    else:
+        # For mesh and other types, approximate as half AABB diagonal
+        rbound = 0.5 * (geoms_init_AABB[i_g, 7] - geoms_init_AABB[i_g, 0]).norm()
+    return rbound
+
+
+@qd.func
 def func_compute_tolerance(
     i_ga,
     i_gb,
@@ -281,6 +309,20 @@ def func_compute_tolerance(
         aabb_size = qd.min(aabb_size_a, aabb_size_b)
 
     return 0.5 * tolerance * aabb_size
+
+
+@qd.func
+def func_compute_mj_tolerance(
+    i_ga,
+    i_gb,
+    tolerance,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+):
+    """Compute tolerance matching MuJoCo's formula: relative_tolerance * min(rbound_g1, rbound_g2)."""
+    rbound_a = func_compute_geom_rbound(i_ga, geoms_info, geoms_init_AABB)
+    rbound_b = func_compute_geom_rbound(i_gb, geoms_info, geoms_init_AABB)
+    return tolerance * qd.min(rbound_a, rbound_b)
 
 
 @qd.func
@@ -312,8 +354,8 @@ def func_contact_orthogonals(
         # Project axis on orthogonal plane to contact normal
         axis_0 = (axis_0 - normal.dot(axis_0) * normal).normalized()
 
-        # Perturb with some noise so that they do not align with world axes to avoid denegerated cases
-        axis_1 = (normal.cross(axis_0) + 0.1 * axis_0).normalized()
+        # Complete orthonormal frame (matching MuJoCo's mju_makeFrame)
+        axis_1 = normal.cross(axis_0)
         axis_0 = axis_1.cross(normal)
     else:
         # The reference geometry is the one that will have the largest impact on the position of
