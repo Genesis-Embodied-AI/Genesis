@@ -258,7 +258,7 @@ class Collider:
                 CCD_ALGORITHM_CODE.MJ_GJK,
             )
             if gjk_only:
-                self._kernel2_n_gjk_threads = gpu_cuda_cores * 4
+                self._kernel2_n_gjk_threads = gpu_cuda_cores
                 self._kernel2_n_total_threads = self._kernel2_n_gjk_threads
             else:
                 self._kernel2_n_gjk_threads = 4000
