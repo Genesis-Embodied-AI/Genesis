@@ -1009,10 +1009,6 @@ class KinematicSolver(Solver):
             tensor = tensor[0]
         return tensor[..., 0], tensor[..., 1]
 
-    def clear_external_force(self):
-        """No-op: kinematic entities have no external forces."""
-        pass
-
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
 

@@ -2641,7 +2641,7 @@ class RigidEntity(KinematicEntity):
         envs_idx=None,
     ):
         """
-        Compute inverse kinematics for  multiple target links.
+        Compute inverse kinematics for multiple target links.
 
         Parameters
         ----------
@@ -2690,6 +2690,8 @@ class RigidEntity(KinematicEntity):
         (optional) error_pose : array_like, shape (6,) or (n_envs, 6) or (len(envs_idx), 6)
             Pose error for each target. The 6-vector is [err_pos_x, err_pos_y, err_pos_z, err_rot_x, err_rot_y, err_rot_z]. Only returned if `return_error` is True.
         """
+        from genesis.engine.solvers.rigid.abd.inverse_kinematics import kernel_rigid_entity_inverse_kinematics
+
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
         if not self._requires_jac_and_IK:
@@ -2764,16 +2766,6 @@ class RigidEntity(KinematicEntity):
             gs.raise_exception("Target dofs not provided.")
 
         links_idx = torch.tensor([link.idx for link in links], dtype=gs.tc_int, device=gs.device)
-        links_idx_by_dofs = []
-        for link in self.links:
-            for joint in link.joints:
-                if any(i in dofs_idx for i in joint.dofs_idx_local):
-                    links_idx_by_dofs.append(link.idx_local)
-                    break
-        links_idx_by_dofs = self._get_global_idx(links_idx_by_dofs, self.n_links, self._link_start)
-        n_links_by_dofs = len(links_idx_by_dofs)
-
-        from genesis.engine.solvers.rigid.abd.inverse_kinematics import kernel_rigid_entity_inverse_kinematics
 
         kernel_rigid_entity_inverse_kinematics(
             self,
@@ -2781,11 +2773,7 @@ class RigidEntity(KinematicEntity):
             poss,
             quats,
             local_points,
-            n_links,
             dofs_idx,
-            n_dofs,
-            links_idx_by_dofs,
-            n_links_by_dofs,
             custom_init_qpos,
             init_qpos,
             max_samples,
