@@ -1410,6 +1410,11 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = not self._enable_mujoco_compatibility
         self._is_forward_vel_updated = not self._enable_mujoco_compatibility
+
+        # Apply IPC restitution velocity corrections after step_2
+        if isinstance(self.sim.coupler, IPCCoupler):
+            self.sim.coupler.apply_restitution_velocity()
+
         if self._requires_grad:
             kernel_save_adjoint_cache(
                 f=f + 1,

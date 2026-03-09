@@ -22,6 +22,7 @@ def main():
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             enable_rigid_rigid_contact=False,
+            restitution=0.0,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),

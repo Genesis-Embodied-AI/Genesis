@@ -1121,6 +1121,10 @@ def test_momentum_conservation(n_envs, show_viewer):
         ),
         coupler_options=gs.options.IPCCouplerOptions(
             contact_d_hat=CONTACT_MARGIN,
+            # Restitution adds a one-sided velocity correction to the rigid body only,
+            # which breaks rigid+FEM momentum conservation. Disable it here to isolate
+            # IPC's internal momentum-conserving contact resolution.
+            restitution=0.0,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),

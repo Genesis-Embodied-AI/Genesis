@@ -50,7 +50,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from uipc.geometry import GeometrySlot, SimplicialComplex, SimplicialComplexSlot
     from uipc.gui import SceneGUI
 
-    from .data import COUPLING_TYPE, ABDLinkData, ArticulatedEntityData
+    from .data import COUPLING_TYPE, ABDLinkData, ArticulatedEntityData, RestitutionTracker
     from .utils import (
         build_ipc_scene_config,
         compute_link_to_link_transform,
@@ -63,6 +63,8 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
 ABD_KAPPA = 100.0
 # TODO: consider deriving from Genesis joint properties instead of hardcoding.
 JOINT_STRENGTH_RATIO = 100.0
+# Position-space threshold for detecting active IPC contact (restitution tracking)
+RESTITUTION_CONTACT_THRESHOLD = 1e-7
 
 
 class IPCCoupler(RBC):
@@ -147,6 +149,12 @@ class IPCCoupler(RBC):
         # ==== Input/Output Data ====
         self._abd_data_by_link: dict["RigidLink", ABDLinkData] = {}
         self._articulation_data_by_entity: dict["RigidEntity", ArticulatedEntityData] = {}
+
+        # ==== Restitution ====
+        # One-shot impulse: accumulate corrections during contact, apply at separation.
+        self._restitution_vel_corrections: list[tuple[int, int, np.ndarray]] = []
+        # Per-DOF-range trackers, keyed by (dof_start, dof_end). Lazily initialized.
+        self._restitution_trackers: dict[tuple[int, int], "RestitutionTracker"] = {}
 
         # ==== GUI ====
         self._ipc_gui: SceneGUI | None = None
@@ -1064,11 +1072,29 @@ class IPCCoupler(RBC):
         For two_way_soft_constraint, non-fixed base links get their IPC-resolved transform
         written to qpos[0:7], and child link joint angles are back-computed from IPC transforms.
         For external_articulation (fixed base only), joint qpos comes from IPC delta_theta.
+
+        When restitution > 0, accumulates per-DOF velocity corrections during active contact
+        and flushes them as one-shot impulses when contact ends. This avoids the per-frame
+        compounding problem where e^N -> 0 for e<1 over N contact frames.
         """
         if not self._coup_type_by_entity:
             return
 
+        e = self.options.restitution
+        dt = self.rigid_solver.substep_dt
         qpos_tc = qd_to_torch(self.rigid_solver.qpos, transpose=True, copy=False)
+
+        # Read predicted qpos (q_pred) before overwriting — needed for restitution
+        if e > 0:
+            qpos_pred_np = qpos_tc.cpu().numpy().copy()
+
+        # Clear one-shot impulses from previous step
+        self._restitution_vel_corrections = []
+
+        # Reset per-frame active flags
+        if e > 0:
+            for tracker in self._restitution_trackers.values():
+                tracker.active_this_frame = False
 
         # ---- Step 1: Non-fixed base links — write IPC transform to qpos[0:7] ----
         for link, abd_data in self._abd_data_by_link.items():
@@ -1079,10 +1105,19 @@ class IPCCoupler(RBC):
                 continue
 
             q_start = entity.q_start
+            dof_start = entity.dof_start
             envs_qpos = np.empty((self._B, 7), dtype=gs.np_float)
             for env_idx in range(self._B):
                 envs_qpos[env_idx, :3], envs_qpos[env_idx, 3:7] = gu.T_to_trans_quat(abd_data.ipc_transforms[env_idx])
             qpos_tc[:, q_start : q_start + 7] = torch.from_numpy(envs_qpos).to(qpos_tc.device)
+
+            if e > 0:
+                self._accumulate_restitution_base_link(
+                    dof_start,
+                    envs_qpos,
+                    qpos_pred_np[:, q_start : q_start + 7],
+                    dt,
+                )
 
         # ---- Step 2a: Two-way child links — back-compute joint angles from IPC transforms ----
         if COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT in self._entities_by_coup_type:
@@ -1136,8 +1171,17 @@ class IPCCoupler(RBC):
                     envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
                 qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(qpos_tc.device)
 
+                if e > 0:
+                    dof_idx = joint.dof_start
+                    self._accumulate_restitution_joint(
+                        dof_idx,
+                        envs_q,
+                        qpos_pred_np[:, q_idx : q_idx + 1],
+                        dt,
+                    )
+
         # ---- Step 2b: External articulation — read delta_theta, write joint qpos ----
-        for ad in self._articulation_data_by_entity.values():
+        for ext_art_entity, ad in self._articulation_data_by_entity.items():
             delta_theta_ipc = np.empty((self._B, len(ad.joints_qs_idx_local)), dtype=np.float64)
             for env_idx in range(self._B):
                 articulation_geom = ad.slots[env_idx].geometry()
@@ -1150,3 +1194,109 @@ class IPCCoupler(RBC):
             # only write joint DOFs here.
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
             qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(qpos_tc.device)
+
+            if e > 0:
+                q_solved_np = ad.ipc_qpos[..., ad.joints_qs_idx_local]
+                q_pred_np = qpos_pred_np[:, global_qs]
+                for i, qi_local in enumerate(ad.joints_qs_idx_local):
+                    dof_idx = ext_art_entity.dof_start + qi_local
+                    self._accumulate_restitution_joint(
+                        dof_idx,
+                        q_solved_np[:, i : i + 1],
+                        q_pred_np[:, i : i + 1],
+                        dt,
+                    )
+
+        # ---- Restitution: flush all trackers simultaneously when all contacts resolve ----
+        if e > 0:
+            self._flush_restitution_trackers()
+
+    def _get_restitution_tracker(self, dof_start: int, dof_end: int) -> "RestitutionTracker":
+        """Get or create a restitution tracker for a DOF range."""
+        key = (dof_start, dof_end)
+        if key not in self._restitution_trackers:
+            from .data import RestitutionTracker
+
+            self._restitution_trackers[key] = RestitutionTracker(
+                n_envs=self._B,
+                n_dofs=dof_end - dof_start,
+            )
+        return self._restitution_trackers[key]
+
+    def _accumulate_restitution_base_link(
+        self,
+        dof_start: int,
+        q_solved: np.ndarray,
+        q_pred: np.ndarray,
+        dt: float,
+    ):
+        """Accumulate restitution correction for a free-joint base link (6 DOFs)."""
+        tracker = self._get_restitution_tracker(dof_start, dof_start + 6)
+        correction = np.zeros((self._B, 6), dtype=gs.np_float)
+
+        # Translation correction
+        correction[:, :3] = (q_solved[:, :3] - q_pred[:, :3]) / dt
+
+        # Rotation correction
+        for env_idx in range(self._B):
+            dq = gu.transform_quat_by_quat(q_solved[env_idx, 3:7], gu.inv_quat(q_pred[env_idx, 3:7]))
+            rotvec = gu.quat_to_rotvec(dq)
+            correction[env_idx, 3:6] = rotvec / dt
+
+        if np.max(np.abs(correction)) > RESTITUTION_CONTACT_THRESHOLD / dt:
+            tracker.accumulated += correction
+            tracker.active_this_frame = True
+
+    def _accumulate_restitution_joint(
+        self,
+        dof_idx: int,
+        q_solved: np.ndarray,
+        q_pred: np.ndarray,
+        dt: float,
+    ):
+        """Accumulate restitution correction for a single joint DOF."""
+        tracker = self._get_restitution_tracker(dof_idx, dof_idx + 1)
+        correction = (q_solved - q_pred) / dt
+
+        if np.max(np.abs(correction)) > RESTITUTION_CONTACT_THRESHOLD / dt:
+            tracker.accumulated += correction
+            tracker.active_this_frame = True
+
+    def _flush_restitution_trackers(self):
+        """Flush all restitution trackers simultaneously when no tracker is active.
+
+        Waits until ALL trackers with nonzero accumulation have their corrections
+        drop below threshold before flushing any of them. This ensures that
+        multi-body contact impulses are applied on the same frame, preserving
+        momentum conservation.
+        """
+        pending = []
+        for key, tracker in self._restitution_trackers.items():
+            if np.any(tracker.accumulated != 0):
+                pending.append((key, tracker))
+                if tracker.active_this_frame:
+                    # At least one tracker is still in active contact — wait
+                    return
+
+        if not pending:
+            return
+
+        # All pending trackers are inactive — flush them all simultaneously
+        e = self.options.restitution
+        for (dof_start, dof_end), tracker in pending:
+            self._restitution_vel_corrections.append((dof_start, dof_end, e * tracker.accumulated.copy()))
+            tracker.accumulated[:] = 0
+
+    def apply_restitution_velocity(self):
+        """Apply one-shot restitution velocity impulses after step_2.
+
+        Called by rigid_solver.substep_post_coupling after kernel_step_2.
+        Impulses are flushed from restitution trackers when contact ends:
+        Δv = e * accumulated((q_solved - q_pred) / dt) over all contact frames.
+        """
+        if not self._restitution_vel_corrections:
+            return
+        vel_tc = qd_to_torch(self.rigid_solver.dofs_state.vel, transpose=True, copy=False)
+        for dof_start, dof_end, correction in self._restitution_vel_corrections:
+            vel_tc[:, dof_start:dof_end] += torch.from_numpy(correction).to(vel_tc.device)
+        self._restitution_vel_corrections = []

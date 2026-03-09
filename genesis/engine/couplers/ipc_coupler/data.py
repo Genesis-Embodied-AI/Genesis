@@ -106,3 +106,22 @@ class ArticulatedEntityData:
     prev_qpos: np.ndarray | None = None
     mass_matrix: np.ndarray | None = None
     ipc_qpos: np.ndarray | None = None
+
+
+@dataclass
+class RestitutionTracker:
+    """Tracks per-DOF contact state for one-shot restitution impulse.
+
+    IPC resolves contact over multiple frames (inelastic). Applying restitution
+    per-frame causes oscillating decay (e^N -> 0 for e<1). Instead, we accumulate
+    the total velocity correction during contact and apply e * accumulated as a
+    single impulse when contact ends.
+    """
+
+    n_envs: int
+    n_dofs: int
+    accumulated: np.ndarray | None = None
+    active_this_frame: bool = False
+
+    def __post_init__(self):
+        self.accumulated = np.zeros((self.n_envs, self.n_dofs), dtype=gs.np_float)
