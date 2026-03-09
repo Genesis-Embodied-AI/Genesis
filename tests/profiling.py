@@ -1,6 +1,8 @@
 import os
 import re
+import sys
 
+import quadrants as qd
 import pytest
 
 
@@ -63,8 +65,6 @@ def pytorch_profiler(pytestconfig, request):
     traced, keeping the overhead minimal. On exit, a Chrome trace and summary
     are written with the test name in the filename.
     """
-    import sys
-
     import torch
     from torch.profiler import ProfilerActivity
 
@@ -125,6 +125,7 @@ def pytorch_profiler(pytestconfig, request):
     def counted_step():
         original_step()
         step_counter[0] += 1
+        qd.sync()
 
     print(f"PyTorch profiling: {test_name} (wait={wait}, warmup={warmup}, active={active})")
     with prof:
