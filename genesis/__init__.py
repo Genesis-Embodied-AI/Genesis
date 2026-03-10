@@ -128,7 +128,7 @@ def init(
     logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
     if is_cpu_fallback:
-        logger.warning("Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
+        logger.warning(f"Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
 
     # Configure Quadrants fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy
