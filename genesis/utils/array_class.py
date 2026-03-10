@@ -758,8 +758,8 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
     # at scene build time by iterating all geom pairs in collider._init_static_config().
-    # When True, the split-kernel narrowphase path runs (kernel1 detection + kernel2
-    # contacts + sort).
+    # On GPU, the split-kernel narrowphase path runs (kernel1 + kernel2 + sort).
+    # On CPU, falls back to the monolithic func_narrow_phase_convex_vs_convex.
     needs_kernel1: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
