@@ -373,6 +373,11 @@ class AnalyticalVsGJKSceneCreator:
             "func_narrowphase_kernel2_mixed",
             narrowphase_modified.func_narrowphase_kernel2_mixed,
         )
+        self.monkeypatch.setattr(
+            narrowphase,
+            "func_narrow_phase_convex_vs_convex",
+            narrowphase_modified.func_narrow_phase_convex_vs_convex,
+        )
 
     def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
@@ -396,11 +401,14 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
-        assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in kernel1."
+        use_split_kernels = self.scene_gjk._sim.rigid_solver.collider._use_split_kernels
+        if use_split_kernels:
+            # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
+            assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in kernel1."
         if expect_collision:
-            # Kernel2 is only reached when kernel1 detects a collision and enqueues the pair.
-            assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK in kernel2."
+            # On GPU: kernel2 is reached when kernel1 detects a collision and enqueues the pair.
+            # On CPU: the monolithic kernel calls gjk.func_gjk_contact directly (skipping gjk.func_gjk).
+            assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK for contact generation."
 
 
 @pytest.mark.required
