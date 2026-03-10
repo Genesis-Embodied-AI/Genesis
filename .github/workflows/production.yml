@@ -47,6 +47,8 @@ jobs:
       - name: Spawn Slurm job
         if: github.event_name == 'pull_request'
         run: |
+          set -e
+
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
           SRUN_CONTAINER_OPTS="\
