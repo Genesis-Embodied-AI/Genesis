@@ -52,7 +52,6 @@ def main():
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            contact_d_hat=0.001,
             enable_rigid_rigid_contact=True,
             enable_rigid_ground_contact=False,
             restitution=args.restitution,
