@@ -4,9 +4,25 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.constraint import solver
 
+# --- Parallel linesearch constants ---
+# Number of candidate step sizes evaluated simultaneously per env.
+# Each CUDA block processes one env with K threads, using shared memory for the argmin reduction.
+# Similar to BLOCK_DIM in func_hessian_direct_tiled: determines parallelism and shared memory layout.
 LS_PARALLEL_K = 16
+
+# Floor for the Newton step estimate used to center the log-spaced search range.
+# When |grad/hess| is near-zero the search range [alpha*1e-2, alpha*1e2] would collapse;
+# this clamp keeps the range meaningful. The value is well below typical linesearch tolerances
+# (ls_tolerance * tolerance ~ 1e-2 * 1e-8 for double, ~ 1e-2 * 1e-5 for float) so it never
+# masks a genuinely small optimal step.
 LS_PARALLEL_MIN_STEP = 1e-6
-LS_PARALLEL_N_REFINE = 1  # number of successive refinement passes in parallel linesearch
+
+# Number of successive refinement passes: after picking the best of K candidates the search
+# range is narrowed around the winner and re-evaluated. 1 pass (K=16 candidates) already
+# gives sufficient resolution; increase for tighter convergence at the cost of more kernels.
+LS_PARALLEL_N_REFINE = 1
+
+# Block sizes for shared-memory reductions in _kernel_parallel_linesearch_p0 and _jv.
 _P0_BLOCK = 32
 _JV_BLOCK = 32
 
@@ -269,7 +285,8 @@ def _kernel_parallel_linesearch_eval(
             hi = constraint_state.candidates[3, i_b]
 
             # Generate log-spaced alpha within [lo, hi]
-            alpha = solver._log_scale(lo, hi, _K, tid)
+            _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
+            alpha = qd.exp(qd.log(lo) + gs.qd_float(tid) * _step)
 
             # Evaluate cost at this alpha
             cost = (
@@ -338,7 +355,9 @@ def _kernel_parallel_linesearch_eval(
                 best_cost = sh_cost[0]
                 lo = constraint_state.candidates[2, i_b]
                 hi = constraint_state.candidates[3, i_b]
-                best_alpha = solver._log_scale(lo, hi, _K, best_tid)
+                # Recover best alpha from log-spaced grid
+                _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
+                best_alpha = qd.exp(qd.log(lo) + gs.qd_float(best_tid) * _step)
 
                 # Only update best alpha if this pass improved over ALL previous passes
                 best_cost_prev = constraint_state.candidates[4, i_b]
@@ -349,8 +368,10 @@ def _kernel_parallel_linesearch_eval(
                     # Narrow range around accepted point for next refinement pass
                     lo_idx = qd.max(0, best_tid - 1)
                     hi_idx = qd.min(_K - 1, best_tid + 1)
-                    constraint_state.candidates[2, i_b] = solver._log_scale(lo, hi, _K, lo_idx)
-                    constraint_state.candidates[3, i_b] = solver._log_scale(lo, hi, _K, hi_idx)
+                    # Narrow search range to neighbors of best candidate
+                    _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
+                    constraint_state.candidates[2, i_b] = qd.exp(qd.log(lo) + gs.qd_float(lo_idx) * _step)
+                    constraint_state.candidates[3, i_b] = qd.exp(qd.log(lo) + gs.qd_float(hi_idx) * _step)
             else:
                 constraint_state.candidates[0, i_b] = 0.0
 

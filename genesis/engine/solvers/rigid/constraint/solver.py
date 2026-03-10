@@ -2356,12 +2356,6 @@ def update_bracket_no_eval_local(
 
 
 @qd.func
-def _log_scale(min_value: gs.qd_float, max_value: gs.qd_float, num_values: qd.i32, i: qd.i32) -> gs.qd_float:
-    step = (qd.log(max_value) - qd.log(min_value)) / qd.max(1.0, gs.qd_float(num_values - 1))
-    return qd.exp(qd.log(min_value) + gs.qd_float(i) * step)
-
-
-@qd.func
 def func_linesearch_and_apply_alpha(
     i_b,
     entities_info: array_class.EntitiesInfo,
