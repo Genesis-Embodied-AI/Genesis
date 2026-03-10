@@ -246,7 +246,12 @@ class Collider:
 
         # Kernel 1 & 2 scratch states only needed when split-kernel narrowphase is active
         if self._collider_static_config.needs_kernel1:
-            self._kernel1_n_chunks = 5
+            if gs.device.type == "cuda":
+                gpu_props = torch.cuda.get_device_properties(gs.device)
+                gpu_cuda_cores = gpu_props.multi_processor_count * 128
+                self._kernel1_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
+            else:
+                self._kernel1_n_chunks = 1
             self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
             self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
             self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
