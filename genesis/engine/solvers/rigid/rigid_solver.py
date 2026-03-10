@@ -1569,12 +1569,12 @@ class RigidSolver(KinematicSolver):
     # ------------------------------------ control ---------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def _mark_ipc_abd_dirty(self):
+    def _mark_ipc_abd_updated(self, qs_idx=None, dofs_idx=None, links_idx=None, envs_idx=None):
         """Notify IPC coupler that rigid positions changed and ABD state needs sync."""
         from genesis.engine.couplers import IPCCoupler
 
         if isinstance(self.sim.coupler, IPCCoupler):
-            self.sim.coupler.mark_is_abd_updated()
+            self.sim.coupler.mark_abd_updated(qs_idx=qs_idx, dofs_idx=dofs_idx, links_idx=links_idx, envs_idx=envs_idx)
 
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
@@ -1647,7 +1647,7 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
-        self._mark_ipc_abd_dirty()
+        self._mark_ipc_abd_updated(links_idx=links_idx, envs_idx=envs_idx)
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
@@ -1715,7 +1715,7 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
-        self._mark_ipc_abd_dirty()
+        self._mark_ipc_abd_updated(links_idx=links_idx, envs_idx=envs_idx)
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
@@ -1828,7 +1828,7 @@ class RigidSolver(KinematicSolver):
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
 
-        self._mark_ipc_abd_dirty()
+        self._mark_ipc_abd_updated(qs_idx=qs_idx, envs_idx=envs_idx)
 
     def set_global_sol_params(self, sol_params):
         """
@@ -2020,7 +2020,7 @@ class RigidSolver(KinematicSolver):
         )
         self._is_forward_pos_updated = True
         self._is_forward_vel_updated = True
-        self._mark_ipc_abd_dirty()
+        self._mark_ipc_abd_updated(dofs_idx=dofs_idx, envs_idx=envs_idx)
 
     def control_dofs_force(self, force, dofs_idx=None, envs_idx=None):
         if gs.use_zerocopy:

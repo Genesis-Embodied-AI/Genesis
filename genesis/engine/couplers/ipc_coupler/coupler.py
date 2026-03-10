@@ -50,7 +50,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
     from uipc.geometry import GeometrySlot, SimplicialComplex, SimplicialComplexSlot
     from uipc.gui import SceneGUI
 
-    from .data import COUPLING_TYPE, ABDLinkData, ArticulatedEntityData, RestitutionTracker
+    from .data import COUPLING_TYPE, ABDLinkData, ArticulatedEntityData
     from .utils import (
         build_ipc_scene_config,
         compute_link_to_link_transform,
@@ -143,18 +143,23 @@ class IPCCoupler(RBC):
         self._abd_merged_meshes: dict["RigidLink", trimesh.Trimesh] = {}
         self._abd_state_feature: AffineBodyStateAccessorFeature | None = None
         self._abd_state_geom: SimplicialComplex | None = None
-        # Set to True when set_qpos/set_dofs_position is called; triggers IPC state sync before next advance
-        self._is_abd_updated: bool = False
+        # ABD links whose IPC state needs sync: link → set of dirty env indices.
+        self._abd_updated_links: dict["RigidLink", set[int]] = {}
+        # Lookup tables built during _add_rigid_geoms_to_ipc:
+        # qpos index → ABD target link
+        self._q_to_abd_link: list["RigidLink | None"] = []
+        # dof index → ABD target link
+        self._dof_to_abd_link: list["RigidLink | None"] = []
+        # global link index → ABD target link (handles fixed-joint merging)
+        self._link_to_abd_link: list["RigidLink | None"] = []
 
         # ==== Input/Output Data ====
         self._abd_data_by_link: dict["RigidLink", ABDLinkData] = {}
         self._articulation_data_by_entity: dict["RigidEntity", ArticulatedEntityData] = {}
 
         # ==== Restitution ====
-        # One-shot impulse: accumulate corrections during contact, apply at separation.
+        # Per-frame velocity corrections: (dof_start, dof_end, correction_array).
         self._restitution_vel_corrections: list[tuple[int, int, np.ndarray]] = []
-        # Per-DOF-range trackers, keyed by (dof_start, dof_end). Lazily initialized.
-        self._restitution_trackers: dict[tuple[int, int], "RestitutionTracker"] = {}
 
         # ==== GUI ====
         self._ipc_gui: SceneGUI | None = None
@@ -359,6 +364,11 @@ class IPCCoupler(RBC):
 
         gs.logger.debug(f"Registered entity coupling types: {set(self._coup_type_by_entity.values())}")
 
+        # Initialize lookup tables
+        self._q_to_abd_link = [None] * self.rigid_solver.n_qs
+        self._dof_to_abd_link = [None] * self.rigid_solver.n_dofs
+        self._link_to_abd_link = [None] * self.rigid_solver.n_links
+
         # ========== Pre-compute link groups (env-independent) ==========
         # Group links by fixed-joint merge target, matching mjcf.py behavior where geoms from fixed-joint children are
         # merged into the parent body's mesh.
@@ -524,6 +534,16 @@ class IPCCoupler(RBC):
                 ipc_transforms=np.tile(np.eye(4, dtype=gs.np_float), (self._B, 1, 1)) if needs_ipc_state else None,
                 ipc_velocities=np.zeros((self._B, 4, 4), dtype=gs.np_float) if needs_ipc_state else None,
             )
+
+            # Populate lookup tables for all source links merged into this target
+            for source_link in source_links:
+                self._link_to_abd_link[source_link.idx] = target_link
+                if source_link.q_start >= 0:
+                    for qi in range(source_link.q_start, source_link.q_end):
+                        self._q_to_abd_link[qi] = target_link
+                if source_link.dof_start >= 0:
+                    for di in range(source_link.dof_start, source_link.dof_end):
+                        self._dof_to_abd_link[di] = target_link
 
     def _add_articulation_entities_to_ipc(self) -> None:
         """
@@ -856,13 +876,65 @@ class IPCCoupler(RBC):
             assert envs_set == all_envs, f"IPC coupler only supports full reset, got envs_idx={envs_idx}"
 
         gs.logger.debug("Resetting IPC coupler state")
-        self._is_abd_updated = False
+        self._abd_updated_links.clear()
         self._ipc_world.recover(0)
         self._ipc_world.retrieve()
 
-    def mark_is_abd_updated(self):
-        """Mark all coupled entities as needing IPC ABD state sync after position changes."""
-        self._is_abd_updated = True
+    def _mark_abd_link_updated(self, link: "RigidLink", env_set: set[int]):
+        """Add a link to the updated set for the given environments."""
+        existing = self._abd_updated_links.get(link)
+        if existing is None:
+            self._abd_updated_links[link] = env_set.copy()
+        else:
+            existing.update(env_set)
+
+    def mark_abd_updated(self, qs_idx=None, dofs_idx=None, links_idx=None, envs_idx=None):
+        """Mark ABD links as needing IPC state sync.
+
+        Parameters
+        ----------
+        qs_idx : array_like | None
+            Global qpos indices that were modified.
+        dofs_idx : array_like | None
+            Global dof indices that were modified.
+        links_idx : array_like | None
+            Global link indices that were modified.
+        envs_idx : array_like | None
+            Environment indices affected. None means all environments.
+
+        If qs_idx, dofs_idx, and links_idx are all None, ALL coupled links are marked.
+        """
+        if not self._abd_data_by_link:
+            return
+        all_envs = set(range(self._B)) if self._B > 0 else {0}
+        env_set = all_envs if envs_idx is None else set(int(i) for i in envs_idx)
+
+        if qs_idx is None and dofs_idx is None and links_idx is None:
+            for link in self._abd_data_by_link:
+                self._mark_abd_link_updated(link, env_set)
+            return
+
+        if qs_idx is not None:
+            if isinstance(qs_idx, slice):
+                qs_idx = range(*qs_idx.indices(len(self._q_to_abd_link)))
+            for qi in qs_idx:
+                link = self._q_to_abd_link[int(qi)]
+                if link is not None:
+                    self._mark_abd_link_updated(link, env_set)
+
+        if dofs_idx is not None:
+            if isinstance(dofs_idx, slice):
+                dofs_idx = range(*dofs_idx.indices(len(self._dof_to_abd_link)))
+            for di in dofs_idx:
+                link = self._dof_to_abd_link[int(di)]
+                if link is not None:
+                    self._mark_abd_link_updated(link, env_set)
+
+        if links_idx is not None:
+            for li in links_idx:
+                link = self._link_to_abd_link[int(li)]
+                if link is not None:
+                    self._mark_abd_link_updated(link, env_set)
 
     def cache_pre_prediction_transforms(self):
         """
@@ -870,10 +942,9 @@ class IPCCoupler(RBC):
 
         Called by RigidSolver before kernel_predict_integrate. At this point
         links_state reflects actual poses (including any set_qpos changes) before
-        prediction overwrites them. ABD bodies are set to these poses so IPC can
-        resolve collisions on the path toward the predicted target.
+        prediction overwrites them. Only updated (link, env) pairs are synced.
         """
-        if not self._is_abd_updated or self._abd_state_feature is None:
+        if not self._abd_updated_links or self._abd_state_feature is None:
             return
 
         assert self._abd_state_geom is not None
@@ -887,12 +958,15 @@ class IPCCoupler(RBC):
         transforms = trans_attr.view()
 
         for i_link, link in enumerate(self._abd_data_by_link.keys()):
-            for env_idx in range(self._B):
+            dirty_envs = self._abd_updated_links.get(link)
+            if dirty_envs is None:
+                continue
+            for env_idx in dirty_envs:
                 abd_body_idx = i_link * self._B + env_idx
                 transforms[abd_body_idx] = links_transform[env_idx, link.idx]
 
         self._abd_state_feature.copy_from(self._abd_state_geom)
-        self._is_abd_updated = False
+        self._abd_updated_links.clear()
 
     @property
     def is_active(self) -> bool:
@@ -1091,11 +1165,6 @@ class IPCCoupler(RBC):
         # Clear one-shot impulses from previous step
         self._restitution_vel_corrections = []
 
-        # Reset per-frame active flags
-        if e > 0:
-            for tracker in self._restitution_trackers.values():
-                tracker.active_this_frame = False
-
         # ---- Step 1: Non-fixed base links — write IPC transform to qpos[0:7] ----
         for link, abd_data in self._abd_data_by_link.items():
             if abd_data.ipc_transforms is None:
@@ -1171,15 +1240,6 @@ class IPCCoupler(RBC):
                     envs_q[env_idx, 0] = qpos0[env_idx, q_idx] + angle_ipc
                 qpos_tc[:, q_idx : q_idx + 1] = torch.from_numpy(envs_q).to(qpos_tc.device)
 
-                if e > 0:
-                    dof_idx = joint.dof_start
-                    self._accumulate_restitution_joint(
-                        dof_idx,
-                        envs_q,
-                        qpos_pred_np[:, q_idx : q_idx + 1],
-                        dt,
-                    )
-
         # ---- Step 2b: External articulation — read delta_theta, write joint qpos ----
         for ext_art_entity, ad in self._articulation_data_by_entity.items():
             delta_theta_ipc = np.empty((self._B, len(ad.joints_qs_idx_local)), dtype=np.float64)
@@ -1195,34 +1255,6 @@ class IPCCoupler(RBC):
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
             qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(qpos_tc.device)
 
-            if e > 0:
-                q_solved_np = ad.ipc_qpos[..., ad.joints_qs_idx_local]
-                q_pred_np = qpos_pred_np[:, global_qs]
-                for i, qi_local in enumerate(ad.joints_qs_idx_local):
-                    dof_idx = ext_art_entity.dof_start + qi_local
-                    self._accumulate_restitution_joint(
-                        dof_idx,
-                        q_solved_np[:, i : i + 1],
-                        q_pred_np[:, i : i + 1],
-                        dt,
-                    )
-
-        # ---- Restitution: flush all trackers simultaneously when all contacts resolve ----
-        if e > 0:
-            self._flush_restitution_trackers()
-
-    def _get_restitution_tracker(self, dof_start: int, dof_end: int) -> "RestitutionTracker":
-        """Get or create a restitution tracker for a DOF range."""
-        key = (dof_start, dof_end)
-        if key not in self._restitution_trackers:
-            from .data import RestitutionTracker
-
-            self._restitution_trackers[key] = RestitutionTracker(
-                n_envs=self._B,
-                n_dofs=dof_end - dof_start,
-            )
-        return self._restitution_trackers[key]
-
     def _accumulate_restitution_base_link(
         self,
         dof_start: int,
@@ -1230,8 +1262,7 @@ class IPCCoupler(RBC):
         q_pred: np.ndarray,
         dt: float,
     ):
-        """Accumulate restitution correction for a free-joint base link (6 DOFs)."""
-        tracker = self._get_restitution_tracker(dof_start, dof_start + 6)
+        """Per-frame restitution correction for a free-joint base link (6 DOFs)."""
         correction = np.zeros((self._B, 6), dtype=gs.np_float)
 
         # Translation correction
@@ -1244,55 +1275,14 @@ class IPCCoupler(RBC):
             correction[env_idx, 3:6] = rotvec / dt
 
         if np.max(np.abs(correction)) > RESTITUTION_CONTACT_THRESHOLD / dt:
-            tracker.accumulated += correction
-            tracker.active_this_frame = True
-
-    def _accumulate_restitution_joint(
-        self,
-        dof_idx: int,
-        q_solved: np.ndarray,
-        q_pred: np.ndarray,
-        dt: float,
-    ):
-        """Accumulate restitution correction for a single joint DOF."""
-        tracker = self._get_restitution_tracker(dof_idx, dof_idx + 1)
-        correction = (q_solved - q_pred) / dt
-
-        if np.max(np.abs(correction)) > RESTITUTION_CONTACT_THRESHOLD / dt:
-            tracker.accumulated += correction
-            tracker.active_this_frame = True
-
-    def _flush_restitution_trackers(self):
-        """Flush all restitution trackers simultaneously when no tracker is active.
-
-        Waits until ALL trackers with nonzero accumulation have their corrections
-        drop below threshold before flushing any of them. This ensures that
-        multi-body contact impulses are applied on the same frame, preserving
-        momentum conservation.
-        """
-        pending = []
-        for key, tracker in self._restitution_trackers.items():
-            if np.any(tracker.accumulated != 0):
-                pending.append((key, tracker))
-                if tracker.active_this_frame:
-                    # At least one tracker is still in active contact — wait
-                    return
-
-        if not pending:
-            return
-
-        # All pending trackers are inactive — flush them all simultaneously
-        e = self.options.restitution
-        for (dof_start, dof_end), tracker in pending:
-            self._restitution_vel_corrections.append((dof_start, dof_end, e * tracker.accumulated.copy()))
-            tracker.accumulated[:] = 0
+            e = self.options.restitution
+            self._restitution_vel_corrections.append((dof_start, dof_start + 6, e * correction))
 
     def apply_restitution_velocity(self):
-        """Apply one-shot restitution velocity impulses after step_2.
+        """Apply per-frame restitution velocity corrections after step_2.
 
         Called by rigid_solver.substep_post_coupling after kernel_step_2.
-        Impulses are flushed from restitution trackers when contact ends:
-        Δv = e * accumulated((q_solved - q_pred) / dt) over all contact frames.
+        Each frame: Δv = e * (q_solved - q_pred) / dt for base links in contact.
         """
         if not self._restitution_vel_corrections:
             return

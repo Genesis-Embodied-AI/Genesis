@@ -427,6 +427,7 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             newton_translation_tolerance=1e-2,
             linear_system_tolerance=1e-3,
             newton_semi_implicit_enable=False,
+            restitution=0.0,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 0.8),
