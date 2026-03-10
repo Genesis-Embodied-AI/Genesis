@@ -1485,7 +1485,9 @@ def func_kernel2_gjk_full(
                             static_rigid_sim_config,
                         )
 
-                    if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
+                    if qd.static(
+                        collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
+                    ):
                         collider_state.contact_cache.normal[i_pair, i_b_env] = normal
                 else:
                     collider_state.contact_cache.normal[i_pair, i_b_env] = qd.Vector.zero(gs.qd_float, 3)

@@ -259,6 +259,7 @@ class Collider:
 
     def _init_kernel2_gjk_state(self):
         """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
+
         class _SolverProxy:
             def __init__(self, _B, requires_grad):
                 self._B = _B
