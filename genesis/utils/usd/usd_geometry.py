@@ -289,7 +289,7 @@ def parse_prim_geoms(
         is_guide = str(gprim.GetPurposeAttr().Get() or "default") == "guide"
         is_visible = str(gprim.ComputeVisibility()) != "invisible"
         is_visual = (is_visible and not is_guide) and (match_visual or not (match_collision or match_visual))
-        is_collision = match_collision or not (match_collision or match_visual)
+        is_collision = is_visible and (match_collision or not (match_collision or match_visual))
 
         g_infos = links_g_infos[link_path_to_idx[str(link_prim.GetPath())]]
         if is_visual:

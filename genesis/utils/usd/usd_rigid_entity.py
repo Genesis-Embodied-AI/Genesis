@@ -414,12 +414,9 @@ def _parse_articulation_structure(stage: Usd.Stage, entity_prim: Usd.Prim, joint
         links = [entity_prim]
         link_joints = [[]]
         link_path_to_idx = {None: -1, str(entity_prim.GetPath()): 0}
-    # Only add placeholder joints for articulation links that have no joints
-    # (pure rigid bodies should not have any joints)
-    if link_path_joints:
-        for joints in link_joints:
-            if not joints:
-                joints.append((None, -1, False))
+    for joints in link_joints:
+        if not joints:
+            joints.append((None, -1, False))
 
     return links, link_joints, link_path_to_idx
 
