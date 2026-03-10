@@ -634,98 +634,24 @@ def func_convex_convex_contact(
                 )
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                    is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif (
-                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
-                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
-                    is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        ga_pos=ga_pos_current,
-                        ga_quat=ga_quat_current,
-                        gb_pos=gb_pos_current,
-                        gb_quat=gb_quat_current,
-                        geoms_info=geoms_info,
-                        rigid_global_info=rigid_global_info,
-                    )
-                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
-                    plane_dir = qd.Vector(
-                        [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
-                    )
-                    plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat_current)
-                    normal = -plane_dir.normalized()
-
-                    v1 = mpr.support_driver(
-                        geoms_info,
-                        collider_state,
-                        collider_static_config,
-                        support_field_info,
-                        normal,
-                        i_gb,
-                        i_b,
-                        gb_pos_current,
-                        gb_quat_current,
-                    )
-                    penetration = normal.dot(v1 - ga_pos_current)
-                    contact_pos = v1 - 0.5 * penetration * normal
-                    is_col = penetration > 0.0
-                else:
+                is_col, normal, contact_pos, penetration, handled = func_detect_primitive(
+                    i_ga, i_gb, ga_pos_current, ga_quat_current, gb_pos_current, gb_quat_current, i_b,
+                    geoms_info, collider_state, collider_static_config, support_field_info, rigid_global_info,
+                )
+                if not handled:
                     ### MPR, MJ_MPR
                     if qd.static(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
                     ):
-                        # Try using MPR before anything else
-                        is_mpr_updated = False
-                        normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
-                        is_mpr_guess_direction_available = (qd.abs(normal_ws) > EPS).any()
-                        for i_mpr in range(2):
-                            if i_mpr == 1:
-                                # Try without warm-start if no contact was detected using it.
-                                # When penetration depth is very shallow, MPR may wrongly classify two geometries as not
-                                # in contact while they actually are. This helps to improve contact persistence without
-                                # increasing much the overall computational cost since the fallback should not be
-                                # triggered very often.
-                                if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                    if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                        normal_ws = qd.Vector.zero(gs.qd_float, 3)
-                                        is_mpr_guess_direction_available = False
-                                        is_mpr_updated = False
+                        is_col, normal, contact_pos, penetration, is_mpr_guess_direction_available = (
+                            func_run_mpr_detection(
+                                i_ga, i_gb, i_b, i_b, ga_pos_current, ga_quat_current, gb_pos_current, gb_quat_current,
+                                geoms_info, geoms_init_AABB, rigid_global_info, static_rigid_sim_config,
+                                collider_state, collider_static_config, mpr_state, mpr_info, support_field_info,
+                                i_pair, i_detection == 0,
+                            )
+                        )
 
-                            if not is_mpr_updated:
-                                is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                    geoms_info,
-                                    geoms_init_AABB,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_static_config,
-                                    mpr_state,
-                                    mpr_info,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    normal_ws,
-                                    ga_pos_current,
-                                    ga_quat_current,
-                                    gb_pos_current,
-                                    gb_quat_current,
-                                )
-                                is_mpr_updated = True
-
-                        # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
-                        # large, and either no collision direction was cached or the geometries have large overlap. This
-                        # contact information provided by MPR may be unreliable in these cases.
                         if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
                             if penetration > tolerance:
                                 prefer_gjk = not is_mpr_guess_direction_available or (
@@ -890,52 +816,13 @@ def func_convex_convex_contact(
                     # Clear collision normal cache if not in contact
                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
             elif multi_contact and is_col:
-                # For perturbed iterations (i_detection > 0), correct contact position and normal. This applies to all
-                # collision methods when multi-contact is enabled, except mujoco compatible.
-                #
-                # 1. Project the contact point on both geometries
-                # 2. Revert the effect of small rotation
-                # 3. Update contact point
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
-                    contact_point_a = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
-                        )
-                        + contact_pos_0
+                    contact_pos, normal, penetration = func_correct_perturbed_contact(
+                        contact_pos, normal, penetration, contact_pos_0, normal_0, qrot, collider_info,
                     )
-                    contact_point_b = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
-                    )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
 
-                    # First-order correction of the normal direction.
-                    # The way the contact normal gets twisted by applying perturbation of geometry poses is
-                    # unpredictable as it depends on the final portal discovered by MPR. Alternatively, let compute
-                    # the minimal rotation that makes the corrected twisted normal as closed as possible to the
-                    # original one, up to the scale of the perturbation, then apply first-order Taylor expansion of
-                    # Rodrigues' rotation formula.
-                    twist_rotvec = qd.math.clamp(
-                        normal.cross(normal_0),
-                        -collider_info.mc_perturbation[None],
-                        collider_info.mc_perturbation[None],
-                    )
-                    normal = normal + twist_rotvec.cross(normal)
-
-                    # Make sure that the penetration is still positive before adding contact point.
-                    # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                    # contact points and thefore more continuous contact forces, without changing the mean-field
-                    # dynamics since zero-penetration contact points should not induce any force.
-                    penetration = normal.dot(contact_point_b - contact_point_a)
-
-                # For MuJoCo-compatible GJK, set penetration of perturbed contacts to equal the initial contact's
-                # penetration, matching MuJoCo's behavior (engine_collision_convex.c:1010).
                 if qd.static(
                     collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
@@ -971,6 +858,191 @@ def func_convex_convex_contact(
 
 
 @qd.func
+def func_run_mpr_detection(
+    i_ga,
+    i_gb,
+    i_b_scratch,
+    i_b_env,
+    ga_pos: qd.types.vector(3, dtype=gs.qd_float),
+    ga_quat: qd.types.vector(4, dtype=gs.qd_float),
+    gb_pos: qd.types.vector(3, dtype=gs.qd_float),
+    gb_quat: qd.types.vector(4, dtype=gs.qd_float),
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_state: array_class.ColliderState,
+    collider_static_config: qd.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    support_field_info: array_class.SupportFieldInfo,
+    i_pair,
+    is_initial_detection,
+):
+    """Run MPR detection with warm-start retry.
+
+    Returns (is_col, normal, contact_pos, penetration, is_mpr_guess_direction_available).
+    """
+    EPS = rigid_global_info.EPS[None]
+    is_col = False
+    penetration = gs.qd_float(0.0)
+    normal = qd.Vector.zero(gs.qd_float, 3)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+
+    is_mpr_updated = False
+    normal_ws = collider_state.contact_cache.normal[i_pair, i_b_env]
+    is_mpr_guess_direction_available = (qd.abs(normal_ws) > EPS).any()
+    for i_mpr in range(2):
+        if i_mpr == 1:
+            if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                if is_initial_detection and not is_col and is_mpr_guess_direction_available:
+                    normal_ws = qd.Vector.zero(gs.qd_float, 3)
+                    is_mpr_guess_direction_available = False
+                    is_mpr_updated = False
+
+        if not is_mpr_updated:
+            is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
+                geoms_info,
+                geoms_init_AABB,
+                rigid_global_info,
+                static_rigid_sim_config,
+                collider_state,
+                collider_static_config,
+                mpr_state,
+                mpr_info,
+                support_field_info,
+                i_ga,
+                i_gb,
+                i_b_scratch,
+                normal_ws,
+                ga_pos,
+                ga_quat,
+                gb_pos,
+                gb_quat,
+            )
+            is_mpr_updated = True
+
+    return is_col, normal, contact_pos, penetration, is_mpr_guess_direction_available
+
+
+@qd.func
+def func_correct_perturbed_contact(
+    contact_pos: qd.types.vector(3, dtype=gs.qd_float),
+    normal: qd.types.vector(3, dtype=gs.qd_float),
+    penetration,
+    contact_pos_0: qd.types.vector(3, dtype=gs.qd_float),
+    normal_0: qd.types.vector(3, dtype=gs.qd_float),
+    qrot: qd.types.vector(4, dtype=gs.qd_float),
+    collider_info: array_class.ColliderInfo,
+):
+    """Undo the effect of perturbation on a multi-contact detection result.
+
+    Projects the contact point onto both geometries, reverts the small
+    rotation applied for perturbation, and recomputes penetration.
+    """
+    contact_point_a = (
+        gu.qd_transform_by_quat(
+            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+            gu.qd_inv_quat(qrot),
+        )
+        + contact_pos_0
+    )
+    contact_point_b = (
+        gu.qd_transform_by_quat(
+            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
+            qrot,
+        )
+        + contact_pos_0
+    )
+    contact_pos = 0.5 * (contact_point_a + contact_point_b)
+    twist_rotvec = qd.math.clamp(
+        normal.cross(normal_0),
+        -collider_info.mc_perturbation[None],
+        collider_info.mc_perturbation[None],
+    )
+    normal = normal + twist_rotvec.cross(normal)
+    penetration = normal.dot(contact_point_b - contact_point_a)
+    return contact_pos, normal, penetration
+
+
+@qd.func
+def func_detect_primitive(
+    i_ga,
+    i_gb,
+    ga_pos: qd.types.vector(3, dtype=gs.qd_float),
+    ga_quat: qd.types.vector(4, dtype=gs.qd_float),
+    gb_pos: qd.types.vector(3, dtype=gs.qd_float),
+    gb_quat: qd.types.vector(4, dtype=gs.qd_float),
+    i_b,
+    geoms_info: array_class.GeomsInfo,
+    collider_state: array_class.ColliderState,
+    collider_static_config: qd.template(),
+    support_field_info: array_class.SupportFieldInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Detect capsule-capsule, sphere-capsule, and plane-* collisions.
+
+    Returns (is_col, normal, contact_pos, penetration, handled).
+    If handled is False, the caller should fall through to MPR/GJK.
+    """
+    is_col = False
+    penetration = gs.qd_float(0.0)
+    normal = qd.Vector.zero(gs.qd_float, 3)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+    handled = False
+
+    if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
+        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
+            i_ga=i_ga,
+            i_gb=i_gb,
+            ga_pos=ga_pos,
+            ga_quat=ga_quat,
+            gb_pos=gb_pos,
+            gb_quat=gb_quat,
+            geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
+        )
+        handled = True
+    elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
+        geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
+    ):
+        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+            i_ga=i_ga,
+            i_gb=i_gb,
+            ga_pos=ga_pos,
+            ga_quat=ga_quat,
+            gb_pos=gb_pos,
+            gb_quat=gb_quat,
+            geoms_info=geoms_info,
+            rigid_global_info=rigid_global_info,
+        )
+        handled = True
+    elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
+        plane_dir = qd.Vector(
+            [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
+        )
+        plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
+        normal = -plane_dir.normalized()
+        v1 = mpr.support_driver(
+            geoms_info,
+            collider_state,
+            collider_static_config,
+            support_field_info,
+            normal,
+            i_gb,
+            i_b,
+            gb_pos,
+            gb_quat,
+        )
+        penetration = normal.dot(v1 - ga_pos)
+        contact_pos = v1 - 0.5 * penetration * normal
+        is_col = penetration > 0.0
+        handled = True
+
+    return is_col, normal, contact_pos, penetration, handled
+
+
+@qd.func
 def func_kernel2_run_detection(
     i_ga,
     i_gb,
@@ -999,128 +1071,79 @@ def func_kernel2_run_detection(
     i_pair,
     use_gjk: qd.template(),
     is_initial_detection: qd.template(),
+    detection_only: qd.template() = False,
 ):
-    """Run one detection (capsule/plane/MPR/GJK) and return (is_col, normal, contact_pos, penetration, used_gjk)."""
+    """Run one detection (capsule/plane/MPR/GJK) and return (is_col, normal, contact_pos, penetration, used_gjk).
+
+    When detection_only=True (kernel1 path), runs GJK distance check and MPR
+    detection but does not produce full GJK contacts.  Unused parameters
+    (faces_info, gjk_static_config) are pruned from the compiled kernel.
+    """
     EPS = rigid_global_info.EPS[None]
-    is_col = False
-    penetration = gs.qd_float(0.0)
-    normal = qd.Vector.zero(gs.qd_float, 3)
-    contact_pos = qd.Vector.zero(gs.qd_float, 3)
     used_gjk = False
     tolerance = func_compute_tolerance(
         i_ga, i_gb, i_b_env, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
     )
 
-    if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-        is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-            i_ga=i_ga,
-            i_gb=i_gb,
-            ga_pos=ga_pos,
-            ga_quat=ga_quat,
-            gb_pos=gb_pos,
-            gb_quat=gb_quat,
-            geoms_info=geoms_info,
-            rigid_global_info=rigid_global_info,
-        )
-    elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
-        geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
-    ):
-        is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-            i_ga=i_ga,
-            i_gb=i_gb,
-            ga_pos=ga_pos,
-            ga_quat=ga_quat,
-            gb_pos=gb_pos,
-            gb_quat=gb_quat,
-            geoms_info=geoms_info,
-            rigid_global_info=rigid_global_info,
-        )
-    elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
-        plane_dir = qd.Vector(
-            [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
-        )
-        plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
-        normal = -plane_dir.normalized()
-        v1 = mpr.support_driver(
-            geoms_info,
-            collider_state,
-            collider_static_config,
-            support_field_info,
-            normal,
-            i_gb,
-            i_b_env,
-            gb_pos,
-            gb_quat,
-        )
-        penetration = normal.dot(v1 - ga_pos)
-        contact_pos = v1 - 0.5 * penetration * normal
-        is_col = penetration > 0.0
-    else:
+    is_col, normal, contact_pos, penetration, handled = func_detect_primitive(
+        i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, i_b_env,
+        geoms_info, collider_state, collider_static_config, support_field_info, rigid_global_info,
+    )
+    if not handled:
+        if qd.static(detection_only):
+            if qd.static(
+                collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
+            ):
+                gjk.clear_cache(gjk_state, i_b_scratch)
+                distance = gjk.func_gjk(
+                    geoms_info, verts_info, static_rigid_sim_config,
+                    collider_state, collider_static_config,
+                    gjk_state, gjk_info, support_field_info,
+                    i_ga, i_gb, i_b_scratch,
+                    ga_pos, ga_quat, gb_pos, gb_quat, False,
+                )
+                is_col = distance < gjk_info.collision_eps[None]
+
         if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)):
-            if not use_gjk:
-                is_mpr_updated = False
-                normal_ws = collider_state.contact_cache.normal[i_pair, i_b_env]
-                is_mpr_guess_direction_available = (qd.abs(normal_ws) > EPS).any()
-                for i_mpr in range(2):
-                    if i_mpr == 1:
-                        if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                            if is_initial_detection and not is_col and is_mpr_guess_direction_available:
-                                normal_ws = qd.Vector.zero(gs.qd_float, 3)
-                                is_mpr_guess_direction_available = False
-                                is_mpr_updated = False
+            if qd.static(detection_only) or not use_gjk:
+                is_col, normal, contact_pos, penetration, _mpr_guess_avail = func_run_mpr_detection(
+                    i_ga, i_gb, i_b_scratch, i_b_env, ga_pos, ga_quat, gb_pos, gb_quat,
+                    geoms_info, geoms_init_AABB, rigid_global_info, static_rigid_sim_config,
+                    collider_state, collider_static_config, mpr_state, mpr_info, support_field_info,
+                    i_pair, is_initial_detection,
+                )
 
-                    if not is_mpr_updated:
-                        is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                            geoms_info,
-                            geoms_init_AABB,
-                            rigid_global_info,
-                            static_rigid_sim_config,
-                            collider_state,
-                            collider_static_config,
-                            mpr_state,
-                            mpr_info,
-                            support_field_info,
-                            i_ga,
-                            i_gb,
-                            i_b_scratch,
-                            normal_ws,
-                            ga_pos,
-                            ga_quat,
-                            gb_pos,
-                            gb_quat,
+        if qd.static(not detection_only):
+            if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
+                if use_gjk:
+                    if qd.static(not static_rigid_sim_config.requires_grad):
+                        gjk.func_gjk_contact(
+                            geoms_state=geoms_state,
+                            geoms_info=geoms_info,
+                            verts_info=verts_info,
+                            faces_info=faces_info,
+                            rigid_global_info=rigid_global_info,
+                            static_rigid_sim_config=static_rigid_sim_config,
+                            collider_state=collider_state,
+                            collider_static_config=collider_static_config,
+                            gjk_state=gjk_state,
+                            gjk_info=gjk_info,
+                            gjk_static_config=gjk_static_config,
+                            support_field_info=support_field_info,
+                            i_ga=i_ga,
+                            i_gb=i_gb,
+                            i_b=i_b_scratch,
+                            pos_a=ga_pos,
+                            quat_a=ga_quat,
+                            pos_b=gb_pos,
+                            quat_b=gb_quat,
                         )
-                        is_mpr_updated = True
-
-        if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-            if use_gjk:
-                if qd.static(not static_rigid_sim_config.requires_grad):
-                    gjk.func_gjk_contact(
-                        geoms_state=geoms_state,
-                        geoms_info=geoms_info,
-                        verts_info=verts_info,
-                        faces_info=faces_info,
-                        rigid_global_info=rigid_global_info,
-                        static_rigid_sim_config=static_rigid_sim_config,
-                        collider_state=collider_state,
-                        collider_static_config=collider_static_config,
-                        gjk_state=gjk_state,
-                        gjk_info=gjk_info,
-                        gjk_static_config=gjk_static_config,
-                        support_field_info=support_field_info,
-                        i_ga=i_ga,
-                        i_gb=i_gb,
-                        i_b=i_b_scratch,
-                        pos_a=ga_pos,
-                        quat_a=ga_quat,
-                        pos_b=gb_pos,
-                        quat_b=gb_quat,
-                    )
-                    is_col = gjk_state.is_col[i_b_scratch] == 1
-                    penetration = gjk_state.penetration[i_b_scratch]
-                    if is_col:
-                        contact_pos = gjk_state.contact_pos[i_b_scratch, 0]
-                        normal = gjk_state.normal[i_b_scratch, 0]
-                    used_gjk = True
+                        is_col = gjk_state.is_col[i_b_scratch] == 1
+                        penetration = gjk_state.penetration[i_b_scratch]
+                        if is_col:
+                            contact_pos = gjk_state.contact_pos[i_b_scratch, 0]
+                            normal = gjk_state.normal[i_b_scratch, 0]
+                        used_gjk = True
 
     return is_col, normal, contact_pos, penetration, used_gjk
 
@@ -1254,32 +1277,9 @@ def func_kernel2_mpr_multicontact(
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
-                    contact_point_a = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
-                        )
-                        + contact_pos_0
+                    contact_pos, normal, penetration = func_correct_perturbed_contact(
+                        contact_pos, normal, penetration, contact_pos_0, normal_0, qrot, collider_info,
                     )
-                    contact_point_b = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
-                    )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
-
-                    twist_rotvec = qd.math.clamp(
-                        normal.cross(normal_0),
-                        -collider_info.mc_perturbation[None],
-                        collider_info.mc_perturbation[None],
-                    )
-                    normal = normal + twist_rotvec.cross(normal)
-
-                    penetration = normal.dot(contact_point_b - contact_point_a)
-                    if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
-                        penetration = penetration_0
 
                 repeated = False
                 for i_c in range(n_con):
@@ -1512,30 +1512,9 @@ def func_kernel2_gjk_full(
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
-                    contact_point_a = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
-                        )
-                        + contact_pos_0
+                    contact_pos, normal, penetration = func_correct_perturbed_contact(
+                        contact_pos, normal, penetration, contact_pos_0, normal_0, qrot, collider_info,
                     )
-                    contact_point_b = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
-                        + contact_pos_0
-                    )
-                    contact_pos = 0.5 * (contact_point_a + contact_point_b)
-                    twist_rotvec = qd.math.clamp(
-                        normal.cross(normal_0),
-                        -collider_info.mc_perturbation[None],
-                        collider_info.mc_perturbation[None],
-                    )
-                    normal = normal + twist_rotvec.cross(normal)
-                    penetration = normal.dot(contact_point_b - contact_point_a)
-                    if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
-                        penetration = penetration_0
 
                 repeated = False
                 for i_c in range(n_con):
@@ -1763,6 +1742,7 @@ def func_narrowphase_kernel1_contact0(
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
     verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     collider_state: array_class.ColliderState,
@@ -1772,6 +1752,7 @@ def func_narrowphase_kernel1_contact0(
     mpr_info: array_class.MPRInfo,
     gjk_state: array_class.GJKState,
     gjk_info: array_class.GJKInfo,
+    gjk_static_config: qd.template(),
     support_field_info: array_class.SupportFieldInfo,
     errno: array_class.V_ANNOTATION,
     n_envs: qd.template(),
@@ -1832,130 +1813,27 @@ def func_narrowphase_kernel1_contact0(
             gb_pos = geoms_state.pos[i_gb, i_b]
             gb_quat = geoms_state.quat[i_gb, i_b]
 
-            is_col = False
-            penetration = gs.qd_float(0.0)
-            normal = qd.Vector.zero(gs.qd_float, 3)
-            contact_pos = qd.Vector.zero(gs.qd_float, 3)
             prefer_gjk = qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK) or qd.static(
                 collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
             )
 
             i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
 
-            if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
-                is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                    i_ga=i_ga,
-                    i_gb=i_gb,
-                    ga_pos=ga_pos,
-                    ga_quat=ga_quat,
-                    gb_pos=gb_pos,
-                    gb_quat=gb_quat,
-                    geoms_info=geoms_info,
-                    rigid_global_info=rigid_global_info,
-                )
-            elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
-                geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
-            ):
-                is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                    i_ga=i_ga,
-                    i_gb=i_gb,
-                    ga_pos=ga_pos,
-                    ga_quat=ga_quat,
-                    gb_pos=gb_pos,
-                    gb_quat=gb_quat,
-                    geoms_info=geoms_info,
-                    rigid_global_info=rigid_global_info,
-                )
-            elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
-                plane_dir = qd.Vector(
-                    [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
-                )
-                plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
-                normal = -plane_dir.normalized()
-                v1 = mpr.support_driver(
-                    geoms_info,
-                    collider_state,
-                    collider_static_config,
-                    support_field_info,
-                    normal,
-                    i_gb,
-                    i_b,
-                    gb_pos,
-                    gb_quat,
-                )
-                penetration = normal.dot(v1 - ga_pos)
-                contact_pos = v1 - 0.5 * penetration * normal
-                is_col = penetration > 0.0
-            else:
-                if qd.static(
-                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
-                ):
-                    gjk.clear_cache(gjk_state, flat_idx)
-                    distance = gjk.func_gjk(
-                        geoms_info,
-                        verts_info,
-                        static_rigid_sim_config,
-                        collider_state,
-                        collider_static_config,
-                        gjk_state,
-                        gjk_info,
-                        support_field_info,
-                        i_ga,
-                        i_gb,
-                        flat_idx,
-                        ga_pos,
-                        ga_quat,
-                        gb_pos,
-                        gb_quat,
-                        False,
+            is_col, normal, contact_pos, penetration, _used_gjk = func_kernel2_run_detection(
+                i_ga, i_gb, flat_idx, i_b, ga_pos, ga_quat, gb_pos, gb_quat,
+                geoms_state, geoms_info, geoms_init_AABB, verts_info, faces_info,
+                rigid_global_info, static_rigid_sim_config,
+                collider_state, collider_info, collider_static_config,
+                mpr_state, mpr_info, gjk_state, gjk_info, gjk_static_config,
+                support_field_info, i_pair, False, True, detection_only=True,
+            )
+
+            if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                if penetration > tolerance:
+                    prefer_gjk = (
+                        collider_info.mc_tolerance[None] * penetration
+                        >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
                     )
-                    is_col = distance < gjk_info.collision_eps[None]
-
-                if qd.static(
-                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)
-                ):
-                    is_mpr_updated = False
-                    normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
-                    is_mpr_guess_direction_available = (qd.abs(normal_ws) > EPS).any()
-                    for i_mpr in range(2):
-                        if i_mpr == 1:
-                            if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                if not is_col and is_mpr_guess_direction_available:
-                                    normal_ws = qd.Vector.zero(gs.qd_float, 3)
-                                    is_mpr_guess_direction_available = False
-                                    is_mpr_updated = False
-
-                        if not is_mpr_updated:
-                            is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
-                                geoms_info,
-                                geoms_init_AABB,
-                                rigid_global_info,
-                                static_rigid_sim_config,
-                                collider_state,
-                                collider_static_config,
-                                mpr_state,
-                                mpr_info,
-                                support_field_info,
-                                i_ga,
-                                i_gb,
-                                flat_idx,
-                                normal_ws,
-                                ga_pos,
-                                ga_quat,
-                                gb_pos,
-                                gb_quat,
-                            )
-                            is_mpr_updated = True
-
-                    if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                        if penetration > tolerance:
-                            # Contact 0's normal always provides a warmstart for
-                            # contacts 1-4, so only prefer GJK when penetration is
-                            # genuinely large — not merely because the cache is cold.
-                            prefer_gjk = (
-                                collider_info.mc_tolerance[None] * penetration
-                                >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                            )
 
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):

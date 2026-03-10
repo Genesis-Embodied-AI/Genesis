@@ -273,8 +273,21 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Disable sphere-capsule analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
-    # Insert errno marker in kernel1's GJK path (before gjk.func_gjk call, uses i_b)
-    lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in kernel1")
+    # Insert errno marker in kernel1's GJK detection path.
+    # kernel1 delegates to func_kernel2_run_detection(detection_only=True), so we
+    # target the call to func_kernel2_run_detection inside func_narrowphase_kernel1_contact0.
+    kernel1_start = None
+    for i, line in enumerate(lines):
+        if "def func_narrowphase_kernel1_contact0(" in line:
+            kernel1_start = i
+            break
+    assert kernel1_start is not None, "Could not find func_narrowphase_kernel1_contact0"
+    for i in range(kernel1_start, len(lines)):
+        if "func_kernel2_run_detection(" in lines[i]:
+            indent_size = len(lines[i]) - len(lines[i].lstrip())
+            errno_line = f"{' ' * indent_size}errno[i_b] |= {ERRNO_CALLED_GJK_K1}  # MODIFIED: GJK detection in kernel1"
+            lines.insert(i, errno_line)
+            break
 
     # Insert errno markers in kernel2's GJK path (before func_kernel2_gjk_full, uses i_b_env)
     lines = insert_errno_before_call(
