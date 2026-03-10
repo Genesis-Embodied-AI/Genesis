@@ -240,9 +240,6 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
     gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            gravity=(0.0, 0.0, 0.0),
-        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3.5, 0.0, 2.5),
             camera_lookat=(0.0, 0.0, 0.5),
@@ -258,6 +255,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
 
     filename_lower = filename.lower()
     morphs = gs.options.morphs
+    material = gs.materials.Kinematic()
     surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
 
     if filename_lower.endswith(morphs.USD_FORMATS):
@@ -268,6 +266,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         entities = [
             scene.add_entity(
                 morph_cls(file=filename, collision=collision, scale=scale),
+                material=material,
                 surface=surface,
             )
         ]
@@ -276,6 +275,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         entities = [
             scene.add_entity(
                 morph_cls(file=filename, collision=collision, scale=scale),
+                material=material,
                 surface=surface,
             )
         ]
@@ -284,6 +284,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         entities = [
             scene.add_entity(
                 morph_cls(file=filename, collision=collision, scale=scale),
+                material=material,
                 surface=surface,
             )
         ]
