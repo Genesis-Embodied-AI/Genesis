@@ -4050,8 +4050,7 @@ def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
         "pair list, which reorders box-box contacts within the same geom pair. The PGS "
         "noslip solver with only 5 iterations is sensitive to this ordering — the same "
         "contacts processed in a different order produce slightly different friction "
-        "forces that accumulate and cause the simulation to diverge. This is not a "
-        "physics bug but an inherent property of finite-iteration Gauss-Seidel."
+        "forces that accumulate and cause the simulation to diverge."
     ),
     strict=False,
 )
@@ -4130,8 +4129,7 @@ def test_noslip_iterations_mixed(scale, box_box_detection, show_viewer, tol, ass
         "in an order that depends on the broadphase pair list. The PGS noslip "
         "solver with finite iterations is sensitive to this ordering — different "
         "contact orderings produce different friction forces that can accumulate "
-        "and cause divergence. This is an inherent property of finite-iteration "
-        "Gauss-Seidel, not a physics bug."
+        "and cause divergence."
     ),
     strict=False,
 )
