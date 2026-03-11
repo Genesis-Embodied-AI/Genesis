@@ -1,8 +1,10 @@
-from typing import Optional
+from typing import Any, Literal
 
 import numpy as np
+from pydantic import Field, PrivateAttr, StrictBool, StrictInt
 
 import genesis as gs
+from genesis.constants import Vec3FType, Vec4FType
 
 from .options import Options
 
@@ -40,18 +42,16 @@ class SimOptions(Options):
         Whether to use hydroelastic contact. Defaults to False.
     """
 
-    dt: float = 1e-2
-    substeps: int = 1
-    substeps_local: Optional[int] = None  # number of substeps stored in GPU memory
-    gravity: tuple = (0.0, 0.0, -9.81)
+    dt: float = Field(default=1e-2, gt=0)
+    substeps: StrictInt = Field(default=1, ge=1)
+    substeps_local: StrictInt | None = Field(default=None, ge=1)  # number of substeps stored in GPU memory
+    gravity: Vec3FType = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
-    requires_grad: bool = False
+    requires_grad: StrictBool = False
 
-    # not set by user
-    _steps_local: Optional[int] = None
+    _steps_local: int | None = PrivateAttr(default=None)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    def model_post_init(self, context: Any) -> None:
         if self.substeps_local is None:
             if self.requires_grad:
                 self.substeps_local = self.substeps
@@ -100,14 +100,14 @@ class LegacyCouplerOptions(BaseCouplerOptions):
         Whether to enable coupling between FEM and SPH solvers. Defaults to True.
     """
 
-    rigid_mpm: bool = True
-    rigid_sph: bool = True
-    rigid_pbd: bool = True
-    rigid_fem: bool = True
-    mpm_sph: bool = True
-    mpm_pbd: bool = True
-    fem_mpm: bool = True
-    fem_sph: bool = True
+    rigid_mpm: StrictBool = True
+    rigid_sph: StrictBool = True
+    rigid_pbd: StrictBool = True
+    rigid_fem: StrictBool = True
+    mpm_sph: StrictBool = True
+    mpm_pbd: StrictBool = True
+    fem_mpm: StrictBool = True
+    fem_sph: StrictBool = True
 
 
 class SAPCouplerOptions(BaseCouplerOptions):
@@ -163,24 +163,24 @@ class SAPCouplerOptions(BaseCouplerOptions):
         Whether to enable coupling between rigid and FEM solvers. Defaults to True.
     """
 
-    n_sap_iterations: int = 5
-    n_pcg_iterations: int = 100
-    n_linesearch_iterations: int = 10
-    sap_convergence_atol: float = 1e-6
-    sap_convergence_rtol: float = 1e-5
-    sap_taud: float = 0.1
-    sap_beta: float = 1.0
-    sap_sigma: float = 1e-3
-    pcg_threshold: float = 1e-6
-    linesearch_ftol: float = 1e-6
-    linesearch_max_step_size: float = 1.5
-    hydroelastic_stiffness: float = 1e8
-    point_contact_stiffness: float = 1e8
-    fem_floor_contact_type: str = "tet"
-    enable_fem_self_tet_contact: bool = True
-    rigid_floor_contact_type: str = "tet"
-    enable_rigid_fem_contact: bool = True
-    rigid_rigid_contact_type: str = "tet"
+    n_sap_iterations: StrictInt = Field(default=5, ge=1)
+    n_pcg_iterations: StrictInt = Field(default=100, ge=1)
+    n_linesearch_iterations: StrictInt = Field(default=10, ge=1)
+    sap_convergence_atol: float = Field(default=1e-6, gt=0)
+    sap_convergence_rtol: float = Field(default=1e-5, gt=0)
+    sap_taud: float = Field(default=0.1, gt=0)
+    sap_beta: float = Field(default=1.0, gt=0)
+    sap_sigma: float = Field(default=1e-3, gt=0)
+    pcg_threshold: float = Field(default=1e-6, gt=0)
+    linesearch_ftol: float = Field(default=1e-6, gt=0)
+    linesearch_max_step_size: float = Field(default=1.5, gt=0)
+    hydroelastic_stiffness: float = Field(default=1e8, gt=0)
+    point_contact_stiffness: float = Field(default=1e8, gt=0)
+    fem_floor_contact_type: Literal["tet", "vert", "none"] = "tet"
+    enable_fem_self_tet_contact: StrictBool = True
+    rigid_floor_contact_type: Literal["tet", "vert", "none"] = "tet"
+    enable_rigid_fem_contact: StrictBool = True
+    rigid_rigid_contact_type: Literal["tet", "vert", "none"] = "tet"
 
 
 class IPCCouplerOptions(BaseCouplerOptions):
@@ -292,50 +292,52 @@ class IPCCouplerOptions(BaseCouplerOptions):
     """
 
     # Newton solver options (None = use libuipc default)
-    newton_max_iterations: int = None
-    newton_min_iterations: int = None
-    newton_tolerance: float = None
-    newton_ccd_tolerance: float = None
-    newton_use_adaptive_tolerance: bool = None
-    newton_translation_tolerance: float = None
-    newton_semi_implicit_enable: bool = None
-    newton_semi_implicit_beta_tolerance: float = None
+    newton_max_iterations: StrictInt | None = Field(default=None, ge=1)
+    newton_min_iterations: StrictInt | None = Field(default=None, ge=1)
+    newton_tolerance: float | None = Field(default=None, gt=0)
+    newton_ccd_tolerance: float | None = Field(default=None, gt=0)
+    newton_use_adaptive_tolerance: StrictBool | None = None
+    newton_translation_tolerance: float | None = Field(default=None, gt=0)
+    newton_semi_implicit_enable: StrictBool | None = None
+    newton_semi_implicit_beta_tolerance: float | None = Field(default=None, gt=0)
 
     # Line search options (None = use libuipc default)
-    n_linesearch_iterations: int = None
-    linesearch_report_energy: bool = None
+    n_linesearch_iterations: StrictInt | None = Field(default=None, ge=1)
+    linesearch_report_energy: StrictBool | None = None
 
     # Linear system options (None = use libuipc default)
-    linear_system_solver: str = None
-    linear_system_tolerance: float = None
+    linear_system_solver: Literal["linear_pcg", "direct"] | None = None
+    linear_system_tolerance: float | None = Field(default=None, gt=0)
 
     # Contact options
-    contact_enable: bool = None
-    contact_d_hat: float = None
-    contact_friction_enable: bool = None
-    contact_resistance: float = 1e9
-    contact_eps_velocity: float = None
-    contact_constitution: str = None
+    contact_enable: StrictBool | None = None
+    contact_d_hat: float | None = Field(default=None, gt=0)
+    contact_friction_enable: StrictBool | None = None
+    contact_resistance: float = Field(default=1e9, gt=0)
+    contact_eps_velocity: float | None = Field(default=None, gt=0)
+    contact_constitution: Literal["ipc", "isometric"] | None = None
 
     # Collision detection options
-    collision_detection_method: str = None
+    collision_detection_method: Literal["linear_bvh", "spatial_hash"] | None = None
 
     # CFL options
-    cfl_enable: bool = None
+    cfl_enable: StrictBool | None = None
 
     # Sanity check options
-    sanity_check_enable: bool = None
+    sanity_check_enable: StrictBool | None = None
 
     # Genesis coupling options
-    constraint_strength_translation: float = 100.0
-    constraint_strength_rotation: float = 100.0
-    enable_rigid_ground_contact: bool = True
-    enable_rigid_rigid_contact: bool = True
-    two_way_coupling: bool = True
-    enable_rigid_dofs_sync: bool = False
-    free_base_driven_by_ipc: bool = False
+    constraint_strength_translation: float = Field(default=100.0, gt=0)
+    constraint_strength_rotation: float = Field(default=100.0, gt=0)
+    enable_rigid_ground_contact: StrictBool = True
+    enable_rigid_rigid_contact: StrictBool = True
+    two_way_coupling: StrictBool = True
+    enable_rigid_dofs_sync: StrictBool = False
+    free_base_driven_by_ipc: StrictBool = False
 
-    def __init__(self, _show_ipc_gui: bool = False, **data):
+    _show_ipc_gui: bool = PrivateAttr(default=False)
+
+    def __init__(self, *, _show_ipc_gui: StrictBool = False, **data) -> None:
         super().__init__(**data)
         self._show_ipc_gui = bool(_show_ipc_gui)
 
@@ -358,12 +360,16 @@ class KinematicOptions(Options):
     ----------
     dt : float, optional
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
+    batch_links_info : bool, optional
+        Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
+    batch_dofs_info : bool, optional
+        Whether to batch DOF info. Defaults to False.
     """
 
-    dt: Optional[float] = None
-    batch_links_info: bool = False
-    batch_joints_info: bool = False
-    batch_dofs_info: bool = False
+    dt: float | None = Field(default=None, gt=0)
+    batch_links_info: StrictBool = False
+    batch_joints_info: StrictBool = False
+    batch_dofs_info: StrictBool = False
 
 
 class ToolOptions(Options):
@@ -382,8 +388,8 @@ class ToolOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     """
 
-    dt: Optional[float] = None
-    floor_height: float = None
+    dt: float | None = Field(default=None, gt=0)
+    floor_height: float | None = None
 
 
 class RigidOptions(Options):
@@ -468,55 +474,52 @@ class RigidOptions(Options):
     Hibernation hasn't been robustly tested and will be fully supported soon.
     """
 
-    dt: Optional[float] = None
-    gravity: Optional[tuple] = None
-    enable_collision: bool = True
-    enable_joint_limit: bool = True
-    enable_self_collision: bool = True
-    enable_neutral_collision: bool = False
-    enable_adjacent_collision: bool = False
-    disable_constraint: bool = False
-    max_collision_pairs: int = 150
-    multiplier_collision_broad_phase: int = 8
+    dt: float | None = Field(default=None, gt=0)
+    gravity: Vec3FType | None = None
+    enable_collision: StrictBool = True
+    enable_joint_limit: StrictBool = True
+    enable_self_collision: StrictBool = True
+    enable_neutral_collision: StrictBool = False
+    enable_adjacent_collision: StrictBool = False
+    disable_constraint: StrictBool = False
+    max_collision_pairs: StrictInt = Field(default=150, ge=0)
+    multiplier_collision_broad_phase: StrictInt = Field(default=8, ge=1)
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
-    IK_max_targets: int = 6
+    IK_max_targets: StrictInt = Field(default=6, ge=1)
 
     # batching info
-    batch_links_info: Optional[bool] = False
-    batch_joints_info: Optional[bool] = False
-    batch_dofs_info: Optional[bool] = False
+    batch_links_info: StrictBool = False
+    batch_joints_info: StrictBool = False
+    batch_dofs_info: StrictBool = False
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
-    iterations: int = 50
-    tolerance: float = 1e-6
-    ls_iterations: int = 50
-    ls_tolerance: float = 1e-2
-    noslip_iterations: int = 0
-    noslip_tolerance: float = 1e-6
-    sparse_solve: bool = False
-    contact_resolve_time: Optional[float] = None
-    constraint_timeconst: float = 0.01
-    use_contact_island: bool = False
-    box_box_detection: bool = False
+    iterations: StrictInt = Field(default=50, ge=1)
+    tolerance: float = Field(default=1e-6, gt=0)
+    ls_iterations: StrictInt = Field(default=50, ge=1)
+    ls_tolerance: float = Field(default=1e-2, gt=0)
+    noslip_iterations: StrictInt = Field(default=0, ge=0)
+    noslip_tolerance: float = Field(default=1e-6, gt=0)
+    sparse_solve: StrictBool = False
+    contact_resolve_time: float | None = Field(default=None, gt=0)
+    constraint_timeconst: float = Field(default=0.01, gt=0)
+    use_contact_island: StrictBool = False
+    box_box_detection: StrictBool = False
 
     # hibernation threshold
-    use_hibernation: bool = False
-    hibernation_thresh_vel: float = 1e-3
-    hibernation_thresh_acc: float = 1e-2
+    use_hibernation: StrictBool = False
+    hibernation_thresh_vel: float = Field(default=1e-3, gt=0)
+    hibernation_thresh_acc: float = Field(default=1e-2, gt=0)
 
     # for dynamic properties
-    max_dynamic_constraints: int = 8
+    max_dynamic_constraints: StrictInt = Field(default=8, ge=0)
 
     # Experimental options mainly intended for debug purpose and unit tests
-    enable_multi_contact: bool = True
-    enable_mujoco_compatibility: bool = False
+    enable_multi_contact: StrictBool = True
+    enable_mujoco_compatibility: StrictBool = False
 
     # GJK collision detection
-    use_gjk_collision: Optional[bool] = None
-
-    def __init__(self, **data):
-        super().__init__(**data)
+    use_gjk_collision: StrictBool | None = None
 
 
 class MPMOptions(Options):
@@ -549,23 +552,22 @@ class MPMOptions(Options):
         This option is deprecated.
     """
 
-    dt: Optional[float] = None
-    gravity: Optional[tuple] = None
-    particle_size: Optional[float] = None  # in meters. Will be computed automatically if it's None.
-    grid_density: float = 64
-    enable_CPIC: bool = False
+    dt: float | None = Field(default=None, gt=0)
+    gravity: Vec3FType | None = None
+    particle_size: float | None = Field(default=None, gt=0)  # in meters. Will be computed automatically if it's None.
+    grid_density: float = Field(default=64, gt=0)
+    enable_CPIC: StrictBool = False
 
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
-    lower_bound: tuple = (-1.0, -1.0, 0.0)
-    upper_bound: tuple = (1.0, 1.0, 1.0)
+    lower_bound: Vec3FType = (-1.0, -1.0, 0.0)
+    upper_bound: Vec3FType = (1.0, 1.0, 1.0)
 
     # Deprecated sparse computation parameter.
-    use_sparse_grid: bool = False
-    leaf_block_size: int = 8
+    use_sparse_grid: StrictBool = False
+    leaf_block_size: StrictInt = Field(default=8, ge=1)
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        if not np.all(np.asarray(self.upper_bound) > np.asarray(self.lower_bound)):
+    def model_post_init(self, context: Any) -> None:
+        if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
         if self.particle_size is None:
@@ -608,26 +610,28 @@ class SPHOptions(Options):
         Maximum number of iterations for the density solver. Defaults to 100.
     """
 
-    dt: Optional[float] = None
-    gravity: Optional[tuple] = None
-    particle_size: float = 0.02
-    pressure_solver: str = "WCSPH"  # 'WCSPH' or 'DFSPH'
+    dt: float | None = Field(default=None, gt=0)
+    gravity: Vec3FType | None = None
+    particle_size: float = Field(default=0.02, gt=0)
+    pressure_solver: Literal["WCSPH", "DFSPH"] = "WCSPH"
 
-    lower_bound: tuple = (-100.0, -100.0, 0.0)
-    upper_bound: tuple = (100.0, 100.0, 100.0)
+    lower_bound: Vec3FType = (-100.0, -100.0, 0.0)
+    upper_bound: Vec3FType = (100.0, 100.0, 100.0)
 
     # spatial hashing
-    hash_grid_res: Optional[tuple] = None  # size of the spatially-repetitive hash grid in meters
-    hash_grid_cell_size: Optional[float] = None  # size of the cubic cell in meters
+    hash_grid_res: Vec3FType | None = None  # size of the spatially-repetitive hash grid in meters
+    hash_grid_cell_size: float | None = Field(default=None, gt=0)  # size of the cubic cell in meters
 
     # DFSPH parameters
-    max_divergence_error: float = 0.1
-    max_density_error_percent: float = 0.05  # This is percent
-    max_divergence_solver_iterations: int = 100
-    max_density_solver_iterations: int = 100
+    max_divergence_error: float = Field(default=0.1, gt=0)
+    max_density_error_percent: float = Field(default=0.05, gt=0)  # This is percent
+    max_divergence_solver_iterations: StrictInt = Field(default=100, ge=1)
+    max_density_solver_iterations: StrictInt = Field(default=100, ge=1)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    _support_radius: float = PrivateAttr(default=0.0)
+    _hash_grid_res: np.ndarray = PrivateAttr(default=None)
+
+    def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
@@ -647,13 +651,6 @@ class SPHOptions(Options):
             self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
         else:
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
-
-        # check pressure solver
-        pressure_solver_available = ["WCSPH", "DFSPH"]
-        if self.pressure_solver not in pressure_solver_available:
-            gs.raise_exception(
-                f"Pressure solver {self.pressure_solver} not implemented. Please select among {pressure_solver_available}."
-            )
 
 
 class PBDOptions(Options):
@@ -692,28 +689,29 @@ class PBDOptions(Options):
         Upper bound of the simulation domain. Defaults to (100.0, 100.0, 100.0).
     """
 
-    dt: Optional[float] = None
-    gravity: Optional[tuple] = None
+    dt: float | None = Field(default=None, gt=0)
+    gravity: Vec3FType | None = None
 
     # constraints solving iterations
-    max_stretch_solver_iterations: int = 4
-    max_bending_solver_iterations: int = 1
-    max_volume_solver_iterations: int = 1
-    max_density_solver_iterations: int = 1
-    max_viscosity_solver_iterations: int = 1
+    max_stretch_solver_iterations: StrictInt = Field(default=4, ge=1)
+    max_bending_solver_iterations: StrictInt = Field(default=1, ge=1)
+    max_volume_solver_iterations: StrictInt = Field(default=1, ge=1)
+    max_density_solver_iterations: StrictInt = Field(default=1, ge=1)
+    max_viscosity_solver_iterations: StrictInt = Field(default=1, ge=1)
 
     # self collision
-    particle_size: Optional[float] = 1e-2
+    particle_size: float = Field(default=1e-2, gt=0)
 
     # spatial hashing
-    hash_grid_res: Optional[tuple] = None  # size of the spatially-repetitive hash grid in meters
-    hash_grid_cell_size: Optional[float] = None  # size of the cubic cell in meters
+    hash_grid_res: Vec3FType | None = None  # size of the spatially-repetitive hash grid in meters
+    hash_grid_cell_size: float | None = Field(default=None, gt=0)  # size of the cubic cell in meters
 
-    lower_bound: tuple = (-100.0, -100.0, 0.0)
-    upper_bound: tuple = (100.0, 100.0, 100.0)
+    lower_bound: Vec3FType = (-100.0, -100.0, 0.0)
+    upper_bound: Vec3FType = (100.0, 100.0, 100.0)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    _hash_grid_res: np.ndarray = PrivateAttr(default=None)
+
+    def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
@@ -784,21 +782,21 @@ class FEMOptions(Options):
         Whether to enable vertex constraints. Defaults to False.
     """
 
-    dt: Optional[float] = None
-    gravity: Optional[tuple] = None
-    damping: Optional[float] = 0.0
-    floor_height: float = None
-    use_implicit_solver: bool = False
-    n_newton_iterations: int = 1
-    n_pcg_iterations: int = 500
-    n_linesearch_iterations: int = 0
-    newton_dx_threshold: float = 1e-6
-    pcg_threshold: float = 1e-6
-    linesearch_c: float = 1e-4
-    linesearch_tau: float = 0.5
-    damping_alpha: float = 0.5
-    damping_beta: float = 5e-4
-    enable_vertex_constraints: bool = False
+    dt: float | None = Field(default=None, gt=0)
+    gravity: Vec3FType | None = None
+    damping: float = Field(default=0.0, ge=0)
+    floor_height: float | None = None
+    use_implicit_solver: StrictBool = False
+    n_newton_iterations: StrictInt = Field(default=1, ge=1)
+    n_pcg_iterations: StrictInt = Field(default=500, ge=1)
+    n_linesearch_iterations: StrictInt = Field(default=0, ge=0)
+    newton_dx_threshold: float = Field(default=1e-6, gt=0)
+    pcg_threshold: float = Field(default=1e-6, gt=0)
+    linesearch_c: float = Field(default=1e-4, gt=0)
+    linesearch_tau: float = Field(default=0.5, gt=0)
+    damping_alpha: float = Field(default=0.5, ge=0)
+    damping_beta: float = Field(default=5e-4, ge=0)
+    enable_vertex_constraints: StrictBool = False
 
 
 class SFOptions(Options):
@@ -811,15 +809,15 @@ class SFOptions(Options):
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     """
 
-    dt: Optional[float] = None
-    res: Optional[int] = 128
-    solver_iters: Optional[int] = 500
-    decay: Optional[float] = 0.99
+    dt: float | None = Field(default=None, gt=0)
+    res: StrictInt = Field(default=128, ge=1)
+    solver_iters: StrictInt = Field(default=500, ge=1)
+    decay: float = Field(default=0.99, gt=0)
 
-    T_low: Optional[float] = 1.0
-    T_high: Optional[float] = 0.0
+    T_low: float = 1.0
+    T_high: float = 0.0
 
-    inlet_pos: Optional[tuple[int, int, int]] = (0.6, 0.0, 0.1)
-    inlet_vel: Optional[tuple[int, int, int]] = (0, 0, 1)
-    inlet_quat: Optional[tuple[int, int, int, int]] = (1, 0, 0, 0)
-    inlet_s: Optional[float] = 400.0
+    inlet_pos: Vec3FType = (0.6, 0.0, 0.1)
+    inlet_vel: Vec3FType = (0.0, 0.0, 1.0)
+    inlet_quat: Vec4FType = (1.0, 0.0, 0.0, 0.0)
+    inlet_s: float = Field(default=400.0, gt=0)
