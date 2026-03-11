@@ -154,12 +154,11 @@ class Raytracer:
         # light objects
         self.lights = []
         for light in options.lights:
-            light_intensity = light.get("intensity", 1.0)
             light_surface = gs.surfaces.Emission(
-                color=tuple(x * light_intensity for x in light.color),
+                color=tuple(x * light.intensity for x in light.color),
             )
             light_surface.update_texture()
-            self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
+            self.lights.append(SphereLight(radius=light.radius, pos=light.pos, surface=light_surface))
 
         # backend and device selection: aligning with genesis if possible
         backend = gs.backend.name
