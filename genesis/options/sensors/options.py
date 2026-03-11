@@ -1,20 +1,21 @@
 from typing import TYPE_CHECKING
 
 import numpy as np
-from pydantic import Field, conlist
+from pydantic import Field, StrictBool, StrictInt
 
 import genesis as gs
+from genesis.constants import (
+    FArrayType,
+    MaybeMatrix3x3Type,
+    MaybeVec3FType,
+    Matrix3x3Type,
+    Vec3FArrayType,
+    Vec3FType,
+    Vec4FType,
+)
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
-
-Vec3FType = conlist(float, min_length=3, max_length=3)
-Vec4FType = conlist(float, min_length=4, max_length=4)
-Vec3FArrayType = conlist(Vec3FType, min_length=1)
-FArrayType = conlist(float, min_length=1)
-MaybeVec3FType = float | Vec3FType
-Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -37,9 +38,9 @@ class SensorOptions(Options):
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
-    delay: float = 0.0
-    update_ground_truth_only: bool = False
-    draw_debug: bool = False
+    delay: float = Field(default=0.0, ge=0)
+    update_ground_truth_only: StrictBool = False
+    draw_debug: StrictBool = False
 
     def validate(self, scene: "Scene"):
         """
@@ -71,8 +72,8 @@ class RigidSensorOptionsMixin:
         The rotational offset of the sensor from the RigidLink in degrees.
     """
 
-    entity_idx: int | None = -1
-    link_idx_local: int = 0
+    entity_idx: StrictInt | None = Field(default=-1, ge=-1)
+    link_idx_local: StrictInt = Field(default=0, ge=0)
     pos_offset: Vec3FType = (0.0, 0.0, 0.0)
     euler_offset: Vec3FType = (0.0, 0.0, 0.0)
 
@@ -117,8 +118,8 @@ class NoisySensorOptionsMixin:
     bias: float | FArrayType = 0.0
     noise: float | FArrayType = 0.0
     random_walk: float | FArrayType = 0.0
-    jitter: float = 0.0
-    interpolate: bool = False
+    jitter: float = Field(default=0.0, ge=0)
+    interpolate: StrictBool = False
 
     def model_post_init(self, _):
         if self.jitter > 0 and not self.interpolate:
@@ -139,7 +140,7 @@ class Contact(RigidSensorOptionsMixin, SensorOptions):
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
-    debug_sphere_radius: float = 0.05
+    debug_sphere_radius: float = Field(default=0.05, gt=0)
     debug_color: Vec4FType = (1.0, 0.0, 1.0, 0.5)
 
 
@@ -163,7 +164,7 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
     max_force: MaybeVec3FType = np.inf
 
     debug_color: Vec4FType = (1.0, 0.0, 1.0, 0.5)
-    debug_scale: float = 0.01
+    debug_scale: float = Field(default=0.01, gt=0)
 
     def model_post_init(self, _):
         if not (isinstance(self.min_force, float) or len(self.min_force) == 3):
@@ -206,7 +207,7 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Se
     probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
     probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
     radius: float | FArrayType = 0.005
-    stiffness: float = 1000.0
+    stiffness: float = Field(default=1000.0, ge=0)
 
     debug_sphere_color: Vec4FType = (1.0, 0.5, 0.0, 0.4)
     debug_contact_color: Vec4FType = (1.0, 0.2, 0.0, 0.8)
@@ -324,11 +325,11 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     magnetic_field: MaybeVec3FType = (0.0, 0.0, 0.5)
 
     debug_acc_color: Vec4FType = (1.0, 0.0, 0.0, 0.6)
-    debug_acc_scale: float = 0.01
+    debug_acc_scale: float = Field(default=0.01, gt=0)
     debug_gyro_color: Vec4FType = (0.0, 1.0, 0.0, 0.6)
-    debug_gyro_scale: float = 0.01
+    debug_gyro_scale: float = Field(default=0.01, gt=0)
     debug_mag_color: Vec4FType = (0.0, 0.0, 1.0, 0.6)
-    debug_mag_scale: float = 0.5
+    debug_mag_scale: float = Field(default=0.5, gt=0)
 
     def model_post_init(self, _):
         self._validate_cross_axis_coupling(self.acc_cross_axis_coupling)
@@ -370,12 +371,12 @@ class Raycaster(RigidSensorOptionsMixin, SensorOptions):
     """
 
     pattern: RaycastPattern
-    min_range: float = 0.0
-    max_range: float = 20.0
+    min_range: float = Field(default=0.0, ge=0)
+    max_range: float = Field(default=20.0, gt=0)
     no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
-    return_world_frame: bool = False
+    return_world_frame: StrictBool = False
 
-    debug_sphere_radius: float = 0.02
+    debug_sphere_radius: float = Field(default=0.02, gt=0)
     debug_ray_start_color: Vec4FType = (0.5, 0.5, 1.0, 1.0)
     debug_ray_hit_color: Vec4FType = (1.0, 0.5, 0.5, 1.0)
 
