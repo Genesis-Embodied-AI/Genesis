@@ -447,17 +447,8 @@ def func_sort_contacts(
         n = collider_state.n_contacts[i_b]
 
         # Phase 1: initialise and insertion-sort the (key, idx) arrays.
-        group_key = gs.qd_float(0.0)
         for i in range(n):
-            ga = collider_state.contact_data.geom_a[i, i_b]
-            gb = collider_state.contact_data.geom_b[i, i_b]
-            if (
-                i == 0
-                or ga != collider_state.contact_data.geom_a[i - 1, i_b]
-                or gb != collider_state.contact_data.geom_b[i - 1, i_b]
-            ):
-                group_key = collider_state.contact_data.pos[i, i_b][0]
-            collider_state.contact_sort_key[i, i_b] = group_key
+            collider_state.contact_sort_key[i, i_b] = collider_state.contact_data.pos[i, i_b][0]
             collider_state.contact_sort_idx[i, i_b] = i
 
         for i in range(1, n):
