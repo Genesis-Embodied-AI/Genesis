@@ -136,6 +136,7 @@ def func_solve_decomposed(
     constraint_state,
     rigid_global_info,
     static_rigid_sim_config,
+    _n_iterations,
 ):
     """
     Uses separate kernels for each solver step per iteration.
@@ -143,8 +144,8 @@ def func_solve_decomposed(
     This maximizes kernel granularity, potentially allowing better GPU scheduling
     and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
     """
-    iterations = rigid_global_info.iterations[None]
-    for _it in range(iterations):
+    # _n_iterations is a Python-native int to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
+    for _it in range(_n_iterations):
         _kernel_linesearch(
             entities_info,
             dofs_state,

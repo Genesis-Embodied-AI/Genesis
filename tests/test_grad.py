@@ -267,6 +267,7 @@ def test_diff_solver(monkeypatch):
             constraint_state=constraint_solver.constraint_state,
             rigid_global_info=rigid_solver._rigid_global_info,
             static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
+            _n_iterations=constraint_solver._n_iterations,
         )
 
     monkeypatch.setattr(constraint_solver, "resolve", constraint_solver_resolve)
