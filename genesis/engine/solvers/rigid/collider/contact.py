@@ -451,7 +451,11 @@ def func_sort_contacts(
         for i in range(n):
             ga = collider_state.contact_data.geom_a[i, i_b]
             gb = collider_state.contact_data.geom_b[i, i_b]
-            if i == 0 or ga != collider_state.contact_data.geom_a[i - 1, i_b] or gb != collider_state.contact_data.geom_b[i - 1, i_b]:
+            if (
+                i == 0
+                or ga != collider_state.contact_data.geom_a[i - 1, i_b]
+                or gb != collider_state.contact_data.geom_b[i - 1, i_b]
+            ):
                 group_key = collider_state.contact_data.pos[i, i_b][0]
             collider_state.contact_sort_key[i, i_b] = group_key
             collider_state.contact_sort_idx[i, i_b] = i
