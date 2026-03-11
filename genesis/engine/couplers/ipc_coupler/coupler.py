@@ -777,16 +777,17 @@ class IPCCoupler(RBC):
                     self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                     continue
 
+                # Fixed-fixed pairs never collide (mirrors RigidSolver collider)
+                if link_i.is_fixed and link_j.is_fixed:
+                    self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
+                    continue
+
                 # Same-entity self-collision filtering (mirrors RigidSolver collider)
                 if link_i.entity is link_j.entity and link_i is not link_j:
                     if not enable_self_collision:
-                        gs.logger.debug(
-                            f"IPC: disable self-coll {link_i.name} <-> {link_j.name} (self_collision=False)"
-                        )
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
                     if not enable_adjacent_collision and are_links_adjacent(link_i, link_j):
-                        gs.logger.debug(f"IPC: disable adjacent-coll {link_i.name} <-> {link_j.name}")
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
                     mesh_i = self._abd_merged_meshes.get(link_i)
@@ -797,27 +798,29 @@ class IPCCoupler(RBC):
                         and mesh_j is not None
                         and are_meshes_overlapping(mesh_i, mesh_j)
                     ):
-                        gs.logger.debug(f"IPC: disable neutral-coll {link_i.name} <-> {link_j.name}")
                         self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, False)
                         continue
 
                 self._ipc_contact_tabular.insert(elem_i, elem_j, friction_ij, resistance_ij, True)
 
         # ---- All contact elements (for ground and no-collision registration) ----
-        all_contact_infos: list[tuple[ContactElement, float, float, bool]] = []
+        # is_abd: whether the element is an ABD rigid link
+        # is_fixed: whether the element's link is fixed wrt the world
+        all_contact_infos: list[tuple[ContactElement, float, float, bool, bool]] = []
         for elem, friction, resistance in non_abd_infos:
-            all_contact_infos.append((elem, friction, resistance, False))
-        for elem, _, friction, resistance in abd_link_infos:
-            all_contact_infos.append((elem, friction, resistance, True))
+            all_contact_infos.append((elem, friction, resistance, False, False))
+        for elem, link, friction, resistance in abd_link_infos:
+            all_contact_infos.append((elem, friction, resistance, True, link.is_fixed))
 
         # Register per-plane ground contact pairs
+        # Ground planes are fixed, so skip fixed ABD links (fixed-fixed pairs never collide).
         for entity, ground_elem in self._ipc_grounds_contact.items():
             plane_friction = entity.material.coup_friction
             plane_resistance = entity.material.contact_resistance or self.options.contact_resistance
-            for elem, friction, resistance, is_abd in all_contact_infos:
+            for elem, friction, resistance, is_abd, is_fixed in all_contact_infos:
                 friction_ground = geometric_mean(friction, plane_friction)
                 resistance_ground = harmonic_mean(resistance, plane_resistance)
-                enabled = not is_abd or self.options.enable_rigid_ground_contact
+                enabled = (not is_abd or self.options.enable_rigid_ground_contact) and not is_fixed
                 self._ipc_contact_tabular.insert(ground_elem, elem, friction_ground, resistance_ground, enabled)
             self._ipc_contact_tabular.insert(self._ipc_no_collision_contact, ground_elem, 0.0, 0.0, False)
 
