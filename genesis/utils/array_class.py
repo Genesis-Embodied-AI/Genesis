@@ -235,6 +235,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     Ma_ws: V_ANNOTATION
     grad: V_ANNOTATION
     Mgrad: V_ANNOTATION
+    MinvJT: V_ANNOTATION
     search: V_ANNOTATION
     efc_D: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
@@ -340,6 +341,10 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
+        MinvJT=V(
+            dtype=gs.qd_float,
+            shape=maybe_shape((len_constraints_, solver.n_dofs_, _B), solver._options.noslip_iterations > 0),
+        ),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
