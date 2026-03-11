@@ -8,7 +8,7 @@ from pydantic import model_validator, computed_field, BeforeValidator, Field
 
 import genesis as gs
 import genesis.utils.mesh as mu
-from genesis.constants import MaybeColorArrayType, ColorArrayType, NDArrayType
+from genesis.constants import MaybeColorArrayType, MaybeFArrayType, ColorArrayType, NDArrayType
 
 from .options import Options
 
@@ -58,7 +58,7 @@ class ColorTexture(Texture):
         Default is (1.0, 1.0, 1.0).
     """
 
-    color: MaybeColorArrayType = (1.0, 1.0, 1.0)
+    color: MaybeFArrayType = (1.0, 1.0, 1.0)
 
     def check_dim(self, dim: int) -> Texture | None:
         if len(self.color) > dim:

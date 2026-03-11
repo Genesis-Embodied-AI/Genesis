@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import Field, PrivateAttr, StrictBool, StrictInt
 
 import genesis as gs
-from genesis.constants import Vec3FType, Vec4FType
+from genesis.constants import QuatType, Vec3FType, Vec4FType
 
 from .options import Options
 
@@ -501,7 +501,6 @@ class RigidOptions(Options):
     noslip_iterations: StrictInt = Field(default=0, ge=0)
     noslip_tolerance: float = Field(default=1e-6, gt=0)
     sparse_solve: StrictBool = False
-    contact_resolve_time: float | None = Field(default=None, gt=0)
     constraint_timeconst: float = Field(default=0.01, gt=0)
     use_contact_island: StrictBool = False
     box_box_detection: StrictBool = False
@@ -520,6 +519,11 @@ class RigidOptions(Options):
 
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
+
+    def __init__(self, *, contact_resolve_time: float | None = None, **data):
+        super().__init__(**data)
+        if contact_resolve_time is not None:
+            gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
 
 
 class MPMOptions(Options):
@@ -562,9 +566,12 @@ class MPMOptions(Options):
     lower_bound: Vec3FType = (-1.0, -1.0, 0.0)
     upper_bound: Vec3FType = (1.0, 1.0, 1.0)
 
-    # Deprecated sparse computation parameter.
-    use_sparse_grid: StrictBool = False
-    leaf_block_size: StrictInt = Field(default=8, ge=1)
+    def __init__(self, *, use_sparse_grid: bool = False, leaf_block_size: int = 8, **data):
+        super().__init__(**data)
+        if use_sparse_grid:
+            gs.logger.warning("'use_sparse_grid' is deprecated and has no effect.")
+        if leaf_block_size != 8:
+            gs.logger.warning("'leaf_block_size' is deprecated and has no effect.")
 
     def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
@@ -819,5 +826,5 @@ class SFOptions(Options):
 
     inlet_pos: Vec3FType = (0.6, 0.0, 0.1)
     inlet_vel: Vec3FType = (0.0, 0.0, 1.0)
-    inlet_quat: Vec4FType = (1.0, 0.0, 0.0, 0.0)
+    inlet_quat: QuatType = (1.0, 0.0, 0.0, 0.0)
     inlet_s: float = Field(default=400.0, gt=0)

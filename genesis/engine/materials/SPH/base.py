@@ -30,10 +30,6 @@ class Base(Material):
 
         self._sampler = sampler
 
-    @classmethod
-    def __repr_name__(cls):
-        return f"<gs.materials.SPH.{cls.__name__}>"
-
     @property
     def sampler(self):
         """Particle sampler ('pbs', 'regular', 'random')."""

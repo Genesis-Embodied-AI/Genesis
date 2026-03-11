@@ -15,8 +15,23 @@ class RBC:
 
     @classmethod
     def __repr_name__(cls):
-        _module, *submodule = cls.__module__.partition(".")
-        return f"<gs{''.join(submodule)}.{cls.__qualname__}>"
+        class_name = cls.__qualname__
+        _module, *submodule = cls.__module__.split(".")
+        # Greedily strip redundant submodule segments (front first, then back)
+        for strip_end in (False, True):
+            while submodule:
+                shorter = submodule[:-1] if strip_end else submodule[1:]
+                obj = gs
+                try:
+                    for seg in shorter:
+                        obj = getattr(obj, seg)
+                    if getattr(obj, class_name, None) is cls:
+                        submodule = shorter
+                        continue
+                except AttributeError:
+                    pass
+                break
+        return f"<gs.{'.'.join((*submodule, class_name))}>"
 
     def _repr_briefer(self):
         repr_str = self.__repr_name__()

@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
-from genesis.constants import Vec3FType, Vec4FType
+from genesis.constants import QuatType, Vec3FType, Vec4FType
 from genesis.datatypes import List
 
 from .options import Options
@@ -104,7 +104,7 @@ class RayTracer(RendererOptions):
     env_surface: Surface | None = None
     env_radius: float = 1000.0
     env_pos: Vec3FType = (0.0, 0.0, 0.0)
-    env_quat: Vec4FType | None = None
+    env_quat: QuatType | None = None
 
     # sphere lights
     lights: Annotated[List[SphereLight], Field(validate_default=True, strict=False)] = List(

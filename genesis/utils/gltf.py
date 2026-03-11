@@ -306,6 +306,7 @@ def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
 
     mesh_infos = mu.MeshInfoGroup()
     materials = {}
+    is_visual_overwritten = surface.texture is not None
 
     for i, (mesh_index, mesh_transform) in enumerate(mesh_list):
         mesh_glb = glb.meshes[mesh_index]
@@ -393,7 +394,11 @@ def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
             if first_created:
                 mesh_info.set_property(
                     surface=material,
-                    metadata={"mesh_path": path, "name": material_name if group_by_material else mesh_name},
+                    metadata={
+                        "mesh_path": path,
+                        "name": material_name if group_by_material else mesh_name,
+                        "is_visual_overwritten": is_visual_overwritten,
+                    },
                 )
             mesh_info.append(points, triangles, normals, uvs)
 

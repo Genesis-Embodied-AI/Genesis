@@ -104,7 +104,8 @@ class Options(RBC, BaseModel):
         other_dump = {k: v for k, v in other_dump.items() if k in self_fields}
         self_dump = self.model_dump(exclude_unset=True)
         merged = {**self_dump, **other_dump} if override else {**other_dump, **self_dump}
-        return self.model_copy(update=merged)
+        # Cannot use 'self.model_copy(update=merged)' because it bypasses validators.
+        return self.__class__(**merged)
 
     def __repr__colorized__(self) -> str:
         repr_items = tuple(self.__repr_args__())

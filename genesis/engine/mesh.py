@@ -340,9 +340,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
 
         metadata = metadata or {}
-        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten", False) or (
-            surface.texture is not None
-        )
+        metadata.setdefault("is_visual_overwritten", False)
         visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts))
 
         tmesh = trimesh.Trimesh(
