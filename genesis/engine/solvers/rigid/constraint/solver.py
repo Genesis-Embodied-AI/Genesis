@@ -31,7 +31,9 @@ class ConstraintSolver:
         self._para_level = rigid_solver._para_level
 
         self._solver_type = rigid_solver._options.constraint_solver
-        self.iterations = rigid_solver._options.iterations
+        self._n_iterations = int(
+            rigid_solver._options.iterations
+        )  # Python-native; passed to Python-scope functions to avoid CPU-GPU sync
         self.tolerance = rigid_solver._options.tolerance
         self.ls_iterations = rigid_solver._options.ls_iterations
         self.ls_tolerance = rigid_solver._options.ls_tolerance
@@ -192,6 +194,7 @@ class ConstraintSolver:
             self.constraint_state,
             self._solver._rigid_global_info,
             self._solver._static_rigid_sim_config,
+            self._n_iterations,
         )
 
         func_update_qacc(
@@ -3032,6 +3035,7 @@ def func_solve_body(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    _n_iterations: int,
 ) -> None: ...
 
 
@@ -3043,6 +3047,7 @@ def func_solve_body_monolith(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
+    _n_iterations: int,
 ):
     _B = constraint_state.grad.shape[1]
 
