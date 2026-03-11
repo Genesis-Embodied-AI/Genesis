@@ -273,6 +273,11 @@ class IPCCouplerOptions(BaseCouplerOptions):
         correction: v_final = v_inelastic + e * (q_solved - q_pred) / dt, where q_pred is the
         predicted position before IPC and q_solved is IPC's contact-resolved position.
         Defaults to 0.0.
+    ignore_end_effector_check : bool, optional
+        Advanced override for two-way soft coupling on articulated robots. When True, IPC coupler
+        skips both the explicit `coup_links` requirement and the end-effector-only validation.
+        This can produce non-physical behavior and should be used only for debugging/experiments.
+        Defaults to False.
     """
 
     # Newton solver options (None = use libuipc default)
@@ -314,6 +319,27 @@ class IPCCouplerOptions(BaseCouplerOptions):
     enable_rigid_ground_contact: bool = True
     enable_rigid_rigid_contact: bool = True
     restitution: float = 1.0
+    ignore_end_effector_check: bool = False
+
+    # Internal export options
+    _export_ipc_surface: bool = False
+    _export_pre_coupling_surface: bool = False
+    _export_post_coupling_surface: bool = False
+    _export_surface_dir: Optional[str] = None
+
+    def __init__(self, **data):
+        # Private keys are not part of pydantic model_fields (leading underscore), so parse manually.
+        export_ipc_surface = data.pop("_export_ipc_surface", False)
+        export_pre_coupling_surface = data.pop("_export_pre_coupling_surface", False)
+        export_post_coupling_surface = data.pop("_export_post_coupling_surface", False)
+        export_surface_dir = data.pop("_export_surface_dir", None)
+
+        super().__init__(**data)
+
+        self._export_ipc_surface = bool(export_ipc_surface)
+        self._export_pre_coupling_surface = bool(export_pre_coupling_surface)
+        self._export_post_coupling_surface = bool(export_post_coupling_surface)
+        self._export_surface_dir = None if export_surface_dir is None else str(export_surface_dir)
 
 
 ############################ Solvers inside simulator ############################

@@ -46,7 +46,7 @@ if TYPE_CHECKING or UIPC_AVAILABLE:
         StableNeoHookean,
         StrainLimitingBaraffWitkinShell,
     )
-    from uipc.core import Engine, World, Scene, AffineBodyStateAccessorFeature, ContactElement, SubsceneElement
+    from uipc.core import Engine, World, Scene, SceneIO, AffineBodyStateAccessorFeature, ContactElement, SubsceneElement
     from uipc.geometry import GeometrySlot, SimplicialComplex, SimplicialComplexSlot
     from uipc.gui import SceneGUI
 
@@ -65,6 +65,9 @@ ABD_KAPPA = 100.0
 JOINT_STRENGTH_RATIO = 100.0
 # Position-space threshold for detecting active IPC contact (restitution tracking)
 RESTITUTION_CONTACT_THRESHOLD = 1e-7
+COM_AABB_TOL = 2e-3
+IPC_SURFACE_PREFIX = "ipc_surface"
+GENESIS_SURFACE_PREFIX = "genesis_surface"
 
 
 class IPCCoupler(RBC):
@@ -109,6 +112,7 @@ class IPCCoupler(RBC):
         self._ipc_engine: Engine | None = None
         self._ipc_world: World | None = None
         self._ipc_scene = Scene(build_ipc_scene_config(self.options, self.sim.options))
+        self._ipc_workspace: str | None = None
         self._ipc_subscenes: list[SubsceneElement] = []
         self._ipc_constitution_tabular = self._ipc_scene.constitution_tabular()
         self._ipc_contact_tabular = self._ipc_scene.contact_tabular()
@@ -160,6 +164,9 @@ class IPCCoupler(RBC):
         # ==== Restitution ====
         # Per-frame velocity corrections: (dof_start, dof_end, correction_array).
         self._restitution_vel_corrections: list[tuple[int, int, np.ndarray]] = []
+        self._debug_surface_export_idx = 0
+        self._debug_genesis_surface_export_after_genesis_before_ipc_idx = 0
+        self._debug_genesis_surface_export_after_ipc_correction_idx = 0
 
         # ==== GUI ====
         self._ipc_gui: SceneGUI | None = None
@@ -234,6 +241,11 @@ class IPCCoupler(RBC):
                 self._coup_links[entity] = set(map(entity.get_link, link_filter_names))
                 gs.logger.debug(f"Rigid entity {i_e}: IPC link filter set to {len(link_filter_names)} link(s)")
 
+            if coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT:
+                selected_links = self._resolve_two_way_target_links(entity, is_robot)
+                for link in selected_links:
+                    self._validate_link_inertial_com_for_ipc(link)
+
             # Resolve collision settings from material
             if not entity.material.enable_coup_collision:
                 # Disable collision for all links
@@ -251,6 +263,66 @@ class IPCCoupler(RBC):
         for entity, coup_type in self._coup_type_by_entity.items():
             self._entities_by_coup_type.setdefault(coup_type, []).append(entity)
 
+    def _resolve_two_way_target_links(self, entity: "RigidEntity", is_robot: bool):
+        """Resolve and validate target links for two-way coupling."""
+        ignore_end_effector_check = self.options.ignore_end_effector_check
+        selected_links = self._coup_links.get(entity)
+        if selected_links is None:
+            if is_robot and not ignore_end_effector_check:
+                gs.raise_exception(
+                    "Two-way soft coupling for articulated robots requires explicit `coup_links` "
+                    "(end-effector links only)."
+                )
+            selected_links = set(entity.links)
+
+        if not ignore_end_effector_check:
+            for link in selected_links:
+                # End-effector only: no child link in the same entity.
+                if any(child.parent_idx == link.idx for child in entity.links):
+                    gs.raise_exception(
+                        f"Two-way soft coupling only supports end-effector links. "
+                        f"Link '{link.name}' has child links in entity '{entity.uid}'."
+                    )
+        elif gs.logger is not None and is_robot:
+            gs.logger.warning(
+                "IPCCouplerOptions.ignore_end_effector_check=True: bypassing articulated two-way "
+                "coupling link validation. Use with caution."
+            )
+        return selected_links
+
+    @staticmethod
+    def _validate_link_inertial_com_for_ipc(link: "RigidLink"):
+        """Raise if inertial COM is outside collision mesh AABB (IPC assumption check)."""
+        if link.inertial_pos is None:
+            return
+
+        aabb_min = np.full(3, np.inf, dtype=gs.np_float)
+        aabb_max = np.full(3, -np.inf, dtype=gs.np_float)
+        has_collision_mesh = False
+        for geom in link.geoms:
+            if geom.type == gs.GEOM_TYPE.PLANE or geom.n_verts <= 0:
+                continue
+            verts = gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat)
+            aabb_min = np.minimum(aabb_min, verts.min(axis=0))
+            aabb_max = np.maximum(aabb_max, verts.max(axis=0))
+            has_collision_mesh = True
+
+        if not has_collision_mesh:
+            return
+
+        com = np.asarray(link.inertial_pos, dtype=gs.np_float)
+        tol = (aabb_max - aabb_min) * COM_AABB_TOL + COM_AABB_TOL
+        if not ((aabb_min - tol < com) & (com < aabb_max + tol)).all():
+            com_str = ", ".join(f"{n}={v:0.3f}" for n, v in zip(("x", "y", "z"), com))
+            aabb_str = ", ".join(
+                f"{n}=({mn:0.3f}, {mx:0.3f})" for n, mn, mx in zip(("x", "y", "z"), aabb_min, aabb_max)
+            )
+            gs.raise_exception(
+                f"IPC two-way coupling assumption violated for link '{link.name}': "
+                f"inertial COM [{com_str}] outside collision AABB [{aabb_str}]. "
+                "Fix inertial origin or collision geometry alignment."
+            )
+
     def _init_ipc(self) -> None:
         """Initialize IPC system components"""
         assert gs.logger is not None
@@ -265,6 +337,7 @@ class IPCCoupler(RBC):
         # Create workspace directory for IPC output, named after scene UID.
         workspace = os.path.join(tempfile.gettempdir(), f"genesis_ipc_{self.sim.scene.uid.full()}")
         os.makedirs(workspace, exist_ok=False)
+        self._ipc_workspace = workspace
 
         # Note: gpu_device option may need to be set via CUDA environment variables (CUDA_VISIBLE_DEVICES)
         # before Genesis initialization, as libuipc Engine does not expose device selection in constructor
@@ -842,6 +915,8 @@ class IPCCoupler(RBC):
 
         # Step 1: Store Genesis rigid states (common)
         self._store_gs_rigid_states()
+        if self.options._export_pre_coupling_surface:
+            self._export_genesis_surface("after_genesis_before_ipc")
 
         # Step 2: Pre-advance processing (per entity type)
         self._pre_advance_external_articulation()
@@ -849,6 +924,8 @@ class IPCCoupler(RBC):
         # Step 3: IPC advance + retrieve (common)
         self._ipc_world.advance()
         self._ipc_world.retrieve()
+        if self.options._export_ipc_surface:
+            self._export_ipc_surface()
 
         # Step 4: Retrieve states
         self._retrieve_ipc_fem_states()
@@ -856,6 +933,9 @@ class IPCCoupler(RBC):
 
         # Step 5: Post-advance — write IPC-resolved state to qpos
         self._post_advance_write_qpos()
+        self._sync_rigid_fk()
+        if self.options._export_post_coupling_surface:
+            self._export_genesis_surface("after_ipc_correction")
 
         # Step 6: Update GUI if enabled
         if self._ipc_gui is not None:
@@ -972,6 +1052,107 @@ class IPCCoupler(RBC):
     def is_active(self) -> bool:
         """Check if IPC coupling is active"""
         return self._ipc_world is not None
+
+    def _export_ipc_surface(self):
+        """Export IPC scene surface snapshots after retrieve().
+
+        Controlled by IPCCouplerOptions private debug fields:
+        - _export_ipc_surface
+        - _export_surface_dir
+        """
+        output_dir = self.options._export_surface_dir or self._ipc_workspace
+        if output_dir is None:
+            output_dir = tempfile.gettempdir()
+        os.makedirs(output_dir, exist_ok=True)
+
+        stem = f"{IPC_SURFACE_PREFIX}_{self._debug_surface_export_idx:06d}"
+        output_path = os.path.join(output_dir, f"{stem}.obj")
+
+        try:
+            scene_io = SceneIO(self._ipc_scene)
+            exported = False
+            for method_name in ("write_surface", "write_surface_obj", "export_surface"):
+                method = getattr(scene_io, method_name, None)
+                if method is None:
+                    continue
+                try:
+                    method(output_path)
+                except TypeError:
+                    # Some bindings may accept (directory, stem) instead of full filepath.
+                    method(output_dir, stem)
+                exported = True
+                break
+
+            if not exported:
+                raise AttributeError("SceneIO has no supported surface export method.")
+
+            self._debug_surface_export_idx += 1
+            if gs.logger is not None:
+                gs.logger.debug(f"IPC debug surface exported: {output_path}")
+        except Exception as exc:
+            if gs.logger is not None:
+                gs.logger.warning(f"Failed to export IPC debug surface snapshot: {exc}")
+
+    def _export_genesis_surface(self, phase: str):
+        """Export current Genesis rigid geometry as one combined OBJ snapshot."""
+        if not self.rigid_solver.is_active:
+            return
+        if phase not in ("after_genesis_before_ipc", "after_ipc_correction"):
+            gs.raise_exception(f"Unknown Genesis surface export phase: {phase}")
+        # Ensure links_state/geoms_state are refreshed from the latest qpos before exporting.
+        self._sync_rigid_fk()
+
+        output_dir = self.options._export_surface_dir or self._ipc_workspace
+        if output_dir is None:
+            output_dir = tempfile.gettempdir()
+        os.makedirs(output_dir, exist_ok=True)
+
+        if phase == "after_genesis_before_ipc":
+            frame_idx = self._debug_genesis_surface_export_after_genesis_before_ipc_idx
+        else:
+            frame_idx = self._debug_genesis_surface_export_after_ipc_correction_idx
+        stem = f"{GENESIS_SURFACE_PREFIX}_{phase}_{frame_idx:06d}"
+        output_path = os.path.join(output_dir, f"{stem}.obj")
+
+        env_idx = 0
+        links_pos = qd_to_numpy(self.rigid_solver.links_state.pos, transpose=True)
+        links_quat = qd_to_numpy(self.rigid_solver.links_state.quat, transpose=True)
+
+        obj_lines: list[str] = []
+        vert_offset = 1
+
+        for link in self.rigid_solver.links:
+            link_pos = links_pos[env_idx, link.idx]
+            link_quat = links_quat[env_idx, link.idx]
+            for geom in link.geoms:
+                if geom.type == gs.GEOM_TYPE.PLANE or geom.n_verts <= 0:
+                    continue
+                verts_link = gu.transform_by_trans_quat(geom.init_verts, geom.init_pos, geom.init_quat)
+                verts_world = gu.transform_by_trans_quat(verts_link, link_pos, link_quat)
+                faces = geom.init_faces.astype(np.int64, copy=False)
+
+                obj_lines.append(f"o link_{link.idx}_{link.name}_geom_{geom.idx}")
+                for v in verts_world:
+                    obj_lines.append(f"v {float(v[0]):.9g} {float(v[1]):.9g} {float(v[2]):.9g}")
+                for f in faces:
+                    i0, i1, i2 = int(f[0]) + vert_offset, int(f[1]) + vert_offset, int(f[2]) + vert_offset
+                    obj_lines.append(f"f {i0} {i1} {i2}")
+                vert_offset += len(verts_world)
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("# Genesis rigid geometry snapshot\n")
+                f.write("\n".join(obj_lines))
+                f.write("\n")
+            if phase == "after_genesis_before_ipc":
+                self._debug_genesis_surface_export_after_genesis_before_ipc_idx += 1
+            else:
+                self._debug_genesis_surface_export_after_ipc_correction_idx += 1
+            if gs.logger is not None:
+                gs.logger.debug(f"Genesis debug surface exported: {output_path}")
+        except Exception as exc:
+            if gs.logger is not None:
+                gs.logger.warning(f"Failed to export Genesis debug surface snapshot: {exc}")
 
     @property
     def has_any_rigid_coupling(self) -> bool:
@@ -1254,6 +1435,29 @@ class IPCCoupler(RBC):
             # only write joint DOFs here.
             global_qs = [ad.q_slice.start + qi for qi in ad.joints_qs_idx_local]
             qpos_tc[:, global_qs] = torch.from_numpy(ad.ipc_qpos[..., ad.joints_qs_idx_local]).to(qpos_tc.device)
+
+    def _sync_rigid_fk(self):
+        """Explicitly run FK to sync qpos with link/geom transforms."""
+        if not self.rigid_solver.is_active:
+            return
+        from genesis.engine.solvers.rigid.abd.forward_kinematics import kernel_forward_kinematics_links_geoms
+
+        kernel_forward_kinematics_links_geoms(
+            self.sim.scene._envs_idx,
+            links_state=self.rigid_solver.links_state,
+            links_info=self.rigid_solver.links_info,
+            joints_state=self.rigid_solver.joints_state,
+            joints_info=self.rigid_solver.joints_info,
+            dofs_state=self.rigid_solver.dofs_state,
+            dofs_info=self.rigid_solver.dofs_info,
+            geoms_state=self.rigid_solver.geoms_state,
+            geoms_info=self.rigid_solver.geoms_info,
+            entities_info=self.rigid_solver.entities_info,
+            rigid_global_info=self.rigid_solver._rigid_global_info,
+            static_rigid_sim_config=self.rigid_solver._static_rigid_sim_config,
+        )
+        self.rigid_solver._is_forward_pos_updated = True
+        self.rigid_solver._is_forward_vel_updated = True
 
     def _accumulate_restitution_base_link(
         self,
