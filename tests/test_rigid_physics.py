@@ -4039,6 +4039,133 @@ def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
     assert box_1_z < -scale
 
 
+@pytest.mark.slow
+@pytest.mark.required
+@pytest.mark.parametrize("scale", [0.1, 10.0])
+@pytest.mark.parametrize("box_box_detection", [False, True])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_noslip_iterations_mixed(scale, box_box_detection, show_viewer, tol, asset_tmp_path):
+    """Noslip test with box primitives plus a distant mesh cube, forcing the convex-convex kernel to run."""
+    mesh_path = str(asset_tmp_path / f"noslip_mixed_box_{scale}.obj")
+    tmesh = trimesh.creation.box(extents=(scale, scale, scale))
+    tmesh.export(mesh_path, file_type="obj")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        rigid_options=gs.options.RigidOptions(
+            box_box_detection=box_box_detection,
+            noslip_iterations=5,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3 * scale, 3 * scale, 3 * scale),
+            camera_lookat=(scale, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    for i in range(3):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(scale, scale, scale),
+                pos=(i * (1 - (not box_box_detection) * 1e-3) * scale, 0, 0),
+                fixed=(i == 0),
+            ),
+            surface=gs.surfaces.Default(
+                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
+            ),
+            visualize_contact=True,
+        )
+
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file=mesh_path,
+            pos=(100 * scale, 100 * scale, 0),
+        ),
+    )
+
+    box_1, box_2 = scene.entities[1], scene.entities[2]
+    scene.build()
+
+    rho = 200
+    coeff_f = 1.0
+    n_box = 2
+    g = 9.81
+    safety = 2.5
+
+    for _ in range(2000):
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
+        scene.step()
+
+    _, _, box_1_z = box_1.get_pos()
+    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+
+    safety = 0.9
+    for _ in range(300):
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
+        scene.step()
+
+    _, _, box_1_z = box_1.get_pos()
+    assert box_1_z < -scale
+
+
+@pytest.mark.slow
+@pytest.mark.required
+@pytest.mark.parametrize("scale", [0.1, 10.0])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_noslip_iterations_mesh(scale, show_viewer, tol, asset_tmp_path):
+    mesh_path = str(asset_tmp_path / f"noslip_box_{scale}.obj")
+    tmesh = trimesh.creation.box(extents=(scale, scale, scale))
+    tmesh.export(mesh_path, file_type="obj")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01),
+        rigid_options=gs.options.RigidOptions(noslip_iterations=5),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3 * scale, 3 * scale, 3 * scale),
+            camera_lookat=(scale, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    for i in range(3):
+        scene.add_entity(
+            gs.morphs.Mesh(
+                file=mesh_path,
+                pos=(i * scale, 0, 0),
+                fixed=(i == 0),
+            ),
+            surface=gs.surfaces.Default(
+                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
+            ),
+            visualize_contact=True,
+        )
+    box_1, box_2 = scene.entities[1:]
+    scene.build()
+
+    rho = 200
+    coeff_f = 1.0
+    n_box = 2
+    g = 9.81
+    safety = 2.5
+
+    for _ in range(2000):
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
+        scene.step()
+
+    _, _, box_1_z = box_1.get_pos()
+    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+
+    safety = 0.9
+    for _ in range(300):
+        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
+        scene.step()
+
+    _, _, box_1_z = box_1.get_pos()
+    assert box_1_z < -scale
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 3])
 def test_axis_aligned_bounding_boxes(n_envs):
