@@ -975,7 +975,7 @@ def test_uv_size_mismatch_no_crash(asset_tmp_path):
     stage.Save()
 
     # This should NOT raise an exception — it should warn and discard UVs
-    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="collision")
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="collision", fixed=True)
     assert len(usd_scene.entities) > 0
 
 
