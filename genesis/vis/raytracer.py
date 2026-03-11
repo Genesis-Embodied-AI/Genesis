@@ -156,7 +156,7 @@ class Raytracer:
         for light in options.lights:
             light_intensity = light.get("intensity", 1.0)
             light_surface = gs.surfaces.Emission(
-                color=map(lambda x: x * light_intensity, light["color"]),
+                color=tuple(x * light_intensity for x in light.color),
             )
             light_surface.update_texture()
             self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
@@ -357,7 +357,7 @@ class Raytracer:
                     image_data=np.ascontiguousarray(image_array).tobytes(),
                     width=image_array.shape[1],
                     height=image_array.shape[0],
-                    channel=texture.channel(),
+                    channel=texture.channel,
                     scale=texture.image_color,
                     encoding=texture.encoding,
                 )

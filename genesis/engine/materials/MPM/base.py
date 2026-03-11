@@ -76,7 +76,7 @@ class Base(Material):
         self._idx = None
 
     @classmethod
-    def _repr_type(cls):
+    def __repr_name__(cls):
         return f"<gs.materials.MPM.{cls.__name__}>"
 
     @qd.func

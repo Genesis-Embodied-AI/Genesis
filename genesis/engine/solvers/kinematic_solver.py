@@ -72,27 +72,7 @@ class KinematicSolver(Solver):
     def __init__(self, scene: "Scene", sim: "Simulator", options: "KinematicOptions") -> None:
         super().__init__(scene, sim, options)
 
-        if isinstance(options, RigidOptions):
-            self._options = options
-        elif isinstance(options, KinematicOptions):
-            self._options = RigidOptions(
-                dt=options.dt,
-                enable_collision=False,
-                enable_joint_limit=False,
-                enable_self_collision=False,
-                enable_neutral_collision=False,
-                enable_adjacent_collision=False,
-                disable_constraint=True,
-                max_collision_pairs=0,
-                enable_multi_contact=False,
-                enable_mujoco_compatibility=False,
-                use_contact_island=False,
-                use_hibernation=False,
-                max_dynamic_constraints=0,
-                iterations=0,
-            )
-        else:
-            gs.raise_exception(f"Invalid options type: {type(options)}")
+        self._options = options
 
         self._enable_collision = False
         self._enable_mujoco_compatibility = False

@@ -1,9 +1,59 @@
 import enum
+from typing import TYPE_CHECKING, Annotated, Sequence, Iterable
+
+import numpy as np
+
+from pydantic import Field, BeforeValidator, StrictFloat, StrictInt, GetPydanticSchema
+from pydantic_core import core_schema
 
 
 # dynamic loading
 ACTIVE = 1
 INACTIVE = 0
+
+
+# type aliases
+if TYPE_CHECKING:
+    NumericType = int | float | bool | np.number
+    NumArrayType = Sequence[NumericType]
+    IArrayType = Sequence[int | np.integer]
+    FArrayType = Sequence[NumericType]
+    Vec2IType = IArrayType
+    Vec3FType = FArrayType
+    ColorFloat = float
+    ColorArrayType = FArrayType
+    MaybeColorArrayType = FArrayType
+    Color3Type = FArrayType
+    Vec4FType = FArrayType
+    Vec3FArrayType = Sequence[Sequence[NumericType]]
+    Matrix3x3Type = Vec3FArrayType
+    NDArrayType = np.ndarray
+else:
+    NumericType = int | float | bool
+    NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
+    IArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=1, strict=False)]
+    FArrayType = Annotated[tuple[float, ...], Field(min_length=1, strict=False)]
+    Vec2IType = Annotated[tuple[StrictInt, StrictInt], Field(strict=False)]
+    Vec3FType = Annotated[tuple[float, float, float], Field(strict=False)]
+    ColorFloat = Annotated[StrictFloat, Field(ge=0.0, le=1.0, strict=False)]
+    ColorArrayType = Annotated[tuple[ColorFloat, ...], Field(min_length=1, strict=False)]
+    MaybeColorArrayType = Annotated[
+        tuple[ColorFloat, ...],
+        BeforeValidator(lambda v: v if isinstance(v, Iterable) else (v,)),
+        Field(min_length=1, strict=False),
+    ]
+    Color3Type = Annotated[tuple[ColorFloat, ColorFloat, ColorFloat], Field(strict=False)]
+    Vec4FType = Annotated[tuple[float, float, float, float], Field(strict=False)]
+    Vec3FArrayType = Annotated[tuple[Vec3FType, ...], Field(min_length=1, strict=False)]
+    Matrix3x3Type = Annotated[tuple[Vec3FType, Vec3FType, Vec3FType], Field(strict=False)]
+    NDArrayType = Annotated[
+        np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))
+    ]
+
+MaybeNumArrayType = NumArrayType | NumericType
+MaybeVec3FType = Vec3FType | float
+MaybeVec3FArrayType = Vec3FArrayType | Vec3FType
+MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 
 class IntEnum(enum.IntEnum):

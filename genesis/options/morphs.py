@@ -117,7 +117,7 @@ class Morph(Options):
         if self.is_free is not None:
             gs.logger.warning("Morph option 'is_free' has been removed. User-specified value will be ignored.")
 
-    def _repr_type(self):
+    def __repr_name__(self):
         return f"<gs.morphs.{self.__class__.__name__}>"
 
 
@@ -606,7 +606,7 @@ class FileMorph(Morph):
 
             self.file = file
 
-    def _repr_type(self):
+    def __repr_name__(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}')>"
 
     def is_format(self, format):
@@ -1559,5 +1559,5 @@ class USD(FileMorph):
 
             self.usd_ctx = UsdContext(self.file)
 
-    def _repr_type(self):
+    def __repr_name__(self):
         return f"<gs.morphs.{self.__class__.__name__}(file='{self.file}', prim_path='{self.prim_path}')>"

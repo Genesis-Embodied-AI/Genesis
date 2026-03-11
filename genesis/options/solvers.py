@@ -361,6 +361,9 @@ class KinematicOptions(Options):
     """
 
     dt: Optional[float] = None
+    batch_links_info: bool = False
+    batch_joints_info: bool = False
+    batch_dofs_info: bool = False
 
 
 class ToolOptions(Options):

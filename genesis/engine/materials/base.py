@@ -19,5 +19,5 @@ class Material(RBC):
         return self._uid
 
     @classmethod
-    def _repr_type(cls):
+    def __repr_name__(cls):
         return f"<gs.{cls.__module__.split('.')[-2]}.{cls.__name__}>"

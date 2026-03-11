@@ -39,7 +39,7 @@ class Surface(Options):
     roughness : float | None, optional
         Roughness of the surface. Shortcut for `roughness_texture` with a single value.
     metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
+        Metalness of the surface. Shortcut for `metallic_texture` with a single value.
     emissive : tuple | None, optional
         Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
@@ -225,7 +225,7 @@ class Surface(Options):
             self.normal_texture,
             self.emissive_texture,
         )
-        return any(texture is not None and texture.requires_uv() for texture in textures)
+        return any(texture is not None and texture.requires_uv for texture in textures)
 
     def get_rgba(self, batch=False):
         all_textures = []
