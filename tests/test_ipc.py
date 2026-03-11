@@ -427,9 +427,9 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
             newton_tolerance=1e-2,
             newton_translation_tolerance=1e-2,
             linear_system_tolerance=1e-3,
-            newton_semi_implicit_enable=False, 
+            newton_semi_implicit_enable=False,
             restitution=0.0,
-            ignore_end_effector_check=True, # bypass two-way soft constraint check
+            ignore_end_effector_check=True,  # bypass two-way soft constraint check
             _export_ipc_surface=True,
             _export_pre_coupling_surface=True,
             _export_post_coupling_surface=True,
