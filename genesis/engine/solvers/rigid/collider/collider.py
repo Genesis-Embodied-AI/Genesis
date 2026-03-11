@@ -86,7 +86,11 @@ class Collider:
         self._diff_normal_tolerance = 1e-2
 
         self._init_static_config()
-        self._use_split_kernels = self._collider_static_config.needs_kernel1 and gs.device.type == "cuda"
+        self._use_split_kernels = (
+            self._collider_static_config.needs_kernel1
+            and gs.device.type == "cuda"
+            and self._solver._options.noslip_iterations == 0
+        )
         self._init_collision_fields()
 
         self._sdf = SDF(rigid_solver)
