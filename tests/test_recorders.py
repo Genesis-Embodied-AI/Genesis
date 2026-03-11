@@ -71,7 +71,7 @@ def test_plotter(tmp_path, monkeypatch, mpl_agg_backend, png_snapshot):
             history_length=HISTORY_LENGTH,
             window_size=(400, 300),
             hz=1.0 / DT / 2,  # half of the simulation frequency, so every other step
-            save_to_filename=str(tmp_path / "video.mp4"),
+            save_to_filename=tmp_path / "video.mp4",
             show_window=False,
         ),
     )
@@ -120,13 +120,13 @@ def test_file_writers(tmp_path):
     contact_sensor = scene.add_sensor(gs.sensors.Contact(entity_idx=box.idx))
 
     csv_file = tmp_path / "contact_data.csv"
-    csv_writer = gs.recorders.CSVFile(filename=str(csv_file), header=("in_contact",))
+    csv_writer = gs.recorders.CSVFile(filename=csv_file, header=("in_contact",))
     contact_sensor.start_recording(csv_writer)
 
     npz_file = tmp_path / "scene_data.npz"
     scene.start_recording(
         data_func=lambda: {"box_pos": box.get_pos(), "dummy": 1},
-        rec_options=gs.recorders.NPZFile(filename=str(npz_file)),
+        rec_options=gs.recorders.NPZFile(filename=npz_file),
     )
 
     scene.build()
@@ -179,7 +179,7 @@ def test_video_writer(tmp_path):
     scene.start_recording(
         data_func=lambda: camera.render(rgb=True, depth=False, segmentation=False, normal=False)[0],
         rec_options=gs.recorders.VideoFile(
-            filename=str(video_rgb_path),
+            filename=video_rgb_path,
             codec="libx264",
             codec_options={"preset": "veryfast", "tune": "zerolatency"},
         ),
@@ -188,7 +188,7 @@ def test_video_writer(tmp_path):
     scene.start_recording(
         data_func=lambda: as_grayscale_image(camera.render(rgb=False, depth=True, segmentation=False, normal=False)[1]),
         rec_options=gs.recorders.VideoFile(
-            filename=str(video_depth_path),
+            filename=video_depth_path,
         ),
     )
     scene.build()

@@ -1,4 +1,5 @@
 import enum
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Annotated, Sequence, Iterable
 
 import numpy as np
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     Vec3FArrayType = Sequence[Sequence[NumericType]]
     Matrix3x3Type = Vec3FArrayType
     NDArrayType = np.ndarray
+    PathType = str | PurePath
 else:
     NumericType = int | float | bool
     NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
@@ -49,6 +51,7 @@ else:
     NDArrayType = Annotated[
         np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))
     ]
+    PathType = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, PurePath) else v)]
 
 MaybeNumArrayType = NumArrayType | NumericType
 MaybeVec3FType = Vec3FType | float
