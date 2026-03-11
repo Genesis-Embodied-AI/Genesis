@@ -370,10 +370,10 @@ class Raytracer:
 
     def add_surface(self, shape_name, surface):
         # add emission
-        if surface.get_emission() is not None:
+        if surface.emission is not None:
             emission_luisa = LuisaRenderPy.Light(
                 name=f"emis_{shape_name}",
-                emission=self.get_texture(surface.get_emission()),
+                emission=self.get_texture(surface.emission),
                 two_sided=False if surface.double_sided is None else surface.double_sided,
                 beam_angle=surface.cutoff,
             )
