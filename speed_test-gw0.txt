@@ -1,1 +1,0 @@
-env=duck_in_box_easy 	| batch_size=30000 	| use_contact_island=False 	| gjk_collision=True 	| dtype=ndarray 	| backend=cuda 	| compile_time=30.5 	| runtime_fps=625693.0 	| realtime_factor=6256.9
