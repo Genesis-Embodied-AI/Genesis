@@ -22,7 +22,6 @@ from genesis.utils import mesh as mu
 from genesis.utils import mjcf as mju
 from genesis.utils import terrain as tu
 from genesis.utils import urdf as uu
-from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
 from genesis.utils.misc import DeprecationError, broadcast_tensor, qd_to_numpy, qd_to_torch
 from genesis.engine.states.entities import RigidEntityState
 
@@ -52,63 +51,6 @@ def tracked(fun):
         return fun(self, *args, **kwargs)
 
     return wrapper
-
-
-def compute_inertial_from_geom_infos(cg_infos, vg_infos, rho):
-    """
-    Compute inertial properties (mass, center of mass, inertia tensor) from geometry infos.
-
-    This is a standalone helper function that computes combined inertial properties from
-    a collection of collision and/or visual geometry infos.
-
-    Parameters
-    ----------
-    cg_infos : list[dict]
-        List of collision geometry info dicts, each containing 'mesh', 'pos', 'quat'.
-    vg_infos : list[dict]
-        List of visual geometry info dicts, each containing 'vmesh', 'pos', 'quat'.
-        Used as fallback if cg_infos is empty.
-    rho : float
-        Material density (kg/m^3) used to compute mass from volume.
-
-    Returns
-    -------
-    tuple[float, np.ndarray, np.ndarray]
-        (total_mass, center_of_mass, inertia_tensor)
-    """
-    total_mass = gs.EPS
-    total_com = np.zeros(3, dtype=gs.np_float)
-    total_inertia = np.zeros((3, 3), dtype=gs.np_float)
-
-    # Use collision geoms if available, otherwise fall back to visual geoms
-    for g_info in cg_infos if cg_infos else vg_infos:
-        mesh = g_info["mesh" if cg_infos else "vmesh"]
-        if g_info["type"] == gs.GEOM_TYPE.PLANE:
-            continue
-        geom_pos = g_info.get("pos", gu.zero_pos())
-        geom_quat = g_info.get("quat", gu.identity_quat())
-
-        inertia_mesh = mesh.trimesh
-        if not inertia_mesh.is_watertight:
-            inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
-
-        if inertia_mesh.volume < -gs.EPS:
-            inertia_mesh.invert()
-
-        geom_mass = inertia_mesh.volume * rho
-        geom_com_local = np.array(inertia_mesh.center_mass, dtype=gs.np_float)
-        geom_inertia_local = inertia_mesh.moment_inertia / inertia_mesh.mass * geom_mass
-
-        # Transform geom properties to link frame
-        geom_com_link = gu.transform_by_quat(geom_com_local, geom_quat) + geom_pos
-        geom_inertia_link = rotate_inertia(geom_inertia_local, gu.quat_to_R(geom_quat))
-
-        # Compose with existing properties
-        total_mass, total_com, total_inertia = compose_inertial_properties(
-            total_mass, total_com, total_inertia, geom_mass, geom_com_link, geom_inertia_link
-        )
-
-    return total_mass, total_com, total_inertia
 
 
 @qd.data_oriented
@@ -181,14 +123,12 @@ class KinematicEntity(Entity):
 
     def _load_morph(self, morph: Morph):
         """Load a single morph into the entity."""
-        # Store g_infos for heterogeneous inertial computation
-        self._first_g_infos = None
         if isinstance(morph, gs.morphs.Mesh):
-            self._first_g_infos = self._load_mesh(morph, self._surface)
+            self._load_mesh(morph, self._surface)
         elif isinstance(morph, (gs.morphs.MJCF, gs.morphs.URDF, gs.morphs.Drone, gs.morphs.USD)):
             self._load_scene(morph, self._surface)
         elif isinstance(morph, gs.morphs.Primitive):
-            self._first_g_infos = self._load_primitive(morph, self._surface)
+            self._load_primitive(morph, self._surface)
         elif isinstance(morph, gs.morphs.Terrain):
             self._load_terrain(morph, self._surface)
         else:
@@ -201,40 +141,21 @@ class KinematicEntity(Entity):
         """
         Load heterogeneous morphs (additional geometry variants for parallel environments).
         Each variant is loaded as additional geoms/vgeoms attached to the single link.
+
+        Variant tracking (geom/vgeom ranges, inertial) is stored on the Link itself.
+        RigidEntity overrides _add_heterogeneous_variant to add collision geoms.
         """
         if not self._enable_heterogeneous:
             return
-
-        # Initialize tracking lists for geom/vgeom ranges per variant.
-        # These store the start/end indices for each variant's geoms and vgeoms,
-        # enabling per-environment dispatch during simulation.
-        self.variants_link_start = gs.List()
-        self.variants_link_end = gs.List()
-        self.variants_n_links = gs.List()
-        self.variants_vgeom_start = gs.List()
-        self.variants_vgeom_end = gs.List()
-
-        # Record the first variant (the main morph)
-        self.variants_link_start.append(self._link_start)
-        self.variants_n_links.append(len(self._links))
-        self.variants_link_end.append(self._link_start + len(self._links))
-        self.variants_vgeom_start.append(self._vgeom_start)
-        self.variants_vgeom_end.append(self._vgeom_start + len(self.vgeoms))
-
-        # Store number of geoms in first variant for balanced block distribution across environments
-        self._first_variant_n_vgeoms = len(self.vgeoms)
 
         # Heterogeneous simulation only supports single-link entities.
         if len(self._links) != 1:
             gs.raise_exception("morph_heterogeneous only supports single-link entities.")
 
-        # Compute first variant's inertial properties using stored g_infos
-        _cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(
-            self._morph, self._first_g_infos, is_robot=False
-        )
+        link = self._links[0]
+        link._init_variant_tracking()
 
         # Load additional heterogeneous variants
-        link = self._links[0]
         for morph in self._morph_heterogeneous:
             if isinstance(morph, gs.morphs.Mesh):
                 g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
@@ -245,22 +166,18 @@ class KinematicEntity(Entity):
                     f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
                 )
 
-            _cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot=False)
+            cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
+            self._add_heterogeneous_variant(link, cg_infos, vg_infos)
 
-            # Add visual geometries
-            for g_info in vg_infos:
-                link._add_vgeom(
-                    vmesh=g_info["vmesh"],
-                    init_pos=g_info.get("pos", gu.zero_pos()),
-                    init_quat=g_info.get("quat", gu.identity_quat()),
-                )
-
-            # Record ranges for this variant
-            self.variants_link_start.append(self.variants_link_end[-1])
-            self.variants_link_end.append(self._link_start + len(self._links))
-            self.variants_n_links.append(self.variants_link_end[-1] - self.variants_link_start[-1])
-            self.variants_vgeom_start.append(self.variants_vgeom_end[-1])
-            self.variants_vgeom_end.append(self.variants_vgeom_end[-1] + len(vg_infos))
+    def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
+        """Add a heterogeneous variant to the link. RigidEntity overrides to add collision geoms."""
+        for g_info in vg_infos:
+            link._add_vgeom(
+                vmesh=g_info["vmesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+            )
+        link._record_variant_vgeom_range(len(vg_infos))
 
     def _load_model(self):
         self._links = gs.List()
@@ -748,22 +665,11 @@ class KinematicEntity(Entity):
         self._vgeoms = self.vgeoms
         self._is_built = True
 
-    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
-        if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
-            raise ValueError(
-                "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
-            )
+    def _create_joints(self, j_infos, link_idx, joint_start):
+        """Create RigidJoint objects from joint info dicts.
 
-        parent_idx = l_info["parent_idx"]
-        if parent_idx >= 0:
-            parent_idx += self._link_start
-        root_idx = l_info.get("root_idx")
-        if root_idx is not None and root_idx >= 0:
-            root_idx += self._link_start
-        link_idx = self.n_links + self._link_start
-        joint_start = self.n_joints + self._joint_start
-
-        # Add parent joints
+        Shared by KinematicEntity._add_by_info and RigidEntity._add_by_info.
+        """
         joints = gs.List()
         self._joints.append(joints)
         for i_j_, j_info in enumerate(j_infos):
@@ -826,6 +732,25 @@ class KinematicEntity(Entity):
             )
             joints.append(joint)
 
+        return joints
+
+    def _add_by_info(self, l_info, j_infos, g_infos, morph, surface):
+        if len(j_infos) > 1 and any(j_info["type"] in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j_info in j_infos):
+            raise ValueError(
+                "Compounding joints of types 'FREE' or 'FIXED' with any other joint on the same body not supported"
+            )
+
+        parent_idx = l_info["parent_idx"]
+        if parent_idx >= 0:
+            parent_idx += self._link_start
+        root_idx = l_info.get("root_idx")
+        if root_idx is not None and root_idx >= 0:
+            root_idx += self._link_start
+        link_idx = self.n_links + self._link_start
+        joint_start = self.n_joints + self._joint_start
+
+        joints = self._create_joints(j_infos, link_idx, joint_start)
+
         # Add child link
         link = KinematicLink(
             entity=self,
@@ -856,11 +781,12 @@ class KinematicEntity(Entity):
         return link, joints
 
     @staticmethod
-    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot):
+    def _separate_geom_infos(morph, g_infos, is_robot):
         """
-        Separate collision from visual geometry and post-process collision meshes.
+        Separate collision from visual geometry.
 
         Used for both normal loading and heterogeneous simulation.
+        RigidEntity overrides this to add collision mesh post-processing.
         """
         cg_infos, vg_infos = [], []
         for g_info in g_infos:
@@ -869,11 +795,6 @@ class KinematicEntity(Entity):
                 cg_infos.append(g_info)
             if morph.visualization and not is_col:
                 vg_infos.append(g_info)
-
-        # Randomize collision mesh colors
-        for g_info in cg_infos:
-            mesh = g_info["mesh"]
-            mesh.set_color((*np.random.rand(3), 0.7))
 
         return cg_infos, vg_infos
 
@@ -1842,111 +1763,32 @@ class RigidEntity(KinematicEntity):
             name,
         )
 
-    def _load_heterogeneous_morphs(self):
-        """
-        Load heterogeneous morphs (additional geometry variants for parallel environments).
-        Each variant is loaded as additional geoms/vgeoms attached to the single link.
-        """
-        if not self._enable_heterogeneous:
-            return
+    def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
+        # Add collision geometries
+        coup_links = self.material.coup_links
+        for g_info in cg_infos:
+            friction = self.material.friction
+            if friction is None:
+                friction = g_info.get("friction", gu.default_friction())
+            needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
+            link._add_geom(
+                mesh=g_info["mesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+                type=g_info["type"],
+                friction=friction,
+                sol_params=g_info["sol_params"],
+                data=g_info.get("data"),
+                needs_coup=needs_coup,
+                contype=g_info["contype"],
+                conaffinity=g_info["conaffinity"],
+            )
 
-        # Initialize tracking lists for geom/vgeom ranges per variant.
-        # These store the start/end indices for each variant's geoms and vgeoms,
-        # enabling per-environment dispatch during simulation.
-        self.variants_link_start = gs.List()
-        self.variants_link_end = gs.List()
-        self.variants_n_links = gs.List()
-        self.variants_geom_start = gs.List()
-        self.variants_geom_end = gs.List()
-        self.variants_vgeom_start = gs.List()
-        self.variants_vgeom_end = gs.List()
-        self.variants_inertial_mass = gs.List()
-        self.variants_inertial_pos = gs.List()
-        self.variants_inertial_i = gs.List()
+        # Add visual geoms and record vgeom range via parent
+        super()._add_heterogeneous_variant(link, cg_infos, vg_infos)
 
-        # Record the first variant (the main morph)
-        self.variants_link_start.append(self._link_start)
-        self.variants_n_links.append(len(self._links))
-        self.variants_link_end.append(self._link_start + len(self._links))
-        self.variants_geom_start.append(self._geom_start)
-        first_variant_geom_end = self._geom_start + len(self.geoms)
-        self.variants_geom_end.append(first_variant_geom_end)
-        self.variants_vgeom_start.append(self._vgeom_start)
-        self.variants_vgeom_end.append(self._vgeom_start + len(self.vgeoms))
-
-        # Store number of geoms in first variant for balanced block distribution across environments
-        self._first_variant_n_geoms = len(self.geoms)
-        self._first_variant_n_vgeoms = len(self.vgeoms)
-
-        # Heterogeneous simulation only supports single-link entities
-        if len(self._links) != 1:
-            gs.raise_exception("morph_heterogeneous only supports single-link entities.")
-
-        # Compute first variant's inertial properties using stored g_infos
-        cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(
-            self._morph, self._first_g_infos, is_robot=False
-        )
-        het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
-        self.variants_inertial_mass.append(het_mass)
-        self.variants_inertial_pos.append(het_pos)
-        self.variants_inertial_i.append(het_i)
-
-        # Load additional heterogeneous variants
-        link = self._links[0]
-        for morph in self._morph_heterogeneous:
-            if isinstance(morph, gs.morphs.Mesh):
-                g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
-            elif isinstance(morph, gs.morphs.Primitive):
-                g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
-            else:
-                gs.raise_exception(
-                    f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
-                )
-
-            cg_infos, vg_infos = self._convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot=False)
-
-            # Compute inertial properties for this variant from collision or visual geometries
-            het_mass, het_pos, het_i = compute_inertial_from_geom_infos(cg_infos, vg_infos, self.material.rho)
-            self.variants_inertial_mass.append(het_mass)
-            self.variants_inertial_pos.append(het_pos)
-            self.variants_inertial_i.append(het_i)
-
-            # Add visual geometries
-            for g_info in vg_infos:
-                link._add_vgeom(
-                    vmesh=g_info["vmesh"],
-                    init_pos=g_info.get("pos", gu.zero_pos()),
-                    init_quat=g_info.get("quat", gu.identity_quat()),
-                )
-
-            # Add collision geometries
-            coup_links = self.material.coup_links
-            for g_info in cg_infos:
-                friction = self.material.friction
-                if friction is None:
-                    friction = g_info.get("friction", gu.default_friction())
-                needs_coup = self.material.needs_coup and (coup_links is None or link.name in coup_links)
-                link._add_geom(
-                    mesh=g_info["mesh"],
-                    init_pos=g_info.get("pos", gu.zero_pos()),
-                    init_quat=g_info.get("quat", gu.identity_quat()),
-                    type=g_info["type"],
-                    friction=friction,
-                    sol_params=g_info["sol_params"],
-                    data=g_info.get("data"),
-                    needs_coup=needs_coup,
-                    contype=g_info["contype"],
-                    conaffinity=g_info["conaffinity"],
-                )
-
-            # Record ranges for this variant
-            self.variants_link_start.append(self.variants_link_end[-1])
-            self.variants_link_end.append(self._link_start + len(self._links))
-            self.variants_n_links.append(self.variants_link_end[-1] - self.variants_link_start[-1])
-            self.variants_geom_start.append(self.variants_geom_end[-1])
-            self.variants_geom_end.append(self.variants_geom_end[-1] + len(cg_infos))
-            self.variants_vgeom_start.append(self.variants_vgeom_end[-1])
-            self.variants_vgeom_end.append(self.variants_vgeom_end[-1] + len(vg_infos))
+        # Record geom range on the link (vgeom range already recorded by parent)
+        link._record_variant_geom_range(len(cg_infos))
 
     def _load_model(self):
         self._equalities = gs.List()
@@ -2071,68 +1913,7 @@ class RigidEntity(KinematicEntity):
             else:
                 free_verts_start += link.n_verts
 
-        # Add parent joints
-        joints = gs.List()
-        self._joints.append(joints)
-        for i_j_, j_info in enumerate(j_infos):
-            n_dofs = j_info["n_dofs"]
-
-            sol_params = np.array(j_info.get("sol_params", gu.default_solver_params()), copy=True)
-            if (
-                len(sol_params.shape) == 2
-                and sol_params.shape[0] == 1
-                and (sol_params[0][3] >= 1.0 or sol_params[0][2] >= sol_params[0][3])
-            ):
-                gs.logger.warning(
-                    f"Joint {j_info['name']}'s sol_params {sol_params[0]} look not right, change to default."
-                )
-                sol_params = gu.default_solver_params()
-
-            dofs_motion_ang = j_info.get("dofs_motion_ang")
-            if dofs_motion_ang is None:
-                if n_dofs == 6:
-                    dofs_motion_ang = np.eye(6, 3, -3)
-                elif n_dofs == 0:
-                    dofs_motion_ang = np.zeros((0, 3))
-                else:
-                    assert False
-
-            dofs_motion_vel = j_info.get("dofs_motion_vel")
-            if dofs_motion_vel is None:
-                if n_dofs == 6:
-                    dofs_motion_vel = np.eye(6, 3)
-                elif n_dofs == 0:
-                    dofs_motion_vel = np.zeros((0, 3))
-                else:
-                    assert False
-
-            joint = RigidJoint(
-                entity=self,
-                name=j_info["name"],
-                idx=joint_start + i_j_,
-                link_idx=link_idx,
-                q_start=self.n_qs + self._q_start,
-                dof_start=self.n_dofs + self._dof_start,
-                n_qs=j_info["n_qs"],
-                n_dofs=n_dofs,
-                type=j_info["type"],
-                pos=j_info.get("pos", gu.zero_pos()),
-                quat=j_info.get("quat", gu.identity_quat()),
-                init_qpos=j_info.get("init_qpos", np.zeros(n_dofs)),
-                sol_params=sol_params,
-                dofs_motion_ang=dofs_motion_ang,
-                dofs_motion_vel=dofs_motion_vel,
-                dofs_limit=j_info.get("dofs_limit", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
-                dofs_invweight=j_info.get("dofs_invweight", np.zeros(n_dofs)),
-                dofs_frictionloss=j_info.get("dofs_frictionloss", np.zeros(n_dofs)),
-                dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
-                dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
-                dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
-                dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
-                dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
-                dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
-            )
-            joints.append(joint)
+        joints = self._create_joints(j_infos, link_idx, joint_start)
 
         # Add child link
         link = RigidLink(
@@ -2170,14 +1951,9 @@ class RigidEntity(KinematicEntity):
             link._inertial_i = None
             link._inertial_mass = None
 
-        # Separate collision from visual geometry for post-processing
-        cg_infos, vg_infos = [], []
-        for g_info in g_infos:
-            is_col = g_info["contype"] or g_info["conaffinity"]
-            if morph.collision and is_col:
-                cg_infos.append(g_info)
-            if morph.visualization and not is_col:
-                vg_infos.append(g_info)
+        # Separate collision from visual geometry, post-process collision meshes, and randomize colors.
+        # See _separate_geom_infos for post-processing details.
+        cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, l_info.get("is_robot", False))
 
         # Add visual geometries
         for g_info in vg_infos:
@@ -2186,42 +1962,6 @@ class RigidEntity(KinematicEntity):
                 init_pos=g_info.get("pos", gu.zero_pos()),
                 init_quat=g_info.get("quat", gu.identity_quat()),
             )
-
-        # Post-process all collision meshes at once.
-        # Destroying the original geometries should be avoided if possible as it will change the way objects
-        # interact with the world due to only computing one contact point per convex geometry. The idea is to
-        # check if each geometry can be convexified independently without resorting on convex decomposition.
-        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
-        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
-        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
-        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
-        # both cases, this improves runtime performance, numerical stability and compilation time.
-        if isinstance(morph, gs.options.morphs.FileMorph):
-            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
-            # is associated with a robot.
-            # The rational behind it is that performing convex decomposition for robots is mostly useless because
-            # the non-physical part that is added to the original geometries to convexify them are generally inside
-            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
-            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
-            if l_info["is_robot"]:
-                decompose_error_threshold = morph.decompose_robot_error_threshold
-            else:
-                decompose_error_threshold = morph.decompose_object_error_threshold
-
-            cg_infos = mu.postprocess_collision_geoms(
-                cg_infos,
-                morph.decimate,
-                morph.decimate_face_num,
-                morph.decimate_aggressiveness,
-                morph.convexify,
-                decompose_error_threshold,
-                morph.coacd_options,
-            )
-
-        # Randomize collision mesh colors. The is especially useful to check convex decomposition.
-        for g_info in cg_infos:
-            mesh = g_info["mesh"]
-            mesh.set_color((*np.random.rand(3), 0.7))
 
         # Add collision geometries
         coup_links = self.material.coup_links
@@ -2246,21 +1986,29 @@ class RigidEntity(KinematicEntity):
         return link, joints
 
     @staticmethod
-    def _convert_g_infos_to_cg_infos_and_vg_infos(morph, g_infos, is_robot):
+    def _separate_geom_infos(morph, g_infos, is_robot):
         """
         Separate collision from visual geometry and post-process collision meshes.
         Used for both normal loading and heterogeneous simulation.
         """
-        cg_infos, vg_infos = [], []
-        for g_info in g_infos:
-            is_col = g_info["contype"] or g_info["conaffinity"]
-            if morph.collision and is_col:
-                cg_infos.append(g_info)
-            if morph.visualization and not is_col:
-                vg_infos.append(g_info)
+        cg_infos, vg_infos = KinematicEntity._separate_geom_infos(morph, g_infos, is_robot)
 
-        # Post-process all collision meshes at once
+        # Post-process all collision meshes at once.
+        # Destroying the original geometries should be avoided if possible as it will change the way objects
+        # interact with the world due to only computing one contact point per convex geometry. The idea is to
+        # check if each geometry can be convexified independently without resorting on convex decomposition.
+        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
+        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
+        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
+        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
+        # both cases, this improves runtime performance, numerical stability and compilation time.
         if isinstance(morph, gs.options.morphs.FileMorph):
+            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
+            # is associated with a robot.
+            # The rational behind it is that performing convex decomposition for robots is mostly useless because
+            # the non-physical part that is added to the original geometries to convexify them are generally inside
+            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
+            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
             if is_robot:
                 decompose_error_threshold = morph.decompose_robot_error_threshold
             else:
@@ -2276,7 +2024,7 @@ class RigidEntity(KinematicEntity):
                 morph.coacd_options,
             )
 
-        # Randomize collision mesh colors
+        # Randomize collision mesh colors. This is especially useful to check convex decomposition.
         for g_info in cg_infos:
             mesh = g_info["mesh"]
             mesh.set_color((*np.random.rand(3), 0.7))
