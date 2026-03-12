@@ -1,89 +1,9 @@
 import enum
-import math
-from pathlib import PurePath
-from typing import TYPE_CHECKING, Annotated, Sequence, Iterable
-
-import numpy as np
-
-from pydantic import Field, BeforeValidator, StrictFloat, StrictInt, GetPydanticSchema
-from pydantic_core import core_schema
 
 
 # dynamic loading
 ACTIVE = 1
 INACTIVE = 0
-
-
-def _normalize_quat(v):
-    quat = tuple(map(float, v))
-    norm = math.sqrt(sum(e**2 for e in quat))
-    if norm > 0:
-        quat = tuple(e / norm for e in quat)
-    return quat
-
-
-# type aliases
-if TYPE_CHECKING:
-    ValidFloat = float
-    PositiveFloat = float
-    NumericType = int | float | bool | np.number
-    NumArrayType = Sequence[NumericType]
-    IArrayType = Sequence[int | np.integer]
-    FArrayType = Sequence[NumericType]
-    Vec2IType = IArrayType
-    Vec2FType = FArrayType
-    Vec3FType = FArrayType
-    QuatType = FArrayType
-    ColorFloat = float
-    ColorArrayType = FArrayType
-    MaybeColorArrayType = FArrayType
-    MaybeFArrayType = FArrayType
-    Color3Type = FArrayType
-    Vec4FType = FArrayType
-    Vec3FArrayType = Sequence[Sequence[NumericType]]
-    Matrix3x3Type = Vec3FArrayType
-    StrArrayType = Sequence[str]
-    NDArrayType = np.ndarray
-    PathType = str | PurePath
-else:
-    ValidFloat = Annotated[float, Field(strict=False, allow_inf_nan=False)]
-    PositiveFloat = Annotated[float, Field(strict=False, gt=0, allow_inf_nan=False)]
-    NumericType = int | float | bool
-    NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
-    IArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=1, strict=False)]
-    FArrayType = Annotated[tuple[ValidFloat, ...], Field(min_length=1, strict=False)]
-    Vec2IType = Annotated[tuple[StrictInt, StrictInt], Field(strict=False)]
-    Vec2FType = Annotated[tuple[ValidFloat, ValidFloat], Field(strict=False)]
-    Vec3FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
-    QuatType = Annotated[
-        tuple[ValidFloat, ValidFloat, ValidFloat, ValidFloat], BeforeValidator(_normalize_quat), Field(strict=False)
-    ]
-    ColorFloat = Annotated[StrictFloat, Field(ge=0.0, le=1.0, strict=False, allow_inf_nan=False)]
-    ColorArrayType = Annotated[tuple[ColorFloat, ...], Field(min_length=1, strict=False)]
-    MaybeColorArrayType = Annotated[
-        tuple[ColorFloat, ...],
-        BeforeValidator(lambda v: v if isinstance(v, Iterable) else (v,)),
-        Field(min_length=1, strict=False),
-    ]
-    MaybeFArrayType = Annotated[
-        tuple[ValidFloat, ...],
-        BeforeValidator(lambda v: v if isinstance(v, Iterable) else (v,)),
-        Field(min_length=1, strict=False),
-    ]
-    Color3Type = Annotated[tuple[ColorFloat, ColorFloat, ColorFloat], Field(strict=False)]
-    Vec4FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
-    StrArrayType = Annotated[tuple[str, ...], Field(strict=False)]
-    Vec3FArrayType = Annotated[tuple[Vec3FType, ...], Field(min_length=1, strict=False)]
-    Matrix3x3Type = Annotated[tuple[Vec3FType, Vec3FType, Vec3FType], Field(strict=False)]
-    NDArrayType = Annotated[
-        np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))
-    ]
-    PathType = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, PurePath) else v)]
-
-MaybeNumArrayType = NumArrayType | NumericType
-MaybeVec3FType = Vec3FType | float
-MaybeVec3FArrayType = Vec3FArrayType | Vec3FType
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
 
 
 class IntEnum(enum.IntEnum):

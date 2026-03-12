@@ -100,10 +100,6 @@ class List(RBC, list[T], Generic[T]):
 
         min_len = 15
         if self:
-            first_line = styless(repr_str)
-            header = self.__repr_name__()
-            line_len = min_len
-        else:
             first_line = styless(repr_str.split("\n")[1])
 
             common_ancestors = set.intersection(*[set(type(obj).__mro__) for obj in self])
@@ -121,6 +117,10 @@ class List(RBC, list[T], Generic[T]):
                 line_len = min(line_len, columns - len(header) - 2)
             except OSError:
                 pass
+        else:
+            first_line = styless(repr_str)
+            header = self.__repr_name__()
+            line_len = min_len
 
         left_line_len = line_len // 2
         right_line_len = line_len - left_line_len

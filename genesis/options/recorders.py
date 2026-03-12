@@ -1,9 +1,9 @@
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, Field, StrictBool, StrictInt
+from pydantic import BeforeValidator, Field, StrictBool
 
 import genesis as gs
-from genesis.constants import PathType, Vec2IType
+from genesis.typing import NonNegativeInt, PathType, PositiveFloat, PositiveInt, PositiveVec2IType
 
 from .options import Options
 
@@ -34,9 +34,9 @@ class RecorderOptions(Options):
         buffer is full. Defaults to 0.1 seconds.
     """
 
-    hz: float | None = Field(default=None, gt=0)
-    buffer_size: StrictInt = Field(default=0, ge=0)
-    buffer_full_wait_time: float = Field(default=0.1, gt=0)
+    hz: PositiveFloat | None = None
+    buffer_size: NonNegativeInt = 0
+    buffer_full_wait_time: PositiveFloat = 0.1
 
 
 class BaseFileWriterOptions(RecorderOptions):
@@ -85,7 +85,7 @@ class VideoFile(BaseFileWriterOptions):
     """
 
     filename: PathType = Field(pattern=r"(?i).*\.mp4$")
-    fps: StrictInt | None = None
+    fps: PositiveInt | None = None
     name: str = ""
     codec: str = "libx264"
     bitrate: float = 1.0
@@ -161,7 +161,7 @@ class BasePlotterOptions(RecorderOptions):
     """
 
     title: str = ""
-    window_size: Vec2IType = (800, 600)
+    window_size: PositiveVec2IType = (800, 600)
     save_to_filename: PathType | None = None
     show_window: StrictBool | None = None
 
@@ -189,11 +189,13 @@ class LinePlotterMixinOptions(Options):
 
     labels: Annotated[
         tuple[str, ...] | dict[str, tuple[str, ...]] | None,
-        BeforeValidator(lambda v: {k: tuple(val) for k, val in v.items()} if isinstance(v, dict) else tuple(v)),
+        BeforeValidator(
+            lambda v: v if v is None else ({k: tuple(val) for k, val in v.items()} if isinstance(v, dict) else tuple(v))
+        ),
     ] = None
     x_label: str = ""
     y_label: str = ""
-    history_length: StrictInt = 100
+    history_length: PositiveInt = 100
 
 
 class PyQtLinePlot(BasePlotterOptions, LinePlotterMixinOptions):

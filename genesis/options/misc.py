@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import Field, StrictBool, StrictInt
 
-from genesis.constants import Vec4FType
+from genesis.typing import NonNegativeInt, PositiveInt, Vec4FType
 
 from .options import Options
 
@@ -32,16 +32,16 @@ class CoacdOptions(Options):
 
     max_convex_hull: StrictInt = Field(default=-1, ge=-1)
     preprocess_mode: Literal["on", "off", "auto"] = "auto"
-    preprocess_resolution: StrictInt = 30
-    resolution: StrictInt = 1000
-    mcts_nodes: StrictInt = 20
-    mcts_iterations: StrictInt = 100
-    mcts_max_depth: StrictInt = 3
+    preprocess_resolution: PositiveInt = 30
+    resolution: PositiveInt = 1000
+    mcts_nodes: PositiveInt = 20
+    mcts_iterations: PositiveInt = 100
+    mcts_max_depth: PositiveInt = 3
     pca: StrictBool = False
     merge: StrictBool = True
     decimate: StrictBool = False
-    max_ch_vertex: StrictInt = 256
+    max_ch_vertex: PositiveInt = 256
     extrude: StrictBool = False
     extrude_margin: float = 0.1
     apx_mode: Literal["ch", "box"] = "ch"
-    seed: StrictInt = 0
+    seed: NonNegativeInt = 0

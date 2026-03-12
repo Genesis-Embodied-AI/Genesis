@@ -6,7 +6,7 @@ rigid object / MPM object / FEM object.
 """
 
 import os
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
@@ -14,7 +14,18 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.misc as mu
-from genesis.constants import PositiveFloat, QuatType, StrArrayType, Vec2FType, Vec2IType, Vec3FType, Vec4FType
+from genesis.typing import (
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+    StrArrayType,
+    UnitVec3FType,
+    UnitVec4FType,
+    Vec2FType,
+    Vec2IType,
+    PositiveVec2FType,
+    Vec3FType,
+)
 
 from .misc import CoacdOptions
 from .options import Options
@@ -32,11 +43,11 @@ class TetGenMixin(Options):
     """
 
     # FEM specific
-    order: StrictInt = Field(default=1, ge=1)
+    order: PositiveInt = 1
 
     # Volumetric mesh entity
-    mindihedral: StrictInt = Field(default=10, ge=0)
-    minratio: float = Field(default=1.1, gt=0)
+    mindihedral: NonNegativeInt = 10
+    minratio: PositiveFloat = 1.1
     nobisect: StrictBool = True
     quality: StrictBool = True
     maxvolume: float = -1.0
@@ -82,7 +93,7 @@ class Morph(Options):
 
     # Note: pos, quat store only initial values at creation time, and are unaffected by sim
     pos: Vec3FType = (0.0, 0.0, 0.0)
-    quat: QuatType | None = None
+    quat: UnitVec4FType | None = None
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
@@ -91,9 +102,12 @@ class Morph(Options):
     @classmethod
     def _resolve_orientation(cls, data: dict) -> dict:
         euler = data.pop("euler", None)
+        quat = data.get("quat")
+        if euler is not None and quat is not None:
+            gs.raise_exception("'euler' and 'quat' cannot both be set.")
         if euler is not None:
             data["quat"] = tuple(gu.xyz_to_quat(np.array(euler), rpy=True, degrees=True))
-        elif data.get("quat") is None:
+        elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
         return data
 
@@ -239,25 +253,29 @@ class Box(Primitive, TetGenMixin):
     upper: Vec3FType | None = None
     size: Vec3FType | None = None
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_geometry(cls, data: dict) -> dict:
+        lower, upper, size = data.get("lower"), data.get("upper"), data.get("size")
 
-        if self.lower is not None and self.upper is not None:
-            self.pos = tuple(((np.array(self.lower) + np.array(self.upper)) / 2).tolist())
-            self.size = tuple((np.array(self.upper) - np.array(self.lower)).tolist())
-
-            if not (np.array(self.upper) >= np.array(self.lower)).all():
+        if lower is not None and upper is not None:
+            lower, upper = np.array(lower), np.array(upper)
+            if not (upper >= lower).all():
                 gs.raise_exception("Invalid lower and upper corner.")
+            data["pos"] = tuple(((lower + upper) / 2).tolist())
+            data["size"] = tuple((upper - lower).tolist())
 
-        elif self.lower is None and self.upper is None:
-            if self.size is None:
+        elif lower is None and upper is None:
+            if size is None:
                 gs.raise_exception("Either [`pos` and `size`] or [`lower` and `upper`] should be specified.")
-
-            self.lower = tuple((np.array(self.pos) - 0.5 * np.array(self.size)).tolist())
-            self.upper = tuple((np.array(self.pos) + 0.5 * np.array(self.size)).tolist())
+            pos, size = np.array(data.get("pos", (0.0, 0.0, 0.0))), np.array(size)
+            data["lower"] = tuple((pos - 0.5 * size).tolist())
+            data["upper"] = tuple((pos + 0.5 * size).tolist())
 
         else:
             gs.raise_exception("`lower` and `upper` must be jointly specified.")
+
+        return data
 
 
 class Cylinder(Primitive, TetGenMixin):
@@ -323,8 +341,8 @@ class Cylinder(Primitive, TetGenMixin):
         **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
-    height: float = Field(default=1.0, gt=0)
-    radius: float = Field(default=0.5, gt=0)
+    height: PositiveFloat = 1.0
+    radius: PositiveFloat = 0.5
 
 
 class Sphere(Primitive, TetGenMixin):
@@ -388,7 +406,7 @@ class Sphere(Primitive, TetGenMixin):
         **This is only used for Volumetric Entity that requires tetraheralization.**
     """
 
-    radius: float = Field(default=0.5, gt=0)
+    radius: PositiveFloat = 0.5
 
 
 class Plane(Primitive):
@@ -437,9 +455,9 @@ class Plane(Primitive):
     """
 
     batch_fixed_verts: StrictBool = False
-    normal: Vec3FType = (0.0, 0.0, 1.0)
-    plane_size: Vec2FType = (1e3, 1e3)
-    tile_size: Vec2FType = (1.0, 1.0)
+    normal: UnitVec3FType = (0.0, 0.0, 1.0)
+    plane_size: PositiveVec2FType = (1e3, 1e3)
+    tile_size: PositiveVec2FType = (1.0, 1.0)
 
     def __init__(self, *, fixed: bool = True, **data):
         if not fixed:
@@ -448,8 +466,6 @@ class Plane(Primitive):
 
         if self.requires_jac_and_IK:
             gs.raise_exception("`requires_jac_and_IK` must be False for `Plane`.")
-
-        self.normal = tuple(np.array(self.normal) / np.linalg.norm(self.normal))
 
 
 ############################ Mesh ############################
@@ -526,7 +542,7 @@ class FileMorph(Morph):
     file: Any = ""
     scale: Annotated[tuple[PositiveFloat, PositiveFloat, PositiveFloat], Field(strict=False)] | PositiveFloat = 1.0
     decimate: StrictBool = True
-    decimate_face_num: StrictInt = Field(default=500, ge=1)
+    decimate_face_num: PositiveInt = 500
     decimate_aggressiveness: StrictInt = Field(default=2, ge=0, le=8)
     convexify: StrictBool | None = None
     decompose_object_error_threshold: float = Field(default=0.15, ge=0, allow_inf_nan=True)
@@ -536,6 +552,29 @@ class FileMorph(Morph):
     file_meshes_are_zup: StrictBool | None = True
     batch_fixed_verts: StrictBool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_file_and_defaults(cls, data: dict) -> dict:
+        # Clamp thresholds to avoid decomposition of convex and primitive shapes
+        obj_thresh = data.get("decompose_object_error_threshold", 0.15)
+        robot_thresh = data.get("decompose_robot_error_threshold", float("inf"))
+        data["decompose_object_error_threshold"] = max(obj_thresh, gs.EPS)
+        data["decompose_robot_error_threshold"] = max(robot_thresh, gs.EPS)
+
+        if data.get("coacd_options") is None:
+            data["coacd_options"] = CoacdOptions()
+
+        file = data.get("file", "")
+        if isinstance(file, str) and file:
+            abs_file = os.path.abspath(file)
+            if not os.path.exists(abs_file):
+                abs_file = os.path.join(gs.utils.get_assets_dir(), file)
+            if not os.path.exists(abs_file):
+                gs.raise_exception(f"File not found in either current directory or assets directory: '{file}'.")
+            data["file"] = abs_file
+
+        return data
+
     def __init__(
         self,
         *,
@@ -543,46 +582,28 @@ class FileMorph(Morph):
         parse_glb_with_zup: bool | None = None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
-
-        scale = np.atleast_1d(np.array(self.scale))
-        if scale.ndim > 1 or scale.size not in (1, 3):
-            gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
-
         if decompose_nonconvex is not None:
             gs.logger.warning(
                 "'decompose_nonconvex' is deprecated. Use 'convexify' and "
                 "'decompose_(robot|object)_error_threshold' instead."
             )
             if decompose_nonconvex:
-                self.convexify = True
-                self.decompose_object_error_threshold = 0.0
-                self.decompose_robot_error_threshold = 0.0
+                kwargs.setdefault("convexify", True)
+                kwargs["decompose_object_error_threshold"] = 0.0
+                kwargs["decompose_robot_error_threshold"] = 0.0
             else:
-                self.decompose_object_error_threshold = float("inf")
-                self.decompose_robot_error_threshold = float("inf")
+                kwargs["decompose_object_error_threshold"] = float("inf")
+                kwargs["decompose_robot_error_threshold"] = float("inf")
 
         if parse_glb_with_zup is not None:
             gs.logger.warning("'parse_glb_with_zup' is deprecated. Use 'file_meshes_are_zup' instead.")
-            self.file_meshes_are_zup = not parse_glb_with_zup
+            kwargs.setdefault("file_meshes_are_zup", not parse_glb_with_zup)
 
-        # Make sure that this threshold is positive to avoid decomposition of convex and primitive shapes
-        self.decompose_object_error_threshold = max(self.decompose_object_error_threshold, gs.EPS)
-        self.decompose_robot_error_threshold = max(self.decompose_robot_error_threshold, gs.EPS)
+        super().__init__(**kwargs)
 
-        if self.coacd_options is None:
-            self.coacd_options = CoacdOptions()
-
-        if isinstance(self.file, str):
-            file = os.path.abspath(self.file)
-
-            if not os.path.exists(file):
-                file = os.path.join(gs.utils.get_assets_dir(), self.file)
-
-            if not os.path.exists(file):
-                gs.raise_exception(f"File not found in either current directory or assets directory: '{self.file}'.")
-
-            self.file = file
+        scale = np.atleast_1d(np.array(self.scale))
+        if scale.ndim > 1 or scale.size not in (1, 3):
+            gs.raise_exception("`scale` should be a scalar sequence of length 1 or 3.")
 
     def __repr_name__(self):
         return f"{super().__repr_name__()[:-1]}(file='{self.file}')>"
@@ -716,29 +737,38 @@ class Mesh(FileMorph, TetGenMixin):
     group_by_material: StrictBool = False
     merge_submeshes_for_collision: StrictBool = False
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_zup(cls, data: dict) -> dict:
+        file = data.get("file", "")
+        is_gltf = isinstance(file, str) and str(file).lower().endswith(GLTF_FORMATS)
 
-        if self.is_format(gs.options.morphs.GLTF_FORMATS):
-            if self.file_meshes_are_zup:
+        if is_gltf:
+            if data.get("file_meshes_are_zup"):
                 gs.logger.warning(
                     "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
                     "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
                 )
                 y_up_quat = (1.0, -1.0, 0.0, 0.0)
-                if self.quat is None:
-                    self.quat = y_up_quat
-                else:
-                    self.quat = gu.transform_quat_by_quat(
-                        np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
+                quat = data.get("quat")
+                if quat is None and data.get("euler") is None:
+                    data["quat"] = y_up_quat
+                elif quat is not None:
+                    data["quat"] = tuple(
+                        gu.transform_quat_by_quat(
+                            np.array(y_up_quat, dtype=gs.np_float), np.array(quat, dtype=gs.np_float)
+                        )
                     )
-                if self.scale is not None:
-                    scale = np.atleast_1d(np.array(self.scale))
-                    if scale.size == 3:
-                        self.scale = (scale[0], scale[2], scale[1])
-            self.file_meshes_are_zup = False
-        elif self.file_meshes_are_zup is None:
-            self.file_meshes_are_zup = True
+                scale = data.get("scale")
+                if scale is not None:
+                    scale_arr = np.atleast_1d(np.array(scale))
+                    if scale_arr.size == 3:
+                        data["scale"] = (scale_arr[0], scale_arr[2], scale_arr[1])
+            data["file_meshes_are_zup"] = False
+        elif data.get("file_meshes_are_zup") is None:
+            data["file_meshes_are_zup"] = True
+
+        return data
 
 
 class MeshSet(Mesh):
@@ -847,33 +877,24 @@ class MJCF(FileMorph):
     """
 
     pos: Vec3FType | None = None
-    quat: QuatType | None = None
+    quat: UnitVec4FType | None = None
     requires_jac_and_IK: StrictBool = True
     default_armature: float | None = Field(default=0.1, ge=0)
 
-    def __init__(self, **data):
-        super().__init__(**data)
-
-        if not self.is_format(MJCF_FORMAT):
-            gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
-
-        # What you want to do with scaling is kinda "zoom" the world from the perspective of the entity, i.e. scale the
-        # geometric properties of an entity wrt its root pose. In the general case, ie for a 3D vector scale, (x, y, z)
-        # dimensions are scaled independently along (x, y, z) world axes respectively. With this definition, it is an
-        # intrinsic uniquely-defined geometric property of the entity, and as such, it does not depend on its current
-        # configuration (aka. position vector).
-        # For rigid non-articulated objects, this is all good and dimension-wise scaling makes sense, but it is no
-        # longer the case for poly-articulated robot. This is due to the fact that the position of each geometry in
-        # world frame depends on their parent link poses, which themselves depends on the current configuration of the
-        # entity. This is problematic as it means that the effect of scaling would depends on the initial configuration
-        # of the robot rather then being a intrinsic uniquely-defined geometric property. There is no another way to
-        # avoid this inconsistency than limiting scaling to a scalar factor. In this case, scaling between anisotropic
-        # and does not depends on the orientation of each geometry anymore, and therefore is independent of the
-        # configuration of the entity, which is precisely the property that we want to enforce.
-        scale = np.atleast_1d(np.array(self.scale))
+    @model_validator(mode="before")
+    @classmethod
+    def _enforce_isotropic_scale(cls, data: dict) -> dict:
+        # Anisotropic scaling is ill-defined for poly-articulated robots because link positions depend on configuration,
+        # making the effect of per-axis scaling configuration-dependent. Limiting to scalar factor avoids this.
+        scale = np.atleast_1d(np.array(data.get("scale", 1.0)))
         if scale.std() > gs.EPS:
             gs.raise_exception("Anisotropic scaling is not supported by MJCF morph.")
-        self.scale = scale.mean()
+        data["scale"] = float(scale.mean())
+        return data
+
+    def model_post_init(self, context: Any) -> None:
+        if not self.is_format(MJCF_FORMAT):
+            gs.raise_exception(f"Expected `{MJCF_FORMAT}` extension for MJCF file: {self.file}")
 
 
 class URDF(FileMorph):
@@ -976,16 +997,19 @@ class URDF(FileMorph):
     links_to_keep: StrArrayType = ()
     default_armature: float | None = Field(default=0.1, ge=0)
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        if not self.is_format(URDF_FORMAT):
-            gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
-
-        # Anisotropic scaling is ill-defined for poly-articulated robots. See related MJCF about this for details.
-        scale = np.atleast_1d(np.array(self.scale))
+    @model_validator(mode="before")
+    @classmethod
+    def _enforce_isotropic_scale(cls, data: dict) -> dict:
+        # Anisotropic scaling is ill-defined for poly-articulated robots. See MJCF for details.
+        scale = np.atleast_1d(np.array(data.get("scale", 1.0)))
         if scale.std() > gs.EPS:
             gs.raise_exception("Anisotropic scaling is not supported by URDF morph.")
-        self.scale = scale.mean()
+        data["scale"] = float(scale.mean())
+        return data
+
+    def model_post_init(self, context: Any) -> None:
+        if not self.is_format(URDF_FORMAT):
+            gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
 
     def is_format(self, format):
         from genesis.ext.urdfpy.urdf import URDF
@@ -1104,8 +1128,6 @@ class Drone(FileMorph):
         propellers_link_names: tuple[str, ...] | None = None,
         **data,
     ):
-        super().__init__(**data)
-
         if COM_link_name is not None:
             gs.logger.warning("'COM_link_name' is deprecated. The true Center of Mass will be used instead.")
 
@@ -1113,10 +1135,14 @@ class Drone(FileMorph):
             gs.logger.warning("'propellers_link_names' is deprecated. Use 'propellers_link_name' instead.")
             if "propellers_link_name" in data:
                 gs.raise_exception("'propellers_link_names' cannot be combined with 'propellers_link_name'.")
-            self.propellers_link_name = propellers_link_names
+            data["propellers_link_name"] = propellers_link_names
 
-        # Make sure that Propellers links are preserved
-        self.links_to_keep = tuple(set([*self.links_to_keep, *self.propellers_link_name]))
+        # Make sure that propellers links are preserved
+        prop_links = data.get("propellers_link_name", self.model_fields["propellers_link_name"].default)
+        links_to_keep = data.get("links_to_keep", self.model_fields["links_to_keep"].default)
+        data["links_to_keep"] = tuple(set([*links_to_keep, *prop_links]))
+
+        super().__init__(**data)
 
         if not self.is_format(URDF_FORMAT):
             gs.raise_exception(f"Drone only supports `{URDF_FORMAT}` extension: {self.file}")
@@ -1202,9 +1228,9 @@ class Terrain(Morph):
     randomize: StrictBool = False
     n_subterrains: Vec2IType = (3, 3)
     subterrain_size: tuple[float, float] = (12.0, 12.0)
-    horizontal_scale: float = Field(default=0.25, gt=0)
-    vertical_scale: float = Field(default=0.005, gt=0)
-    uv_scale: float = Field(default=1.0, gt=0)
+    horizontal_scale: PositiveFloat = 0.25
+    vertical_scale: PositiveFloat = 0.005
+    uv_scale: PositiveFloat = 1.0
     subterrain_types: Any = [
         ["flat_terrain", "random_uniform_terrain", "stepping_stones_terrain"],
         ["pyramid_sloped_terrain", "discrete_obstacles_terrain", "wave_terrain"],
@@ -1214,59 +1240,55 @@ class Terrain(Morph):
     name: str | None = None
     subterrain_parameters: dict[str, dict] | None = None
 
+    _SUPPORTED_SUBTERRAIN_TYPES: ClassVar[tuple[str, ...]] = (
+        "flat_terrain",
+        "fractal_terrain",
+        "random_uniform_terrain",
+        "sloped_terrain",
+        "pyramid_sloped_terrain",
+        "discrete_obstacles_terrain",
+        "wave_terrain",
+        "stairs_terrain",
+        "pyramid_stairs_terrain",
+        "stepping_stones_terrain",
+    )
+
     def __init__(self, *, from_stored: str | None = None, **data):
+        if from_stored is not None:
+            gs.logger.warning("'from_stored' is deprecated. Use 'name' instead.")
+            if data.get("name") is None:
+                data["name"] = from_stored
+            elif from_stored != data.get("name"):
+                gs.raise_exception("'from_stored' and 'name' cannot both be set to different values.")
+
+        # Merge subterrain_parameters with defaults
         custom_params = data.get("subterrain_parameters") or {}
         terrain_types = set(self.default_params) | set(custom_params)
         overwritten_params = {}
-
         for terrain_type in terrain_types:
             default_value = self.default_params.get(terrain_type, {})
             custom_value = custom_params.get(terrain_type, {})
             overwritten_params[terrain_type] = default_value | custom_value
-
         data["subterrain_parameters"] = overwritten_params
+
+        # Expand subterrain_types string to 2D list
+        subterrain_types = data.get("subterrain_types")
+        if isinstance(subterrain_types, str):
+            n_subterrains = data.get("n_subterrains", self.model_fields["n_subterrains"].default)
+            data["subterrain_types"] = [[subterrain_types] * n_subterrains[1] for _ in range(n_subterrains[0])]
+
         super().__init__(**data)
 
-        if from_stored is not None:
-            gs.logger.warning("'from_stored' is deprecated. Use 'name' instead.")
-            if self.name is None:
-                self.name = from_stored
-            elif from_stored != self.name:
-                gs.raise_exception("'from_stored' and 'name' cannot both be set to different values.")
-
-        self._subterrain_parameters = overwritten_params
-
-        supported_subterrain_types = [
-            "flat_terrain",
-            "fractal_terrain",
-            "random_uniform_terrain",
-            "sloped_terrain",
-            "pyramid_sloped_terrain",
-            "discrete_obstacles_terrain",
-            "wave_terrain",
-            "stairs_terrain",
-            "pyramid_stairs_terrain",
-            "stepping_stones_terrain",
-        ]
-
+    def model_post_init(self, context: Any) -> None:
         if self.height_field is not None:
             try:
                 if np.array(self.height_field).ndim != 2:
                     gs.raise_exception("`height_field` should be a 2D array.")
             except Exception:
                 gs.raise_exception("`height_field` should be array-like to be converted to np.ndarray.")
-
             return
 
-        if isinstance(self.subterrain_types, str):
-            subterrain_types = []
-            for i in range(self.n_subterrains[0]):
-                row = []
-                for j in range(self.n_subterrains[1]):
-                    row.append(self.subterrain_types)
-                subterrain_types.append(row)
-            self.subterrain_types = subterrain_types
-        else:
+        if not isinstance(self.subterrain_types, str):
             if np.array(self.subterrain_types).shape != (self.n_subterrains[0], self.n_subterrains[1]):
                 gs.raise_exception(
                     "`subterrain_types` should be either a string or a 2D list of strings with the same shape as `n_subterrains`."
@@ -1274,9 +1296,9 @@ class Terrain(Morph):
 
         for row in self.subterrain_types:
             for subterrain_type in row:
-                if subterrain_type not in supported_subterrain_types:
+                if subterrain_type not in self._SUPPORTED_SUBTERRAIN_TYPES:
                     gs.raise_exception(
-                        f"Unsupported subterrain type: {subterrain_type}, should be one of {supported_subterrain_types}"
+                        f"Unsupported subterrain type: {subterrain_type}, should be one of {list(self._SUPPORTED_SUBTERRAIN_TYPES)}"
                     )
 
         if not mu.is_approx_multiple(self.subterrain_size[0], self.horizontal_scale) or not mu.is_approx_multiple(
@@ -1332,7 +1354,7 @@ class Terrain(Morph):
 
     @property
     def subterrain_params(self):
-        return self._subterrain_parameters
+        return self.subterrain_parameters
 
 
 class USD(FileMorph):

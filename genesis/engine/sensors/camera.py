@@ -501,22 +501,21 @@ class RasterizerCameraSensor(BaseCameraSensor):
         context.reset()
         return context
 
-    def _convert_light_config_to_rasterizer(self, light_config):
-        """Convert a light config dict to rasterizer format."""
-        # Default values for rasterizer
+    @staticmethod
+    def _convert_light_config_to_rasterizer(light_config):
+        """Convert a light config dict to a typed light options object for the rasterizer."""
+        from genesis.options.vis import DirectionalLight, PointLight
+
         light_type = light_config.get("type", "directional")
-        pos = light_config.get("pos", (0.0, 0.0, 5.0))
-        dir = light_config.get("dir", (0.0, 0.0, -1.0))
         color = light_config.get("color", (1.0, 1.0, 1.0))
         intensity = light_config.get("intensity", 1.0)
 
-        return {
-            "type": light_type,
-            "pos": pos,
-            "dir": dir,
-            "color": tuple(np.array(color) * intensity),
-            "intensity": intensity,
-        }
+        if light_type == "point":
+            pos = light_config.get("pos", (0.0, 0.0, 5.0))
+            return PointLight(pos=pos, color=color, intensity=intensity)
+        else:
+            dir = light_config.get("dir", (0.0, 0.0, -1.0))
+            return DirectionalLight(dir=dir, color=color, intensity=intensity)
 
     def _update_camera_pose(self):
         """Update camera pose based on options."""

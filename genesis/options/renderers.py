@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
-from genesis.constants import QuatType, Vec3FType, Vec4FType
+from genesis.typing import PositiveFloat, UnitVec4FType, Vec3FType
 from genesis.datatypes import List
 
 from .options import Options
@@ -98,13 +98,13 @@ class RayTracer(RendererOptions):
     state_limit: StrictInt = 2**25
     tracing_depth: StrictInt = 32
     rr_depth: StrictInt = 0
-    rr_threshold: float = 0.95
+    rr_threshold: PositiveFloat = 0.95
 
     # environment texture
     env_surface: Surface | None = None
     env_radius: float = 1000.0
     env_pos: Vec3FType = (0.0, 0.0, 0.0)
-    env_quat: QuatType | None = None
+    env_quat: UnitVec4FType | None = None
 
     # sphere lights
     lights: Annotated[List[SphereLight], Field(validate_default=True, strict=False)] = List(

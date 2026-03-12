@@ -311,13 +311,13 @@ class Glass(Surface):
     _color_target: ClassVar[str] = "specular_texture"
 
     subsurface: StrictBool = False
-    specular_texture: Texture | None = Field(default=None, frozen=False)
-    diffuse_texture: Texture | None = Field(default=None, frozen=False)
-    transmission_texture: Texture | None = Field(default=None, frozen=False)
-    thickness_texture: Texture | None = Field(default=None, frozen=False)
-    roughness_texture: Texture | None = Field(default=None, frozen=False)
-    normal_texture: Texture | None = Field(default=None, frozen=False)
-    emissive_texture: Texture | None = Field(default=None, frozen=False)
+    specular_texture: Texture | None = None
+    diffuse_texture: Texture | None = None
+    transmission_texture: Texture | None = None
+    thickness_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
 
     def __init__(self, *, roughness: float = 0.0, ior: float = 1.5, thickness: float | None = None, **data) -> None:
         super().__init__(roughness=roughness, ior=ior, thickness=thickness, **data)
@@ -334,7 +334,11 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
-        self._extract_opacity_from(self.specular_texture, self.emissive_texture, None)
+        # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
+        if self.specular_texture is not None:
+            self.specular_texture.check_dim(3)
+        if self.emissive_texture is not None:
+            self.emissive_texture.check_dim(3)
         if self.specular_texture is not None and self.transmission_texture is None:
             self.transmission_texture = self.specular_texture
         return self
@@ -412,11 +416,11 @@ class Metal(Surface):
     """
 
     metal_type: MetalType = "iron"
-    diffuse_texture: Texture | None = Field(default=None, frozen=False)
-    opacity_texture: Texture | None = Field(default=None, frozen=False)
-    roughness_texture: Texture | None = Field(default=None, frozen=False)
-    normal_texture: Texture | None = Field(default=None, frozen=False)
-    emissive_texture: Texture | None = Field(default=None, frozen=False)
+    diffuse_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
 
     @property
     def texture(self) -> Texture | None:
@@ -499,12 +503,12 @@ class Plastic(Surface):
         Emissive texture of the surface.
     """
 
-    diffuse_texture: Texture | None = Field(default=None, frozen=False)
-    specular_texture: Texture | None = Field(default=None, frozen=False)
-    opacity_texture: Texture | None = Field(default=None, frozen=False)
-    roughness_texture: Texture | None = Field(default=None, frozen=False)
-    normal_texture: Texture | None = Field(default=None, frozen=False)
-    emissive_texture: Texture | None = Field(default=None, frozen=False)
+    diffuse_texture: Texture | None = None
+    specular_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
 
     def __init__(self, *, ior: float = 1.0, **data) -> None:
         super().__init__(ior=ior, **data)
@@ -595,12 +599,12 @@ class BSDF(Surface):
         Emissive texture of the surface.
     """
 
-    diffuse_texture: Texture | None = Field(default=None, frozen=False)
-    opacity_texture: Texture | None = Field(default=None, frozen=False)
-    roughness_texture: Texture | None = Field(default=None, frozen=False)
-    metallic_texture: Texture | None = Field(default=None, frozen=False)
-    normal_texture: Texture | None = Field(default=None, frozen=False)
-    emissive_texture: Texture | None = Field(default=None, frozen=False)
+    diffuse_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    metallic_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
     specular_trans: float = 0.0
     diffuse_trans: float = 0.0
 
@@ -684,7 +688,7 @@ class Emission(Surface):
 
     _color_target: ClassVar[str] = "emissive_texture"
 
-    emissive_texture: Texture | None = Field(default=None, frozen=False)
+    emissive_texture: Texture | None = None
 
     @property
     def texture(self) -> Texture | None:

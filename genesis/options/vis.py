@@ -1,10 +1,10 @@
-import warnings
 from typing import Annotated, Literal
 
 from pydantic import StrictBool, StrictInt, Field, model_validator
 
+import genesis as gs
 from genesis.datatypes import List
-from genesis.constants import IArrayType, Vec2IType, Vec3FType, Color3Type
+from genesis.typing import IArrayType, PositiveFloat, PositiveInt, PositiveVec2IType, Vec3FType, Color3Type
 
 from .options import Options
 
@@ -43,10 +43,10 @@ class ViewerOptions(Options):
         Whether to enable the default keyboard controls in the viewer.
     """
 
-    res: Vec2IType | None = None
+    res: PositiveVec2IType | None = None
     run_in_thread: StrictBool | None = None
-    refresh_rate: StrictInt = 60
-    max_FPS: StrictInt | None = 60
+    refresh_rate: PositiveInt = 60
+    max_FPS: PositiveInt | None = 60
     camera_pos: Vec3FType = (3.5, 0.5, 2.5)
     camera_lookat: Vec3FType = (0.0, 0.0, 0.5)
     camera_up: Vec3FType = (0.0, 0.0, 1.0)
@@ -148,8 +148,8 @@ class VisOptions(Options):
     visualize_pbd_boundary: StrictBool = False
     segmentation_level: Literal["entity", "link", "geom"] = "link"
     render_particle_as: Literal["sphere", "tet"] = "sphere"
-    particle_size_scale: float = 1.0
-    contact_force_scale: float = 0.01
+    particle_size_scale: PositiveFloat = 1.0
+    contact_force_scale: PositiveFloat = 0.01
     n_support_neighbors: StrictInt = 12
     rendered_envs_idx: IArrayType | None = None
     lights: Annotated[List[LightType], Field(validate_default=True, strict=False)] = List(
@@ -160,11 +160,9 @@ class VisOptions(Options):
     @classmethod
     def _handle_deprecated_n_rendered_envs(cls, data: dict) -> dict:
         if "n_rendered_envs" in data:
-            warnings.warn(
+            gs.logger.warning(
                 "Viewer option 'n_rendered_envs' is deprecated and will be removed in a future release. "
-                "Please use 'rendered_envs_idx' instead.",
-                DeprecationWarning,
-                stacklevel=2,
+                "Please use 'rendered_envs_idx' instead."
             )
             if data.get("rendered_envs_idx") is not None:
                 raise ValueError("Cannot specify both 'n_rendered_envs' and 'rendered_envs_idx'.")

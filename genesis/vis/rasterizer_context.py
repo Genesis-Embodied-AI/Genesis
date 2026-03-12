@@ -93,7 +93,7 @@ class RasterizerContext:
         self.particle_size_scale = options.particle_size_scale
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
-        self.rendered_envs_idx = options.rendered_envs_idx
+        self.rendered_envs_idx = list(options.rendered_envs_idx) if options.rendered_envs_idx is not None else None
         self.env_separate_rigid = options.env_separate_rigid
 
         self.buffer = dict()

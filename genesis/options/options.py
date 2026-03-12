@@ -25,8 +25,7 @@ class Options(RBC, BaseModel):
     directly under the `gs` namespace for convenience.
     """
 
-    # FIXME: Switch to 'frozen=True' after finalizing option refactoring.
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=False)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     def __init__(self, /, **data: Any) -> None:
         # format pydantic error message to be more informative yet concise
@@ -64,9 +63,9 @@ class Options(RBC, BaseModel):
                 continue
             if err_type == "extra_forbidden":
                 trace = f"Unrecognized attribute '{attr}'."
-            if err_type == "frozen_instance":
+            elif err_type in ("frozen_instance", "frozen_field"):
                 trace = f"{msg[0].lower()}{msg[1:]}."
-            if err_type == "missing":
+            elif err_type == "missing":
                 trace = f"Missing attribute '{attr}'."
             elif attr in err_invalid_infos:
                 filtered_attrs.add(attr)

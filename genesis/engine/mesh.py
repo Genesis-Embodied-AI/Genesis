@@ -210,7 +210,7 @@ class Mesh(RBC):
         """
         return Mesh(
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
-            surface=self._surface.copy(),
+            surface=self._surface.model_copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
             metadata=self._metadata.copy(),
         )
@@ -235,7 +235,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
             surface.update_texture()
         else:
-            surface = surface.copy()
+            surface = surface.model_copy()
 
         mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
@@ -340,7 +340,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
 
         metadata = metadata or {}
-        metadata.setdefault("is_visual_overwritten", False)
+        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten") or (surface.texture is not None)
         visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts))
 
         tmesh = trimesh.Trimesh(

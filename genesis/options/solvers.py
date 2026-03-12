@@ -1,10 +1,10 @@
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import Field, PrivateAttr, StrictBool, StrictInt
+from pydantic import Field, PrivateAttr, StrictBool, StrictInt, model_validator
 
 import genesis as gs
-from genesis.constants import QuatType, Vec3FType, Vec4FType
+from genesis.typing import NonNegativeFloat, NonNegativeInt, PositiveFloat, PositiveInt, UnitVec4FType, Vec3FType
 
 from .options import Options
 
@@ -42,23 +42,24 @@ class SimOptions(Options):
         Whether to use hydroelastic contact. Defaults to False.
     """
 
-    dt: float = Field(default=1e-2, gt=0)
-    substeps: StrictInt = Field(default=1, ge=1)
-    substeps_local: StrictInt | None = Field(default=None, ge=1)  # number of substeps stored in GPU memory
+    dt: PositiveFloat = 1e-2
+    substeps: PositiveInt = 1
+    substeps_local: PositiveInt | None = None  # number of substeps stored in GPU memory
     gravity: Vec3FType = (0.0, 0.0, -9.81)
     floor_height: float = 0.0
     requires_grad: StrictBool = False
 
     _steps_local: int | None = PrivateAttr(default=None)
 
-    def model_post_init(self, context: Any) -> None:
-        if self.substeps_local is None:
-            if self.requires_grad:
-                self.substeps_local = self.substeps
-            else:
-                # use 1 to save gpu memory
-                self.substeps_local = 1
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_substeps(cls, data: dict) -> dict:
+        if data.get("substeps_local") is None:
+            # use 1 to save gpu memory when not in differentiable mode
+            data["substeps_local"] = data.get("substeps", 1) if data.get("requires_grad", False) else 1
+        return data
 
+    def model_post_init(self, context: Any) -> None:
         if self.requires_grad:
             if self.substeps_local % self.substeps != 0:
                 gs.raise_exception("`substeps_local` must be divisible by `substeps` when `requires_grad` is True.")
@@ -163,19 +164,19 @@ class SAPCouplerOptions(BaseCouplerOptions):
         Whether to enable coupling between rigid and FEM solvers. Defaults to True.
     """
 
-    n_sap_iterations: StrictInt = Field(default=5, ge=1)
-    n_pcg_iterations: StrictInt = Field(default=100, ge=1)
-    n_linesearch_iterations: StrictInt = Field(default=10, ge=1)
-    sap_convergence_atol: float = Field(default=1e-6, gt=0)
-    sap_convergence_rtol: float = Field(default=1e-5, gt=0)
-    sap_taud: float = Field(default=0.1, gt=0)
-    sap_beta: float = Field(default=1.0, gt=0)
-    sap_sigma: float = Field(default=1e-3, gt=0)
-    pcg_threshold: float = Field(default=1e-6, gt=0)
-    linesearch_ftol: float = Field(default=1e-6, gt=0)
-    linesearch_max_step_size: float = Field(default=1.5, gt=0)
-    hydroelastic_stiffness: float = Field(default=1e8, gt=0)
-    point_contact_stiffness: float = Field(default=1e8, gt=0)
+    n_sap_iterations: PositiveInt = 5
+    n_pcg_iterations: PositiveInt = 100
+    n_linesearch_iterations: PositiveInt = 10
+    sap_convergence_atol: PositiveFloat = 1e-6
+    sap_convergence_rtol: PositiveFloat = 1e-5
+    sap_taud: PositiveFloat = 0.1
+    sap_beta: PositiveFloat = 1.0
+    sap_sigma: PositiveFloat = 1e-3
+    pcg_threshold: PositiveFloat = 1e-6
+    linesearch_ftol: PositiveFloat = 1e-6
+    linesearch_max_step_size: PositiveFloat = 1.5
+    hydroelastic_stiffness: PositiveFloat = 1e8
+    point_contact_stiffness: PositiveFloat = 1e8
     fem_floor_contact_type: Literal["tet", "vert", "none"] = "tet"
     enable_fem_self_tet_contact: StrictBool = True
     rigid_floor_contact_type: Literal["tet", "vert", "none"] = "tet"
@@ -292,29 +293,29 @@ class IPCCouplerOptions(BaseCouplerOptions):
     """
 
     # Newton solver options (None = use libuipc default)
-    newton_max_iterations: StrictInt | None = Field(default=None, ge=1)
-    newton_min_iterations: StrictInt | None = Field(default=None, ge=1)
-    newton_tolerance: float | None = Field(default=None, gt=0)
-    newton_ccd_tolerance: float | None = Field(default=None, gt=0)
+    newton_max_iterations: PositiveInt | None = None
+    newton_min_iterations: PositiveInt | None = None
+    newton_tolerance: PositiveFloat | None = None
+    newton_ccd_tolerance: PositiveFloat | None = None
     newton_use_adaptive_tolerance: StrictBool | None = None
-    newton_translation_tolerance: float | None = Field(default=None, gt=0)
+    newton_translation_tolerance: PositiveFloat | None = None
     newton_semi_implicit_enable: StrictBool | None = None
-    newton_semi_implicit_beta_tolerance: float | None = Field(default=None, gt=0)
+    newton_semi_implicit_beta_tolerance: PositiveFloat | None = None
 
     # Line search options (None = use libuipc default)
-    n_linesearch_iterations: StrictInt | None = Field(default=None, ge=1)
+    n_linesearch_iterations: PositiveInt | None = None
     linesearch_report_energy: StrictBool | None = None
 
     # Linear system options (None = use libuipc default)
     linear_system_solver: Literal["linear_pcg", "direct"] | None = None
-    linear_system_tolerance: float | None = Field(default=None, gt=0)
+    linear_system_tolerance: PositiveFloat | None = None
 
     # Contact options
     contact_enable: StrictBool | None = None
-    contact_d_hat: float | None = Field(default=None, gt=0)
+    contact_d_hat: PositiveFloat | None = None
     contact_friction_enable: StrictBool | None = None
-    contact_resistance: float = Field(default=1e9, gt=0)
-    contact_eps_velocity: float | None = Field(default=None, gt=0)
+    contact_resistance: PositiveFloat = 1e9
+    contact_eps_velocity: PositiveFloat | None = None
     contact_constitution: Literal["ipc", "isometric"] | None = None
 
     # Collision detection options
@@ -327,8 +328,8 @@ class IPCCouplerOptions(BaseCouplerOptions):
     sanity_check_enable: StrictBool | None = None
 
     # Genesis coupling options
-    constraint_strength_translation: float = Field(default=100.0, gt=0)
-    constraint_strength_rotation: float = Field(default=100.0, gt=0)
+    constraint_strength_translation: PositiveFloat = 100.0
+    constraint_strength_rotation: PositiveFloat = 100.0
     enable_rigid_ground_contact: StrictBool = True
     enable_rigid_rigid_contact: StrictBool = True
     two_way_coupling: StrictBool = True
@@ -366,7 +367,7 @@ class KinematicOptions(Options):
         Whether to batch DOF info. Defaults to False.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
@@ -388,7 +389,7 @@ class ToolOptions(Options):
         Height of the floor in meters. Defaults to 0.0.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     floor_height: float | None = None
 
 
@@ -474,7 +475,7 @@ class RigidOptions(Options):
     Hibernation hasn't been robustly tested and will be fully supported soon.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     gravity: Vec3FType | None = None
     enable_collision: StrictBool = True
     enable_joint_limit: StrictBool = True
@@ -482,10 +483,10 @@ class RigidOptions(Options):
     enable_neutral_collision: StrictBool = False
     enable_adjacent_collision: StrictBool = False
     disable_constraint: StrictBool = False
-    max_collision_pairs: StrictInt = Field(default=150, ge=0)
-    multiplier_collision_broad_phase: StrictInt = Field(default=8, ge=1)
+    max_collision_pairs: NonNegativeInt = 150
+    multiplier_collision_broad_phase: PositiveInt = 8
     integrator: gs.integrator = gs.integrator.approximate_implicitfast
-    IK_max_targets: StrictInt = Field(default=6, ge=1)
+    IK_max_targets: PositiveInt = 6
 
     # batching info
     batch_links_info: StrictBool = False
@@ -494,24 +495,24 @@ class RigidOptions(Options):
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
-    iterations: StrictInt = Field(default=50, ge=1)
-    tolerance: float = Field(default=1e-6, gt=0)
-    ls_iterations: StrictInt = Field(default=50, ge=1)
-    ls_tolerance: float = Field(default=1e-2, gt=0)
-    noslip_iterations: StrictInt = Field(default=0, ge=0)
-    noslip_tolerance: float = Field(default=1e-6, gt=0)
+    iterations: PositiveInt = 50
+    tolerance: PositiveFloat = 1e-6
+    ls_iterations: PositiveInt = 50
+    ls_tolerance: PositiveFloat = 1e-2
+    noslip_iterations: NonNegativeInt = 0
+    noslip_tolerance: PositiveFloat = 1e-6
     sparse_solve: StrictBool = False
-    constraint_timeconst: float = Field(default=0.01, gt=0)
+    constraint_timeconst: PositiveFloat = 0.01
     use_contact_island: StrictBool = False
     box_box_detection: StrictBool = False
 
     # hibernation threshold
     use_hibernation: StrictBool = False
-    hibernation_thresh_vel: float = Field(default=1e-3, gt=0)
-    hibernation_thresh_acc: float = Field(default=1e-2, gt=0)
+    hibernation_thresh_vel: PositiveFloat = 1e-3
+    hibernation_thresh_acc: PositiveFloat = 1e-2
 
     # for dynamic properties
-    max_dynamic_constraints: StrictInt = Field(default=8, ge=0)
+    max_dynamic_constraints: NonNegativeInt = 8
 
     # Experimental options mainly intended for debug purpose and unit tests
     enable_multi_contact: StrictBool = True
@@ -556,10 +557,10 @@ class MPMOptions(Options):
         This option is deprecated.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     gravity: Vec3FType | None = None
-    particle_size: float | None = Field(default=None, gt=0)  # in meters. Will be computed automatically if it's None.
-    grid_density: float = Field(default=64, gt=0)
+    particle_size: PositiveFloat | None = None  # in meters. Will be computed automatically if it's None.
+    grid_density: PositiveFloat = 64
     enable_CPIC: StrictBool = False
 
     # These will later be converted to discrete grid bound. The actual grid boundary could be slightly tighter.
@@ -573,12 +574,16 @@ class MPMOptions(Options):
         if leaf_block_size != 8:
             gs.logger.warning("'leaf_block_size' is deprecated and has no effect.")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_defaults(cls, data: dict) -> dict:
+        if data.get("particle_size") is None:
+            data["particle_size"] = 0.01 * 64.0 / data.get("grid_density", 64)
+        return data
+
     def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
-
-        if self.particle_size is None:
-            self.particle_size = 0.01 * 64.0 / self.grid_density
 
 
 class SPHOptions(Options):
@@ -617,9 +622,9 @@ class SPHOptions(Options):
         Maximum number of iterations for the density solver. Defaults to 100.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     gravity: Vec3FType | None = None
-    particle_size: float = Field(default=0.02, gt=0)
+    particle_size: PositiveFloat = 0.02
     pressure_solver: Literal["WCSPH", "DFSPH"] = "WCSPH"
 
     lower_bound: Vec3FType = (-100.0, -100.0, 0.0)
@@ -627,16 +632,25 @@ class SPHOptions(Options):
 
     # spatial hashing
     hash_grid_res: Vec3FType | None = None  # size of the spatially-repetitive hash grid in meters
-    hash_grid_cell_size: float | None = Field(default=None, gt=0)  # size of the cubic cell in meters
+    hash_grid_cell_size: PositiveFloat | None = None  # size of the cubic cell in meters
 
     # DFSPH parameters
-    max_divergence_error: float = Field(default=0.1, gt=0)
-    max_density_error_percent: float = Field(default=0.05, gt=0)  # This is percent
-    max_divergence_solver_iterations: StrictInt = Field(default=100, ge=1)
-    max_density_solver_iterations: StrictInt = Field(default=100, ge=1)
+    max_divergence_error: PositiveFloat = 0.1
+    max_density_error_percent: PositiveFloat = 0.05  # This is percent
+    max_divergence_solver_iterations: PositiveInt = 100
+    max_density_solver_iterations: PositiveInt = 100
 
     _support_radius: float = PrivateAttr(default=0.0)
     _hash_grid_res: np.ndarray = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_defaults(cls, data: dict) -> dict:
+        particle_size = data.get("particle_size", 0.02)
+        support_radius = 2 * particle_size
+        if data.get("hash_grid_cell_size") is None:
+            data["hash_grid_cell_size"] = support_radius
+        return data
 
     def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
@@ -644,18 +658,14 @@ class SPHOptions(Options):
 
         self._support_radius = 2 * self.particle_size
 
-        if self.hash_grid_cell_size is None:
-            self.hash_grid_cell_size = self._support_radius
-        else:
-            if self.hash_grid_cell_size < self._support_radius:
-                gs.raise_exception("`hash_grid_cell_size` should not be smaller than 2 * `particle_size`.")
+        if self.hash_grid_cell_size < self._support_radius:
+            gs.raise_exception("`hash_grid_cell_size` should not be smaller than 2 * `particle_size`.")
 
         if self.hash_grid_res is None:
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
             ).astype(gs.np_int)
-            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
-            self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
+            self._hash_grid_res = np.minimum(max_hash_grid_res, np.array([150, 150, 150], dtype=gs.np_int))
         else:
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
@@ -696,49 +706,51 @@ class PBDOptions(Options):
         Upper bound of the simulation domain. Defaults to (100.0, 100.0, 100.0).
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     gravity: Vec3FType | None = None
 
     # constraints solving iterations
-    max_stretch_solver_iterations: StrictInt = Field(default=4, ge=1)
-    max_bending_solver_iterations: StrictInt = Field(default=1, ge=1)
-    max_volume_solver_iterations: StrictInt = Field(default=1, ge=1)
-    max_density_solver_iterations: StrictInt = Field(default=1, ge=1)
-    max_viscosity_solver_iterations: StrictInt = Field(default=1, ge=1)
+    max_stretch_solver_iterations: PositiveInt = 4
+    max_bending_solver_iterations: PositiveInt = 1
+    max_volume_solver_iterations: PositiveInt = 1
+    max_density_solver_iterations: PositiveInt = 1
+    max_viscosity_solver_iterations: PositiveInt = 1
 
     # self collision
-    particle_size: float = Field(default=1e-2, gt=0)
+    particle_size: PositiveFloat = 1e-2
 
     # spatial hashing
     hash_grid_res: Vec3FType | None = None  # size of the spatially-repetitive hash grid in meters
-    hash_grid_cell_size: float | None = Field(default=None, gt=0)  # size of the cubic cell in meters
+    hash_grid_cell_size: PositiveFloat | None = None  # size of the cubic cell in meters
 
     lower_bound: Vec3FType = (-100.0, -100.0, 0.0)
     upper_bound: Vec3FType = (100.0, 100.0, 100.0)
 
     _hash_grid_res: np.ndarray = PrivateAttr(default=None)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_defaults(cls, data: dict) -> dict:
+        particle_size = data.get("particle_size", 1e-2)
+        # NOTE: 1.25 is a safety factor, as inside one single substep, multiple substages can change the position of
+        # the particles but we only do spatial hashing once. The grid cell needs to be a bit bigger so that neighbours
+        # are not missed.
+        if data.get("hash_grid_cell_size") is None:
+            data["hash_grid_cell_size"] = 1.25 * particle_size
+        return data
+
     def model_post_init(self, context: Any) -> None:
         if not np.all(np.array(self.upper_bound) > np.array(self.lower_bound)):
             gs.raise_exception("Invalid pair of upper_bound and lower_bound.")
 
-        # NOTE: 1.25 is a safety factor, as inside one single substep, multiple substages can change the position of the particles but we only do spatial hashing once.
-        # Therefore, the grid cell needs to be a bit bigger so that neighbours are not missed.
-        if self.hash_grid_cell_size is None:
-            self.hash_grid_cell_size = 1.25 * self.particle_size
-        else:
-            if self.hash_grid_cell_size < 1.25 * self.particle_size:
-                gs.raise_exception("`hash_grid_cell_size` should not be smaller than 1.25 * `particle_size`.")
+        if self.hash_grid_cell_size < 1.25 * self.particle_size:
+            gs.raise_exception("`hash_grid_cell_size` should not be smaller than 1.25 * `particle_size`.")
 
         if self.hash_grid_res is None:
-            # compute _hash_grid_res smartly
-            # if a small bound is given, it's used for the hash grid
-            # Otherwise, we use a default value of a 150^3 cube. Any grid bigger than that will results in too many cells hence not ideal.
             max_hash_grid_res = np.ceil(
                 (np.array(self.upper_bound) - np.array(self.lower_bound)) / self.hash_grid_cell_size
             ).astype(gs.np_int)
-            default_hash_grid_res = np.array([150, 150, 150], dtype=gs.np_int)
-            self._hash_grid_res = np.minimum(max_hash_grid_res, default_hash_grid_res)
+            self._hash_grid_res = np.minimum(max_hash_grid_res, np.array([150, 150, 150], dtype=gs.np_int))
         else:
             self._hash_grid_res = np.ceil(np.array(self.hash_grid_res) / self.hash_grid_cell_size).astype(gs.np_int)
 
@@ -789,20 +801,20 @@ class FEMOptions(Options):
         Whether to enable vertex constraints. Defaults to False.
     """
 
-    dt: float | None = Field(default=None, gt=0)
+    dt: PositiveFloat | None = None
     gravity: Vec3FType | None = None
-    damping: float = Field(default=0.0, ge=0)
+    damping: NonNegativeFloat = 0.0
     floor_height: float | None = None
     use_implicit_solver: StrictBool = False
-    n_newton_iterations: StrictInt = Field(default=1, ge=1)
-    n_pcg_iterations: StrictInt = Field(default=500, ge=1)
-    n_linesearch_iterations: StrictInt = Field(default=0, ge=0)
-    newton_dx_threshold: float = Field(default=1e-6, gt=0)
-    pcg_threshold: float = Field(default=1e-6, gt=0)
-    linesearch_c: float = Field(default=1e-4, gt=0)
-    linesearch_tau: float = Field(default=0.5, gt=0)
-    damping_alpha: float = Field(default=0.5, ge=0)
-    damping_beta: float = Field(default=5e-4, ge=0)
+    n_newton_iterations: PositiveInt = 1
+    n_pcg_iterations: PositiveInt = 500
+    n_linesearch_iterations: NonNegativeInt = 0
+    newton_dx_threshold: PositiveFloat = 1e-6
+    pcg_threshold: PositiveFloat = 1e-6
+    linesearch_c: PositiveFloat = 1e-4
+    linesearch_tau: PositiveFloat = 0.5
+    damping_alpha: NonNegativeFloat = 0.5
+    damping_beta: NonNegativeFloat = 5e-4
     enable_vertex_constraints: StrictBool = False
 
 
@@ -816,15 +828,15 @@ class SFOptions(Options):
         Time duration for each simulation step in seconds. If none, it will inherit from `SimOptions`. Defaults to None.
     """
 
-    dt: float | None = Field(default=None, gt=0)
-    res: StrictInt = Field(default=128, ge=1)
-    solver_iters: StrictInt = Field(default=500, ge=1)
-    decay: float = Field(default=0.99, gt=0)
+    dt: PositiveFloat | None = None
+    res: PositiveInt = 128
+    solver_iters: PositiveInt = 500
+    decay: PositiveFloat = 0.99
 
     T_low: float = 1.0
     T_high: float = 0.0
 
     inlet_pos: Vec3FType = (0.6, 0.0, 0.1)
     inlet_vel: Vec3FType = (0.0, 0.0, 1.0)
-    inlet_quat: QuatType = (1.0, 0.0, 0.0, 0.0)
-    inlet_s: float = Field(default=400.0, gt=0)
+    inlet_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
+    inlet_s: PositiveFloat = 400.0

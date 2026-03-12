@@ -8,7 +8,7 @@ from pydantic import model_validator, computed_field, BeforeValidator, Field
 
 import genesis as gs
 import genesis.utils.mesh as mu
-from genesis.constants import MaybeColorArrayType, MaybeFArrayType, ColorArrayType, NDArrayType
+from genesis.typing import MaybeColorArrayType, MaybeFArrayType, ColorArrayType, NDArrayType
 
 from .options import Options
 
@@ -63,7 +63,7 @@ class ColorTexture(Texture):
     def check_dim(self, dim: int) -> Texture | None:
         if len(self.color) > dim:
             self.color, res = self.color[:dim], self.color[dim]
-            return ColorTexture(color=(res,))
+            return ColorTexture(color=res)
         return None
 
     def check_simplify(self) -> "ColorTexture":
@@ -139,7 +139,7 @@ class ImageTexture(Texture):
             # Look for absolute image path
             if not os.path.exists(image_path):
                 candidate_image_path = os.path.join(gs.utils.get_assets_dir(), image_path)
-                if not os.path.exists(image_path):
+                if not os.path.exists(candidate_image_path):
                     gs.raise_exception(
                         f"File not found in either current directory or assets directory: '{image_path}'."
                     )
@@ -211,7 +211,7 @@ class ImageTexture(Texture):
         return True
 
     @computed_field
-    @cached_property
+    @property
     def channel(self) -> int:
         if self.image_array is None:
             return 3
@@ -229,7 +229,6 @@ class ImageTexture(Texture):
             if self.channel > dim:
                 self.image_array, res_array = self.image_array[:, :, :dim], self.image_array[:, :, dim]
                 self.image_color, res_color = self.image_color[:dim], self.image_color[dim:]
-                self.channel = dim
                 return ImageTexture(image_array=res_array, image_color=res_color, encoding="linear").check_simplify()
         return None
 
@@ -262,10 +261,10 @@ class BatchTexture(Texture):
 
     @staticmethod
     def from_images(
-        image_paths: list[str] | None = None,
+        image_paths: Sequence[str] | None = None,
         image_folder: str | None = None,
-        image_arrays: list[np.ndarray] | None = None,
-        image_colors: list[float] | Sequence[list[float] | None] | None = None,
+        image_arrays: Sequence[np.ndarray] | None = None,
+        image_colors: Sequence[float] | Sequence[Sequence[float] | None] | None = None,
         encoding: Literal["srgb", "linear"] = "srgb",
     ) -> "BatchTexture":
         """
@@ -287,9 +286,6 @@ class BatchTexture(Texture):
             - 'srgb': Encoding of some RGB images.
             - 'linear': All generic images, such as opacity, roughness and normal, should be encoded with 'linear'.
         """
-        if not ((image_paths is not None) ^ (image_arrays is not None)):
-            gs.raise_exception("Please set either `image_paths` or `image_arrays`.")
-
         image_sources = (image_paths, image_folder, image_arrays)
         if sum(x is not None for x in image_sources) != 1:
             gs.raise_exception("Please set exactly one of `image_paths`, `image_folder`, `image_arrays`.")
@@ -339,7 +335,7 @@ class BatchTexture(Texture):
 
     @staticmethod
     def from_colors(
-        colors: list[list[float]],
+        colors: Sequence[Sequence[float]],
     ) -> "BatchTexture":
         """
         Create a batch texture from colors.

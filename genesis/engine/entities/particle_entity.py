@@ -245,7 +245,7 @@ class ParticleEntity(Entity):
         if isinstance(self._morph, gs.options.morphs.MeshSet):
             particles = []
             mesh_data = self._morph.model_dump()
-            del mesh_data["files"], mesh_data["poss"], mesh_data["eulers"]
+            del mesh_data["files"], mesh_data["poss"], mesh_data["eulers"], mesh_data["quat"]
             for i, file in enumerate(self._morph.files):
                 mesh_data.update(file=file, pos=self._morph.poss[i], euler=self._morph.eulers[i])
                 morph_i = gs.morphs.Mesh(**mesh_data)
