@@ -1,0 +1,48 @@
+=== Kernel Summary (sorted by cuda_time_total) ===
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                          ProfilerStep*         0.00%       0.000us         0.00%       0.000us       0.000us       9.982ms       138.91%       9.982ms       9.982ms             1  
+func_narrowphase_kernel2_mixed_c412_0_kernel_0_range...         0.00%       0.000us         0.00%       0.000us       0.000us       3.528ms        49.10%       3.528ms       1.764ms             2  
+_kernel_newton_only_nt_hessian_c488_0_kernel_1_range...         0.00%       0.000us         0.00%       0.000us       0.000us     914.244us        12.72%     914.244us      18.285us            50  
+           _kernel_linesearch_c482_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us     319.684us         4.45%     319.684us       6.394us            50  
+    _kernel_update_constraint_c486_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us     273.124us         3.80%     273.124us       5.462us            50  
+_kernel_newton_only_nt_hessian_c488_0_kernel_3_range...         0.00%       0.000us         0.00%       0.000us       0.000us     224.355us         3.12%     224.355us       4.487us            50  
+      _kernel_update_gradient_c490_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us     216.833us         3.02%     216.833us       4.337us            50  
+func_narrowphase_kernel1_contact0_c418_0_kernel_1_ra...         0.00%       0.000us         0.00%       0.000us       0.000us     215.809us         3.00%     215.809us     215.809us             1  
+_kernel_update_search_direction_c492_0_kernel_1_rang...         0.00%       0.000us         0.00%       0.000us       0.000us     215.521us         3.00%     215.521us       4.310us            50  
+                                       Memset (Managed)         0.00%       0.000us         0.00%       0.000us       0.000us     189.633us         2.64%     189.633us     189.633us             1  
+                       Memcpy HtoD (Pageable -> Device)         0.00%       0.000us         0.00%       0.000us       0.000us     138.427us         1.93%     138.427us       0.522us           265  
+             func_solve_init_c468_0_kernel_10_range_for         0.00%       0.000us         0.00%       0.000us       0.000us     128.544us         1.79%     128.544us     128.544us             1  
+add_inequality_constraints_c462_0_kernel_3_range_for...         0.00%       0.000us         0.00%       0.000us       0.000us      83.968us         1.17%      83.968us      83.968us             1  
+             func_broad_phase_c400_0_kernel_2_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      59.808us         0.83%      59.808us      59.808us             1  
+           func_sort_contacts_c408_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      51.712us         0.72%      51.712us      51.712us             1  
+_kernel_newton_only_nt_hessian_c488_0_kernel_0_seria...         0.00%       0.000us         0.00%       0.000us       0.000us      48.927us         0.68%      48.927us       0.979us            50  
+              func_solve_init_c468_0_kernel_7_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      45.216us         0.63%      45.216us      45.216us             1  
+_kernel_update_search_direction_c492_0_kernel_0_seri...         0.00%       0.000us         0.00%       0.000us       0.000us      41.125us         0.57%      41.125us       0.822us            50  
+              _kernel_linesearch_c482_0_kernel_0_serial         0.00%       0.000us         0.00%       0.000us       0.000us      40.511us         0.56%      40.511us       0.810us            50  
+         _kernel_update_gradient_c490_0_kernel_0_serial         0.00%       0.000us         0.00%       0.000us       0.000us      40.190us         0.56%      40.190us       0.804us            50  
+       _kernel_update_constraint_c486_0_kernel_0_serial         0.00%       0.000us         0.00%       0.000us       0.000us      39.998us         0.56%      39.998us       0.800us            50  
+_kernel_newton_only_nt_hessian_c488_0_kernel_2_seria...         0.00%       0.000us         0.00%       0.000us       0.000us      39.970us         0.56%      39.970us       0.799us            50  
+                kernel_step_2_c496_0_kernel_9_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      26.144us         0.36%      26.144us      26.144us             1  
+              func_solve_init_c468_0_kernel_5_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      25.056us         0.35%      25.056us      25.056us             1  
+                kernel_step_1_c494_0_kernel_5_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      13.152us         0.18%      13.152us      13.152us             1  
+     kernel_update_geom_aabbs_c286_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      12.416us         0.17%      12.416us      12.416us             1  
+                kernel_step_2_c496_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      12.288us         0.17%      12.288us      12.288us             1  
+             func_solve_init_c468_0_kernel_11_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      11.648us         0.16%      11.648us      11.648us             1  
+               kernel_step_1_c494_0_kernel_10_range_for         0.00%       0.000us         0.00%       0.000us       0.000us      11.328us         0.16%      11.328us      11.328us             1  
+                                          ProfilerStep*        82.31%       9.151ms        99.93%      11.110ms      11.110ms       0.000us         0.00%      11.041us      11.041us             1  
+    func_update_contact_force_c472_0_kernel_2_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       9.344us         0.13%       9.344us       9.344us             1  
+             func_broad_phase_c400_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       8.960us         0.12%       8.960us       8.960us             1  
+                                               aten::to         0.02%       2.338us         8.97%     997.668us     498.834us       0.000us         0.00%       8.706us       4.353us             2  
+                                         aten::_to_copy         0.08%       8.746us         8.95%     995.330us     995.330us       0.000us         0.00%       8.706us       8.706us             1  
+                                            aten::copy_         0.45%      50.080us         8.83%     981.207us     981.207us       4.353us         0.06%       8.706us       8.706us             1  
+                kernel_step_1_c494_0_kernel_1_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       8.608us         0.12%       8.608us       8.608us             1  
+               kernel_step_2_c496_0_kernel_10_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       7.616us         0.11%       7.616us       7.616us             1  
+              func_solve_init_c468_0_kernel_3_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       7.552us         0.11%       7.552us       7.552us             1  
+             func_solve_init_c468_0_kernel_13_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       7.328us         0.10%       7.328us       7.328us             1  
+                kernel_step_1_c494_0_kernel_4_range_for         0.00%       0.000us         0.00%       0.000us       0.000us       6.656us         0.09%       6.656us       6.656us             1  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 11.118ms
+Self CUDA time total: 7.186ms
+

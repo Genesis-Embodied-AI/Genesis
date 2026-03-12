@@ -1,0 +1,11 @@
+env=duck_in_box_easy 	| batch_size=30000 	| use_contact_island=False 	| gjk_collision=True 	| dtype=ndarray 	| backend=cuda 	| compile_time=31.4 	| runtime_fps=679840.0 	| realtime_factor=6798.4
+env=duck_in_box_easy 	| batch_size=30000 	| use_contact_island=False 	| gjk_collision=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=50.0 	| runtime_fps=4325956.0 	| realtime_factor=43259.6
+env=go2 	| batch_size=4096 	| constraint_solver=CG 	| use_contact_island=False 	| gjk_collision=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=59.8 	| runtime_fps=132626.0 	| realtime_factor=1326.3
+env=go2 	| batch_size=4096 	| constraint_solver=Newton 	| use_contact_island=False 	| gjk_collision=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=61.9 	| runtime_fps=179229.0 	| realtime_factor=1792.3
+env=box_pyramid_3 	| batch_size=4096 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=62.3 	| runtime_fps=21511.0 	| realtime_factor=215.1
+env=box_pyramid_4 	| batch_size=4096 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=68.5 	| runtime_fps=1699.0 	| realtime_factor=17.0
+env=box_pyramid_5 	| batch_size=4096 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=68.9 	| runtime_fps=2135.0 	| realtime_factor=21.4
+env=box_pyramid_6 	| batch_size=4096 	| use_contact_island=False 	| gjk_collision=True 	| dtype=ndarray 	| backend=cuda 	| compile_time=60.6 	| runtime_fps=373.0 	| realtime_factor=3.7
+env=box_pyramid_6 	| batch_size=4096 	| use_contact_island=False 	| gjk_collision=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=89.4 	| runtime_fps=633.0 	| realtime_factor=6.3
+env=g1_fall 	| batch_size=4096 	| constraint_solver=Newton 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=62.6 	| runtime_fps=15943.0 	| realtime_factor=79.7
+env=dex_hand 	| batch_size=4096 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=76.6 	| runtime_fps=380.0 	| realtime_factor=23.8
