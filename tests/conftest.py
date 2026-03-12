@@ -416,7 +416,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
-    parser.addoption("--ref", type=str, default=None, help="Label added to benchmark output filenames.")
     parser.addoption(
         "--speed-test-filepath",
         type=str,

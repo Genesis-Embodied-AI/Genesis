@@ -62,16 +62,7 @@ def pytorch_profiler(pytestconfig):
         trace_path = f"trace_{ref}_{trace_counter[0]}.json"
         prof.export_chrome_trace(trace_path)
         trace_counter[0] += 1
-
-        sort_by = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
-        table = prof.key_averages().table(sort_by=sort_by, row_limit=40)
-        summary_path = f"profile_summary_{ref}_{trace_counter[0] - 1}.txt"
-        with open(summary_path, "w") as f:
-            f.write(f"=== Kernel Summary (sorted by {sort_by}) ===\n")
-            f.write(table + "\n")
-        import sys
-
-        print(f"Exported trace to {trace_path}, summary to {summary_path}", file=sys.stderr, flush=True)
+        print(f"Exported trace cycle {trace_counter[0]} to {trace_path}")
 
     prof = torch.profiler.profile(
         activities=activities,
@@ -83,30 +74,6 @@ def pytorch_profiler(pytestconfig):
         on_trace_ready=trace_handler,
     )
 
-    step_counter = [0]
-    original_step = prof.step
-
-    def counted_step():
-        original_step()
-        step_counter[0] += 1
-
     print(f"PyTorch profiling enabled (wait={wait}, warmup={warmup}, active={active})")
     with prof:
-        yield counted_step
-    if trace_counter[0] == 0:
-        import sys
-
-        print(
-            f"WARNING: on_trace_ready never fired ({step_counter[0]} steps called). Exporting fallback.",
-            file=sys.stderr,
-            flush=True,
-        )
-        prof.export_chrome_trace(f"trace_{ref}_fallback.json")
-
-        sort_by = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
-        table = prof.key_averages().table(sort_by=sort_by, row_limit=40)
-        summary_path = f"profile_summary_{ref}_fallback.txt"
-        with open(summary_path, "w") as f:
-            f.write(f"=== Kernel Summary (sorted by {sort_by}) ===\n")
-            f.write(table + "\n")
-        print(f"Summary written to {summary_path}", file=sys.stderr, flush=True)
+        yield prof.step
