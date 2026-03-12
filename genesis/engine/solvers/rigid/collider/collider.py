@@ -292,9 +292,7 @@ class Collider:
         if weld_pairs:
             link_min = np.minimum(link_a, link_b)
             link_max = np.maximum(link_a, link_b)
-            is_weld = np.array(
-                [(link_min[i], link_max[i]) in weld_pairs for i in range(len(row))], dtype=bool
-            )
+            is_weld = np.array([(link_min[i], link_max[i]) in weld_pairs for i in range(len(row))], dtype=bool)
             valid &= ~is_weld
 
         # --- Self-collision: adjacent and neutral overlap checks (Python loop, only same-root pairs) ---
