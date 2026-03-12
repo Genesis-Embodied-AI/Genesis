@@ -161,10 +161,9 @@ class LinePlotHelper:
             data = _data_to_array(data)
 
             if options.labels is not None:
-                if not isinstance(options.labels, Sequence):
-                    options.labels = (options.labels,)
-                assert len(options.labels) == len(data), f"[{type(self).__name__}] Label count must match data count"
-                plot_labels = tuple(options.labels)
+                labels = options.labels if isinstance(options.labels, Sequence) else (options.labels,)
+                assert len(labels) == len(data), f"[{type(self).__name__}] Label count must match data count"
+                plot_labels = tuple(labels)
             else:
                 plot_labels = tuple(f"data_{i}" for i in range(len(data)))
 

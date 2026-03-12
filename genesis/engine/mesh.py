@@ -80,7 +80,7 @@ class Mesh(RBC):
             assert scale.ndim == 1 and scale.size in (1, 3)
             self._mesh.apply_scale(scale)
 
-        if self._surface.requires_uv():  # check uvs here
+        if self._surface.requires_uv:  # check uvs here
             if self._uvs is None:
                 if "mesh_path" in self._metadata:
                     gs.logger.warning(
@@ -210,7 +210,7 @@ class Mesh(RBC):
         """
         return Mesh(
             mesh=self._mesh.copy(**(dict(include_cache=True) if isinstance(self._mesh, trimesh.Trimesh) else {})),
-            surface=self._surface.copy(),
+            surface=self._surface.model_copy(),
             uvs=self._uvs.copy() if self._uvs is not None else None,
             metadata=self._metadata.copy(),
         )
@@ -235,7 +235,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
             surface.update_texture()
         else:
-            surface = surface.copy()
+            surface = surface.model_copy()
 
         mesh = mesh.copy(**(dict(include_cache=True) if isinstance(mesh, trimesh.Trimesh) else {}))
 
@@ -290,8 +290,8 @@ class Mesh(RBC):
             else:
                 # TODO: support vertex/face colors in luisa
                 color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
-        elif surface.color is not None:
-            color_factor = surface.color
+        elif isinstance(surface.texture, gs.textures.ColorTexture):
+            color_factor = surface.texture.color
             metadata["is_visual_overwritten"] = True
         elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
             isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
@@ -340,7 +340,7 @@ class Mesh(RBC):
             surface = gs.surfaces.Default()
 
         metadata = metadata or {}
-        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten", False) or (surface.color is not None)
+        metadata["is_visual_overwritten"] = metadata.get("is_visual_overwritten") or (surface.texture is not None)
         visual = mu.surface_uvs_to_trimesh_visual(surface, uvs, len(verts))
 
         tmesh = trimesh.Trimesh(

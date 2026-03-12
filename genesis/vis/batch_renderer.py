@@ -134,8 +134,8 @@ class GenesisGeomRetriever:
                             texture_indices[texture_id] = texture_idx
                         texture_widths.append(geom_texture.image_array.shape[1])
                         texture_heights.append(geom_texture.image_array.shape[0])
-                        assert geom_texture.channel() == 4
-                        texture_nchans.append(geom_texture.channel())
+                        assert geom_texture.channel == 4
+                        texture_nchans.append(geom_texture.channel)
                         texture_offsets.append(total_texture_size)
                         texture_data.append(geom_texture.image_array.flat)
                         num_textures += 1

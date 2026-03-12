@@ -438,7 +438,7 @@ class RigidJoint(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}, type: {self._type}"
+        return f"{(self.__repr_name__())}: {self._uid}, name: '{self._name}', idx: {self._idx}, type: {self._type}"
 
 
 @qd.kernel

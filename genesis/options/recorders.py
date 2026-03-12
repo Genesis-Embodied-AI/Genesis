@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from typing import Annotated, Any
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field, StrictBool
 
 import genesis as gs
+from genesis.typing import NonNegativeInt, PathType, PositiveFloat, PositiveInt, PositiveVec2IType
 
 from .options import Options
 
@@ -33,18 +34,9 @@ class RecorderOptions(Options):
         buffer is full. Defaults to 0.1 seconds.
     """
 
-    hz: float | None = None
-    buffer_size: int = 0
-    buffer_full_wait_time: float = 0.1
-
-    def model_post_init(self, context):
-        """Validate the recorder options values before the recorder is added to the scene."""
-        if self.hz is not None and self.hz < gs.EPS:
-            gs.raise_exception(f"[{type(self).__name__}] recording hz should be greater than 0.")
-        if self.buffer_size < 0:
-            gs.raise_exception(f"[{type(self).__name__}] buffer size should be 0 (infinite size) or greater.")
-        if self.buffer_full_wait_time < gs.EPS:
-            gs.raise_exception(f"[{type(self).__name__}] buffer full wait time should be greater than 0.")
+    hz: PositiveFloat | None = None
+    buffer_size: NonNegativeInt = 0
+    buffer_full_wait_time: PositiveFloat = 0.1
 
 
 class BaseFileWriterOptions(RecorderOptions):
@@ -60,8 +52,8 @@ class BaseFileWriterOptions(RecorderOptions):
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    filename: str
-    save_on_reset: bool = False
+    filename: PathType
+    save_on_reset: StrictBool = False
 
 
 class VideoFile(BaseFileWriterOptions):
@@ -92,23 +84,18 @@ class VideoFile(BaseFileWriterOptions):
         reset. Defaults to False.
     """
 
-    fps: int | None = None
+    filename: PathType = Field(pattern=r"(?i).*\.mp4$")
+    fps: PositiveInt | None = None
     name: str = ""
     codec: str = "libx264"
     bitrate: float = 1.0
     codec_options: dict[str, str] = Field(default_factory=dict)
 
-    def model_post_init(self, context):
+    def model_post_init(self, context: Any) -> None:
         if not IS_PYAV_AVAILABLE:
             gs.raise_exception("PyAV is not installed. Please install it with `pip install av`.")
-
-        super().model_post_init(context)
-
         if self.codec not in av.codecs_available:
-            gs.raise_exception(f"[{type(self).__name__}] Codec '{self._options.codec}' not supported.")
-
-        if not self.filename.endswith(".mp4"):
-            gs.raise_exception(f"[{type(self).__name__}] Video filename must have '.mp4' extension.")
+            gs.raise_exception(f"[{type(self).__name__}] Codec '{self.codec}' not supported.")
 
 
 class CSVFile(BaseFileWriterOptions):
@@ -134,13 +121,9 @@ class CSVFile(BaseFileWriterOptions):
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    header: tuple[str, ...] | None = None
-    save_every_write: bool = False
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-        if not self.filename.lower().endswith(".csv"):
-            gs.raise_exception(f"[{type(self).__name__}] CSV output must be a .csv file")
+    filename: PathType = Field(pattern=r"(?i).*\.csv$")
+    header: tuple[str, ...] | None = Field(default=None, strict=False)
+    save_every_write: StrictBool = False
 
 
 class NPZFile(BaseFileWriterOptions):
@@ -158,10 +141,7 @@ class NPZFile(BaseFileWriterOptions):
         If True, a counter will be added to the filename and incremented on each reset.
     """
 
-    def model_post_init(self, context):
-        super().model_post_init(context)
-        if not self.filename.lower().endswith(".npz"):
-            gs.raise_exception(f"[{type(self).__name__}] NPZ output must be an .npz file")
+    filename: PathType = Field(pattern=r"(?i).*\.npz$")
 
 
 class BasePlotterOptions(RecorderOptions):
@@ -181,13 +161,12 @@ class BasePlotterOptions(RecorderOptions):
     """
 
     title: str = ""
-    window_size: tuple[int, int] = (800, 600)
-    save_to_filename: str | None = None
-    show_window: bool | None = None
+    window_size: PositiveVec2IType = (800, 600)
+    save_to_filename: PathType | None = None
+    show_window: StrictBool | None = None
 
 
-@dataclass
-class LinePlotterMixinOptions:
+class LinePlotterMixinOptions(Options):
     """
     Mixin class for live line plot visualization of scalar data.
 
@@ -208,10 +187,15 @@ class LinePlotterMixinOptions:
         The maximum number of previous data to store.
     """
 
-    labels: tuple[str, ...] | dict[str, tuple[str, ...]] | None = None
+    labels: Annotated[
+        tuple[str, ...] | dict[str, tuple[str, ...]] | None,
+        BeforeValidator(
+            lambda v: v if v is None else ({k: tuple(val) for k, val in v.items()} if isinstance(v, dict) else tuple(v))
+        ),
+    ] = None
     x_label: str = ""
     y_label: str = ""
-    history_length: int = 100
+    history_length: PositiveInt = 100
 
 
 class PyQtLinePlot(BasePlotterOptions, LinePlotterMixinOptions):

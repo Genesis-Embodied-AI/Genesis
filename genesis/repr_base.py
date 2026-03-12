@@ -8,21 +8,39 @@ from genesis.styles import colors, formats, styless
 class RBC:
     """
     REPR Base Class.
-    All class that inherits this class will have an artist-level __repr__ method that prints out all the properties (decorated by @property) of the class, ordered by length of the property name.
+
+    All class that inherits this class will have an artist-level __repr__ method that prints out all the properties
+    (decorated by @property) of the class, ordered by length of the property name.
     """
 
     @classmethod
-    def _repr_type(cls):
-        return f"<gs.{cls.__name__}>"
+    def __repr_name__(cls):
+        class_name = cls.__qualname__
+        _module, *submodule = cls.__module__.split(".")
+        # Greedily strip redundant submodule segments (front first, then back)
+        for strip_end in (False, True):
+            while submodule:
+                shorter = submodule[:-1] if strip_end else submodule[1:]
+                obj = gs
+                try:
+                    for seg in shorter:
+                        obj = getattr(obj, seg)
+                    if getattr(obj, class_name, None) is cls:
+                        submodule = shorter
+                        continue
+                except AttributeError:
+                    pass
+                break
+        return f"<gs.{'.'.join((*submodule, class_name))}>"
 
     def _repr_briefer(self):
-        repr_str = self._repr_type()
+        repr_str = self.__repr_name__()
         if hasattr(self, "id"):
             repr_str += f"(id={self.id})"
         return repr_str
 
     def _repr_brief(self):
-        repr_str = self._repr_type()
+        repr_str = self.__repr_name__()
         if hasattr(self, "id"):
             repr_str += f": {self.id}"
         if hasattr(self, "idx"):
@@ -33,18 +51,14 @@ class RBC:
             repr_str += f", material: {self.material}"
         return repr_str
 
-    def _is_debugger(self) -> bool:
-        """Detect if running under a debugger (VSCode or PyCharm)."""
+    def __repr__(self) -> str:
+        # Detect if running under a debugger (VSCode or PyCharm)
         for frame in inspect.stack():
             if any(module in frame.filename for module in ("debugpy", "ptvsd", "pydevd")):
-                return True
-        return False
+                return super().__repr__()
+        return self.__repr__colorized__()
 
-    def __repr__(self):
-        if not self._is_debugger():
-            return self.__colorized__repr__()
-
-    def __colorized__repr__(self) -> str:
+    def __repr__colorized__(self) -> str:
         all_attrs = self.__dir__()
         property_attrs = []
 
@@ -52,7 +66,7 @@ class RBC:
             if isinstance(getattr(self.__class__, attr, None), property):
                 property_attrs.append(attr)
 
-        max_attr_len = max([len(attr) for attr in property_attrs]) if property_attrs else 0
+        max_attr_len = max((len(attr) for attr in property_attrs), default=0)
 
         repr_str = ""
         # sort property attrs
@@ -84,7 +98,7 @@ class RBC:
         # length of the first line
         first_line = styless(repr_str.split("\n")[0])
         header_len = len(first_line)
-        line_len = header_len - len(self._repr_type()) - 2
+        line_len = header_len - len(self.__repr_name__()) - 2
         left_line_len = line_len // 2
         right_line_len = line_len - left_line_len
 
@@ -94,12 +108,11 @@ class RBC:
         right_line_len = max(right_line_len, min_line_len)
 
         repr_str = (
-            f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{self._repr_type()}{formats.RESET} {colors.CORN}{'─' * right_line_len}\n"
+            f"{colors.CORN}{'─' * left_line_len} {formats.BOLD}{formats.ITALIC}{self.__repr_name__()}{formats.RESET} {colors.CORN}{'─' * right_line_len}\n"
             + repr_str
         )
 
         return repr_str
 
     def __format__(self, format_spec):
-        repr_str = self._repr_type()
-        return repr_str
+        return self.__repr_name__()
