@@ -293,7 +293,7 @@ class Collider:
             link_min = np.minimum(link_a, link_b)
             link_max = np.maximum(link_a, link_b)
             is_weld = np.array(
-                [(int(link_min[i]), int(link_max[i])) in weld_pairs for i in range(len(row))], dtype=bool
+                [(link_min[i], link_max[i]) in weld_pairs for i in range(len(row))], dtype=bool
             )
             valid &= ~is_weld
 
@@ -307,11 +307,8 @@ class Collider:
         # Lazily compute geom vertices only for geoms that need neutral overlap checks
         geoms_verts: dict[int, np.ndarray] = {}
         if needs_neutral_check:
-            self_root_geom_idxs = set()
             self_root_indices = np.where(valid & same_root)[0]
-            for idx in self_root_indices:
-                self_root_geom_idxs.add(int(row[idx]))
-                self_root_geom_idxs.add(int(col[idx]))
+            self_root_geom_idxs = np.unique(np.concatenate([row[self_root_indices], col[self_root_indices]]))
             # Compute vertices only for geoms involved in self-collision pairs,
             # shrunk by 0.1% to avoid false positive when detecting self-collision
             for gi in self_root_geom_idxs:
@@ -324,7 +321,7 @@ class Collider:
         if needs_self_check:
             self_root_indices = np.where(valid & same_root)[0]
             for idx in self_root_indices:
-                i_ga, i_gb = int(row[idx]), int(col[idx])
+                i_ga, i_gb = row[idx], col[idx]
                 link_ga = geoms[i_ga].link
                 link_gb = geoms[i_gb].link
 
