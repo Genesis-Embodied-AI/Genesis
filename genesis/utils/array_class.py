@@ -692,7 +692,7 @@ def get_collider_state(
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
         narrowphase_work_queues=get_narrowphase_work_queues(
-            max(max_collision_pairs_broad * _B, 1) if collider_static_config.has_convex_convex else 1
+            max(max_collision_pairs_broad * _B, 1) if collider_static_config.needs_kernel1 else 1
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
@@ -760,7 +760,7 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
     # at scene build time by iterating all geom pairs in collider._init_static_config().
     # On GPU, the split-kernel narrowphase path runs (kernel1 + kernel2 + sort).
     # On CPU, falls back to the monolithic func_narrow_phase_convex_vs_convex.
-    has_convex_convex: bool
+    needs_kernel1: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
     # maximum number of contact pairs per collision pair
