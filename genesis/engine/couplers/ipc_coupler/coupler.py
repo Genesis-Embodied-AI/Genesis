@@ -108,17 +108,17 @@ class IPCCoupler(RBC):
         self.rigid_solver: "RigidSolver" = self.sim.rigid_solver
         self.fem_solver: "FEMSolver" = self.sim.fem_solver
 
-        # ==== IPC System Infrastructure ====
+        # ==== IPC System Infrastructure (created in _init_ipc) ====
         self._ipc_engine: Engine | None = None
         self._ipc_world: World | None = None
-        self._ipc_scene = Scene(build_ipc_scene_config(self.options, self.sim.options))
+        self._ipc_scene: Scene | None = None
         self._ipc_workspace: str | None = None
         self._ipc_subscenes: list[SubsceneElement] = []
-        self._ipc_constitution_tabular = self._ipc_scene.constitution_tabular()
-        self._ipc_contact_tabular = self._ipc_scene.contact_tabular()
-        self._ipc_subscene_tabular = self._ipc_scene.subscene_tabular()
-        self._ipc_objects = self._ipc_scene.objects()
-        self._ipc_animator = self._ipc_scene.animator()
+        self._ipc_constitution_tabular = None
+        self._ipc_contact_tabular = None
+        self._ipc_subscene_tabular = None
+        self._ipc_objects = None
+        self._ipc_animator = None
 
         # ==== IPC Constitutions ====
         self._ipc_abd: AffineBodyConstitution | None = None
@@ -129,7 +129,7 @@ class IPCCoupler(RBC):
         self._ipc_eac: ExternalArticulationConstraint | None = None
 
         # ==== IPC Contact Elements ====
-        self._ipc_no_collision_contact: ContactElement = self._ipc_contact_tabular.create("no_collision_contact")
+        self._ipc_no_collision_contact: ContactElement | None = None
         self._ipc_fems_contact: dict["FEMEntity", ContactElement] = {}
         self._ipc_clothes_contact: dict["FEMEntity", ContactElement] = {}
         self._ipc_abd_links_contact: dict["RigidLink", ContactElement] = {}
@@ -326,6 +326,15 @@ class IPCCoupler(RBC):
     def _init_ipc(self) -> None:
         """Initialize IPC system components"""
         assert gs.logger is not None
+
+        # Create IPC scene (deferred from __init__ so solver is_active is available)
+        self._ipc_scene = Scene(build_ipc_scene_config(self.options, self.sim))
+        self._ipc_constitution_tabular = self._ipc_scene.constitution_tabular()
+        self._ipc_contact_tabular = self._ipc_scene.contact_tabular()
+        self._ipc_subscene_tabular = self._ipc_scene.subscene_tabular()
+        self._ipc_objects = self._ipc_scene.objects()
+        self._ipc_animator = self._ipc_scene.animator()
+        self._ipc_no_collision_contact = self._ipc_contact_tabular.create("no_collision_contact")
 
         if gs.logger.level <= logging.DEBUG:
             uipc.Logger.set_level(uipc.Logger.Level.Info)
