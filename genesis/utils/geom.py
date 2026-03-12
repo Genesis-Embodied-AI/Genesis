@@ -398,7 +398,7 @@ def qd_orthogonals(a):
         b[1] = -a[1] * a[2]
         b[2] = 1.0 - a[2] ** 2
     b = b.normalized()
-    return b, a.cross(b)
+    return b.cross(a), b
 
 
 @qd.func
@@ -2237,3 +2237,23 @@ def cubic_spline_1d(x, y, xv):
     ix = np.clip(np.searchsorted(x[1:], xv), 0, n - 2)
     dx = (xv - x[ix])[:, None]
     return y_2d[ix] + b[ix] * dx + c[ix] * dx**2 + d[ix] * dx**3
+
+
+@nb.jit(nopython=True, cache=True)
+def orthogonals(a):
+    """
+    Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
+
+    Note that `a` is assumed to be normalized.
+    """
+    B = a.shape[:-1]
+
+    a_1d = a.reshape((-1, 3))
+    a_x, a_y, a_z = a_1d[:, 0], a_1d[:, 1], a_1d[:, 2]
+
+    b1 = np.stack((-a_x * a_y, 1.0 - a_y**2, -a_z * a_y), axis=-1)
+    b2 = np.stack((-a_x * a_z, -a_y * a_z, 1.0 - a_z**2), axis=-1)
+    b_1d = np.where(np.abs(a_y).reshape((-1, 1)) < 0.5, b1, b2)
+    b_1d /= np.sqrt(np.sum(np.square(b_1d), -1)).reshape((-1, 1))
+
+    return np.cross(b_1d, a_1d).reshape((*B, 3)), b_1d.reshape((*B, 3))

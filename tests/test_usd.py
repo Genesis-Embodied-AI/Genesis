@@ -975,5 +975,114 @@ def test_uv_size_mismatch_no_crash(asset_tmp_path):
     stage.Save()
 
     # This should NOT raise an exception — it should warn and discard UVs
-    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="collision")
+    usd_scene = build_usd_scene(usd_file, scale=1.0, vis_mode="collision", fixed=True)
     assert len(usd_scene.entities) > 0
+
+
+@pytest.fixture(scope="session")
+def pure_rigid_usd(asset_tmp_path):
+    """Create a minimal USD file with a single rigid body (cube) and no joints."""
+    usd_file = str(asset_tmp_path / "pure_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    cube = UsdGeom.Cube.Define(stage, "/root/body")
+    cube.GetSizeAttr().Set(1.0)
+
+    UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+    UsdPhysics.MassAPI.Apply(cube.GetPrim())
+    UsdPhysics.MassAPI(cube.GetPrim()).GetMassAttr().Set(1.0)
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("fixed", [False, True])
+def test_pure_rigid_body_fixed(pure_rigid_usd, fixed):
+    """Pure rigid body USD: fixed=False → 6 DOFs (FREE), fixed=True → 0 DOFs (FIXED)."""
+    usd_scene = build_usd_scene(pure_rigid_usd, scale=1.0, fixed=fixed)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    expected_dofs = 0 if fixed else 6
+    assert entity.n_dofs == expected_dofs
+    assert entity.n_links == 1
+
+
+@pytest.fixture(scope="session")
+def visual_collision_usd(asset_tmp_path):
+    """Create a USD file mimicking Pan011 structure: separate Visual/Collision groups + invisible Sites.
+
+    Structure:
+        /root
+        /root/Body  (RigidBodyAPI, MassAPI)
+            /root/Body/Collisions  (purpose=guide)
+                /root/Body/Collisions/Collider1  (Cube, CollisionAPI, purpose=guide)
+                /root/Body/Collisions/Collider2  (Sphere, CollisionAPI, purpose=guide)
+            /root/Body/Visuals
+                /root/Body/Visuals/Visual1  (Cube)
+            /root/Body/Sites  (visibility=invisible)
+                /root/Body/Sites/site_marker  (Cube, purpose=guide, invisible)
+    """
+    usd_file = str(asset_tmp_path / "visual_collision.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    # Rigid body
+    body = stage.DefinePrim("/root/Body", "Xform")
+    UsdPhysics.RigidBodyAPI.Apply(body)
+    UsdPhysics.MassAPI.Apply(body)
+    UsdPhysics.MassAPI(body).GetMassAttr().Set(1.0)
+
+    # Collisions group (purpose=guide, like Pan011)
+    collisions_xform = UsdGeom.Xform.Define(stage, "/root/Body/Collisions")
+    collisions_xform.GetPrim().CreateAttribute("purpose", Sdf.ValueTypeNames.Token).Set("guide")
+
+    col1 = UsdGeom.Cube.Define(stage, "/root/Body/Collisions/Collider1")
+    col1.GetSizeAttr().Set(0.5)
+    col1.GetPurposeAttr().Set("guide")
+    UsdPhysics.CollisionAPI.Apply(col1.GetPrim())
+
+    col2 = UsdGeom.Sphere.Define(stage, "/root/Body/Collisions/Collider2")
+    col2.GetRadiusAttr().Set(0.3)
+    col2.GetPurposeAttr().Set("guide")
+    UsdPhysics.CollisionAPI.Apply(col2.GetPrim())
+
+    # Visuals group
+    UsdGeom.Xform.Define(stage, "/root/Body/Visuals")
+
+    vis1 = UsdGeom.Cube.Define(stage, "/root/Body/Visuals/Visual1")
+    vis1.GetSizeAttr().Set(1.0)
+
+    # Sites group (invisible, like Pan011)
+    sites_xform = UsdGeom.Xform.Define(stage, "/root/Body/Sites")
+    UsdGeom.Imageable(sites_xform.GetPrim()).MakeInvisible()
+
+    site_marker = UsdGeom.Cube.Define(stage, "/root/Body/Sites/site_marker")
+    site_marker.GetSizeAttr().Set(0.1)
+    site_marker.GetPurposeAttr().Set("guide")
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_visual_collision_parsing(visual_collision_usd):
+    """Collision geoms (purpose=guide) are parsed as collision; visual geoms as visual; invisible sites are excluded."""
+    usd_scene = build_usd_scene(visual_collision_usd, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    link = entity.links[0]
+    # 2 collision geoms (Collider1 + Collider2), invisible site_marker excluded
+    assert link.n_geoms == 2
+    # 1 visual geom (Visual1), invisible site_marker excluded
+    assert link.n_vgeoms == 1

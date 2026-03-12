@@ -21,11 +21,7 @@ def kernel_rigid_entity_inverse_kinematics(
     poss: qd.types.ndarray(),
     quats: qd.types.ndarray(),
     local_points: qd.types.ndarray(),
-    n_links: qd.i32,
     dofs_idx: qd.types.ndarray(),
-    n_dofs: qd.i32,
-    links_idx_by_dofs: qd.types.ndarray(),
-    n_links_by_dofs: qd.i32,
     custom_init_qpos: qd.i32,
     init_qpos: qd.types.ndarray(),
     max_samples: qd.i32,
@@ -55,6 +51,8 @@ def kernel_rigid_entity_inverse_kinematics(
     # convert to qd Vector
     pos_mask = qd.Vector([pos_mask_[0], pos_mask_[1], pos_mask_[2]], dt=gs.qd_float)
     rot_mask = qd.Vector([rot_mask_[0], rot_mask_[1], rot_mask_[2]], dt=gs.qd_float)
+    n_dofs = dofs_idx.shape[0]
+    n_links = links_idx.shape[0]
     n_error_dims = 6 * n_links
 
     for i_b_ in range(envs_idx.shape[0]):
@@ -142,11 +140,11 @@ def kernel_rigid_entity_inverse_kinematics(
                     )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this
 
                     # copy to multi-link jacobian (only for the effective n_dofs instead of self.n_dofs)
-                    for i_dof in range(n_dofs):
+                    for i_d_ in range(n_dofs):
+                        i_d = dofs_idx[i_d_]
                         for i_error in qd.static(range(6)):
                             i_row = i_ee * 6 + i_error
-                            i_dof_ = dofs_idx[i_dof]
-                            rigid_entity._IK_jacobian[i_row, i_dof, i_b] = rigid_entity._jacobian[i_error, i_dof_, i_b]
+                            rigid_entity._IK_jacobian[i_row, i_d_, i_b] = rigid_entity._jacobian[i_error, i_d, i_b]
 
                 # compute dq = jac.T @ inverse(jac @ jac.T + diag) @ error (only for the effective n_dofs instead of self.n_dofs)
                 lu.mat_transpose(rigid_entity._IK_jacobian, rigid_entity._IK_jacobian_T, n_error_dims, n_dofs, i_b)
@@ -178,19 +176,19 @@ def kernel_rigid_entity_inverse_kinematics(
                     i_b,
                 )
 
-                for i_d in range(rigid_entity.n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
-                    rigid_entity._IK_delta_qpos[i_d, i_b] = 0
-                for i_d in range(n_dofs):
+                for i_d_ in range(rigid_entity.n_dofs):  # IK_delta_qpos = IK_jacobian_T @ IK_vec
+                    rigid_entity._IK_delta_qpos[i_d_, i_b] = 0
+                for i_d_ in range(n_dofs):
+                    i_d = dofs_idx[i_d_]
                     for j in range(n_error_dims):
                         # NOTE: IK_delta_qpos uses the original indexing instead of the effective n_dofs
-                        i_d_ = dofs_idx[i_d]
-                        rigid_entity._IK_delta_qpos[i_d_, i_b] += (
-                            rigid_entity._IK_jacobian_T[i_d, j, i_b] * rigid_entity._IK_vec[j, i_b]
+                        rigid_entity._IK_delta_qpos[i_d, i_b] += (
+                            rigid_entity._IK_jacobian_T[i_d_, j, i_b] * rigid_entity._IK_vec[j, i_b]
                         )
 
-                for i_d in range(rigid_entity.n_dofs):
-                    rigid_entity._IK_delta_qpos[i_d, i_b] = qd.math.clamp(
-                        rigid_entity._IK_delta_qpos[i_d, i_b], -max_step_size, max_step_size
+                for i_d_ in range(rigid_entity.n_dofs):
+                    rigid_entity._IK_delta_qpos[i_d_, i_b] = qd.math.clamp(
+                        rigid_entity._IK_delta_qpos[i_d_, i_b], -max_step_size, max_step_size
                     )
 
                 # update q
@@ -289,9 +287,17 @@ def kernel_rigid_entity_inverse_kinematics(
 
                 # Resample init q
                 if respect_joint_limit and i_sample < max_samples - 1:
-                    for i_l_ in range(n_links_by_dofs):
-                        i_l = links_idx_by_dofs[i_l_]
+                    for i_l in range(links_info.root_idx.shape[0]):
                         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+
+                        must_resample = False
+                        for i_d_ in range(n_dofs):
+                            i_d = dofs_idx[i_d_]
+                            if links_info.dof_start[I_l] <= i_d and i_d < links_info.dof_end[I_l]:
+                                must_resample = True
+                                break
+                        if not must_resample:
+                            continue
 
                         for i_j in range(links_info.joint_start[I_l], links_info.joint_end[I_l]):
                             I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
