@@ -16,8 +16,6 @@ from .utils import (
 )
 
 
-REPORT_FILE = "speed_test.txt"
-
 STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
@@ -197,8 +195,8 @@ def get_file_morph_options(**kwargs):
 
 
 @pytest.fixture(scope="session")
-def stream_writers(printer_session):
-    report_path = Path(REPORT_FILE)
+def stream_writers(printer_session, request):
+    report_path = Path(request.config.getoption("--speed-test-filepath"))
 
     # Delete old unrelated worker-specific reports
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
@@ -317,7 +315,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _anymal(solver, n_envs, gjk, control, profiler_step):
+def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -339,6 +337,11 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
             )
         ),
     )
+    if with_kinematic:
+        ghost = scene.add_entity(
+            gs.morphs.URDF(file="urdf/anymal_c/urdf/anymal_c.urdf", pos=(0, -0.5, 0.8)),
+            material=gs.materials.Kinematic(),
+        )
     time_start = time.time()
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
@@ -362,6 +365,10 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
             robot.control_dofs_position(
                 torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
             )
+        if with_kinematic:
+            ghost.set_dofs_position(
+                torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
+            )
         scene.step()
         profiler_step()
         time_elapsed = time.time() - time_start
@@ -380,17 +387,22 @@ def _anymal(solver, n_envs, gjk, control, profiler_step):
 
 @pytest.fixture
 def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control=None, profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step)
 
 
 @pytest.fixture
 def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step)
 
 
 @pytest.fixture
 def anymal_random(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="per_env", profiler_step=pytorch_profiler_step)
+    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step)
+
+
+@pytest.fixture
+def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step)
 
 
 def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
@@ -762,6 +774,204 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
+@pytest.fixture
+def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
+    """Two shadow hands manipulating a drill on a table."""
+    import quadrants as qd
+
+    shadow_hand_path = Path(get_hf_dataset(pattern="shadow_hand/*"))
+    dex_path = Path(get_hf_dataset(pattern="dex/*"))
+
+    WRIST_STIFFNESS = 20
+    FINGER_FORCE = 0.6
+    DRILL_STIFFNESS = 20
+
+    duration_warmup = 20.0
+    duration_record = 5.0
+    step_dt = 1 / 16
+
+    JOINT_NAMES = [
+        "FFJ4",
+        "FFJ3",
+        "FFJ2",
+        "FFJ1",
+        "MFJ4",
+        "MFJ3",
+        "MFJ2",
+        "MFJ1",
+        "RFJ4",
+        "RFJ3",
+        "RFJ2",
+        "RFJ1",
+        "LFJ5",
+        "LFJ4",
+        "LFJ3",
+        "LFJ2",
+        "LFJ1",
+        "THJ5",
+        "THJ4",
+        "THJ3",
+        "THJ2",
+        "THJ1",
+    ]
+    LEFT_DOFS = [
+        0.34907,
+        0.24929,
+        0.54424,
+        0.65614,
+        0.21329,
+        0.08060,
+        0.19969,
+        0.66944,
+        1.57080,
+        0.21846,
+        0.53605,
+        0.44963,
+        0.38350,
+        0.02379,
+        0.41705,
+        0.54773,
+        0.61160,
+        0.36664,
+        0.44036,
+        0.20944,
+        0.34497,
+        0.15896,
+    ]
+    RIGHT_DOFS = [
+        0.34907,
+        0.23328,
+        0.57399,
+        0.70467,
+        0.00000,
+        0.34907,
+        0.51778,
+        0.65078,
+        1.48947,
+        0.33727,
+        0.55919,
+        0.56268,
+        0.54360,
+        -0.08460,
+        0.48588,
+        0.66095,
+        0.73317,
+        0.13239,
+        0.45613,
+        0.20944,
+        0.19625,
+        0.00750,
+    ]
+
+    hand_configs = [
+        dict(
+            pos=(0.19227, -0.00058, 1.31227),
+            quat=(-0.45215, -0.31265, 0.76087, 0.34480),
+            dofs=LEFT_DOFS,
+            urdf="shadow_hand_left_woarm.urdf",
+        ),
+        dict(
+            pos=(0.16257, 0.24658, 1.28047),
+            quat=(0.74525, 0.46466, -0.45186, -0.15660),
+            dofs=RIGHT_DOFS,
+            urdf="shadow_hand_right_woarm.urdf",
+        ),
+    ]
+
+    # Note: screenshots on effect of coacd_options on how the drill and table look
+    # at https://github.com/Genesis-Embodied-AI/Genesis/pull/2500#discussion_r2900243286
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(substeps=25, dt=step_dt),
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=200,
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        show_viewer=False,
+        show_FPS=False,
+    )
+
+    hands = []
+    for cfg in hand_configs:
+        urdf_path = str(shadow_hand_path / "shadow_hand" / cfg["urdf"])
+        hand = scene.add_entity(
+            gs.morphs.URDF(file=urdf_path, pos=cfg["pos"], quat=cfg["quat"]),
+        )
+        hands.append(hand)
+
+    table_path = str(dex_path / "dex" / "table.glb")
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file=table_path,
+            pos=(0.1, 0.0, 0.485403),
+            euler=(0, 0, 90),
+            fixed=True,
+        )
+    )
+    drill_path = str(dex_path / "dex" / "drill_1.glb")
+    drill = scene.add_entity(
+        gs.morphs.Mesh(
+            file=drill_path,
+            pos=(0.15, 0.1, 0.87),
+            euler=(90, 0, 225),
+        )
+    )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    for hand, default_dof in zip(hands, (LEFT_DOFS, RIGHT_DOFS)):
+        kp = [WRIST_STIFFNESS] * 6 + [40.0] * (hand.n_dofs - 6)
+        hand.set_dofs_kp(kp)
+        hand.set_dofs_kv(2.0 * np.sqrt(kp))
+        hand.set_dofs_position(
+            default_dof,
+            dofs_idx_local=[hand.get_joint(name).dofs_idx_local[0] for name in JOINT_NAMES],
+        )
+        hand.control_dofs_position(torch.clamp(hand.get_dofs_position(), *hand.get_dofs_limit()))
+
+    finger_dofs = {hand: slice(6, hand.n_dofs) for hand in hands}
+    random_forces = {
+        hand: torch.zeros((n_envs, hand.n_dofs - 6), dtype=gs.tc_float, device=gs.device) for hand in hands
+    }
+    base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand in hands}
+
+    drill_xy_kp = [DRILL_STIFFNESS, DRILL_STIFFNESS]
+    drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
+    drill.set_dofs_kv(2.0 * np.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
+    drill_xy_target = drill.get_dofs_position()[:, :2]
+
+    for hand in hands:
+        hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
+    drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
+
+    num_steps = 0
+    is_recording = False
+    qd.sync()
+    time_start = time.time()
+    while True:
+        for hand in hands:
+            random_forces[hand].uniform_(-FINGER_FORCE, FINGER_FORCE)
+            hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
+        scene.step()
+        pytorch_profiler_step()
+        time_elapsed = time.time() - time_start
+        if is_recording:
+            num_steps += 1
+            if time_elapsed > duration_record:
+                qd.sync()
+                time_elapsed = time.time() - time_start
+                break
+        elif time_elapsed > duration_warmup:
+            qd.sync()
+            time_start = time.time()
+            is_recording = True
+    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
+    realtime_factor = runtime_fps * step_dt
+
+    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+
+
 @pytest.mark.parametrize(
     "runnable, solver, gjk, n_envs, backend",
     [
@@ -774,6 +984,8 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
         ("anymal_uniform", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 30000, gs.gpu),
         ("anymal_zero", None, None, 0, gs.cpu),
+        ("anymal_uniform_kinematic", None, None, 30000, gs.gpu),
+        ("anymal_uniform_kinematic", None, None, 0, gs.cpu),
         ("go2", None, True, 4096, gs.gpu),
         ("go2", gs.constraint_solver.CG, False, 4096, gs.gpu),
         ("go2", gs.constraint_solver.Newton, False, 4096, gs.gpu),
@@ -792,6 +1004,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("dex_hand", None, None, 4096, gs.gpu),
     ],
 )
 def test_speed(factory_logger, request, runnable, solver, gjk, n_envs):

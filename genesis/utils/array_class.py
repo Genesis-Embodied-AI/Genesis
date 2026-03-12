@@ -126,7 +126,7 @@ class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
     EPS: V_ANNOTATION
 
 
-def get_rigid_global_info(solver):
+def get_rigid_global_info(solver, kinematic_only):
     _B = solver._B
 
     mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
@@ -139,6 +139,43 @@ def get_rigid_global_info(solver):
     if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
         gs.raise_exception(
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
+        )
+
+    # FIXME: Add a better split between kinematic and Genesis
+    if kinematic_only:
+        return StructRigidGlobalInfo(
+            envs_offset=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
+            gravity=V_VEC(3, dtype=gs.qd_float, shape=()),
+            meaninertia=V(dtype=gs.qd_float, shape=()),
+            n_awake_dofs=V(dtype=gs.qd_int, shape=(_B,)),
+            n_awake_entities=V(dtype=gs.qd_int, shape=(_B,)),
+            n_awake_links=V(dtype=gs.qd_int, shape=(_B,)),
+            awake_dofs=V(dtype=gs.qd_int, shape=(solver.n_dofs_, _B)),
+            awake_entities=V(dtype=gs.qd_int, shape=(solver.n_entities_, _B)),
+            awake_links=V(dtype=gs.qd_int, shape=(solver.n_links_, _B)),
+            qpos0=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
+            qpos=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
+            qpos_next=V(dtype=gs.qd_float, shape=(solver.n_qs_, _B)),
+            links_T=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(solver.n_links_,)),
+            geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=()),
+            mass_mat=V(dtype=gs.qd_float, shape=()),
+            mass_mat_L=V(dtype=gs.qd_float, shape=()),
+            mass_mat_L_bw=V(dtype=gs.qd_float, shape=()),
+            mass_mat_D_inv=V(dtype=gs.qd_float, shape=()),
+            mass_mat_mask=V(dtype=gs.qd_bool, shape=()),
+            mass_parent_mask=V(dtype=gs.qd_float, shape=()),
+            substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+            tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            ls_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+            ls_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            noslip_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+            noslip_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            n_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+            n_candidate_equalities=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+            hibernation_thresh_acc=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            hibernation_thresh_vel=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
+            EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
         )
 
     return StructRigidGlobalInfo(
@@ -1883,8 +1920,8 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
 
 @qd.data_oriented
 class DataManager:
-    def __init__(self, solver):
-        self.rigid_global_info = get_rigid_global_info(solver)
+    def __init__(self, solver, kinematic_only):
+        self.rigid_global_info = get_rigid_global_info(solver, kinematic_only)
 
         self.dofs_info = get_dofs_info(solver)
         self.dofs_state = get_dofs_state(solver)
@@ -1892,15 +1929,9 @@ class DataManager:
         self.links_state = get_links_state(solver)
         self.joints_info = get_joints_info(solver)
         self.joints_state = get_joints_state(solver)
-        self.geoms_info = get_geoms_info(solver)
-        self.geoms_state = get_geoms_state(solver)
 
-        self.verts_info = get_verts_info(solver)
-        self.faces_info = get_faces_info(solver)
-        self.edges_info = get_edges_info(solver)
-
-        self.free_verts_state = get_free_verts_state(solver)
-        self.fixed_verts_state = get_fixed_verts_state(solver)
+        self.entities_info = get_entities_info(solver)
+        self.entities_state = get_entities_state(solver)
 
         self.vverts_info = get_vverts_info(solver)
         self.vfaces_info = get_vfaces_info(solver)
@@ -1908,10 +1939,18 @@ class DataManager:
         self.vgeoms_info = get_vgeoms_info(solver)
         self.vgeoms_state = get_vgeoms_state(solver)
 
-        self.equalities_info = get_equalities_info(solver)
+        if not kinematic_only:
+            self.geoms_info = get_geoms_info(solver)
+            self.geoms_state = get_geoms_state(solver)
 
-        self.entities_info = get_entities_info(solver)
-        self.entities_state = get_entities_state(solver)
+            self.verts_info = get_verts_info(solver)
+            self.faces_info = get_faces_info(solver)
+            self.edges_info = get_edges_info(solver)
+
+            self.free_verts_state = get_free_verts_state(solver)
+            self.fixed_verts_state = get_fixed_verts_state(solver)
+
+            self.equalities_info = get_equalities_info(solver)
 
         if solver._static_rigid_sim_config.requires_grad:
             # Data structures required for backward pass

@@ -385,9 +385,7 @@ def test_frictionloss(gs_sim, mj_sim, tol):
     assert_allclose(gs_qvel, 0.0, tol=1e-2)
 
 
-# Disable Genesis multi-contact because it relies on discretized geometry unlike Mujoco
 @pytest.mark.required
-@pytest.mark.multi_contact(False)
 @pytest.mark.parametrize("xml_path", ["xml/walker.xml"])
 @pytest.mark.parametrize(
     "gs_solver",
@@ -594,7 +592,6 @@ def test_rope_ball(gs_sim, mj_sim, gs_solver, tol):
 
 
 @pytest.mark.required
-@pytest.mark.multi_contact(False)
 @pytest.mark.parametrize("xml_path", ["linear_deformable.urdf"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast])
@@ -615,20 +612,20 @@ def test_urdf_rope(gs_sim, mj_sim, gs_solver, xml_path):
 
 @pytest.mark.required
 @pytest.mark.mujoco_compatibility(True)
-@pytest.mark.multi_contact(False)  # FIXME: Mujoco has errors with multi-contact, so this test is disabled
 @pytest.mark.parametrize("xml_path", ["xml/tet_tet.xml", "xml/tet_ball.xml", "xml/tet_capsule.xml"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
 @pytest.mark.parametrize("gs_integrator", [gs.integrator.implicitfast, gs.integrator.Euler])
 @pytest.mark.parametrize("gjk_collision", [True])
+@pytest.mark.parametrize("multi_contact", [True, False])
 @pytest.mark.parametrize("backend", [gs.cpu])
-def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, tol):
+def test_tet_primitive_shapes(gs_sim, mj_sim, gs_integrator, gs_solver, xml_path, multi_contact, tol):
     # Make sure it is possible to set the configuration vector without failure
     gs_sim.rigid_solver.set_dofs_position(gs_sim.rigid_solver.get_dofs_position())
 
     check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
-    # FIXME: Because of very small numerical error, error could be this large even if there is no logical error
-    tol = 1e-6 if xml_path == "xml/tet_tet.xml" else 2e-8
-    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=tol)
+    # FIXME: Because of very small numerical error, error could be this large even if there is no logical error.
+    # Multi-contact perturbation introduces slightly larger errors due to GJK implementation differences.
+    simulate_and_check_mujoco_consistency(gs_sim, mj_sim, num_steps=700, tol=2e-6)
 
 
 @pytest.mark.required

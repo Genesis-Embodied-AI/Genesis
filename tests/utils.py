@@ -36,7 +36,7 @@ from genesis.utils.misc import tensor_to_array
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "0f5098c4c4e00c161180d25446c4b65114a2b3f4"
+HUGGINGFACE_ASSETS_REVISION = "fcc8cfe8cc752b1426331f8be0b19647bf0be078"
 HUGGINGFACE_SNAPSHOT_REVISION = "63afb805efb70350a983dcafee27fbd74a7a9286"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
@@ -492,7 +492,7 @@ def _get_model_mappings(
 
 
 def build_mujoco_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, native_ccd
+    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, native_ccd
 ):
     if gs_solver == gs.constraint_solver.CG:
         mj_solver = mujoco.mjtSolver.mjSOL_CG

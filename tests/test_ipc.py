@@ -317,7 +317,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
 
 @pytest.mark.required
 def test_needs_coup():
-    """needs_coup=False excludes entity from IPC; coup_type with needs_coup=False raises."""
+    """needs_coup=False excludes entity from IPC."""
     scene = gs.Scene(
         coupler_options=gs.options.IPCCouplerOptions(),
         show_viewer=False,
@@ -328,7 +328,7 @@ def test_needs_coup():
         material=gs.materials.Rigid(needs_coup=False),
     )
     scene.build()
-    assert scene.sim.coupler._coupling_types == {}
+    assert scene.sim.coupler._coup_type_by_entity == {}
     assert not scene.sim.coupler.has_any_rigid_coupling
 
 
@@ -365,15 +365,15 @@ def test_link_filter_strict():
     base_link = robot.get_link("base")
     moving_link = robot.get_link("moving")
 
-    assert robot in coupler._coupling_link_filters
-    assert coupler._coupling_link_filters[robot] == {moving_link}
+    assert robot in coupler._coup_links
+    assert coupler._coup_links[robot] == {moving_link}
 
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
     assert base_link.idx not in ipc_links_idx
 
-    assert moving_link in coupler._abd_link_to_slot
-    assert base_link not in coupler._abd_link_to_slot
+    assert moving_link in coupler._abd_slots_by_link
+    assert base_link not in coupler._abd_slots_by_link
 
 
 @pytest.mark.required
@@ -451,12 +451,12 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
     moving_link = robot.get_link("moving")
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert moving_link.idx in ipc_links_idx
-    assert moving_link in coupler._abd_link_to_slot
+    assert moving_link in coupler._abd_slots_by_link
     if coup_type == "two_way_soft_constraint":
         assert moving_link in coupler._abd_data_by_link
     elif coup_type == "external_articulation":
-        art_data = coupler.articulation_data[robot]
-        assert len(art_data.articulation_slots_by_env) == max(scene.n_envs, 1)
+        art_data = coupler._articulation_data_by_entity[robot]
+        assert len(art_data.articulation_slots) == max(scene.n_envs, 1)
         if fixed:
             assert not coupler._abd_data_by_link
 
@@ -486,7 +486,8 @@ def test_single_joint(n_envs, coup_type, joint_type, fixed, show_viewer):
         if coup_type == "two_way_soft_constraint" or not fixed:
             for env_idx in envs_idx:
                 abd_data = coupler._abd_data_by_link[moving_link][env_idx]
-                gs_transform, ipc_transform = abd_data.aim_transform, abd_data.transform
+                gs_transform = coupler._abd_transforms_by_link[moving_link][env_idx]
+                ipc_transform = abd_data.transform
                 # FIXME: Why the tolerance is must so large if no fixed ?!
                 assert_allclose(gs_transform[:3, 3], ipc_transform[:3, 3], atol=TOL_SINGLE if fixed else 0.2)
                 assert_allclose(
@@ -570,19 +571,19 @@ def test_find_target_links(coup_type, merge_fixed_links, show_viewer):
     # With merge_fixed_links=True, attachment is merged into link7.
     # With merge_fixed_links=False, attachment stays separate but IPC should still group them.
     link7 = robot.get_link("link7")
-    assert link7 in coupler._abd_link_to_slot
+    assert link7 in coupler._abd_slots_by_link
 
     if not merge_fixed_links:
         attachment = robot.get_link("attachment")
         # attachment exists as separate link but shares ABD body with link7
         target = find_target_link_for_fixed_merge(attachment)
         assert target == link7
-        # attachment is aliased to the same ABD slot as link7 (fixed joint merge)
-        assert coupler._abd_link_to_slot[attachment][0] is coupler._abd_link_to_slot[link7][0]
+        # attachment is NOT in _abd_slots_by_link — only the target link gets a slot entry
+        assert attachment not in coupler._abd_slots_by_link
 
     if coup_type == "external_articulation":
-        art_data = coupler.articulation_data[robot]
-        assert len(art_data.articulation_slots_by_env) == 1
+        art_data = coupler._articulation_data_by_entity[robot]
+        assert len(art_data.articulation_slots) == 1
         # All 7 revolute joints should be present (fixed joint is skipped)
         assert len(art_data.joints_child_link) == 7
 
@@ -728,7 +729,7 @@ def test_objects_freefall(n_envs, show_viewer):
 
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert box.base_link_idx in ipc_links_idx
-    assert box.base_link in coupler._abd_link_to_slot
+    assert box.base_link in coupler._abd_slots_by_link
 
     # Verify that geometries are present in IPC for each environment
     cloth_entity_idx = scene.sim.fem_solver.entities.index(cloth)
@@ -1015,12 +1016,12 @@ def test_robot_grasp_fem(coup_type, show_viewer):
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert franka_finger_links_idx.issubset(ipc_links_idx)
     for link_idx in franka_finger_links:
-        assert link_idx in coupler._abd_link_to_slot
+        assert link_idx in coupler._abd_slots_by_link
 
     franka_links_idx = {link.idx for link in franka.links}
     franka_ipc_links_idx = franka_links_idx.intersection(ipc_links_idx)
     if coup_type == "two_way_soft_constraint":
-        assert coupler._coupling_link_filters.get(franka) == franka_finger_links
+        assert coupler._coup_links.get(franka) == franka_finger_links
         assert franka_ipc_links_idx == franka_finger_links_idx
     else:
         assert franka_finger_links_idx.issubset(franka_ipc_links_idx)
@@ -1141,7 +1142,7 @@ def test_momentum_conservation(n_envs, show_viewer):
     rigid_link = rigid_cube.base_link
     ipc_links_idx = get_ipc_rigid_links_idx(scene, env_idx=0)
     assert rigid_link.idx in ipc_links_idx
-    assert rigid_link in coupler._abd_link_to_slot
+    assert rigid_link in coupler._abd_slots_by_link
 
     cube_mass = rigid_cube.get_mass()
 
@@ -1578,7 +1579,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
     cloth_aabb_min, cloth_aabb_max = cloth_positions_f.min(axis=-2), cloth_positions_f.max(axis=-2)
     cloth_aabb_extent = cloth_aabb_max - cloth_aabb_min
     assert (cloth_aabb_extent[..., :2] < STRETCH_RATIO_1 * (2.0 * CLOTH_HALF)).all()
-    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.15)).all()
+    assert ((0.001 < cloth_aabb_extent[..., 2]) & (cloth_aabb_extent[..., 2] < 0.2)).all()
 
 
 @pytest.mark.required

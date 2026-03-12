@@ -30,11 +30,13 @@ try:
     has_tkinter = True
 except ImportError:
     tkinter = type(sys)("tkinter")
+    tkinter.filedialog = lambda *arg, **kwargs: None
+    tkinter.mainloop = type(sys)("mainloop")
+    tkinter.mainloop.__code__ = ""
     tkinter.Tk = type(sys)("Tk")
-    tkinter.filedialog = type(sys)("filedialog")
+    tkinter.Misc = type(sys)("Misc")
+    tkinter.Misc.mainloop = tkinter.mainloop
     sys.modules["tkinter"] = tkinter
-    sys.modules["tkinter.Tk"] = tkinter.Tk
-    sys.modules["tkinter.filedialog"] = tkinter.filedialog
 
 # Determine whether a screen is available
 if has_tkinter:
@@ -162,10 +164,6 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
     # relying on this mechanism is fragile.
     os.environ.setdefault("QD_ENABLE_PYBUF", "0" if sys.stdout is sys.__stdout__ else "1")
-
-    # Disable Quadrants dynamic array mode by default on MacOS because it is not supported by Metal
-    if sys.platform == "darwin":
-        os.environ.setdefault("GS_ENABLE_NDARRAY", "0")
 
     # Enforce special environment variable before importing test modules if distributed framework is enabled
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
@@ -381,7 +379,7 @@ def pytest_collection_modifyitems(config, items):
 def pytest_runtest_setup(item):
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
-    dtype = "ndarray" if os.environ.get("GS_ENABLE_NDARRAY") == "1" else "field"
+    dtype = "field" if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else "ndarray"
     test_name = test_name[:-1] + f"-{dtype}]"
 
     setproctitle.setproctitle(f"pytest: {test_name}")
@@ -418,6 +416,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
+    parser.addoption(
+        "--speed-test-filepath",
+        type=str,
+        default="speed_test.txt",
+        help="Base filepath for speed test reports (default: speed_test.txt).",
+    )
     if os.environ.get("GS_PROFILING", "0") == "1":
         profiling.parser_add_options(parser)
 
@@ -624,11 +628,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         if sys.platform == "darwin" and backend != gs.cpu:
             if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip("Apple Metal GPU does not support 64bits precision.")
-            if os.environ.get("GS_ENABLE_NDARRAY") == "1":
-                pytest.skip(
-                    "Using Quadrants dynamic array type is not supported on Apple Metal GPU because this backend only "
-                    "supports up to 31 kernel parameters, which is not enough for most solvers."
-                )
 
         gs.init(
             backend=backend,
@@ -656,9 +655,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
 
 @pytest.fixture
-def mj_sim(
-    xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, dof_damping, gjk_collision
-):
+def mj_sim(xml_path, gs_solver, gs_integrator, merge_fixed_links, multi_contact, adjacent_collision, gjk_collision):
     from .utils import build_mujoco_sim
 
     return build_mujoco_sim(
@@ -668,7 +665,6 @@ def mj_sim(
         merge_fixed_links,
         multi_contact,
         adjacent_collision,
-        dof_damping,
         gjk_collision,
     )
 

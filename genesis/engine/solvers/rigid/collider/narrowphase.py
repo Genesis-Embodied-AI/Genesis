@@ -23,6 +23,7 @@ from .box_contact import (
 from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
+    func_compute_mj_tolerance,
     func_compute_tolerance,
     func_contact_orthogonals,
     func_rotate_frame,
@@ -556,6 +557,10 @@ def func_convex_convex_contact(
         tolerance = func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
         )
+        if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
+            tolerance = func_compute_mj_tolerance(
+                i_ga, i_gb, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+            )
         diff_pos_tolerance = func_compute_tolerance(
             i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
         )
@@ -602,10 +607,19 @@ def func_convex_convex_contact(
 
             # Apply perturbations to thread-local state
             if multi_contact and is_col_0:
-                # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
-                # otherwise it would be more sensitive to ill-conditioning.
-                axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
-                qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
+                if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
+                    # Match MuJoCo's perturbation pattern: single axis at a time
+                    # i_detection 1: (axis_0, -angle), 2: (axis_0, +angle),
+                    # 3: (axis_1, -angle), 4: (axis_1, +angle)
+                    axis_idx = (i_detection - 1) // 2
+                    angle_sign = 2 * ((i_detection - 1) % 2) - 1
+                    axis = axis_0 if axis_idx == 0 else axis_1
+                    qrot = gu.qd_rotvec_to_quat(angle_sign * collider_info.mc_perturbation[None] * axis, EPS)
+                else:
+                    # Perturbation axis must not be aligned with the principal axes of inertia the geometry,
+                    # otherwise it would be more sensitive to ill-conditioning.
+                    axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
+                    qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
                 # Apply perturbation starting from original state
                 ga_pos_current, ga_quat_current = func_rotate_frame(
@@ -912,10 +926,13 @@ def func_convex_convex_contact(
                     # contact points and thefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
-                    if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
-                        # Only change penetration to the initial one, because the normal vector could change abruptly
-                        # under MuJoCo's GJK-EPA.
-                        penetration = penetration_0
+
+                # For MuJoCo-compatible GJK, set penetration of perturbed contacts to equal the initial contact's
+                # penetration, matching MuJoCo's behavior (engine_collision_convex.c:1010).
+                if qd.static(
+                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
+                ):
+                    penetration = penetration_0
 
                 # Discard contact point is repeated
                 repeated = False

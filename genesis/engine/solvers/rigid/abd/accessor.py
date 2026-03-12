@@ -18,6 +18,75 @@ from .misc import func_apply_link_external_force, func_apply_link_external_torqu
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
+def kernel_get_kinematic_state(
+    qpos: qd.types.ndarray(),
+    vel: qd.types.ndarray(),
+    links_pos: qd.types.ndarray(),
+    links_quat: qd.types.ndarray(),
+    i_pos_shift: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_qs = qpos.shape[1]
+    n_dofs = vel.shape[1]
+    n_links = links_pos.shape[1]
+    _B = qpos.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_q, i_b in qd.ndrange(n_qs, _B):
+        qpos[i_b, i_q] = rigid_global_info.qpos[i_q, i_b]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        vel[i_b, i_d] = dofs_state.vel[i_d, i_b]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l, i_b in qd.ndrange(n_links, _B):
+        for j in qd.static(range(3)):
+            links_pos[i_b, i_l, j] = links_state.pos[i_l, i_b][j]
+            i_pos_shift[i_b, i_l, j] = links_state.i_pos_shift[i_l, i_b][j]
+        for j in qd.static(range(4)):
+            links_quat[i_b, i_l, j] = links_state.quat[i_l, i_b][j]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_set_kinematic_state(
+    envs_idx: qd.types.ndarray(),
+    qpos: qd.types.ndarray(),
+    dofs_vel: qd.types.ndarray(),
+    links_pos: qd.types.ndarray(),
+    links_quat: qd.types.ndarray(),
+    i_pos_shift: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    dofs_state: array_class.DofsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_qs = qpos.shape[1]
+    n_dofs = dofs_vel.shape[1]
+    n_links = links_pos.shape[1]
+    _B = envs_idx.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_q, i_b_ in qd.ndrange(n_qs, _B):
+        rigid_global_info.qpos[i_q, envs_idx[i_b_]] = qpos[envs_idx[i_b_], i_q]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b_ in qd.ndrange(n_dofs, _B):
+        dofs_state.vel[i_d, envs_idx[i_b_]] = dofs_vel[envs_idx[i_b_], i_d]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_l, i_b_ in qd.ndrange(n_links, _B):
+        for j in qd.static(range(3)):
+            links_state.pos[i_l, envs_idx[i_b_]][j] = links_pos[envs_idx[i_b_], i_l, j]
+            links_state.i_pos_shift[i_l, envs_idx[i_b_]][j] = i_pos_shift[envs_idx[i_b_], i_l, j]
+        for j in qd.static(range(4)):
+            links_state.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_get_state(
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
@@ -64,6 +133,7 @@ def kernel_get_state(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_state(
+    envs_idx: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
     dofs_vel: qd.types.ndarray(),
     dofs_acc: qd.types.ndarray(),
@@ -72,7 +142,6 @@ def kernel_set_state(
     i_pos_shift: qd.types.ndarray(),
     mass_shift: qd.types.ndarray(),
     friction_ratio: qd.types.ndarray(),
-    envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
     geoms_state: array_class.GeomsState,
@@ -120,7 +189,6 @@ def kernel_get_state_grad(
     links_quat_grad: qd.types.ndarray(),
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
-    geoms_state: array_class.GeomsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):

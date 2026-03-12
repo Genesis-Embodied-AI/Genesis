@@ -1,6 +1,7 @@
 from .misc import CoacdOptions, FoamOptions
 from .profiling import ProfilingOptions
 from .solvers import (
+    KinematicOptions,
     BaseCouplerOptions,
     FEMOptions,
     IPCCouplerOptions,
@@ -17,6 +18,7 @@ from .solvers import (
 from .vis import ViewerOptions, VisOptions
 
 __all__ = [
+    "KinematicOptions",
     "BaseCouplerOptions",
     "CoacdOptions",
     "FEMOptions",

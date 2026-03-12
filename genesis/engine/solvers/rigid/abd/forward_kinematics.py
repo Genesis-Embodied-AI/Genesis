@@ -39,31 +39,35 @@ def kernel_forward_kinematics_links_geoms(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    func_update_cartesian_space(
-        links_state=links_state,
-        links_info=links_info,
-        joints_state=joints_state,
-        joints_info=joints_info,
-        dofs_state=dofs_state,
-        dofs_info=dofs_info,
-        geoms_info=geoms_info,
-        geoms_state=geoms_state,
-        entities_info=entities_info,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        force_update_fixed_geoms=True,
-        is_backward=False,
-    )
-    func_forward_velocity(
-        entities_info=entities_info,
-        links_info=links_info,
-        links_state=links_state,
-        joints_info=joints_info,
-        dofs_state=dofs_state,
-        rigid_global_info=rigid_global_info,
-        static_rigid_sim_config=static_rigid_sim_config,
-        is_backward=False,
-    )
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        func_update_cartesian_space_batch(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            geoms_info=geoms_info,
+            geoms_state=geoms_state,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            force_update_fixed_geoms=True,
+            is_backward=False,
+        )
+        func_forward_velocity_batch(
+            i_b=i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -97,6 +101,114 @@ def kernel_masked_forward_kinematics_links_geoms(
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 force_update_fixed_geoms=True,
+                is_backward=False,
+            )
+            func_forward_velocity_batch(
+                i_b=i_b,
+                entities_info=entities_info,
+                links_info=links_info,
+                links_state=links_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
+            )
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_forward_kinematics(
+    envs_idx: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    for i_b_ in range(envs_idx.shape[0]):
+        i_b = envs_idx[i_b_]
+        func_forward_kinematics_batch(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
+        func_COM_links(
+            i_b=i_b,
+            links_state=links_state,
+            links_info=links_info,
+            joints_state=joints_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
+        func_forward_velocity_batch(
+            i_b=i_b,
+            entities_info=entities_info,
+            links_info=links_info,
+            links_state=links_state,
+            joints_info=joints_info,
+            dofs_state=dofs_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=False,
+        )
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_masked_forward_kinematics(
+    envs_mask: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    joints_state: array_class.JointsState,
+    joints_info: array_class.JointsInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_forward_kinematics_batch(
+                i_b=i_b,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+                is_backward=False,
+            )
+            func_COM_links(
+                i_b=i_b,
+                links_state=links_state,
+                links_info=links_info,
+                joints_state=joints_state,
+                joints_info=joints_info,
+                dofs_state=dofs_state,
+                dofs_info=dofs_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
                 is_backward=False,
             )
             func_forward_velocity_batch(
@@ -235,6 +347,7 @@ def func_COM_links_entity(
     static_rigid_sim_config: qd.template(),
     is_backward: qd.template(),
 ):
+    EPS = rigid_global_info.EPS[None]
     BW = qd.static(is_backward)
 
     # Becomes static loop in backward pass, because we assume this loop is an inner loop
@@ -286,7 +399,11 @@ def func_COM_links_entity(
 
             i_r = links_info.root_idx[I_l]
             if i_l == i_r:
-                links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+                mass_sum = links_state.mass_sum[i_l, i_b]
+                if mass_sum > EPS:
+                    links_state.root_COM[i_l, i_b] = links_state.root_COM_bw[i_l, i_b] / links_state.mass_sum[i_l, i_b]
+                else:
+                    links_state.root_COM[i_l, i_b] = links_state.i_pos_bw[i_r, i_b]
 
     for i_l_ in (
         range(entities_info.link_start[i_e], entities_info.link_end[i_e])
@@ -414,8 +531,6 @@ def func_COM_links_entity(
                     i_j = i_j_ if qd.static(not BW) else (i_j_ + links_info.joint_start[I_l])
 
                     if func_check_index_range(i_j, links_info.joint_start[I_l], links_info.joint_end[I_l], BW):
-                        EPS = rigid_global_info.EPS[None]
-
                         offset_pos = links_state.root_COM[i_l, i_b] - joints_state.xanchor[i_j, i_b]
                         I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
                         joint_type = joints_info.type[I_j]
@@ -485,7 +600,7 @@ def func_forward_kinematics_entity(
         if qd.static(not BW)
         else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
     ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+        i_l = gs.qd_int(i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e]))
 
         if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -891,7 +1006,7 @@ def func_forward_velocity_entity(
         if qd.static(not BW)
         else qd.static(range(static_rigid_sim_config.max_n_links_per_entity))
     ):
-        i_l = i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e])
+        i_l = gs.qd_int(i_l_ if qd.static(not BW) else (i_l_ + entities_info.link_start[i_e]))
 
         if func_check_index_range(i_l, entities_info.link_start[i_e], entities_info.link_end[i_e], BW):
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l

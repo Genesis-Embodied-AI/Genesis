@@ -357,7 +357,9 @@ class Viewer(pyglet.window.Window):
             self._message_text = None
             self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
             self._message_opac = 1.0 + self._ticks_till_fade
-            self.register_keybinds(Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions))
+            self.register_keybinds(
+                Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions, protected=True)
+            )
 
         # Setup viewer plugins
         self.plugins: list[ViewerPlugin] = []
@@ -508,7 +510,7 @@ class Viewer(pyglet.window.Window):
         # Register pyglet.window event handlers from the plugin
         self.push_handlers(plugin)
 
-    def register_keybinds(self, *keybinds: Keybind) -> None:
+    def register_keybinds(self, /, *keybinds: Keybind, overwrite: bool = False) -> None:
         """
         Add a key handler to call a function when the given key is pressed.
 
@@ -518,7 +520,7 @@ class Viewer(pyglet.window.Window):
             One or more Keybind objects to register.
         """
         for keybind in keybinds:
-            self._keybindings.register(keybind)
+            self._keybindings.register(keybind, overwrite)
         self._update_instr_texts()
 
     def remap_keybind(

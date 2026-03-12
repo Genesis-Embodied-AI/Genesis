@@ -380,16 +380,23 @@ class RasterizerContext:
             dtype=np.float32,
         )
 
-    def on_rigid(self):
+    def _rigid_solvers(self):
+        """Yield active solvers that manage KinematicEntity-based entities (rigid + kinematic)."""
         if self.sim.rigid_solver.is_active:
+            yield self.sim.rigid_solver
+        if self.sim.kinematic_solver.is_active:
+            yield self.sim.kinematic_solver
+
+    def on_rigid(self):
+        for solver in self._rigid_solvers():
             # TODO: support dynamic switching in GUI later
-            for rigid_entity in self.sim.rigid_solver.entities:
-                if rigid_entity.surface.vis_mode == "visual":
-                    geoms = rigid_entity.vgeoms
-                    geoms_T = self.sim.rigid_solver._vgeoms_render_T
+            for entity in solver.entities:
+                if entity.surface.vis_mode == "visual":
+                    geoms = entity.vgeoms
+                    geoms_T = solver._vgeoms_render_T
                 else:
-                    geoms = rigid_entity.geoms
-                    geoms_T = self.sim.rigid_solver._geoms_render_T
+                    geoms = entity.geoms
+                    geoms_T = solver._geoms_render_T
 
                 for geom in geoms:
                     # For heterogeneous simulation, filter envs based on geom's assigned environments
@@ -397,7 +404,7 @@ class RasterizerContext:
                     if len(geom_envs_idx) == 0:
                         continue
 
-                    if "sdf" in rigid_entity.surface.vis_mode:
+                    if "sdf" in entity.surface.vis_mode:
                         mesh = geom.get_sdf_trimesh()
                     else:
                         mesh = geom.get_trimesh()
@@ -407,26 +414,26 @@ class RasterizerContext:
                         pyrender.Mesh.from_trimesh(
                             mesh=mesh,
                             poses=geom_T,
-                            smooth=geom.surface.smooth if "collision" not in rigid_entity.surface.vis_mode else False,
+                            smooth=geom.surface.smooth if "collision" not in entity.surface.vis_mode else False,
                             double_sided=(
-                                geom.surface.double_sided if "collision" not in rigid_entity.surface.vis_mode else False
+                                geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
                             ),
-                            is_floor=isinstance(rigid_entity._morph, gs.morphs.Plane),
+                            is_floor=isinstance(entity._morph, gs.morphs.Plane),
                             env_shared=not self.env_separate_rigid,
                         ),
                     )
-                    if isinstance(rigid_entity._morph, gs.morphs.Plane):
+                    if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
     def update_rigid(self, buffer_updates):
-        if self.sim.rigid_solver.is_active:
-            for rigid_entity in self.sim.rigid_solver.entities:
-                if rigid_entity.surface.vis_mode == "visual":
-                    geoms = rigid_entity.vgeoms
-                    geoms_T = self.sim.rigid_solver._vgeoms_render_T
+        for solver in self._rigid_solvers():
+            for entity in solver.entities:
+                if entity.surface.vis_mode == "visual":
+                    geoms = entity.vgeoms
+                    geoms_T = solver._vgeoms_render_T
                 else:
-                    geoms = rigid_entity.geoms
-                    geoms_T = self.sim.rigid_solver._geoms_render_T
+                    geoms = entity.geoms
+                    geoms_T = solver._geoms_render_T
 
                 for geom in geoms:
                     # Skip geoms that weren't added - in heterogeneous simulation, some geoms
@@ -444,7 +451,7 @@ class RasterizerContext:
                     node.mesh._bounds = None
                     node.mesh.primitives[0].poses = geom_T
                     buffer_updates[self._scene.get_buffer_id(node, "model")] = geom_T.transpose((0, 2, 1))
-                    if isinstance(rigid_entity._morph, gs.morphs.Plane):
+                    if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
 
     def update_contact(self, buffer_updates):
