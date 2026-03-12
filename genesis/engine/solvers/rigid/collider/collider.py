@@ -138,15 +138,22 @@ class Collider:
             n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
 
         # Compute collision pairs and algorithm flags in a single pass
-        self._n_possible_pairs, self._collision_pair_idx, pair_flags = self._compute_collision_pair_idx()
+        (
+            self._n_possible_pairs,
+            self._collision_pair_idx,
+            has_terrain,
+            has_convex_convex,
+            has_convex_specialization,
+            has_nonconvex_nonterrain,
+        ) = self._compute_collision_pair_idx()
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
-            has_terrain=pair_flags["has_terrain"],
-            has_convex_convex=pair_flags["has_convex_convex"],
-            has_convex_specialization=pair_flags["has_convex_specialization"],
-            has_nonconvex_nonterrain=pair_flags["has_nonconvex_nonterrain"],
+            has_terrain=has_terrain,
+            has_convex_convex=has_convex_convex,
+            has_convex_specialization=has_convex_specialization,
+            has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
@@ -209,13 +216,7 @@ class Collider:
         geoms = self._solver.geoms
 
         if n_geoms == 0:
-            pair_flags = {
-                "has_terrain": False,
-                "has_convex_convex": False,
-                "has_convex_specialization": False,
-                "has_nonconvex_nonterrain": False,
-            }
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), pair_flags
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), False, False, False, False
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -380,46 +381,45 @@ class Collider:
         collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
 
         # --- Compute algorithm flags from valid pairs ---
-        TERRAIN = gs.GEOM_TYPE.TERRAIN
-        BOX = gs.GEOM_TYPE.BOX
-        PLANE = gs.GEOM_TYPE.PLANE
-
         valid_type_a = geom_type[row[valid_indices]]
         valid_type_b = geom_type[col[valid_indices]]
         valid_convex_a = geom_is_convex[row[valid_indices]]
         valid_convex_b = geom_is_convex[col[valid_indices]]
 
-        has_any_vs_terrain = bool(np.any((valid_type_a == TERRAIN) | (valid_type_b == TERRAIN)))
+        has_any_vs_terrain = bool(
+            np.any((valid_type_a == gs.GEOM_TYPE.TERRAIN) | (valid_type_b == gs.GEOM_TYPE.TERRAIN))
+        )
         has_convex_vs_convex = bool(np.any(valid_convex_a & valid_convex_b))
 
         if self._solver._options.box_box_detection:
+            spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
             has_convex_specialization = bool(
-                np.any(
-                    (valid_type_a == TERRAIN)
-                    | (valid_type_a == BOX)
-                    | (valid_type_b == TERRAIN)
-                    | (valid_type_b == BOX)
-                )
+                np.any(np.isin(valid_type_a, spec_types) | np.isin(valid_type_b, spec_types))
             )
         else:
             has_convex_specialization = bool(
                 np.any(
-                    ((valid_type_a == BOX) & (valid_type_b == PLANE))
-                    | ((valid_type_a == PLANE) & (valid_type_b == BOX))
+                    ((valid_type_a == gs.GEOM_TYPE.BOX) & (valid_type_b == gs.GEOM_TYPE.PLANE))
+                    | ((valid_type_a == gs.GEOM_TYPE.PLANE) & (valid_type_b == gs.GEOM_TYPE.BOX))
                 )
             )
 
         has_nonconvex_vs_nonterrain = bool(
-            np.any(~(valid_convex_a & valid_convex_b) & (valid_type_a != TERRAIN) & (valid_type_b != TERRAIN))
+            np.any(
+                ~(valid_convex_a & valid_convex_b)
+                & (valid_type_a != gs.GEOM_TYPE.TERRAIN)
+                & (valid_type_b != gs.GEOM_TYPE.TERRAIN)
+            )
         )
 
-        pair_flags = {
-            "has_terrain": has_any_vs_terrain,
-            "has_convex_convex": has_convex_vs_convex,
-            "has_convex_specialization": has_convex_specialization,
-            "has_nonconvex_nonterrain": has_nonconvex_vs_nonterrain,
-        }
-        return n_possible_pairs, collision_pair_idx, pair_flags
+        return (
+            n_possible_pairs,
+            collision_pair_idx,
+            has_any_vs_terrain,
+            has_convex_vs_convex,
+            has_convex_specialization,
+            has_nonconvex_vs_nonterrain,
+        )
 
     def _compute_verts_connectivity(self):
         """
