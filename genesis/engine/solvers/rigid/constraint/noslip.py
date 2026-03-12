@@ -132,14 +132,7 @@ def kernel_compute_MinvJT(
                     if qd.static(static_rigid_sim_config.use_hibernation)
                     else i_0
                 )
-                func_solve_mass_entity_row(
-                    i_row,
-                    i_e,
-                    i_b,
-                    constraint_state.MinvJT,
-                    entities_info,
-                    rigid_global_info,
-                )
+                func_solve_mass_entity_row(-i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
