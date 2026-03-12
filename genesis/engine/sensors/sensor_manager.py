@@ -28,7 +28,7 @@ class SensorManager:
         self._cloned_cache: dict[tuple[bool, Type[torch.dtype]], torch.Tensor] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
-        sensor_options.validate(self._sim.scene)
+        sensor_options.validate_scene(self._sim.scene)
         sensor_cls, metadata_cls, data_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:

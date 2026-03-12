@@ -235,6 +235,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     Ma_ws: V_ANNOTATION
     grad: V_ANNOTATION
     Mgrad: V_ANNOTATION
+    MinvJT: V_ANNOTATION
     search: V_ANNOTATION
     efc_D: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
@@ -302,7 +303,7 @@ def get_constraint_state(constraint_solver, solver):
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
-    jac_relevant_dofs_shape = maybe_shape((len_constraints_, solver.n_dofs_, _B), constraint_solver.sparse_solve)
+    jac_relevant_dofs_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
@@ -340,6 +341,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
+        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),

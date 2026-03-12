@@ -504,8 +504,7 @@ class KinematicEntity(Entity):
             l_infos, links_j_infos, links_g_infos, eqs_info = uu.parse_urdf(morph, surface)
 
             # Mujoco's unified MJCF+URDF parser for only link, joints, and collision geometries properties
-            morph_ = copy(morph)
-            morph_.visualization = False
+            morph_ = morph.model_copy(update=dict(visualization=False))
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.

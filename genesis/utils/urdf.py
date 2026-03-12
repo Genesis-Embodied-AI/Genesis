@@ -201,7 +201,7 @@ def parse_urdf(morph, surface):
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
-                    surface.color is None
+                    surface.texture is None
                     and getattr(geom_prop, "material") is not None
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or not tmesh.visual.defined)

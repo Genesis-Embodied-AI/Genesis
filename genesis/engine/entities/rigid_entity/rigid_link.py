@@ -418,7 +418,7 @@ class KinematicLink(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}"
+        return f"{(self.__repr_name__())}: {self._uid}, name: '{self._name}', idx: {self._idx}"
 
 
 class RigidLink(KinematicLink):

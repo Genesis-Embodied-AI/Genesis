@@ -154,12 +154,11 @@ class Raytracer:
         # light objects
         self.lights = []
         for light in options.lights:
-            light_intensity = light.get("intensity", 1.0)
             light_surface = gs.surfaces.Emission(
-                color=map(lambda x: x * light_intensity, light["color"]),
+                color=tuple(x * light.intensity for x in light.color),
             )
             light_surface.update_texture()
-            self.lights.append(SphereLight(radius=light["radius"], pos=light["pos"], surface=light_surface))
+            self.lights.append(SphereLight(radius=light.radius, pos=light.pos, surface=light_surface))
 
         # backend and device selection: aligning with genesis if possible
         backend = gs.backend.name
@@ -357,7 +356,7 @@ class Raytracer:
                     image_data=np.ascontiguousarray(image_array).tobytes(),
                     width=image_array.shape[1],
                     height=image_array.shape[0],
-                    channel=texture.channel(),
+                    channel=texture.channel,
                     scale=texture.image_color,
                     encoding=texture.encoding,
                 )
@@ -370,10 +369,10 @@ class Raytracer:
 
     def add_surface(self, shape_name, surface):
         # add emission
-        if surface.get_emission() is not None:
+        if surface.emission is not None:
             emission_luisa = LuisaRenderPy.Light(
                 name=f"emis_{shape_name}",
-                emission=self.get_texture(surface.get_emission()),
+                emission=self.get_texture(surface.emission),
                 two_sided=False if surface.double_sided is None else surface.double_sided,
                 beam_angle=surface.cutoff,
             )

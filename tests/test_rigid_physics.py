@@ -3973,16 +3973,21 @@ def test_mesh_primitive_COM(show_viewer, tol):
 
 @pytest.mark.slow  # ~110s
 @pytest.mark.required
-@pytest.mark.parametrize("scale", [0.1, 10.0])
-@pytest.mark.parametrize("box_box_detection", [False, True])
+@pytest.mark.parametrize("scale", [0.04, 1.0])
+@pytest.mark.parametrize("friction", [0.5, 2.0])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
+def test_noslip_iterations(scale, friction, show_viewer, tol):
+    GRAVITY = -9.81
+    # FIXME: we need apply a larger force than expected to keep the boxes static
+    SAFETY_FACTOR = 2.5
+
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
+            gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
-            box_box_detection=box_box_detection,
+            use_gjk_collision=False,
             noslip_iterations=5,
         ),
         viewer_options=gs.options.ViewerOptions(
@@ -3998,45 +4003,58 @@ def test_noslip_iterations(scale, box_box_detection, show_viewer, tol):
     for i in range(3):
         scene.add_entity(
             gs.morphs.Box(
-                size=(scale, scale, scale),
-                pos=(i * (1 - (not box_box_detection) * 1e-3) * scale, 0, 0),
+                size=(scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i))),
+                pos=(i * (1 - 1e-3) * scale, 0, 0),
                 fixed=(i == 0),
+            ),
+            material=gs.materials.Rigid(
+                rho=200.0,
+                friction=friction,
             ),
             surface=gs.surfaces.Default(
                 color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
             ),
             visualize_contact=True,
         )
-    box_1, box_2 = scene.entities[1:]
+    _, box_1, box_2 = scene.entities
     scene.build()
 
-    rho = 200
-    coeff_f = 1.0
-    n_box = 2
-    g = 9.81
-    # FIXME: we need apply a larger force than expected to keep the boxes static
-    safety = 2.5
+    # Compute the force that must be applied to get the box in place without slipping
+    total_mass = box_1.get_mass() + box_2.get_mass()
+    force_x = (total_mass * GRAVITY) / friction
 
-    # simulate for 20 seconds
+    # Push the floating box that is further away from the fixed box in its direction
+    box_2.control_dofs_force(SAFETY_FACTOR * force_x, dofs_idx_local=0)
+
+    # Add position-based orientation control torque is used to stabilize contacts
+    for box in (box_1, box_2):
+        box.set_dofs_kp(1000.0 * total_mass, dofs_idx_local=slice(3, 6))
+        box.set_dofs_kv(100.0 * total_mass, dofs_idx_local=slice(3, 6))
+        box.control_dofs_position(0.0, dofs_idx_local=slice(3, 6))
+
+    # Recording rest positions after a few warmup steps
+    for _ in range(50):
+        scene.step()
+    boxes_pos_init = [box.get_pos() for box in (box_1, box_2)]
+
+    # Simulate for 20 seconds
     for _ in range(2000):
-        # push to -x direction
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
         scene.step()
 
-    # allow some small sliding due to first few frames
-    # scale = 0.1 is less stable than bigger scale
-    _, _, box_1_z = box_1.get_pos()
-    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
+    # Check that the floating boxes did not move
+    assert_allclose([box.get_pos() for box in (box_1, box_2)], boxes_pos_init, atol=5e-3)
 
-    # reduce the multiplier and it will slide
-    safety = 0.9
+    # Reduce the force below theoretical threshold
+    box_2.control_dofs_force(0.95 * force_x, dofs_idx_local=0)
+
+    # Simulate for a while
     for _ in range(300):
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
         scene.step()
 
-    # it will slip away
-    _, _, box_1_z = box_1.get_pos()
-    assert box_1_z < -scale
+    # Check that boxes are falling
+    for box in (box_1, box_2):
+        _, _, box_z = box.get_pos()
+        assert box_z < -scale
 
 
 @pytest.mark.required

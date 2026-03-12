@@ -149,29 +149,19 @@ class Scene(RBC):
 
         self.sim_options = sim_options
         self.coupler_options = coupler_options
-        self.tool_options = tool_options
-        self.rigid_options = rigid_options
-        self.kinematic_options = kinematic_options
-        self.mpm_options = mpm_options
-        self.sph_options = sph_options
-        self.fem_options = fem_options
-        self.sf_options = sf_options
-        self.pbd_options = pbd_options
+        self.tool_options = tool_options.model_copy_from(sim_options)
+        self.rigid_options = rigid_options.model_copy_from(sim_options)
+        self.kinematic_options = kinematic_options.model_copy_from(sim_options)
+        self.mpm_options = mpm_options.model_copy_from(sim_options)
+        self.sph_options = sph_options.model_copy_from(sim_options)
+        self.fem_options = fem_options.model_copy_from(sim_options)
+        self.sf_options = sf_options.model_copy_from(sim_options)
+        self.pbd_options = pbd_options.model_copy_from(sim_options)
         self.profiling_options = profiling_options
 
         self.vis_options = vis_options
         self.viewer_options = viewer_options
         self.renderer_options = renderer
-
-        # merge options
-        self.tool_options.copy_attributes_from(self.sim_options)
-        self.rigid_options.copy_attributes_from(self.sim_options)
-        self.kinematic_options.copy_attributes_from(self.sim_options)
-        self.mpm_options.copy_attributes_from(self.sim_options)
-        self.sph_options.copy_attributes_from(self.sim_options)
-        self.fem_options.copy_attributes_from(self.sim_options)
-        self.sf_options.copy_attributes_from(self.sim_options)
-        self.pbd_options.copy_attributes_from(self.sim_options)
 
         # simulator
         self._sim = Simulator(
