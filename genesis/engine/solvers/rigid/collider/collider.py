@@ -137,45 +137,23 @@ class Collider:
         ):
             n_contacts_per_pair = max(n_contacts_per_pair, self._box_MAXCONPAIR)
 
-        # Determine which combination of collision detection algorithms must be enabled
-        self._n_possible_pairs, self._collision_pair_idx = self._compute_collision_pair_idx()
-        has_any_vs_terrain = False
-        has_convex_vs_convex = False
-        has_convex_specialization = False
-        has_nonconvex_vs_nonterrain = False
-        for i_ga in range(self._solver.n_geoms):
-            for i_gb in range(i_ga + 1, self._solver.n_geoms):
-                if self._collision_pair_idx[i_ga, i_gb] == -1:
-                    continue
-                geom_a, geom_b = self._solver.geoms[i_ga], self._solver.geoms[i_gb]
-                if geom_a.type == gs.GEOM_TYPE.TERRAIN or geom_b.type == gs.GEOM_TYPE.TERRAIN:
-                    has_any_vs_terrain = True
-                if geom_a.is_convex and geom_b.is_convex:
-                    has_convex_vs_convex = True
-                if self._solver._options.box_box_detection:
-                    if geom_a.type in (gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX) or geom_b.type in (
-                        gs.GEOM_TYPE.TERRAIN,
-                        gs.GEOM_TYPE.BOX,
-                    ):
-                        has_convex_specialization = True
-                elif (geom_a.type == gs.GEOM_TYPE.BOX and geom_b.type == gs.GEOM_TYPE.PLANE) or (
-                    geom_a.type == gs.GEOM_TYPE.PLANE and geom_b.type == gs.GEOM_TYPE.BOX
-                ):
-                    has_convex_specialization = True
-                if (
-                    not (geom_a.is_convex and geom_b.is_convex)
-                    and geom_a.type != gs.GEOM_TYPE.TERRAIN
-                    and geom_b.type != gs.GEOM_TYPE.TERRAIN
-                ):
-                    has_nonconvex_vs_nonterrain = True
+        # Compute collision pairs and algorithm flags in a single pass
+        (
+            self._n_possible_pairs,
+            self._collision_pair_idx,
+            has_terrain,
+            has_convex_convex,
+            has_convex_specialization,
+            has_nonconvex_nonterrain,
+        ) = self._compute_collision_pair_idx()
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
-            has_terrain=has_any_vs_terrain,
-            has_convex_convex=has_convex_vs_convex,
+            has_terrain=has_terrain,
+            has_convex_convex=has_convex_convex,
             has_convex_specialization=has_convex_specialization,
-            has_nonconvex_nonterrain=has_nonconvex_vs_nonterrain,
+            has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
             ccd_algorithm=ccd_algorithm,
         )
@@ -220,10 +198,13 @@ class Collider:
 
     def _compute_collision_pair_idx(self):
         """
-        Compute flat indices of all valid collision pairs.
+        Compute flat indices of all valid collision pairs, plus algorithm flags.
 
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
+
+        Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
+        for has_terrain, has_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
         """
         # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
@@ -231,9 +212,15 @@ class Collider:
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
 
+        n_geoms = self._solver.n_geoms
+        geoms = self._solver.geoms
+
+        if n_geoms == 0:
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), False, False, False, False
+
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
-        ipc_delegated_links = set()
-        ipc_only_links = set()
+        ipc_delegated_link_idxs = set()
+        ipc_only_link_idxs = set()
         if isinstance(self._solver.sim.coupler, IPCCoupler):
             for entity in self._solver._entities:
                 if not entity.material.needs_coup:
@@ -242,114 +229,136 @@ class Collider:
                 if mode is None:
                     continue
                 if mode == "ipc_only":
-                    ipc_only_links.update(entity.links)
+                    ipc_only_link_idxs.update(l.idx for l in entity.links)
                 link_filter_names = entity.material.coup_links
                 if mode == "two_way_soft_constraint" and link_filter_names is not None:
                     for name in link_filter_names:
-                        ipc_delegated_links.add(entity.get_link(name=name))
+                        ipc_delegated_link_idxs.add(entity.get_link(name=name).idx)
                 else:
-                    ipc_delegated_links.update(entity.links)
+                    ipc_delegated_link_idxs.update(l.idx for l in entity.links)
 
-        # Compute vertices all geometries, shrunk by 0.1% to avoid false positive when detecting self-collision
-        geoms_verts: list[np.ndarray] = []
-        for geom in self._solver.geoms:
-            verts = tensor_to_array(geom.get_verts())
-            verts = verts.reshape((-1, *verts.shape[-2:]))
-            centroid = verts.mean(axis=1, keepdims=True)
-            verts = centroid + (1.0 - 1e-3) * (verts - centroid)
-            geoms_verts.append(verts)
+        # Pre-compute per-geom properties into numpy arrays for vectorized filtering
+        geom_link_idx = np.array([g.link.idx for g in geoms], dtype=np.int32)
+        geom_root_idx = np.array([g.link.root_idx for g in geoms], dtype=np.int32)
+        geom_is_fixed = np.array([g.link.is_fixed for g in geoms], dtype=bool)
+        geom_entity_id = np.array([id(g.entity) for g in geoms], dtype=np.int64)
+        geom_contype = np.array([g.contype for g in geoms], dtype=np.int64)
+        geom_conaffinity = np.array([g.conaffinity for g in geoms], dtype=np.int64)
+        geom_local_mask = np.array([g.entity.is_local_collision_mask for g in geoms], dtype=bool)
+        geom_is_ipc_only = np.array([g.link.idx in ipc_only_link_idxs for g in geoms], dtype=bool)
+        geom_is_ipc_deleg = np.array([g.link.idx in ipc_delegated_link_idxs for g in geoms], dtype=bool)
+        geom_type = np.array([g.type for g in geoms], dtype=np.int32)
+        geom_is_convex = np.array([g.is_convex for g in geoms], dtype=bool)
 
-        # Track pairs that are colliding in neutral configuration for warning
+        # Build weld pairs set for O(1) lookup (use sorted tuple keys)
+        weld_pairs = set()
+        for eq in self._solver.equalities:
+            if eq.type == gs.EQUALITY_TYPE.WELD:
+                a, b = eq.eq_obj1id, eq.eq_obj2id
+                weld_pairs.add((min(a, b), max(a, b)))
+
+        # --- Vectorized filtering: build upper-triangular valid-pair mask ---
+        row, col = np.triu_indices(n_geoms, k=1)
+
+        link_a = geom_link_idx[row]
+        link_b = geom_link_idx[col]
+
+        # geoms in the same link
+        valid = link_a != link_b
+
+        # Skip all pairs involving ipc_only links
+        valid &= ~geom_is_ipc_only[row]
+        valid &= ~geom_is_ipc_only[col]
+
+        # Skip pairs where both links are delegated to IPC
+        valid &= ~(geom_is_ipc_deleg[row] & geom_is_ipc_deleg[col])
+
+        # pair of fixed links wrt the world
+        valid &= ~(geom_is_fixed[row] & geom_is_fixed[col])
+
+        # contype and conaffinity
+        same_entity = geom_entity_id[row] == geom_entity_id[col]
+        has_local_mask = geom_local_mask[row] | geom_local_mask[col]
+        con_match = (geom_contype[row] & geom_conaffinity[col]) | (geom_contype[col] & geom_conaffinity[row])
+        con_skip = (same_entity | ~has_local_mask) & (con_match == 0)
+        valid &= ~con_skip
+
+        # self collision (same root) — disabled
+        same_root = geom_root_idx[row] == geom_root_idx[col]
+        if not self._solver._enable_self_collision:
+            valid &= ~same_root
+
+        # Weld constraint filtering
+        if weld_pairs:
+            link_min = np.minimum(link_a, link_b)
+            link_max = np.maximum(link_a, link_b)
+            is_weld = np.array([(link_min[i], link_max[i]) in weld_pairs for i in range(len(row))], dtype=bool)
+            valid &= ~is_weld
+
+        # --- Self-collision: adjacent and neutral overlap checks (Python loop, only same-root pairs) ---
+        # These checks only apply when self_collision is enabled and the pair passed all vectorized filters
         self_colliding_pairs: list[tuple[int, int]] = []
 
-        n_possible_pairs = 0
-        collision_pair_idx = np.full((self._solver.n_geoms, self._solver.n_geoms), fill_value=-1, dtype=gs.np_int)
-        for i_ga in range(self._solver.n_geoms):
-            geom_a = self._solver.geoms[i_ga]
-            link_a = geom_a.link
-            e_a = geom_a.entity
-            for i_gb in range(i_ga + 1, self._solver.n_geoms):
-                geom_b = self._solver.geoms[i_gb]
-                link_b = geom_b.link
-                e_b = geom_b.entity
+        needs_self_check = self._solver._enable_self_collision and np.any(valid & same_root)
+        needs_neutral_check = needs_self_check and not self._solver._enable_neutral_collision
 
-                # geoms in the same link
-                if link_a is link_b:
-                    continue
+        # Lazily compute geom vertices only for geoms that need neutral overlap checks
+        geoms_verts: dict[int, np.ndarray] = {}
+        if needs_neutral_check:
+            self_root_indices = np.where(valid & same_root)[0]
+            self_root_geom_idxs = np.unique(np.concatenate([row[self_root_indices], col[self_root_indices]]))
+            # Compute vertices only for geoms involved in self-collision pairs,
+            # shrunk by 0.1% to avoid false positive when detecting self-collision
+            for gi in self_root_geom_idxs:
+                verts = tensor_to_array(geoms[gi].get_verts())
+                verts = verts.reshape((-1, *verts.shape[-2:]))
+                centroid = verts.mean(axis=1, keepdims=True)
+                verts = centroid + (1.0 - 1e-3) * (verts - centroid)
+                geoms_verts[gi] = verts
 
-                # Skip all pairs involving ipc_only links (IPC fully controls their pose)
-                if link_a in ipc_only_links or link_b in ipc_only_links:
-                    continue
+        if needs_self_check:
+            self_root_indices = np.where(valid & same_root)[0]
+            for idx in self_root_indices:
+                i_ga, i_gb = row[idx], col[idx]
+                link_ga = geoms[i_ga].link
+                link_gb = geoms[i_gb].link
 
-                # Skip pairs where both links are delegated to IPC
-                if link_a in ipc_delegated_links and link_b in ipc_delegated_links:
-                    continue
-
-                # Filter out right away weld constraint that have been declared statically and cannot be removed
-                is_valid = True
-                for eq in self._solver.equalities:
-                    if eq.type == gs.EQUALITY_TYPE.WELD and {eq.eq_obj1id, eq.eq_obj2id} == {link_a.idx, link_b.idx}:
-                        is_valid = False
-                        break
-                if not is_valid:
-                    continue
-
-                # contype and conaffinity
-                if ((e_a is e_b) or not (e_a.is_local_collision_mask or e_b.is_local_collision_mask)) and not (
-                    (geom_a.contype & geom_b.conaffinity) or (geom_b.contype & geom_a.conaffinity)
-                ):
-                    continue
-
-                # pair of fixed links wrt the world
-                if link_a.is_fixed and link_b.is_fixed:
-                    continue
-
-                # self collision
-                if link_a.root_idx == link_b.root_idx:
-                    if not self._solver._enable_self_collision:
+                # adjacent links
+                # FIXME: Links should be considered adjacent if connected by only fixed joints.
+                if not self._solver._enable_adjacent_collision:
+                    is_adjacent = False
+                    link_a_, link_b_ = (link_ga, link_gb) if link_ga.idx < link_gb.idx else (link_gb, link_ga)
+                    while link_b_.parent_idx != -1:
+                        if link_b_.parent_idx == link_a_.idx:
+                            is_adjacent = True
+                            break
+                        if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
+                            break
+                        link_b_ = self._solver.links[link_b_.parent_idx]
+                    if is_adjacent:
+                        valid[idx] = False
                         continue
 
-                    # adjacent links
-                    # FIXME: Links should be considered adjacent if connected by only fixed joints.
-                    if not self._solver._enable_adjacent_collision:
-                        is_adjacent = False
-                        link_a_, link_b_ = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
-                        while link_b_.parent_idx != -1:
-                            if link_b_.parent_idx == link_a_.idx:
-                                is_adjacent = True
-                                break
-                            if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in link_b_.joints):
-                                break
-                            link_b_ = self._solver.links[link_b_.parent_idx]
-                        if is_adjacent:
+                # active in neutral configuration (qpos0)
+                if needs_neutral_check:
+                    verts_a = geoms_verts[i_ga][0]
+                    mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geoms[i_ga].init_faces, process=False)
+                    verts_b = geoms_verts[i_gb][0]
+                    mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geoms[i_gb].init_faces, process=False)
+                    bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
+                    if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
+                        voxels_a = mesh_a.voxelized(
+                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
+                        )
+                        voxels_b = mesh_b.voxelized(
+                            pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
+                        )
+                        coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
+                        coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
+                        if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
+                            self_colliding_pairs.append((i_ga, i_gb))
+                            valid[idx] = False
                             continue
-
-                    # active in neutral configuration (qpos0)
-                    is_self_colliding = False
-                    for i_b in range(1 if not self._solver._enable_neutral_collision else 0):
-                        verts_a = geoms_verts[i_ga][i_b]
-                        mesh_a = trimesh.Trimesh(vertices=verts_a, faces=geom_a.init_faces, process=False)
-                        verts_b = geoms_verts[i_gb][i_b]
-                        mesh_b = trimesh.Trimesh(vertices=verts_b, faces=geom_b.init_faces, process=False)
-                        bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
-                        if not ((bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any()):
-                            voxels_a = mesh_a.voxelized(
-                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_a.extents))
-                            )
-                            voxels_b = mesh_b.voxelized(
-                                pitch=min(NEUTRAL_COLLISION_RES_ABS, NEUTRAL_COLLISION_RES_REL * max(mesh_b.extents))
-                            )
-                            coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
-                            coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
-                            if voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any():
-                                is_self_colliding = True
-                                self_colliding_pairs.append((i_ga, i_gb))
-                                break
-                    if is_self_colliding:
-                        continue
-
-                collision_pair_idx[i_ga, i_gb] = n_possible_pairs
-                n_possible_pairs = n_possible_pairs + 1
 
         # Emit warning for self-collision pairs
         if self_colliding_pairs:
@@ -360,7 +369,52 @@ class Collider:
                 "This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'."
             )
 
-        return n_possible_pairs, collision_pair_idx
+        # --- Build collision_pair_idx and count ---
+        valid_indices = np.where(valid)[0]
+        n_possible_pairs = len(valid_indices)
+        collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
+        collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
+
+        # --- Compute algorithm flags from valid pairs ---
+        valid_type_a = geom_type[row[valid_indices]]
+        valid_type_b = geom_type[col[valid_indices]]
+        valid_convex_a = geom_is_convex[row[valid_indices]]
+        valid_convex_b = geom_is_convex[col[valid_indices]]
+
+        has_any_vs_terrain = bool(
+            np.any((valid_type_a == gs.GEOM_TYPE.TERRAIN) | (valid_type_b == gs.GEOM_TYPE.TERRAIN))
+        )
+        has_convex_vs_convex = bool(np.any(valid_convex_a & valid_convex_b))
+
+        if self._solver._options.box_box_detection:
+            spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
+            has_convex_specialization = bool(
+                np.any(np.isin(valid_type_a, spec_types) | np.isin(valid_type_b, spec_types))
+            )
+        else:
+            has_convex_specialization = bool(
+                np.any(
+                    ((valid_type_a == gs.GEOM_TYPE.BOX) & (valid_type_b == gs.GEOM_TYPE.PLANE))
+                    | ((valid_type_a == gs.GEOM_TYPE.PLANE) & (valid_type_b == gs.GEOM_TYPE.BOX))
+                )
+            )
+
+        has_nonconvex_vs_nonterrain = bool(
+            np.any(
+                ~(valid_convex_a & valid_convex_b)
+                & (valid_type_a != gs.GEOM_TYPE.TERRAIN)
+                & (valid_type_b != gs.GEOM_TYPE.TERRAIN)
+            )
+        )
+
+        return (
+            n_possible_pairs,
+            collision_pair_idx,
+            has_any_vs_terrain,
+            has_convex_vs_convex,
+            has_convex_specialization,
+            has_nonconvex_vs_nonterrain,
+        )
 
     def _compute_verts_connectivity(self):
         """
