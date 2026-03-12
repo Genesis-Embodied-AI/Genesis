@@ -107,7 +107,7 @@ def pytorch_profiler(pytestconfig, request):
             f.write(f"=== Kernel Summary (sorted by {sort_by}) ===\n")
             f.write(table + "\n")
 
-        print(f"Exported trace to {trace_path}, summary to {summary_path}", file=sys.stderr, flush=True)
+        print(f"Exported trace to {trace_path}, summary to {summary_path}")
 
     prof = torch.profiler.profile(
         activities=activities,
@@ -134,7 +134,6 @@ def pytorch_profiler(pytestconfig, request):
         print(
             f"WARNING: on_trace_ready never fired ({step_counter[0]} steps called). Exporting fallback.",
             file=sys.stderr,
-            flush=True,
         )
         trace_path = _path(f"trace_{label}_fallback.json")
         prof.export_chrome_trace(trace_path)
@@ -145,4 +144,4 @@ def pytorch_profiler(pytestconfig, request):
         with open(summary_path, "w") as f:
             f.write(f"=== Kernel Summary (sorted by {sort_by}) ===\n")
             f.write(table + "\n")
-        print(f"Fallback summary written to {summary_path}", file=sys.stderr, flush=True)
+        print(f"Fallback summary written to {summary_path}")
