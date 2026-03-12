@@ -17,9 +17,7 @@ def _normalize_vector(vec):
 
 
 def _is_sequence(v):
-    return isinstance(v, (list, tuple, np.ndarray)) or (
-        hasattr(v, "__len__") and hasattr(v, "__getitem__") and not isinstance(v, (str, bytes, Mapping))
-    )
+    return hasattr(v, "__len__") and hasattr(v, "__getitem__") and not isinstance(v, (str, bytes, Mapping))
 
 
 def _scalar_or_sequence_to_tuple(v):

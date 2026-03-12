@@ -6,6 +6,7 @@ import numpy as np
 from pydantic import Field, StrictBool, model_validator
 
 import genesis as gs
+from genesis.typing import ColorFloat
 from genesis.utils import mesh as mu
 
 from .misc import FoamOptions
@@ -77,7 +78,7 @@ class Surface(Options):
     _color_target: ClassVar[str] = "diffuse_texture"
 
     ior: float | None = None
-    default_roughness: float = 1.0
+    default_roughness: ColorFloat = 1.0
     vis_mode: Literal["visual", "collision", "particle", "sdf", "recon"] | None = None
     smooth: StrictBool = True
     double_sided: StrictBool | None = None
@@ -320,7 +321,13 @@ class Glass(Surface):
     emissive_texture: Texture | None = None
 
     def __init__(self, *, roughness: float = 0.0, ior: float = 1.5, thickness: float | None = None, **data) -> None:
-        super().__init__(roughness=roughness, ior=ior, thickness=thickness, **data)
+        super().__init__(
+            roughness=roughness,
+            ior=ior,
+            thickness=thickness,
+            default_roughness=data.pop("default_roughness", roughness),
+            **data,
+        )
 
     @model_validator(mode="before")
     @classmethod
@@ -421,6 +428,9 @@ class Metal(Surface):
     roughness_texture: Texture | None = None
     normal_texture: Texture | None = None
     emissive_texture: Texture | None = None
+
+    def __init__(self, *, roughness: float = 0.1, **data) -> None:
+        super().__init__(roughness=roughness, default_roughness=data.pop("default_roughness", roughness), **data)
 
     @property
     def texture(self) -> Texture | None:
@@ -735,7 +745,9 @@ class Rough(Plastic):
     """
 
     def __init__(self, *, roughness: float = 1.0, ior: float = 1.5, **data) -> None:
-        super().__init__(roughness=roughness, ior=ior, **data)
+        super().__init__(
+            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
+        )
 
 
 class Smooth(Plastic):
@@ -744,7 +756,9 @@ class Smooth(Plastic):
     """
 
     def __init__(self, *, roughness: float = 0.1, ior: float = 1.5, **data) -> None:
-        super().__init__(roughness=roughness, ior=ior, **data)
+        super().__init__(
+            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
+        )
 
 
 class Reflective(Plastic):
@@ -753,7 +767,9 @@ class Reflective(Plastic):
     """
 
     def __init__(self, *, roughness: float = 0.01, ior: float = 2.0, **data) -> None:
-        super().__init__(roughness=roughness, ior=ior, **data)
+        super().__init__(
+            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
+        )
 
 
 class Collision(Plastic):
@@ -771,7 +787,13 @@ class Water(Glass):
     """
 
     def __init__(self, *, color: tuple = (0.61, 0.98, 0.93), roughness: float = 0.2, ior: float = 1.2, **data) -> None:
-        super().__init__(color=color, roughness=roughness, ior=ior, **data)
+        super().__init__(
+            color=color,
+            roughness=roughness,
+            ior=ior,
+            default_roughness=data.pop("default_roughness", roughness),
+            **data,
+        )
 
 
 class Iron(Metal):
