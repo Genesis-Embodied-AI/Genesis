@@ -294,6 +294,20 @@ def double_pendulum():
 
 
 @pytest.fixture(scope="session")
+def undefined_inertia():
+    """Generate a URDF with a single link that has no inertial element."""
+    urdf = ET.Element("robot", name="undefined_inertia")
+    link = ET.SubElement(urdf, "link", name="base_link")
+    visual = ET.SubElement(link, "visual")
+    geometry = ET.SubElement(visual, "geometry")
+    ET.SubElement(geometry, "sphere", radius="0.03")
+    collision = ET.SubElement(link, "collision")
+    geometry = ET.SubElement(collision, "geometry")
+    ET.SubElement(geometry, "sphere", radius="0.03")
+    return urdf
+
+
+@pytest.fixture(scope="session")
 def double_ball_pendulum():
     mjcf = ET.Element("mujoco", model="double_ball_pendulum")
 
@@ -2815,6 +2829,32 @@ def test_urdf_parsing(show_viewer, tol):
         assert_allclose(door_pos_diff, 0, tol=5e-3)
     assert_allclose(scene.rigid_solver.dofs_state.vel.to_numpy(), 0.0, tol=1e-3)
     _check_entity_positions(relative=True, tol=2e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["undefined_inertia"])
+def test_urdf_parsing_undefined_inertia(xml_path, show_viewer):
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.5, 0.5, 0.5),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+
+    entity = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=xml_path,
+            pos=(0.0, 0.0, 0.1),
+        )
+    )
+
+    scene.build()
+
+    for i in range(30):
+        scene.step()
+    assert_allclose(entity.get_pos(), (0, 0, 0.03), tol=1e-3)
 
 
 @pytest.mark.required
