@@ -8,7 +8,7 @@ from pydantic import model_validator, computed_field, BeforeValidator, Field
 
 import genesis as gs
 import genesis.utils.mesh as mu
-from genesis.typing import MaybeColorArrayType, MaybeFArrayType, ColorArrayType, NDArrayType
+from genesis.typing import LaxUnitIntervalArrayType, LaxFArrayType, UnitIntervalArrayType, NDArrayType
 
 from .options import Options
 
@@ -58,7 +58,7 @@ class ColorTexture(Texture):
         Default is (1.0, 1.0, 1.0).
     """
 
-    color: MaybeFArrayType = (1.0, 1.0, 1.0)
+    color: LaxFArrayType = (1.0, 1.0, 1.0)
 
     def check_dim(self, dim: int) -> Texture | None:
         if len(self.color) > dim:
@@ -107,7 +107,7 @@ class ImageTexture(Texture):
 
     image_path: str | None = None
     image_array: NDArrayType | None
-    image_color: ColorArrayType
+    image_color: UnitIntervalArrayType
     encoding: Annotated[Literal["srgb", "linear"], BeforeValidator(lambda e: str(e).lower())] = "srgb"
 
     def __init__(
@@ -115,7 +115,7 @@ class ImageTexture(Texture):
         *,
         image_path: str | None = None,
         image_array: np.ndarray | None = None,
-        image_color: MaybeColorArrayType | float | None = None,
+        image_color: LaxUnitIntervalArrayType | float | None = None,
         encoding: str = "srgb",
         **data,
     ) -> None:

@@ -21,7 +21,6 @@ from genesis.typing import (
     StrArrayType,
     UnitVec3FType,
     UnitVec4FType,
-    Vec2FType,
     Vec2IType,
     PositiveVec2FType,
     Vec3FType,

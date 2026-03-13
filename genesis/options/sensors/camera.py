@@ -75,7 +75,7 @@ class RasterizerCameraOptions(BaseCameraOptions):
     # Camera images are updated lazily on read(), so skip per-step measured-cache updates
     update_ground_truth_only: StrictBool = True
 
-    def model_post_init(self, context):
+    def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
@@ -140,7 +140,7 @@ class BatchRendererCameraOptions(BaseCameraOptions):
     use_rasterizer: StrictBool = True
     update_ground_truth_only: StrictBool = True
 
-    def model_post_init(self, context):
+    def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
         if self.far <= self.near:
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")

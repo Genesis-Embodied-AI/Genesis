@@ -197,7 +197,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         shared_metadata.bvh.build()
 
     def build(self):
-        super().build()  # set shared metadata from RigidSensorMixin
+        super().build()
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:

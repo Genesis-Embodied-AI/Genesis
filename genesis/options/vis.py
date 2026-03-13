@@ -4,7 +4,7 @@ from pydantic import StrictBool, StrictInt, Field, model_validator
 
 import genesis as gs
 from genesis.datatypes import List
-from genesis.typing import IArrayType, PositiveFloat, PositiveInt, PositiveVec2IType, Vec3FType, Color3Type
+from genesis.typing import IArrayType, PositiveFloat, PositiveInt, PositiveVec2IType, Vec3FType, UnitIntervalVec3Type
 
 from .options import Options
 
@@ -58,20 +58,20 @@ class ViewerOptions(Options):
 class DirectionalLight(Options):
     type: Literal["directional"] = "directional"
     dir: Vec3FType
-    color: Color3Type
+    color: UnitIntervalVec3Type
     intensity: float
 
 
 class PointLight(Options):
     type: Literal["point"] = "point"
     pos: Vec3FType
-    color: Color3Type
+    color: UnitIntervalVec3Type
     intensity: float
 
 
 class AmbientLight(Options):
     type: Literal["ambient"] = "ambient"
-    color: Color3Type
+    color: UnitIntervalVec3Type
     intensity: float
 
 
@@ -141,8 +141,8 @@ class VisOptions(Options):
     shadow: StrictBool = True
     plane_reflection: StrictBool = False
     env_separate_rigid: StrictBool = False
-    background_color: Color3Type = (0.04, 0.08, 0.12)
-    ambient_light: Color3Type = (0.1, 0.1, 0.1)
+    background_color: UnitIntervalVec3Type = (0.04, 0.08, 0.12)
+    ambient_light: UnitIntervalVec3Type = (0.1, 0.1, 0.1)
     visualize_mpm_boundary: StrictBool = False
     visualize_sph_boundary: StrictBool = False
     visualize_pbd_boundary: StrictBool = False
@@ -152,7 +152,7 @@ class VisOptions(Options):
     contact_force_scale: PositiveFloat = 0.01
     n_support_neighbors: StrictInt = 12
     rendered_envs_idx: IArrayType | None = None
-    lights: Annotated[List[LightType], Field(validate_default=True, strict=False)] = List(
+    lights: Annotated[List[LightType], Field(strict=False)] = List(
         (DirectionalLight(dir=(-1, -1, -1), color=(1.0, 1.0, 1.0), intensity=5.0),)
     )
 

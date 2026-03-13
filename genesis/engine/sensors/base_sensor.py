@@ -2,19 +2,19 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
 
-import quadrants as qd
 import numpy as np
 import torch
 
 import genesis as gs
+from genesis.typing import NumArrayType, NumericType
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.options.sensors.options import SensorOptions
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
+    from genesis.options.sensors.options import SensorOptions
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -22,17 +22,13 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-NumericType = int | float | bool
-NumericSequenceType = NumericType | Sequence[NumericType]
-
-
-def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
+def _to_tuple(*values: NumArrayType, length_per_value: int = 3) -> tuple[NumericType, ...]:
     """
     Convert all input values to one flattened tuple, where each value is ensured to be a tuple of length_per_value.
     """
     full_tuple = ()
     for value in values:
-        if isinstance(value, (int, float)):
+        if isinstance(value, NumericType):
             value = (value,) * length_per_value
         elif isinstance(value, torch.Tensor):
             value = value.reshape((-1,))

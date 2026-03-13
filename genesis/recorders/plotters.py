@@ -5,8 +5,8 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Sequence
-from functools import partial
-from typing import Any, Callable, T
+from functools import partial, cached_property
+from typing import Any, Callable, TypeVar
 
 import numpy as np
 import torch
@@ -46,6 +46,9 @@ MPL_PLOTTER_RESCALE_RATIO_X = 0.15
 MPL_PLOTTER_RESCALE_RATIO_Y = 0.15
 
 COLORS = itertools.cycle(("r", "g", "b", "c", "m", "y"))
+
+
+T = TypeVar("T")
 
 
 def _data_to_array(data: Sequence) -> np.ndarray:
@@ -433,7 +436,7 @@ class BaseMPLPlotter(BasePlotter):
 
         return rgb_array
 
-    @property
+    @cached_property
     def run_in_thread(self) -> bool:
         from matplotlib.backends.backend_agg import FigureCanvasAgg
 

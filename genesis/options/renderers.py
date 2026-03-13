@@ -107,7 +107,7 @@ class RayTracer(RendererOptions):
     env_quat: UnitVec4FType | None = None
 
     # sphere lights
-    lights: Annotated[List[SphereLight], Field(validate_default=True, strict=False)] = List(
+    lights: Annotated[List[SphereLight], Field(strict=False)] = List(
         (SphereLight(pos=(0.0, 0.0, 10.0), color=(1.0, 1.0, 1.0), intensity=10.0, radius=4.0),)
     )
 
