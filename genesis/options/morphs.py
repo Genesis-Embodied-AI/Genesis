@@ -14,6 +14,7 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.misc as mu
+import genesis.ext.urdfpy as urdfpy
 from genesis.typing import (
     NonNegativeInt,
     PositiveFloat,
@@ -1011,9 +1012,7 @@ class URDF(FileMorph):
             gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
 
     def is_format(self, format):
-        from genesis.ext.urdfpy.urdf import URDF
-
-        if isinstance(self.file, URDF):
+        if isinstance(self.file, urdfpy.URDF):
             return True
         return super().is_format(format)
 
