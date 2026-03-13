@@ -138,16 +138,6 @@ class KinematicEntity(Entity):
         # Load heterogeneous variants (if any)
         self._load_heterogeneous_morphs()
 
-    def _compute_variant_init_qpos(self, morph):
-        """Compute the init_qpos for a heterogeneous variant from its morph pos/quat.
-
-        For free-base entities, the free joint's init_qpos encodes the morph position.
-        For fixed-base entities, init_qpos has no positional component.
-        """
-        if morph.fixed:
-            return np.array([])
-        return np.concatenate([np.asarray(morph.pos), np.asarray(morph.quat)])
-
     def _load_heterogeneous_morphs(self):
         """
         Load heterogeneous morphs (additional geometry variants for parallel environments).
@@ -182,7 +172,8 @@ class KinematicEntity(Entity):
 
             cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
             self._add_heterogeneous_variant(link, cg_infos, vg_infos)
-            self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
+            init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
+            self._variant_init_qpos.append(init_qpos)
 
     def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
         """Add a heterogeneous variant to the link. RigidEntity overrides to add collision geoms."""
@@ -1798,24 +1789,15 @@ class RigidEntity(KinematicEntity):
         for morph in self._morph_heterogeneous:
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
                 self._load_heterogeneous_scene_variant(morph)
-            elif isinstance(morph, gs.morphs.Mesh):
-                if len(self._links) != 1:
-                    gs.raise_exception("Primitive/Mesh heterogeneous morphs only support single-link entities.")
-                g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+            else:  # isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive))
+                if isinstance(morph, gs.morphs.Mesh):
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                else:
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
-                self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
-            elif isinstance(morph, gs.morphs.Primitive):
-                if len(self._links) != 1:
-                    gs.raise_exception("Primitive/Mesh heterogeneous morphs only support single-link entities.")
-                g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
-                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
-                self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
-            else:
-                gs.raise_exception(
-                    f"morph_heterogeneous only supports URDF, MJCF, Primitive, and Mesh, got: {type(morph).__name__}."
-                )
+                init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
+                self._variant_init_qpos.append(init_qpos)
 
         # For multi-link entities, reassign indices and recompute variant ranges
         if len(self._links) > 1:
