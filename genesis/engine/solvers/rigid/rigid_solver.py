@@ -248,11 +248,6 @@ class RigidSolver(KinematicSolver):
         self._hibernation_thresh_vel = options.hibernation_thresh_vel
         self._hibernation_thresh_acc = options.hibernation_thresh_acc
 
-        if options.contact_resolve_time is not None:
-            gs.logger.warning(
-                "Rigid option 'contact_resolve_time' is deprecated and will be remove in future release. Please "
-                "use 'constraint_timeconst' instead."
-            )
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
 

@@ -57,6 +57,122 @@ def kernel_build_efc_AR_b(
             constraint_state.efc_b[i_c, i_b] = v
 
 
+@qd.func
+def func_solve_mass_entity_row(
+    i_row: qd.int32,
+    i_e: qd.int32,
+    i_b: qd.int32,
+    buf: array_class.V_ANNOTATION,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """LDL^T forward-backward substitution on buf[i_row, :, i_b].
+
+    Same algorithm as func_solve_mass_entity (forward-only path), but operates
+    on a 3D buffer indexed by (constraint_row, dof, batch). This allows
+    different constraint rows to be solved in parallel since each row uses
+    a separate memory slice.
+    """
+    if rigid_global_info.mass_mat_mask[i_e, i_b]:
+        entity_dof_start = entities_info.dof_start[i_e]
+        entity_dof_end = entities_info.dof_end[i_e]
+        n_dofs = entities_info.n_dofs[i_e]
+
+        # Step 1: Solve w s.t. L^T @ w = y (backward substitution)
+        for i_d_ in range(n_dofs):
+            i_d = entity_dof_end - i_d_ - 1
+            curr_out = buf[i_row, i_d, i_b]
+            for j_d in range(i_d + 1, entity_dof_end):
+                curr_out = curr_out - rigid_global_info.mass_mat_L[j_d, i_d, i_b] * buf[i_row, j_d, i_b]
+            buf[i_row, i_d, i_b] = curr_out
+
+        # Step 2: z = D^{-1} @ w
+        for i_d in range(entity_dof_start, entity_dof_end):
+            buf[i_row, i_d, i_b] = buf[i_row, i_d, i_b] * rigid_global_info.mass_mat_D_inv[i_d, i_b]
+
+        # Step 3: Solve x s.t. L @ x = z (forward substitution)
+        for i_d in range(entity_dof_start, entity_dof_end):
+            curr_out = buf[i_row, i_d, i_b]
+            for j_d in range(entity_dof_start, i_d):
+                curr_out = curr_out - rigid_global_info.mass_mat_L[i_d, j_d, i_b] * buf[i_row, j_d, i_b]
+            buf[i_row, i_d, i_b] = curr_out
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_compute_MinvJT(
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute MinvJT[row, :, i_b] = M^{-1} @ J[row, :, i_b] for each constraint row.
+
+    Parallelized over (row, batch) via ndrange — each thread independently
+    copies J[row] into MinvJT[row] and solves M^{-1} in-place using the
+    row-indexed LDL^T substitution. No shared buffers between rows.
+    """
+    len_c = constraint_state.MinvJT.shape[0]
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+
+    for i_row, i_b in qd.ndrange(len_c, _B):
+        if i_row < constraint_state.n_constraints[i_b]:
+            # Copy J[row] into MinvJT[row] (per-row buffer)
+            for i_d in range(n_dofs):
+                constraint_state.MinvJT[i_row, i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+
+            # In-place solve: MinvJT[row] = M^{-1} @ J[row]
+            for i_0 in (
+                range(rigid_global_info.n_awake_entities[i_b])
+                if qd.static(static_rigid_sim_config.use_hibernation)
+                else range(entities_info.n_links.shape[0])
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_0, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_compute_AR_and_b(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Phase 2: Compute AR = J @ MinvJT and efc_b (GPU multi-env only).
+
+    AR[row, col, i_b] = sum_d J[col, d, i_b] * MinvJT[row, d, i_b]
+
+    Uses ndrange for full GPU parallelism across (row, col, batch) — gives
+    nefc^2 * n_envs independent threads (~490K for typical scenes).
+
+    This kernel is only called when para_level >= PARA_LEVEL.ALL (GPU multi-env).
+    For CPU and GPU single-env, the fused kernel_build_efc_AR_b is used instead.
+    """
+    len_c = constraint_state.efc_AR.shape[0]
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+
+    for i_row, i_col, i_b in qd.ndrange(len_c, len_c, _B):
+        nefc = constraint_state.n_constraints[i_b]
+        if i_row < nefc and i_col < nefc:
+            s = gs.qd_float(0.0)
+            for i_d in range(n_dofs):
+                s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.MinvJT[i_row, i_d, i_b]
+            constraint_state.efc_AR[i_row, i_col, i_b] = s
+        else:
+            constraint_state.efc_AR[i_row, i_col, i_b] = gs.qd_float(0.0)
+
+    for i_c, i_b in qd.ndrange(len_c, _B):
+        if i_c < constraint_state.n_constraints[i_b]:
+            v = -constraint_state.aref[i_c, i_b]
+            for i_d in range(n_dofs):
+                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            constraint_state.efc_b[i_c, i_b] = v
+
+
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_noslip(
     collider_state: array_class.ColliderState,

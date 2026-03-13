@@ -1,5 +1,9 @@
 import logging
 import os
+from typing import Generic, TypeVar, SupportsIndex, overload, get_args
+
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 import genesis as gs
 from genesis.repr_base import RBC
@@ -9,41 +13,44 @@ from genesis.styles import colors, formats, styless
 LOGGER = logging.getLogger(__name__)
 
 
-class List(list, RBC):
+T = TypeVar("T", bound=RBC)
+
+
+class List(RBC, list[T], Generic[T]):
     """
     Custom list with more informative repr.
+
     Elements in the list should also inherit from RBC.
     """
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: type["List[T]"], handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        (item_type,) = get_args(source_type) or (RBC,)
+        return core_schema.no_info_after_validator_function(
+            cls,  # wraps the validated list in gs.List(...)
+            core_schema.list_schema(handler.generate_schema(item_type)),
+        )
+
+    @overload
+    def __getitem__(self, i: SupportsIndex, /) -> T: ...
+
+    @overload
+    def __getitem__(self, s: slice, /) -> list[T]: ...
 
     def __getitem__(self, item):
         result = super().__getitem__(item)
         if isinstance(item, slice):
             return self.__class__(result)
-        else:
-            return result
+        return result
 
-    def common_ancestor(self):
-        common_ancestor = None
-        if len(self) > 0:
-            classes = [obj.__class__ for obj in self]
-            for obj_cls in classes[0].__mro__:
-                if all(obj_cls in obj.__mro__ for obj in classes[1:]):
-                    common_ancestor = obj_cls
-                    break
-        return common_ancestor
-
-    def common_length(self):
-        if len(self) > 0:
-            return max([len(obj._repr_type()) for obj in self])
-        else:
-            return 0
-
-    def _repr_elem(self, elem, common_length=0):
-        spaces = common_length - len(elem._repr_type())
+    def _repr_elem(self, elem: T, common_length: int = 0) -> str:
+        spaces = common_length - len(elem.__repr_name__())
         repr_str = " " * spaces + elem._repr_brief()
         return repr_str
 
-    def _repr_elem_colorized(self, elem, common_length=0):
+    def _repr_elem_colorized(self, elem: T, common_length: int = 0) -> str:
         content = self._repr_elem(elem, common_length)
         idx = content.find(">")
         formatted_content = f"{colors.BLUE}{formats.ITALIC}{content[: idx + 1]}{formats.RESET}{content[idx + 1 :]}"
@@ -53,72 +60,56 @@ class List(list, RBC):
         formatted_content += formats.RESET
         return formatted_content
 
-    def _repr_brief(self):
-        repr_str = f"{self._repr_type()}(len={len(self)}, ["
-
-        if len(self) == 0:
-            repr_str += "])"
-
-        elif len(self) < 15:
-            repr_str += "\n"
-            for element in self:
-                repr_str += f"    {self._repr_elem(element)},\n"
-            repr_str += "])"
-
-        else:
+    def _repr_brief(self) -> str:
+        repr_str = f"{self.__repr_name__()}(len={len(self)}, ["
+        if len(self) >= 15:
             repr_str += "\n"
             for element in self[:9]:
                 repr_str += f"    {self._repr_elem(element)},\n"
             repr_str += "    ...\n"
             for element in self[-1:]:
                 repr_str += f"    {self._repr_elem(element)},\n"
-            repr_str += "])"
-
+        elif self:
+            repr_str += "\n"
+            for element in self:
+                repr_str += f"    {self._repr_elem(element)},\n"
+        repr_str += "])"
         return repr_str
 
-    def __repr__(self):
-        return RBC.__repr__(self)
+    def __repr__colorized__(self) -> str:
+        repr_str = f"{colors.BLUE}{self.__repr_name__()}(len={colors.MINT}{formats.UNDERLINE}{len(self)}{formats.RESET}{colors.BLUE}, ["
 
-    def __colorized__repr__(self):
-        repr_str = f"{colors.BLUE}{self._repr_type()}(len={colors.MINT}{formats.UNDERLINE}{len(self)}{formats.RESET}{colors.BLUE}, ["
+        is_verbose = getattr(gs, "logger", LOGGER).level <= logging.DEBUG
+        common_length = max((len(obj.__repr_name__()) for obj in self), default=0)
 
-        if len(self) == 0:
+        if not self:
             repr_str += f"{colors.BLUE}])"
-
+        elif len(self) < 15 or is_verbose:
+            repr_str += "\n"
+            for element in self:
+                repr_str += f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
+            repr_str += f"{colors.BLUE}]){formats.RESET}"
         else:
-            common_length = self.common_length()
-
-            is_verbose = getattr(gs, "logger", LOGGER).level <= logging.DEBUG
-            if len(self) < 15 or is_verbose:
-                repr_str += "\n"
-                for element in self:
-                    repr_str += (
-                        f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
-                    )
-                repr_str += f"{colors.BLUE}]){formats.RESET}"
-
-            else:
-                repr_str += "\n"
-                for element in self[:9]:
-                    repr_str += (
-                        f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
-                    )
-                repr_str += f"    {colors.GRAY}...{formats.RESET}\n"
-                for element in self[-1:]:
-                    repr_str += (
-                        f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
-                    )
-                repr_str += f"{colors.BLUE}]){formats.RESET}"
+            repr_str += "\n"
+            for element in self[:9]:
+                repr_str += f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
+            repr_str += f"    {colors.GRAY}...{formats.RESET}\n"
+            for element in self[-1:]:
+                repr_str += f"    {self._repr_elem_colorized(element, common_length)}{colors.GRAY},{formats.RESET}\n"
+            repr_str += f"{colors.BLUE}]){formats.RESET}"
 
         min_len = 15
-        if len(self) == 0:
-            first_line = styless(repr_str)
-            header = self._repr_type()
-            line_len = min_len
-        else:
-            common_class_name = self.common_ancestor()._repr_type()
+        if self:
             first_line = styless(repr_str.split("\n")[1])
-            header = f"{self._repr_type()} of {common_class_name}"
+
+            common_ancestors = set.intersection(*[set(type(obj).__mro__) for obj in self])
+            if common_ancestors:
+                common_class_name = next(
+                    base_cls.__repr_name__() for base_cls in type(self[0]).__mro__ if base_cls in common_ancestors
+                )
+                header = f"{self.__repr_name__()} of {common_class_name}"
+            else:
+                header = f"{self.__repr_name__()}"
             header_len = len(first_line)
             line_len = max(min_len, header_len - len(header) - 2)
             try:
@@ -126,6 +117,10 @@ class List(list, RBC):
                 line_len = min(line_len, columns - len(header) - 2)
             except OSError:
                 pass
+        else:
+            first_line = styless(repr_str)
+            header = self.__repr_name__()
+            line_len = min_len
 
         left_line_len = line_len // 2
         right_line_len = line_len - left_line_len

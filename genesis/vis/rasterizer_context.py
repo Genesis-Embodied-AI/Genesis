@@ -93,7 +93,7 @@ class RasterizerContext:
         self.particle_size_scale = options.particle_size_scale
         self.contact_force_scale = options.contact_force_scale
         self.render_particle_as = options.render_particle_as
-        self.rendered_envs_idx = options.rendered_envs_idx
+        self.rendered_envs_idx = list(options.rendered_envs_idx) if options.rendered_envs_idx is not None else None
         self.env_separate_rigid = options.env_separate_rigid
 
         self.buffer = dict()
@@ -1017,15 +1017,15 @@ class RasterizerContext:
 
     def add_light(self, light):
         # light direction is light pose's -z frame
-        if light["type"] == "directional":
+        if isinstance(light, gs.options.vis.DirectionalLight):
             pose = np.eye(4, dtype=np.float32)
-            gu.z_up_to_R(-np.asarray(light["dir"], dtype=np.float32), out=pose[:3, :3])
-            self.add_node(pyrender.DirectionalLight(color=light["color"], intensity=light["intensity"]), pose=pose)
-        elif light["type"] == "point":
-            pose = gu.trans_to_T(np.asarray(light["pos"], dtype=np.float32))
-            self.add_node(pyrender.PointLight(color=light["color"], intensity=light["intensity"]), pose=pose)
+            gu.z_up_to_R(-np.array(light.dir, dtype=np.float32), out=pose[:3, :3])
+            self.add_node(pyrender.DirectionalLight(color=light.color, intensity=light.intensity), pose=pose)
+        elif isinstance(light, gs.options.vis.PointLight):
+            pose = gu.trans_to_T(np.array(light.pos, dtype=np.float32))
+            self.add_node(pyrender.PointLight(color=light.color, intensity=light.intensity), pose=pose)
         else:
-            gs.raise_exception(f"Unsupported light type: {light['type']}")
+            gs.raise_exception(f"Unsupported light: {light}")
 
     def create_node_seg(self, seg_key, seg_node):
         seg_idxc = self.seg_color_map.seg_key_to_idxc(seg_key)

@@ -614,6 +614,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
+    # Avoid numba cache collision
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / ".cache" / "numba"))
+
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
     monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
 

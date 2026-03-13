@@ -231,7 +231,7 @@ def surface_uvs_to_trimesh_visual(surface, uvs=None, n_verts=None):
             )
         else:
             # fall back to color texture
-            visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(texture.mean_color(), [n_verts, 1]))
+            visual = trimesh.visual.ColorVisuals(vertex_colors=np.tile(texture.mean_color, [n_verts, 1]))
     elif isinstance(texture, gs.textures.ColorTexture):
         if n_verts is None:
             gs.raise_exception("n_verts is required for color texture.")

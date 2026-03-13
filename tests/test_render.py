@@ -1167,18 +1167,18 @@ def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, rend
 
     monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
 
-    # Mock 'on_key_press' to determine whether requests have been processed
+    # Mock 'on_key_release' to determine whether requests have been processed
     is_done = False
-    on_key_press_orig = gs.ext.pyrender.viewer.Viewer.on_key_press
+    on_key_release_orig = gs.ext.pyrender.viewer.Viewer.on_key_release
 
-    def on_key_press(self, symbol: int, modifiers: int):
+    def on_key_release(self, symbol: int, modifiers: int):
         nonlocal is_done
         assert not is_done
-        ret = on_key_press_orig(self, symbol, modifiers)
+        ret = on_key_release_orig(self, symbol, modifiers)
         is_done = True
         return ret
 
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_press", on_key_press)
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_release", on_key_release)
 
     # Create a scene
     scene = gs.Scene(
@@ -1211,7 +1211,7 @@ def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, rend
     assert pyrender_viewer.is_active
 
     # Try saving the current frame
-    pyrender_viewer.dispatch_event("on_key_press", Key.S, 0)
+    pyrender_viewer.dispatch_event("on_key_release", Key.S, 0)
 
     # Waiting for request completion
     if pyrender_viewer.run_in_thread:

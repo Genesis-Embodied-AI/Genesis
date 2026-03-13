@@ -11,7 +11,7 @@ class UID(RBC):
         return self.__repr__()
 
     def __repr__(self) -> str:
-        return f"{self._repr_type()}('{self.full()}')"
+        return f"{self.__repr_name__()}('{self.full()}')"
 
     def __format__(self, format_spec) -> str:
         return f"<{self.short()}>"

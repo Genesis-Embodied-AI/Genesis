@@ -215,13 +215,28 @@ class ConstraintSolver:
         )
 
     def noslip(self):
-        constraint_noslip.kernel_build_efc_AR_b(
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self._solver._rigid_global_info,
-            self.constraint_state,
-            self._solver._static_rigid_sim_config,
-        )
+        if self._solver._para_level >= gs.PARA_LEVEL.PARTIAL:
+            # GPU (any n_envs): split into Phase 1 (parallel M^{-1} solve) + Phase 2 (parallel AR build)
+            constraint_noslip.kernel_compute_MinvJT(
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
+            constraint_noslip.kernel_compute_AR_and_b(
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            # CPU: use original fused kernel (no overhead)
+            constraint_noslip.kernel_build_efc_AR_b(
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
 
         constraint_noslip.kernel_noslip(
             self._collider._collider_state,
