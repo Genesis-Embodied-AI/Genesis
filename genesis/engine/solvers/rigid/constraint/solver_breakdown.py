@@ -285,8 +285,8 @@ def _kernel_parallel_linesearch_eval(
             hi = constraint_state.candidates[3, i_b]
 
             # Generate log-spaced alpha within [lo, hi]
-            _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
-            alpha = qd.exp(qd.log(lo) + gs.qd_float(tid) * _step)
+            _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, qd.cast(_K - 1, gs.qd_float))
+            alpha = qd.exp(qd.log(lo) + qd.cast(tid, gs.qd_float) * _step)
 
             # Evaluate cost at this alpha
             cost = (
@@ -356,8 +356,8 @@ def _kernel_parallel_linesearch_eval(
                 lo = constraint_state.candidates[2, i_b]
                 hi = constraint_state.candidates[3, i_b]
                 # Recover best alpha from log-spaced grid
-                _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
-                best_alpha = qd.exp(qd.log(lo) + gs.qd_float(best_tid) * _step)
+                _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, qd.cast(_K - 1, gs.qd_float))
+                best_alpha = qd.exp(qd.log(lo) + qd.cast(best_tid, gs.qd_float) * _step)
 
                 # Only update best alpha if this pass improved over ALL previous passes
                 best_cost_prev = constraint_state.candidates[4, i_b]
@@ -369,9 +369,9 @@ def _kernel_parallel_linesearch_eval(
                     lo_idx = qd.max(0, best_tid - 1)
                     hi_idx = qd.min(_K - 1, best_tid + 1)
                     # Narrow search range to neighbors of best candidate
-                    _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, gs.qd_float(_K - 1))
-                    constraint_state.candidates[2, i_b] = qd.exp(qd.log(lo) + gs.qd_float(lo_idx) * _step)
-                    constraint_state.candidates[3, i_b] = qd.exp(qd.log(lo) + gs.qd_float(hi_idx) * _step)
+                    _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, qd.cast(_K - 1, gs.qd_float))
+                    constraint_state.candidates[2, i_b] = qd.exp(qd.log(lo) + qd.cast(lo_idx, gs.qd_float) * _step)
+                    constraint_state.candidates[3, i_b] = qd.exp(qd.log(lo) + qd.cast(hi_idx, gs.qd_float) * _step)
             else:
                 constraint_state.candidates[0, i_b] = 0.0
 
