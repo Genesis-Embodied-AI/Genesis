@@ -4796,6 +4796,14 @@ def test_heterogeneous_robots(show_viewer, tol):
     with pytest.raises(AssertionError):
         assert_allclose(inertial_i[0, 0], inertial_i[2, 0], tol=tol)
 
+    # Check contacts
+    for i in range(4):
+        for _ in range(10):
+            scene.step()
+        pos = het_obj.get_pos()
+        assert_allclose(pos, het_pos_init, tol=5e-3)
+        het_obj.set_quat(gu.euler_to_quat((90 * i, 0, 0)))
+
     # Apply control and simulate for a while
     target_dof_pos = np.array((0.01, 0.02, 0.05, 0.1), dtype=gs.np_float)
     het_obj.set_dofs_kp((100.0, 100.0, 1000.0, 1000.0), dofs_idx_local=-1)

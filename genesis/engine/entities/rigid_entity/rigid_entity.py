@@ -139,12 +139,10 @@ class KinematicEntity(Entity):
         self._load_heterogeneous_morphs()
 
     def _load_heterogeneous_morphs(self):
-        """
-        Load heterogeneous morphs (additional geometry variants for parallel environments).
-        Each variant is loaded as additional geoms/vgeoms attached to links.
+        """Load heterogeneous morphs (additional geometry variants for parallel environments).
 
+        Each variant is loaded as additional geoms/vgeoms attached to links.
         Variant tracking (geom/vgeom ranges, inertial) is stored on the Link itself.
-        RigidEntity overrides _add_heterogeneous_variant to add collision geoms.
         """
         if not self._enable_heterogeneous:
             return
@@ -156,10 +154,62 @@ class KinematicEntity(Entity):
         # Track per-variant init_qpos for per-environment dispatch (primary first)
         self._variant_init_qpos = [self.init_qpos.copy()]
 
+        n_links = len(self._links)
+
         # Load additional heterogeneous variants
         for morph in self._morph_heterogeneous:
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
-                self._load_heterogeneous_scene_variant(morph)
+                # Parse variant scene file
+                morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
+                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
+
+                # Validate that the variant has the same joint structure as the primary
+                if len(v_l_infos) != n_links:
+                    gs.raise_exception(
+                        f"Heterogeneous variant has {len(v_l_infos)} links, "
+                        f"but primary has {n_links}. All variants must have the same link count."
+                    )
+                for i_l, (link, v_j_infos) in enumerate(zip(self._links, v_links_j_infos)):
+                    primary_joints = link.joints
+                    if len(v_j_infos) != len(primary_joints):
+                        gs.raise_exception(
+                            f"Heterogeneous variant link {i_l} has {len(v_j_infos)} joints, "
+                            f"but primary has {len(primary_joints)}."
+                        )
+                    for p_joint, v_j_info in zip(primary_joints, v_j_infos):
+                        if p_joint.name != v_j_info["name"]:
+                            gs.raise_exception(
+                                f"Joint name mismatch at link {i_l}: primary has '{p_joint.name}', "
+                                f"variant has '{v_j_info['name']}'. All variants must have the same joint names."
+                            )
+                        if p_joint.type != v_j_info["type"]:
+                            gs.raise_exception(
+                                f"Joint type mismatch for '{p_joint.name}': primary has {p_joint.type}, "
+                                f"variant has {v_j_info['type']}."
+                            )
+                        if p_joint.n_dofs != v_j_info["n_dofs"]:
+                            gs.raise_exception(
+                                f"DoF count mismatch for joint '{p_joint.name}': primary has {p_joint.n_dofs}, "
+                                f"variant has {v_j_info['n_dofs']}."
+                            )
+
+                # Extract variant's init_qpos from parsed joint infos
+                variant_init_qpos_parts = []
+                for v_j_infos in v_links_j_infos:
+                    for j_info in v_j_infos:
+                        variant_init_qpos_parts.append(j_info["init_qpos"])
+                if variant_init_qpos_parts:
+                    self._variant_init_qpos.append(np.concatenate(variant_init_qpos_parts))
+                else:
+                    self._variant_init_qpos.append(np.array([]))
+
+                # Add geoms per link
+                for link, v_l_info, v_g_infos in zip(self._links, v_l_infos, v_links_g_infos):
+                    is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))
+                    cg_infos, vg_infos = self._separate_geom_infos(morph, v_g_infos, is_robot)
+                    self._add_heterogeneous_variant(link, cg_infos, vg_infos)
+                    self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
+
             elif isinstance(morph, gs.morphs.Mesh):
                 g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
@@ -182,7 +232,10 @@ class KinematicEntity(Entity):
             self._reassign_heterogeneous_indices()
 
     def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
-        """Add a heterogeneous variant to the link. RigidEntity overrides to add collision geoms."""
+        """Add a heterogeneous variant's visual geoms to a link.
+
+        RigidEntity overrides to additionally add collision geoms.
+        """
         for g_info in vg_infos:
             link._add_vgeom(
                 vmesh=g_info["vmesh"],
@@ -190,73 +243,6 @@ class KinematicEntity(Entity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
             )
         link._record_variant_vgeom_range(len(vg_infos))
-
-    def _parse_scene_file_for_variant(self, morph):
-        """Parse a URDF/MJCF variant file and prepare for heterogeneous loading.
-
-        Delegates to _parse_scene which handles free joint addition, inertia validation,
-        virtual root removal, and 0-dof joint filtering.
-        """
-        morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
-        l_infos, links_j_infos, links_g_infos, _ = self._parse_scene(morph, self._surface)
-        return l_infos, links_j_infos, links_g_infos
-
-    def _validate_heterogeneous_scene_structure(self, variant_l_infos, variant_links_j_infos):
-        """Validate that a variant URDF/MJCF has the same joint structure as the primary."""
-        n_links = len(self._links)
-        if len(variant_l_infos) != n_links:
-            gs.raise_exception(
-                f"Heterogeneous variant has {len(variant_l_infos)} links, "
-                f"but primary has {n_links}. All variants must have the same link count."
-            )
-
-        for i_l, (link, v_j_infos) in enumerate(zip(self._links, variant_links_j_infos)):
-            primary_joints = link.joints
-            if len(v_j_infos) != len(primary_joints):
-                gs.raise_exception(
-                    f"Heterogeneous variant link {i_l} has {len(v_j_infos)} joints, "
-                    f"but primary has {len(primary_joints)}."
-                )
-            for p_joint, v_j_info in zip(primary_joints, v_j_infos):
-                if p_joint.name != v_j_info["name"]:
-                    gs.raise_exception(
-                        f"Joint name mismatch at link {i_l}: primary has '{p_joint.name}', "
-                        f"variant has '{v_j_info['name']}'. All variants must have the same joint names."
-                    )
-                if p_joint.type != v_j_info["type"]:
-                    gs.raise_exception(
-                        f"Joint type mismatch for '{p_joint.name}': primary has {p_joint.type}, "
-                        f"variant has {v_j_info['type']}."
-                    )
-                if p_joint.n_dofs != v_j_info["n_dofs"]:
-                    gs.raise_exception(
-                        f"DoF count mismatch for joint '{p_joint.name}': primary has {p_joint.n_dofs}, "
-                        f"variant has {v_j_info['n_dofs']}."
-                    )
-
-    def _load_heterogeneous_scene_variant(self, morph):
-        """Load a URDF/MJCF heterogeneous variant: parse, validate, and add geoms per link.
-
-        Calls _on_heterogeneous_scene_variant_loaded for subclass hooks (e.g. inertial storage).
-        """
-        v_l_infos, v_links_j_infos, v_links_g_infos = self._parse_scene_file_for_variant(morph)
-        self._validate_heterogeneous_scene_structure(v_l_infos, v_links_j_infos)
-
-        # Extract variant's init_qpos from parsed joint infos (includes morph.pos applied to free joint)
-        variant_init_qpos_parts = []
-        for v_j_infos in v_links_j_infos:
-            for j_info in v_j_infos:
-                variant_init_qpos_parts.append(j_info["init_qpos"])
-        if variant_init_qpos_parts:
-            self._variant_init_qpos.append(np.concatenate(variant_init_qpos_parts))
-        else:
-            self._variant_init_qpos.append(np.array([]))
-
-        for link, v_l_info, v_g_infos in zip(self._links, v_l_infos, v_links_g_infos):
-            is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))
-            cg_infos, vg_infos = self._separate_geom_infos(morph, v_g_infos, is_robot)
-            self._add_heterogeneous_variant(link, cg_infos, vg_infos)
-            self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
 
     def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_info):
         """Hook for subclasses after a scene variant's geoms have been added to a link."""
