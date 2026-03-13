@@ -1979,6 +1979,19 @@ class RigidEntity(KinematicEntity):
             cg_infos, vg_infos = self._separate_geom_infos(morph, v_g_infos, is_robot)
             self._add_heterogeneous_variant(link, cg_infos, vg_infos)
 
+            # Store parsed inertial from the variant file for use during link._build()
+            if link._variant_scene_inertial is None:
+                link._variant_scene_inertial = []
+            link._variant_scene_inertial.append(
+                (
+                    morph,
+                    v_l_info.get("inertial_mass"),
+                    v_l_info.get("inertial_pos"),
+                    v_l_info.get("inertial_quat"),
+                    v_l_info.get("inertial_i"),
+                )
+            )
+
     def _load_model(self):
         self._equalities = gs.List()
         self._requires_jac_and_IK = self._morph.requires_jac_and_IK

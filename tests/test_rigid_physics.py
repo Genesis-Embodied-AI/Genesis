@@ -4581,11 +4581,19 @@ def test_pick_heterogenous_objects(show_viewer):
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
 
 
-def _build_two_link_revolute_urdf(name, geom_tag, geom_attribs):
-    """Build a 2-link revolute URDF file and return its path."""
+def _build_two_link_revolute_urdf(name, geom_tag, geom_attribs, links_inertial=None):
+    """Build a 2-link revolute URDF file and return its path.
+
+    Parameters
+    ----------
+    links_inertial : list of dict or None
+        Per-link inertial overrides. Each dict may contain 'mass', 'ixx', 'iyy', 'izz',
+        'ixy', 'ixz', 'iyz', 'origin_xyz'. If None, zero mass/inertia is used (recomputed from geometry).
+    """
     robot = ET.Element("robot", name=name)
 
-    for link_name, origin_xyz in (("base", None), ("moving", "0.1 0 0")):
+    link_defs = [("base", None), ("moving", "0.1 0 0")]
+    for i_link, (link_name, origin_xyz) in enumerate(link_defs):
         link = ET.SubElement(robot, "link", name=link_name)
         for group_tag in ("visual", "collision"):
             group = ET.SubElement(link, group_tag)
@@ -4593,9 +4601,21 @@ def _build_two_link_revolute_urdf(name, geom_tag, geom_attribs):
             ET.SubElement(geom, geom_tag, **geom_attribs)
             if origin_xyz:
                 ET.SubElement(group, "origin", xyz=origin_xyz)
+        inertial_props = links_inertial[i_link] if links_inertial else None
         inertial = ET.SubElement(link, "inertial")
-        ET.SubElement(inertial, "mass", value="0")
-        ET.SubElement(inertial, "inertia", ixx="0", ixy="0", ixz="0", iyy="0", iyz="0", izz="0")
+        ET.SubElement(inertial, "mass", value=str(inertial_props.get("mass", 0)) if inertial_props else "0")
+        if inertial_props and "origin_xyz" in inertial_props:
+            ET.SubElement(inertial, "origin", xyz=inertial_props["origin_xyz"])
+        ET.SubElement(
+            inertial,
+            "inertia",
+            ixx=str(inertial_props.get("ixx", 0)) if inertial_props else "0",
+            ixy=str(inertial_props.get("ixy", 0)) if inertial_props else "0",
+            ixz=str(inertial_props.get("ixz", 0)) if inertial_props else "0",
+            iyy=str(inertial_props.get("iyy", 0)) if inertial_props else "0",
+            iyz=str(inertial_props.get("iyz", 0)) if inertial_props else "0",
+            izz=str(inertial_props.get("izz", 0)) if inertial_props else "0",
+        )
 
     joint = ET.SubElement(robot, "joint", name="joint1", type="prismatic")
     ET.SubElement(joint, "parent", link="base")
@@ -4615,12 +4635,20 @@ def test_heterogeneous_robots(show_viewer, tol):
     matching bounding boxes but different vertex counts and mass. Verifies dynamics,
     mass, joint structure, and ground contact settling.
     """
-    # Variant A: box primitive collision
+    # Variant A: box primitive collision (zero inertial => recomputed from geometry)
     urdf_boxes = _build_two_link_revolute_urdf("two_box_revolute", "box", {"size": "0.04 0.04 0.04"})
-    # Variant B: sphere mesh collision
+    # Variant B: sphere mesh collision with explicit inertial properties per link
     sphere_mesh_path = os.path.join(get_assets_dir(), "meshes", "sphere.obj")
+    sphere_base_mass, sphere_moving_mass = 0.5, 0.3
+    sphere_inertial = [
+        {"mass": sphere_base_mass, "ixx": 1e-4, "iyy": 1e-4, "izz": 1e-4, "origin_xyz": "0 0 0"},
+        {"mass": sphere_moving_mass, "ixx": 5e-5, "iyy": 5e-5, "izz": 5e-5, "origin_xyz": "0.1 0 0"},
+    ]
     urdf_spheres = _build_two_link_revolute_urdf(
-        "two_sphere_revolute", "mesh", {"filename": sphere_mesh_path, "scale": "0.08 0.08 0.08"}
+        "two_sphere_revolute",
+        "mesh",
+        {"filename": sphere_mesh_path, "scale": "0.08 0.08 0.08"},
+        links_inertial=sphere_inertial,
     )
 
     scene = gs.Scene(
@@ -4671,6 +4699,8 @@ def test_heterogeneous_robots(show_viewer, tol):
     assert_allclose(mass[0], mass[1], tol=tol)
     assert_allclose(mass[2], mass[3], tol=tol)
     assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
+    # Variant B total mass should match the explicit URDF inertial values
+    assert_allclose(mass[2], sphere_base_mass + sphere_moving_mass, tol=tol)
 
     # Joint structure: both variants share the same joints (root_joint + joint1)
     assert len(het_obj.joints) == 2

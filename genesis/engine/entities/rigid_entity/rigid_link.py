@@ -618,6 +618,7 @@ class RigidLink(KinematicLink):
         """Start tracking heterogeneous variants. Records first variant from current state."""
         super()._init_variant_tracking()
         self._variant_geom_ranges = [(self._geom_start, self._geom_start + self.n_geoms)]
+        self._variant_scene_inertial: list[tuple] | None = None
 
     def _record_variant_geom_range(self, n_new_geoms):
         """Record a new variant's geom range."""
@@ -752,9 +753,44 @@ class RigidLink(KinematicLink):
             rho = self.entity.material.rho
             self._variant_inertial = []
             for v in range(len(self._variant_geom_ranges)):
+                if v == 0:
+                    # Primary variant: use the link's own parsed/computed inertial
+                    self._variant_inertial.append(
+                        (
+                            self._inertial_mass,
+                            np.asarray(self._inertial_pos, dtype=gs.np_float),
+                            np.asarray(
+                                self._inertial_quat if self._inertial_quat is not None else gu.identity_quat(),
+                                dtype=gs.np_float,
+                            ),
+                            np.asarray(self._inertial_i, dtype=gs.np_float),
+                        )
+                    )
+                    continue
+
+                # For URDF/MJCF variants, use parsed inertial from the variant file
+                # (index v-1 because variant 0 is the primary)
+                if self._variant_scene_inertial is not None:
+                    morph_v, v_mass, v_pos, v_quat, v_i = self._variant_scene_inertial[v - 1]
+                    if (
+                        not (morph_v.recompute_inertia and not self._is_fixed)
+                        and v_mass is not None
+                        and v_pos is not None
+                        and v_i is not None
+                    ):
+                        self._variant_inertial.append(
+                            (
+                                max(float(v_mass), gs.EPS),
+                                np.asarray(v_pos, dtype=gs.np_float),
+                                np.asarray(v_quat if v_quat is not None else gu.identity_quat(), dtype=gs.np_float),
+                                np.asarray(v_i, dtype=gs.np_float),
+                            )
+                        )
+                        continue
+
+                # Compute from geometry (Primitive/Mesh variants, or recompute_inertia)
                 gs_v, ge_v = self._variant_geom_ranges[v]
                 vs_v, ve_v = self._variant_vgeom_ranges[v]
-                # Use collision geoms if available, otherwise fall back to visual geoms
                 variant_geoms = [g for g in self._geoms if gs_v <= g.idx < ge_v]
                 if variant_geoms:
                     mass, com, inertia = compute_inertial_from_geoms(variant_geoms, rho)
@@ -766,7 +802,8 @@ class RigidLink(KinematicLink):
                         mass = gs.EPS
                         com = np.zeros(3, dtype=gs.np_float)
                         inertia = np.zeros((3, 3), dtype=gs.np_float)
-                self._variant_inertial.append((mass, com, inertia))
+                quat = np.asarray(gu.identity_quat(), dtype=gs.np_float)
+                self._variant_inertial.append((mass, com, quat, inertia))
 
     def _add_geom(
         self,
