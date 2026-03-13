@@ -81,7 +81,7 @@ def main():
             link_idx_local=0,
             probe_local_pos=probe_positions,
             probe_local_normal=probe_normals,
-            radius=probe_radii,
+            probe_radius=probe_radii,
             stiffness=5000.0,
             draw_debug=args.vis,
         )

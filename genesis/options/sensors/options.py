@@ -14,7 +14,6 @@ from genesis.typing import (
     NonNegativeInt,
     PositiveFloat,
     RotationMatrixType,
-    Vec3FArrayType,
     Vec3FType,
     Vec4FType,
 )
@@ -191,60 +190,6 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
         super().model_post_init(context)
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
-
-
-class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
-    """
-    A tactile sensor which queries contact depth relative to given probe normals and within the radius of the probe
-    positions along a rigid entity link.
-
-    The returned force is an spring-like (kinematic) estimate based on contact depth, computed as
-    F = stiffness * penetration * probe_normal, as opposed to the actual impulse force on the link from the contact
-    obtained from the physics solver.
-
-    Note
-    ----
-    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
-
-    Parameters
-    ----------
-    probe_local_pos : array-like[array-like[float, float, float]]
-        Probe positions in link-local frame. One (x, y, z) per probe.
-    probe_local_normal : array-like[array-like[float, float, float]]
-        Probe sensing directions in link-local frame. Penetration is measured along this axis.
-    radius : float | array-like[float]
-        Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
-    stiffness : float
-        User-defined coefficient for force estimation. Default: 1000.0.
-    """
-
-    probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
-    radius: float | FArrayType = 0.005
-    stiffness: NonNegativeFloat = 1000.0
-
-    debug_sphere_color: Vec4FType = (1.0, 0.5, 0.0, 0.4)
-    debug_contact_color: Vec4FType = (1.0, 0.2, 0.0, 0.8)
-
-    def model_post_init(self, context):
-        super().model_post_init(context)
-        if np.any(np.array(self.radius) < 0):
-            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
-
-        normals = np.array(self.probe_local_normal, dtype=float)
-        if np.any(np.linalg.norm(normals, axis=1) < gs.EPS):
-            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {self.probe_local_normal}")
-
-        if len(self.probe_local_pos) != len(self.probe_local_normal):
-            gs.raise_exception(
-                "probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(self.probe_local_pos)} positions and {len(self.probe_local_normal)} normals."
-            )
-        if not isinstance(self.radius, float) and len(self.radius) != len(self.probe_local_pos):
-            gs.raise_exception(
-                "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.radius)} radii and {len(self.probe_local_pos)} probe positions."
-            )
 
 
 class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
