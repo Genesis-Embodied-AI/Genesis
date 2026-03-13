@@ -6,7 +6,7 @@ import numpy as np
 from pydantic import Field, StrictBool, model_validator
 
 import genesis as gs
-from genesis.typing import ColorFloat
+from genesis.typing import UnitInterval
 from genesis.utils import mesh as mu
 
 from .misc import FoamOptions
@@ -78,7 +78,7 @@ class Surface(Options):
     _color_target: ClassVar[str] = "diffuse_texture"
 
     ior: float | None = None
-    default_roughness: ColorFloat = 1.0
+    default_roughness: UnitInterval = 1.0
     vis_mode: Literal["visual", "collision", "particle", "sdf", "recon"] | None = None
     smooth: StrictBool = True
     double_sided: StrictBool | None = None

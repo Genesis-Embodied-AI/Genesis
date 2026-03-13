@@ -1,7 +1,7 @@
 from typing import Any, Literal
 
 import numpy as np
-from pydantic import Field, PrivateAttr, StrictBool, StrictInt, model_validator
+from pydantic import PrivateAttr, StrictBool, model_validator
 
 import genesis as gs
 from genesis.typing import NonNegativeFloat, NonNegativeInt, PositiveFloat, PositiveInt, UnitVec4FType, Vec3FType

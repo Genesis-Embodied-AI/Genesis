@@ -1,27 +1,36 @@
-import math
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Annotated, Mapping, Sequence
 
 import numpy as np
 
-from pydantic import Field, BeforeValidator, StrictFloat, StrictInt, GetPydanticSchema
-from pydantic_core import core_schema
+from pydantic import Field, BeforeValidator, StrictInt, GetPydanticSchema
+from pydantic_core import core_schema, PydanticCustomError
 
 
-def _normalize_vector(vec):
-    vec = tuple(map(float, vec))
-    norm = math.sqrt(sum(e**2 for e in vec))
+def _normalize(vec):
+    if not _is_sequence(vec):
+        raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
+    norm = 0.0
+    for e in vec:
+        if _is_sequence(e):
+            raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
+        norm += e**2
     if norm > 0:
         vec = tuple(e / norm for e in vec)
-    return vec
+        return vec
+    raise PydanticCustomError("zero_division", "Cannot be normalized", {"value": vec})
 
 
 def _is_sequence(v):
-    return hasattr(v, "__len__") and hasattr(v, "__getitem__") and not isinstance(v, (str, bytes, Mapping))
-
-
-def _scalar_or_sequence_to_tuple(v):
-    return tuple(v) if _is_sequence(v) else (v,)
+    if isinstance(v, (str, bytes, Mapping)):
+        return False
+    if not (hasattr(v, "__len__") and hasattr(v, "__getitem__")):
+        return False
+    try:
+        tuple(v)
+    except TypeError:
+        return False
+    return True
 
 
 # type aliases
@@ -34,64 +43,96 @@ if TYPE_CHECKING:
     NumericType = int | float | bool | np.number
     NumArrayType = Sequence[NumericType]
     IArrayType = Sequence[int | np.integer]
-    FArrayType = Sequence[NumericType]
+    FArrayType = Sequence[float | np.floating]
+    PositiveFArrayType = FArrayType
     Vec2IType = IArrayType
     PositiveVec2IType = IArrayType
     Vec2FType = FArrayType
     PositiveVec2FType = FArrayType
     Vec3FType = FArrayType
+    LaxVec3FType = FArrayType | float
     UnitVec3FType = FArrayType
     UnitVec4FType = FArrayType
-    ColorFloat = float
-    ColorArrayType = FArrayType
-    MaybeColorArrayType = FArrayType | float
-    MaybeFArrayType = FArrayType | float
-    Color3Type = FArrayType
+    UnitInterval = float
+    UnitIntervalArrayType = FArrayType
+    LaxUnitIntervalArrayType = FArrayType | float
+    LaxFArrayType = FArrayType | float
+    LaxPositiveFArrayType = LaxFArrayType
+    UnitIntervalVec3Type = FArrayType
+    UnitIntervalVec4Type = FArrayType
     Vec4FType = FArrayType
     Vec3FArrayType = Sequence[Sequence[NumericType]]
-    Matrix3x3Type = Vec3FArrayType
+    UnitVec3FArrayType = Vec3FArrayType
+    Vec3FLaxArrayType = Vec3FArrayType | Vec3FType
+    UnitVec3FLaxArrayType = Vec3FLaxArrayType
+    RotationMatrixType = Vec3FArrayType
     Matrix4x4Type = Sequence[Sequence[NumericType]]
     StrArrayType = Sequence[str]
     NDArrayType = np.ndarray
     PathType = str | PurePath
 else:
-    ValidFloat = Annotated[float, Field(strict=False, allow_inf_nan=False)]
-    NonNegativeFloat = Annotated[float, Field(strict=False, ge=0, allow_inf_nan=False)]
-    PositiveFloat = Annotated[float, Field(strict=False, gt=0, allow_inf_nan=False)]
-    NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
-    PositiveInt = Annotated[int, Field(strict=True, gt=0)]
+    ValidFloat = Annotated[float, Field(allow_inf_nan=False, strict=False)]
+    NonNegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=False)]
+    PositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False, strict=False)]
+    NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
+    PositiveInt = Annotated[int, Field(gt=0, strict=True)]
     NumericType = int | float | bool
     NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
     IArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=1, strict=False)]
     FArrayType = Annotated[tuple[ValidFloat, ...], Field(min_length=1, strict=False)]
+    PositiveFArrayType = Annotated[tuple[PositiveFloat, ...], Field(min_length=1, strict=False)]
     Vec2IType = Annotated[tuple[StrictInt, StrictInt], Field(strict=False)]
     PositiveVec2IType = Annotated[tuple[PositiveInt, PositiveInt], Field(strict=False)]
     Vec2FType = Annotated[tuple[ValidFloat, ValidFloat], Field(strict=False)]
     PositiveVec2FType = Annotated[tuple[PositiveFloat, PositiveFloat], Field(strict=False)]
     Vec3FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
+    LaxVec3FType = Annotated[
+        tuple[ValidFloat, ValidFloat, ValidFloat],
+        BeforeValidator(lambda v: v if _is_sequence(v) else (v,) * 3),
+        Field(strict=False),
+    ]
     UnitVec3FType = Annotated[
-        tuple[ValidFloat, ValidFloat, ValidFloat], BeforeValidator(_normalize_vector), Field(strict=False)
+        tuple[ValidFloat, ValidFloat, ValidFloat], BeforeValidator(_normalize), Field(strict=False)
     ]
     UnitVec4FType = Annotated[
-        tuple[ValidFloat, ValidFloat, ValidFloat, ValidFloat], BeforeValidator(_normalize_vector), Field(strict=False)
+        tuple[ValidFloat, ValidFloat, ValidFloat, ValidFloat], BeforeValidator(_normalize), Field(strict=False)
     ]
-    ColorFloat = Annotated[StrictFloat, Field(ge=0.0, le=1.0, strict=False, allow_inf_nan=False)]
-    ColorArrayType = Annotated[tuple[ColorFloat, ...], Field(min_length=1, strict=False)]
-    MaybeColorArrayType = Annotated[
-        tuple[ColorFloat, ...],
-        BeforeValidator(_scalar_or_sequence_to_tuple),
+    UnitInterval = Annotated[ValidFloat, Field(ge=0.0, le=1.0, strict=False, allow_inf_nan=False)]
+    UnitIntervalArrayType = Annotated[tuple[UnitInterval, ...], Field(min_length=1, strict=False)]
+    LaxUnitIntervalArrayType = Annotated[
+        tuple[UnitInterval, ...],
+        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
         Field(min_length=1, strict=False),
     ]
-    MaybeFArrayType = Annotated[
+    LaxFArrayType = Annotated[
         tuple[ValidFloat, ...],
-        BeforeValidator(_scalar_or_sequence_to_tuple),
+        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
         Field(min_length=1, strict=False),
     ]
-    Color3Type = Annotated[tuple[ColorFloat, ColorFloat, ColorFloat], Field(strict=False)]
+    LaxPositiveFArrayType = Annotated[
+        tuple[PositiveFloat, ...],
+        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
+        Field(min_length=1, strict=False),
+    ]
+    UnitIntervalVec3Type = Annotated[tuple[UnitInterval, UnitInterval, UnitInterval], Field(strict=False)]
+    UnitIntervalVec4Type = Annotated[tuple[UnitInterval, UnitInterval, UnitInterval, UnitInterval], Field(strict=False)]
     Vec4FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
     StrArrayType = Annotated[tuple[str, ...], Field(strict=False)]
     Vec3FArrayType = Annotated[tuple[Vec3FType, ...], Field(min_length=1, strict=False)]
-    Matrix3x3Type = Annotated[tuple[Vec3FType, Vec3FType, Vec3FType], Field(strict=False)]
+    UnitVec3FArrayType = Annotated[tuple[UnitVec3FType, ...], Field(min_length=1, strict=False)]
+    Vec3FLaxArrayType = Annotated[
+        tuple[Vec3FType, ...],
+        BeforeValidator(lambda v: v if _is_sequence(v) and len(v) > 0 and _is_sequence(v[0]) else (v,)),
+        Field(min_length=1, strict=False),
+    ]
+    UnitVec3FLaxArrayType = Annotated[
+        tuple[UnitVec3FType, ...],
+        BeforeValidator(lambda v: v if _is_sequence(v) and len(v) > 0 and _is_sequence(v[0]) else (v,)),
+        Field(min_length=1, strict=False),
+    ]
+    RotationMatrixType = Annotated[
+        tuple[UnitIntervalVec3Type, UnitIntervalVec3Type, UnitIntervalVec3Type], Field(strict=False)
+    ]
     Matrix4x4Type = Annotated[
         tuple[Vec4FType, Vec4FType, Vec4FType, Vec4FType],
         BeforeValidator(lambda v: tuple(tuple(row) for row in v) if isinstance(v, np.ndarray) else v),
@@ -101,8 +142,3 @@ else:
         np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))
     ]
     PathType = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, PurePath) else v)]
-
-MaybeNumArrayType = NumArrayType | NumericType
-MaybeVec3FType = Vec3FType | float
-MaybeVec3FArrayType = Vec3FArrayType | Vec3FType
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType

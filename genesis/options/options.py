@@ -25,7 +25,7 @@ class Options(RBC, BaseModel):
     directly under the `gs` namespace for convenience.
     """
 
-    model_config = ConfigDict(strict=True, extra="forbid")
+    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
 
     def __init__(self, /, **data: Any) -> None:
         # format pydantic error message to be more informative yet concise

@@ -387,6 +387,8 @@ def motion_cross_motion(s_ang, s_vel, m_ang, m_vel):
 def qd_orthogonals(a):
     """
     Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
+
+    Note that `a` is assumed to be normalized.
     """
     b = qd.Vector.zero(gs.qd_float, 3)
     if qd.abs(a[1]) < 0.5:
@@ -1436,12 +1438,12 @@ def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]
 
     if is_batched:
         # Pre-allocate output arrays
-        batch_shape = A.shape[:-2]
-        U_out = np.empty((*batch_shape, M, N), dtype=A.dtype)
+        B = A.shape[:-2]
+        U_out = np.empty((*B, M, N), dtype=A.dtype)
         if side == "right":
-            P_out = np.empty((*batch_shape, N, N), dtype=A.dtype)
+            P_out = np.empty((*B, N, N), dtype=A.dtype)
         else:
-            P_out = np.empty((*batch_shape, M, M), dtype=A.dtype)
+            P_out = np.empty((*B, M, M), dtype=A.dtype)
 
         # Call batched numba function
         _np_polar_core_batched(A, pure_rotation, side_int, U_out, P_out)
@@ -2240,7 +2242,7 @@ def cubic_spline_1d(x, y, xv):
 
 
 @nb.jit(nopython=True, cache=True)
-def orthogonals(a):
+def orthogonals(a) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
 

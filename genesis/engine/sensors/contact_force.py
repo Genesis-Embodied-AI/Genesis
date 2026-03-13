@@ -99,6 +99,7 @@ class ContactSensor(Sensor):
 
     def build(self):
         super().build()
+
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
@@ -185,19 +186,16 @@ class ContactForceSensor(
 
     def __init__(
         self,
-        sensor_options: ContactForceSensorOptions,
+        options: ContactForceSensorOptions,
         sensor_idx: int,
         data_cls: Type[tuple],
         sensor_manager: "SensorManager",
     ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+        super().__init__(options, sensor_idx, data_cls, sensor_manager)
 
         self.debug_object: "Mesh" | None = None
 
     def build(self):
-        if not (isinstance(self._options.resolution, tuple) and len(self._options.resolution) == 3):
-            self._options.resolution = tuple([self._options.resolution] * 3)
-
         super().build()
 
         if self._shared_metadata.solver is None:
