@@ -201,10 +201,10 @@ class KinematicSolver(Solver):
             para_level=self.sim._para_level,
             requires_grad=False,
             use_hibernation=False,
-            batch_links_info=False,
+            batch_links_info=self._options.batch_links_info,
             batch_dofs_info=False,
             batch_joints_info=False,
-            enable_heterogeneous=False,
+            enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=False,
             enable_multi_contact=False,
             enable_collision=False,
@@ -326,6 +326,17 @@ class KinematicSolver(Solver):
         self.qpos0 = self._rigid_global_info.qpos0
         if self.n_qs > 0:
             init_qpos = np.tile(np.expand_dims(self.init_qpos, -1), (1, self._B))
+
+            # Dispatch per-variant init_qpos for heterogeneous entities
+            for entity in self.entities:
+                if entity._variant_init_qpos is None:
+                    continue
+                n_variants = len(entity._variant_init_qpos)
+                variant_idx = _balanced_variant_mapping(n_variants, self._B)
+                q_s, q_e = entity.q_start, entity.q_start + entity.n_qs
+                for i_b in range(self._B):
+                    init_qpos[q_s:q_e, i_b] = entity._variant_init_qpos[variant_idx[i_b]]
+
             self.qpos0.from_numpy(init_qpos)
             is_init_qpos_out_of_bounds = False
             for joint in self.joints:

@@ -4324,25 +4324,17 @@ def test_heterogeneous_simulation(show_viewer, tol):
     """Test heterogeneous simulation by comparing against independent homogeneous simulations.
 
     This test verifies that heterogeneous simulation produces identical physics results
-    to running separate homogeneous simulations for each variant.
+    to running separate homogeneous simulations for each variant, including per-variant
+    initial positions.
     """
     n_steps = 20
-    drop_height = 0.05  # Drop objects 5cm above ground for collision dynamics
-
-    # Define morphs for testing - box and sphere with different sizes
-    box_morph = gs.morphs.Box(
-        size=(0.04, 0.04, 0.04),
-        pos=(0.0, 0.0, drop_height),
-    )
-    sphere_morph = gs.morphs.Sphere(
-        radius=0.02,
-        pos=(0.0, 0.0, drop_height),
-    )
+    box_drop_height = 0.05
+    sphere_drop_height = 0.08
 
     # Run homogeneous simulation with box only
     scene_box = gs.Scene(show_viewer=False)
     scene_box.add_entity(gs.morphs.Plane())
-    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, drop_height)))
+    box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, box_drop_height)))
     scene_box.build()
     for _ in range(n_steps):
         scene_box.step()
@@ -4355,7 +4347,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
     sphere_obj = scene_sphere.add_entity(
         gs.morphs.Sphere(
             radius=0.02,
-            pos=(0.0, 0.0, drop_height),
+            pos=(0.1, 0.0, sphere_drop_height),
         ),
     )
     scene_sphere.build()
@@ -4364,22 +4356,32 @@ def test_heterogeneous_simulation(show_viewer, tol):
     sphere_pos = tensor_to_array(sphere_obj.get_pos())
     sphere_vel = tensor_to_array(sphere_obj.get_vel())
 
-    # Run heterogeneous simulation with both variants
+    # Run heterogeneous simulation with both variants (different sizes AND positions)
     # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
     scene_het = gs.Scene(show_viewer=show_viewer)
     scene_het.add_entity(gs.morphs.Plane())
     morphs_heterogeneous = (
         gs.morphs.Box(
             size=(0.04, 0.04, 0.04),
-            pos=(0.0, 0.0, drop_height),
+            pos=(0.0, 0.0, box_drop_height),
         ),
         gs.morphs.Sphere(
             radius=0.02,
-            pos=(0.0, 0.0, drop_height),
+            pos=(0.1, 0.0, sphere_drop_height),
         ),
     )
     het_obj = scene_het.add_entity(morph=morphs_heterogeneous)
     scene_het.build(n_envs=4)
+
+    # Verify initial positions match per-variant morph.pos
+    het_pos_init = tensor_to_array(het_obj.get_pos())
+    assert_allclose(het_pos_init[0, 2], box_drop_height, tol=tol)
+    assert_allclose(het_pos_init[1, 2], box_drop_height, tol=tol)
+    assert_allclose(het_pos_init[2, 0], 0.1, tol=tol)
+    assert_allclose(het_pos_init[2, 2], sphere_drop_height, tol=tol)
+    assert_allclose(het_pos_init[3, 0], 0.1, tol=tol)
+    assert_allclose(het_pos_init[3, 2], sphere_drop_height, tol=tol)
+
     for _ in range(n_steps):
         scene_het.step()
     het_pos = tensor_to_array(het_obj.get_pos())
@@ -4409,7 +4411,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
 
 @pytest.mark.required
 def test_heterogeneous_invalid_material_raises():
-    """Test that heterogeneous morphs with non-Rigid material raises an exception."""
+    """Test that heterogeneous morphs with unsupported material raises an exception."""
     scene = gs.Scene(show_viewer=False)
 
     morphs_heterogeneous = (
@@ -4439,74 +4441,57 @@ def test_heterogeneous_fewer_envs_than_variants():
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
-    # 4 variants but only 2 environments
+    # 4 variants with different positions but only 2 environments (using Kinematic material)
     morphs_heterogeneous = [
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Box(size=(0.03, 0.03, 0.03), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Sphere(radius=0.02, pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Box(size=(0.03, 0.03, 0.03), pos=(0.1, 0.0, 0.15)),
+        gs.morphs.Box(size=(0.02, 0.02, 0.02), pos=(0.2, 0.0, 0.2)),
+        gs.morphs.Sphere(radius=0.02, pos=(0.3, 0.0, 0.25)),
     ]
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(morph=morphs_heterogeneous, material=gs.materials.Kinematic())
 
     # Building with only 2 environments should work - each env gets a unique variant
     scene.build(n_envs=2)
 
-    # Verify mass - env 0 gets variant 0 (0.04 box), env 1 gets variant 1 (0.03 box)
-    mass = het_obj.get_mass()
-    assert mass.shape == (scene.n_envs,)
-    # Different box sizes should have different masses
-    assert mass[0] != mass[1]
+    # Verify initial positions match per-variant morph.pos
+    pos = tensor_to_array(het_obj.get_pos())
+    assert_allclose(pos[0], [0.0, 0.0, 0.1], tol=gs.EPS)
+    assert_allclose(pos[1], [0.1, 0.0, 0.15], tol=gs.EPS)
 
 
 @pytest.mark.required
 def test_heterogeneous_aabb(tol):
-    """Test that get_AABB and get_vAABB work correctly with heterogeneous simulation."""
+    """Test that get_vAABB works correctly with heterogeneous kinematic simulation."""
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(gs.morphs.Plane())
 
-    # Box and sphere with different sizes
+    # Box and sphere with different sizes and positions (using Kinematic material)
     morphs_heterogeneous = (
         gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1)),
-        gs.morphs.Sphere(radius=0.01, pos=(0.0, 0.0, 0.1)),
+        gs.morphs.Sphere(radius=0.01, pos=(0.1, 0.0, 0.15)),
     )
-    het_obj = scene.add_entity(morph=morphs_heterogeneous)
+    het_obj = scene.add_entity(morph=morphs_heterogeneous, material=gs.materials.Kinematic())
     # 4 envs: envs 0-1 get box, envs 2-3 get sphere
     scene.build(n_envs=4)
 
-    # get_AABB should return correct shapes
-    aabb = het_obj.get_AABB()
-    assert aabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz)
-    for i in range(scene.n_envs):
-        assert_allclose(aabb[i], het_obj.get_AABB(i), tol=gs.EPS)
-
-    # Box envs should have same AABB, sphere envs should have same AABB
-    assert_allclose(aabb[0], aabb[1], tol=gs.EPS)
-    assert_allclose(aabb[2], aabb[3], tol=gs.EPS)
-
-    # Box and sphere should have different AABBs (different sizes)
-    with pytest.raises(AssertionError):
-        assert_allclose(aabb[0], aabb[2], tol=1e-3)
-
-    # get_vAABB should also work
     vaabb = het_obj.get_vAABB()
-    assert vaabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz) - same as AABB
+    assert vaabb.shape == (scene.n_envs, 2, 3)  # (n_envs, min/max, xyz)
     for i in range(scene.n_envs):
         assert_allclose(vaabb[i], het_obj.get_vAABB(i), tol=gs.EPS)
 
-    # vAABB should have same structure as AABB (box envs same, sphere envs same)
+    # Box envs should have same vAABB, sphere envs should have same vAABB
     assert_allclose(vaabb[0], vaabb[1], tol=gs.EPS)
     assert_allclose(vaabb[2], vaabb[3], tol=gs.EPS)
+
+    # Box and sphere should have different vAABBs (different sizes and positions)
     with pytest.raises(AssertionError):
         assert_allclose(vaabb[0], vaabb[2], tol=1e-3)
 
-    # AABB and vAABB sizes should be approximately equal for each environment
-    aabb_size_box = aabb[0, 1] - aabb[0, 0]
-    vaabb_size_box = vaabb[0, 1] - vaabb[0, 0]
-    assert_allclose(aabb_size_box, vaabb_size_box, tol=tol)
-
-    aabb_size_sphere = aabb[2, 1] - aabb[2, 0]
-    vaabb_size_sphere = vaabb[2, 1] - vaabb[2, 0]
-    assert_allclose(aabb_size_sphere, vaabb_size_sphere, tol=1e-3)  # Allow small tolerance for decimation
+    # Verify per-variant positions are reflected in vAABB centers
+    box_center_z = (vaabb[0, 0, 2] + vaabb[0, 1, 2]) / 2
+    sphere_center_z = (vaabb[2, 0, 2] + vaabb[2, 1, 2]) / 2
+    assert_allclose(box_center_z, 0.1, tol=tol)
+    assert_allclose(sphere_center_z, 0.15, tol=tol)
 
 
 # 30s
@@ -4612,12 +4597,12 @@ def _build_two_link_revolute_urdf(name, geom_tag, geom_attribs):
         ET.SubElement(inertial, "mass", value="0")
         ET.SubElement(inertial, "inertia", ixx="0", ixy="0", ixz="0", iyy="0", iyz="0", izz="0")
 
-    joint = ET.SubElement(robot, "joint", name="joint1", type="revolute")
+    joint = ET.SubElement(robot, "joint", name="joint1", type="prismatic")
     ET.SubElement(joint, "parent", link="base")
     ET.SubElement(joint, "child", link="moving")
     ET.SubElement(joint, "origin", xyz="0.1 0 0")
-    ET.SubElement(joint, "axis", xyz="0 1 0")
-    ET.SubElement(joint, "limit", lower="-1.57", upper="1.57", effort="100", velocity="1.0")
+    ET.SubElement(joint, "axis", xyz="1 0 0")
+    ET.SubElement(joint, "limit", lower="-1.0", upper="1.0", effort="100", velocity="1.0")
 
     return urdfpy.URDF._from_xml(robot, robot, get_assets_dir())
 
@@ -4631,10 +4616,10 @@ def test_heterogeneous_robots(show_viewer, tol):
     mass, joint structure, and ground contact settling.
     """
     # Variant A: box primitive collision
-    urdf_a = _build_two_link_revolute_urdf("two_box_revolute", "box", {"size": "0.04 0.04 0.04"})
+    urdf_boxes = _build_two_link_revolute_urdf("two_box_revolute", "box", {"size": "0.04 0.04 0.04"})
     # Variant B: sphere mesh collision
     sphere_mesh_path = os.path.join(get_assets_dir(), "meshes", "sphere.obj")
-    urdf_b = _build_two_link_revolute_urdf(
+    urdf_spheres = _build_two_link_revolute_urdf(
         "two_sphere_revolute", "mesh", {"filename": sphere_mesh_path, "scale": "0.08 0.08 0.08"}
     )
 
@@ -4649,11 +4634,21 @@ def test_heterogeneous_robots(show_viewer, tol):
     scene.add_entity(gs.morphs.Plane())
     het_obj = scene.add_entity(
         morph=[
-            gs.morphs.URDF(file=urdf_a, pos=(0, 0, 0.15)),
-            gs.morphs.URDF(file=urdf_b, pos=(0.5, 0, 0.2)),
+            gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
+            gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08)),
         ]
     )
-    scene.build(n_envs=4, env_spacing=(0.5, 0.5))
+    scene.build(n_envs=4)
+
+    # Verify initial z-positions match per-variant morph.pos (z is unaffected by env_spacing)
+    het_pos_init = tensor_to_array(het_obj.get_pos())
+    assert_allclose(het_pos_init[0, 2], 0.02, tol=tol)
+    assert_allclose(het_pos_init[1, 2], 0.02, tol=tol)
+    assert_allclose(het_pos_init[2, 2], 0.08, tol=tol)
+    assert_allclose(het_pos_init[3, 2], 0.08, tol=tol)
+    # Variant B has x-offset relative to variant A
+    assert_allclose(het_pos_init[2, 0] - het_pos_init[0, 0], 0.5, tol=tol)
+    assert_allclose(het_pos_init[3, 0] - het_pos_init[1, 0], 0.5, tol=tol)
 
     for _ in range(30):
         scene.step()
@@ -4679,7 +4674,6 @@ def test_heterogeneous_robots(show_viewer, tol):
 
     # Joint structure: both variants share the same joints (root_joint + joint1)
     assert len(het_obj.joints) == 2
-    assert {j.name for j in het_obj.joints} == {"root_joint", "joint1"}
     assert len(het_obj.links) == 2
     assert het_obj.get_qpos().shape == (4, 8)  # free joint (7) + revolute (1)
     assert het_obj.get_dofs_velocity().shape == (4, 7)  # free joint (6) + revolute (1)

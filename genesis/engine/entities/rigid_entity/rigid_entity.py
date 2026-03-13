@@ -101,6 +101,7 @@ class KinematicEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
+        self._variant_init_qpos: list[np.ndarray] | None = None
 
         self._load_model()
 
@@ -137,6 +138,16 @@ class KinematicEntity(Entity):
         # Load heterogeneous variants (if any)
         self._load_heterogeneous_morphs()
 
+    def _compute_variant_init_qpos(self, morph):
+        """Compute the init_qpos for a heterogeneous variant from its morph pos/quat.
+
+        For free-base entities, the free joint's init_qpos encodes the morph position.
+        For fixed-base entities, init_qpos has no positional component.
+        """
+        if morph.fixed:
+            return np.array([])
+        return np.concatenate([np.asarray(morph.pos), np.asarray(morph.quat)])
+
     def _load_heterogeneous_morphs(self):
         """
         Load heterogeneous morphs (additional geometry variants for parallel environments).
@@ -155,6 +166,9 @@ class KinematicEntity(Entity):
         link = self._links[0]
         link._init_variant_tracking()
 
+        # Track per-variant init_qpos for per-environment dispatch (primary first)
+        self._variant_init_qpos = [self.init_qpos.copy()]
+
         # Load additional heterogeneous variants
         for morph in self._morph_heterogeneous:
             if isinstance(morph, gs.morphs.Mesh):
@@ -168,6 +182,7 @@ class KinematicEntity(Entity):
 
             cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
             self._add_heterogeneous_variant(link, cg_infos, vg_infos)
+            self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
 
     def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
         """Add a heterogeneous variant to the link. RigidEntity overrides to add collision geoms."""
@@ -1776,6 +1791,9 @@ class RigidEntity(KinematicEntity):
         for link in self._links:
             link._init_variant_tracking()
 
+        # Track per-variant init_qpos for per-environment dispatch (primary first)
+        self._variant_init_qpos = [self.init_qpos.copy()]
+
         # Load additional heterogeneous variants
         for morph in self._morph_heterogeneous:
             if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
@@ -1786,12 +1804,14 @@ class RigidEntity(KinematicEntity):
                 g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
+                self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
             elif isinstance(morph, gs.morphs.Primitive):
                 if len(self._links) != 1:
                     gs.raise_exception("Primitive/Mesh heterogeneous morphs only support single-link entities.")
                 g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
                 cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
+                self._variant_init_qpos.append(self._compute_variant_init_qpos(morph))
             else:
                 gs.raise_exception(
                     f"morph_heterogeneous only supports URDF, MJCF, Primitive, and Mesh, got: {type(morph).__name__}."
@@ -1943,6 +1963,16 @@ class RigidEntity(KinematicEntity):
         """Load a URDF/MJCF heterogeneous variant: parse, validate, and add geoms per link."""
         v_l_infos, v_links_j_infos, v_links_g_infos = self._parse_scene_file_for_variant(morph)
         self._validate_heterogeneous_scene_structure(v_l_infos, v_links_j_infos)
+
+        # Extract variant's init_qpos from parsed joint infos (includes morph.pos applied to free joint)
+        variant_init_qpos_parts = []
+        for v_j_infos in v_links_j_infos:
+            for j_info in v_j_infos:
+                variant_init_qpos_parts.append(j_info["init_qpos"])
+        if variant_init_qpos_parts:
+            self._variant_init_qpos.append(np.concatenate(variant_init_qpos_parts))
+        else:
+            self._variant_init_qpos.append(np.array([]))
 
         for link, v_l_info, v_g_infos in zip(self._links, v_l_infos, v_links_g_infos):
             is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))

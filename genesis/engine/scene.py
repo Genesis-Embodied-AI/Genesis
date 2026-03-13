@@ -365,8 +365,10 @@ class Scene(RBC):
         if is_heterogeneous:
             morph = tuple(morph)
             morph_for_checks = morph[0]
-            if not isinstance(material, gs.materials.Rigid):
-                gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
+                gs.raise_exception(
+                    "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
+                )
             if not all(
                 isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)) for m in morph
             ):
