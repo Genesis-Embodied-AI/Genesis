@@ -4702,14 +4702,22 @@ def test_heterogeneous_robots(show_viewer, tol):
     )
 
     scene.add_entity(gs.morphs.Plane())
+    het_morph = (
+        gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
+        gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08)),
+    )
     het_obj = scene.add_entity(
-        morph=[
-            gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
-            gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08)),
-        ],
+        morph=het_morph,
         material=gs.materials.Rigid(
-            # Disable friction make simplify analytical acceleration check
             friction=1e-2,
+        ),
+    )
+    # Kinematic heterogeneous URDF entity (same variants, different positions)
+    het_kin = scene.add_entity(
+        morph=het_morph,
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Default(
+            color=(0.0, 0.0, 1.0, 0.4),
         ),
     )
     scene.build(n_envs=4, env_spacing=(0.0, 0.5))
@@ -4719,6 +4727,9 @@ def test_heterogeneous_robots(show_viewer, tol):
     assert len(het_obj.links) == 2
     assert het_obj.get_qpos().shape == (4, 8)  # free joint (7) + prismatic (1)
     assert het_obj.get_dofs_velocity().shape == (4, 7)  # free joint (6) + prismatic (1)
+
+    # Check that kinematic vAABB matches rigid
+    assert_allclose(het_kin.get_vAABB(), het_obj.get_vAABB(), tol=1e-3)
 
     # Verify initial z-positions match per-variant morph.pos (z is unaffected by env_spacing)
     het_pos_init = het_obj.get_pos()

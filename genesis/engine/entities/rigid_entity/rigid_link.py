@@ -759,9 +759,10 @@ class RigidLink(KinematicLink):
                         (
                             self._inertial_mass,
                             np.asarray(self._inertial_pos, dtype=gs.np_float),
-                            np.asarray(
-                                self._inertial_quat if self._inertial_quat is not None else gu.identity_quat(),
-                                dtype=gs.np_float,
+                            (
+                                np.asarray(self._inertial_quat, dtype=gs.np_float)
+                                if self._inertial_quat is not None
+                                else gu.identity_quat()
                             ),
                             np.asarray(self._inertial_i, dtype=gs.np_float),
                         )
@@ -780,9 +781,9 @@ class RigidLink(KinematicLink):
                     ):
                         self._variant_inertial.append(
                             (
-                                max(float(v_mass), gs.EPS),
+                                v_mass,
                                 np.asarray(v_pos, dtype=gs.np_float),
-                                np.asarray(v_quat if v_quat is not None else gu.identity_quat(), dtype=gs.np_float),
+                                np.asarray(v_quat, dtype=gs.np_float) if v_quat is not None else gu.identity_quat(),
                                 np.asarray(v_i, dtype=gs.np_float),
                             )
                         )
@@ -802,8 +803,7 @@ class RigidLink(KinematicLink):
                         mass = gs.EPS
                         com = np.zeros(3, dtype=gs.np_float)
                         inertia = np.zeros((3, 3), dtype=gs.np_float)
-                quat = np.asarray(gu.identity_quat(), dtype=gs.np_float)
-                self._variant_inertial.append((mass, com, quat, inertia))
+                self._variant_inertial.append((mass, com, gu.identity_quat(), inertia))
 
     def _add_geom(
         self,
