@@ -44,7 +44,7 @@
     <inertial>
       <mass value="1.0"/>
       <inertia ixx="0.00667" ixy="0.0" ixz="0.0" iyy="0.00667" iyz="0.0" izz="0.00667"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0.1 0 0" rpy="0 0 0"/>
     </inertial>
   </link>
 

@@ -46,8 +46,6 @@ def main():
             dt=0.02,
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=100.0,
-            constraint_strength_rotation=100.0,
             n_linesearch_iterations=8,
             linesearch_report_energy=False,
             newton_tolerance=1e-1,
@@ -68,7 +66,12 @@ def main():
     )
 
     # Add flat floor
-    scene.add_entity(gs.morphs.Plane())
+    scene.add_entity(
+        gs.morphs.Plane(),
+        material=gs.materials.Rigid(
+            coup_type="ipc_only",
+        ),
+    )
 
     # Add Franka robot
     franka_material_kwargs = dict(

@@ -2993,12 +2993,6 @@ class RigidEntity(KinematicEntity):
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
-            gs.raise_exception(
-                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
-            )
         super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative)
 
     @gs.assert_built
@@ -3024,12 +3018,6 @@ class RigidEntity(KinematicEntity):
             Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type is not None and self.base_link.is_fixed:
-            gs.raise_exception(
-                "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
-            )
         super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative)
 
     @gs.assert_built
@@ -3089,10 +3077,6 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
         super().set_qpos(qpos, qs_idx_local, envs_idx, zero_velocity=zero_velocity, skip_forward=skip_forward)
 
     @gs.assert_built
@@ -3214,11 +3198,24 @@ class RigidEntity(KinematicEntity):
             Whether to zero the velocity of all the entity's dofs. Defaults to True. This is a safety measure after a
             sudden change in entity pose.
         """
-        from genesis.engine.couplers import IPCCoupler
-
-        if isinstance(self.sim.coupler, IPCCoupler) and self.material.coup_type == "external_articulation":
-            gs.raise_exception("This method is not supported by `RigidMaterial.coup_type='external_articulation'`.")
         super().set_dofs_position(position, dofs_idx_local, envs_idx, zero_velocity=zero_velocity)
+
+    @gs.assert_built
+    def set_dofs_velocity(self, velocity=None, dofs_idx_local=None, envs_idx=None, *, skip_forward=False):
+        """
+        Set the entity's dofs' velocity.
+
+        Parameters
+        ----------
+        velocity : array_like | None
+            The velocity to set. Zero if not specified.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs to set. If None, all dofs will be set. Note that here this uses the local `q_idx`,
+            not the scene-level one. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+        """
+        super().set_dofs_velocity(velocity, dofs_idx_local, envs_idx, skip_forward=skip_forward)
 
     # ------------------------------------------------------------------------------------
     # ---------------------------------- PD control --------------------------------------

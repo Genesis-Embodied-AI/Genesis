@@ -21,9 +21,8 @@ def main():
             gravity=(0.0, 0.0, 0.0),
         ),
         coupler_options=gs.options.IPCCouplerOptions(
-            constraint_strength_translation=1,  # Translation strength ratio
-            constraint_strength_rotation=1,  # Rotation strength ratio
             enable_rigid_rigid_contact=False,
+            restitution=0.0,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.5, 1.3, 0.6),
@@ -61,6 +60,7 @@ def main():
             rho=1000,
             friction=0.3,
             coup_type="two_way_soft_constraint",
+            coup_stiffness=(1.0, 1.0),
         ),
         surface=gs.surfaces.Plastic(
             color=(0.8, 0.2, 0.2, 0.8),

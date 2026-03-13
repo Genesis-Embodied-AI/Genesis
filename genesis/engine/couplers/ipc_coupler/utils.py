@@ -34,9 +34,8 @@ def find_target_link_for_fixed_merge(link):
         if link.parent_idx < 0:
             break
 
-        # Check if there is any non-fixed joint
+        # Stop if the link has any non-fixed joint (non-fixed joints define separate bodies)
         if any(joint.type != gs.JOINT_TYPE.FIXED for joint in link.joints):
-            # Found a link with non-FIXED joint, this is our target
             break
 
         # All joints are FIXED, move up to parent
@@ -71,28 +70,33 @@ def compute_link_to_link_transform(from_link, to_link):
     return pos, quat
 
 
-def build_ipc_scene_config(options, sim_options):
+def build_ipc_scene_config(options, simulator):
     """
-    Build IPC Scene config dict from IPCCouplerOptions and SimOptions.
+    Build IPC Scene config dict from IPCCouplerOptions and simulator.
 
     Parameters
     ----------
     options : IPCCouplerOptions
         The coupler options
-    sim_options : SimOptions
-        The simulation options (provides dt, gravity, requires_grad)
-
-    Returns
-    -------
-    dict
-        Scene config dict ready to pass to Scene(config)
+    simulator : Simulator
+        The simulator instance
     """
     config = Scene.default_config()
 
-    # Basic simulation parameters (derived from SimOptions)
-    config["dt"] = sim_options.dt
-    gravity = sim_options.gravity
-    config["gravity"] = [[float(e)] for e in gravity]
+    # Read dt/gravity from active solvers; verify consistency if multiple are active
+    active = []
+    if simulator.rigid_solver.is_active:
+        active.append(("RigidSolver", simulator.rigid_options))
+    if simulator.fem_solver.is_active:
+        active.append(("FEMSolver", simulator.fem_options))
+
+    ref_name, ref_opts = active[0] if active else ("SimOptions", simulator.options)
+    for name, opts in active[1:]:
+        if opts.dt != ref_opts.dt or tuple(opts.gravity) != tuple(ref_opts.gravity):
+            gs.raise_exception(f"IPC coupler requires consistent dt/gravity: {ref_name} vs {name}.")
+
+    config["dt"] = ref_opts.dt
+    config["gravity"] = [[float(e)] for e in ref_opts.gravity]
 
     # Newton solver options (only set if specified)
     _set_if_not_none(config, ["newton", "max_iter"], options.newton_max_iterations)
@@ -128,8 +132,8 @@ def build_ipc_scene_config(options, sim_options):
     # Sanity check options
     _set_if_not_none(config, ["sanity_check", "enable"], options.sanity_check_enable)
 
-    # Differential simulation options (derived from SimOptions)
-    _set_if_not_none(config, ["diff_sim", "enable"], sim_options.requires_grad)
+    # Differential simulation options
+    _set_if_not_none(config, ["diff_sim", "enable"], simulator.options.requires_grad)
 
     return config
 

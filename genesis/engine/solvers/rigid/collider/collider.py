@@ -15,7 +15,6 @@ import trimesh
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
-from genesis.engine.materials.rigid import Rigid
 from genesis.utils.misc import tensor_to_array, qd_to_torch, qd_to_numpy
 from genesis.utils.sdf import SDF
 
@@ -70,6 +69,18 @@ IS_OLD_TORCH = tuple(map(int, torch.__version__.split(".")[:2])) < (2, 8)
 
 NEUTRAL_COLLISION_RES_ABS = 0.01
 NEUTRAL_COLLISION_RES_REL = 0.05
+
+
+def are_links_adjacent(link_a, link_b) -> bool:
+    """Check if two links are adjacent (parent-child, walking through fixed joints)."""
+    a, b = (link_a, link_b) if link_a.idx < link_b.idx else (link_b, link_a)
+    while b.parent_idx != -1:
+        if b.parent_idx == a.idx:
+            return True
+        if not all(joint.type is gs.JOINT_TYPE.FIXED for joint in b.joints):
+            break
+        b = b.entity.solver.links[b.parent_idx]
+    return False
 
 
 class Collider:
@@ -211,6 +222,8 @@ class Collider:
         # IPCCoupler._add_rigid_geoms_to_ipc: for two_way_soft_constraint with a link filter,
         # only the filtered links are in IPC; for all other coupling modes, all links are in IPC.
         from genesis.engine.couplers import IPCCoupler
+        from genesis.engine.couplers.ipc_coupler.data import COUPLING_TYPE
+        from genesis.utils.mesh import are_meshes_overlapping
 
         n_geoms = self._solver.n_geoms
         geoms = self._solver.geoms
@@ -227,11 +240,17 @@ class Collider:
                     continue
                 mode = entity.material.coup_type
                 if mode is None:
-                    continue
-                if mode == "ipc_only":
+                    # Auto-infer coupling type (mirrors IPCCoupler._setup_coupling_config)
+                    is_robot = any(j.type not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED) for j in entity.joints)
+                    if is_robot:
+                        mode = "external_articulation" if entity.base_link.is_fixed else "two_way_soft_constraint"
+                    else:
+                        mode = "ipc_only"
+                coup_type = COUPLING_TYPE[mode.upper()]
+                if coup_type == COUPLING_TYPE.IPC_ONLY:
                     ipc_only_link_idxs.update(l.idx for l in entity.links)
                 link_filter_names = entity.material.coup_links
-                if mode == "two_way_soft_constraint" and link_filter_names is not None:
+                if coup_type == COUPLING_TYPE.TWO_WAY_SOFT_CONSTRAINT and link_filter_names is not None:
                     for name in link_filter_names:
                         ipc_delegated_link_idxs.add(entity.get_link(name=name).idx)
                 else:

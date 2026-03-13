@@ -36,14 +36,12 @@ class Rigid(Kinematic):
             Compensation factor for gravity. 1.0 cancels gravity. Default is 0.
         coup_type : str or None, optional
             Coupling mode for this entity. Only used by the IPC coupler. Requires ``needs_coup=True``.
-            If None, auto-selected based on entity type: ``'external_articulation'`` for fixed-base
-            articulated robots, ``'two_way_soft_constraint'`` for floating-base robots, and
-            ``'ipc_only'`` for non-articulated objects. Valid values:
+            Must be explicitly set when ``needs_coup=True``. Valid values:
               - 'two_way_soft_constraint': Two-way soft coupling.
               - 'external_articulation': Joint-level coupling for articulated bodies. Joint positions will be coupled at
                 the DOF level.
-              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Only supported by rigid
-                non-articulated objects.
+              - 'ipc_only': IPC controls entity, transforms copied to Genesis (one-way). Not supported for
+                articulated robots (with revolute, prismatic, etc. joints).
             Default is None.
         coup_links : tuple of str or None, optional
             Tuple of link names to include in coupling. When set, only the named links participate
@@ -61,6 +59,11 @@ class Rigid(Kinematic):
         contact_resistance : float or None, optional
             IPC coupling contact resistance/stiffness override for this entity. ``None`` means use
             ``IPCCouplerOptions.contact_resistance``. Default is None.
+        coup_stiffness : tuple of float or None, optional
+            ``(translation, rotation)`` strength ratios for SoftTransformConstraint coupling.
+            Controls how tightly the IPC ABD body tracks the Genesis rigid body pose.
+            Actual strength = ratio × body_mass. Only used with ``coup_type='two_way_soft_constraint'``.
+            Default is ``(100.0, 100.0)``.
     """
 
     def __init__(
@@ -80,6 +83,7 @@ class Rigid(Kinematic):
         enable_coup_collision=True,
         coup_collision_links=None,
         contact_resistance=None,
+        coup_stiffness=(100.0, 100.0),
     ):
         super().__init__()
 
@@ -153,6 +157,7 @@ class Rigid(Kinematic):
         self._enable_coup_collision = bool(enable_coup_collision)
         self._coup_collision_links = tuple(coup_collision_links) if coup_collision_links is not None else None
         self._contact_resistance = float(contact_resistance) if contact_resistance is not None else None
+        self._coup_stiffness = (float(coup_stiffness[0]), float(coup_stiffness[1]))
 
     @property
     def gravity_compensation(self) -> float:
@@ -228,3 +233,8 @@ class Rigid(Kinematic):
     def coup_collision_links(self) -> tuple[str, ...] | None:
         """Tuple of link names whose geoms participate in IPC collision. None = all coupled links."""
         return self._coup_collision_links
+
+    @property
+    def coup_stiffness(self) -> tuple[float, float]:
+        """(translation, rotation) strength ratios for SoftTransformConstraint coupling."""
+        return self._coup_stiffness

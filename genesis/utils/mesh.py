@@ -1114,3 +1114,44 @@ def check_exr_compression(exr_path):
 
     exr_file.close()
     return exr_path
+
+
+# ---------------------------------------------------------------------------
+# Collision geometry helpers (shared by RigidCollider and IPCCoupler)
+# ---------------------------------------------------------------------------
+
+# Voxelization resolution for neutral-pose overlap check
+NEUTRAL_OVERLAP_RES_ABS = 0.01
+NEUTRAL_OVERLAP_RES_REL = 0.05
+
+
+def are_meshes_overlapping(
+    mesh_a: trimesh.Trimesh,
+    mesh_b: trimesh.Trimesh,
+    res_abs: float = NEUTRAL_OVERLAP_RES_ABS,
+    res_rel: float = NEUTRAL_OVERLAP_RES_REL,
+) -> bool:
+    """Check if two trimesh instances overlap using voxelization.
+
+    Parameters
+    ----------
+    mesh_a, mesh_b : trimesh.Trimesh
+        Meshes to check for overlap.
+    res_abs : float
+        Absolute voxel pitch upper bound.
+    res_rel : float
+        Relative voxel pitch as fraction of mesh extent.
+
+    Returns
+    -------
+    bool
+        True if any voxel of one mesh lies inside the other.
+    """
+    bounds_a, bounds_b = mesh_a.bounds, mesh_b.bounds
+    if (bounds_a[1] < bounds_b[0]).any() or (bounds_b[1] < bounds_a[0]).any():
+        return False
+    voxels_a = mesh_a.voxelized(pitch=min(res_abs, res_rel * max(mesh_a.extents)))
+    voxels_b = mesh_b.voxelized(pitch=min(res_abs, res_rel * max(mesh_b.extents)))
+    coords_a = voxels_a.indices_to_points(np.argwhere(voxels_a.matrix))
+    coords_b = voxels_b.indices_to_points(np.argwhere(voxels_b.matrix))
+    return bool(voxels_a.is_filled(coords_b).any() or voxels_b.is_filled(coords_a).any())
