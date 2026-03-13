@@ -650,79 +650,59 @@ class RigidSolver(KinematicSolver):
 
         self._rigid_global_info.gravity.from_numpy(self.gravity)
 
-    def _process_heterogeneous_link_info(self):
+    def _dispatch_heterogeneous_vgeoms(self):
         """
-        Process heterogeneous link info: dispatch geoms per environment and compute per-env inertial properties.
-        This method is called after _init_link_fields to update the per-environment inertial properties
-        for entities with heterogeneous morphs.
+        Dispatch per-environment geom/vgeom ranges and inertial properties for heterogeneous links.
+
+        Extends the base class (which handles vgeom-only dispatch) to also dispatch collision geom
+        ranges and per-variant inertial properties. Per-variant inertial is pre-computed during
+        link._build() from actual geom objects, using analytic formulas for primitives.
         """
-        for entity in self._entities:
-            # Skip non-heterogeneous entities
-            if not entity._enable_heterogeneous:
+        from genesis.engine.solvers.kinematic_solver import _balanced_variant_mapping
+
+        for link in self.links:
+            if link._variant_vgeom_ranges is None:
                 continue
 
-            # Get the number of variants for this entity
-            n_variants = len(entity.variants_geom_start)
+            n_variants = len(link._variant_vgeom_ranges)
+            variant_idx = _balanced_variant_mapping(n_variants, self._B)
 
-            # Distribute variants across environments using balanced block assignment:
-            # - If B >= n_variants: first B/n_variants environments get variant 0, next get variant 1, etc.
-            # - If B < n_variants: each environment gets a different variant (some variants unused)
-            if self._B >= n_variants:
-                base = self._B // n_variants
-                extra = self._B % n_variants  # first `extra` chunks get one more
-                sizes = np.r_[np.full(extra, base + 1), np.full(n_variants - extra, base)]
-                variant_idx = np.repeat(np.arange(n_variants), sizes)
-            else:
-                # Each environment gets a unique variant; variants beyond B are unused
-                variant_idx = np.arange(self._B)
+            # Build per-env arrays from link's variant data
+            geom_starts = np.array([link._variant_geom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
+            geom_ends = np.array([link._variant_geom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
+            vgeom_starts = np.array([link._variant_vgeom_ranges[v][0] for v in variant_idx], dtype=gs.np_int)
+            vgeom_ends = np.array([link._variant_vgeom_ranges[v][1] for v in variant_idx], dtype=gs.np_int)
 
-            # Get arrays from entity
-            np_geom_start = np.array(entity.variants_geom_start, dtype=gs.np_int)
-            np_geom_end = np.array(entity.variants_geom_end, dtype=gs.np_int)
-            np_vgeom_start = np.array(entity.variants_vgeom_start, dtype=gs.np_int)
-            np_vgeom_end = np.array(entity.variants_vgeom_end, dtype=gs.np_int)
+            # Build per-env inertial arrays from pre-computed per-variant inertial
+            links_inertial_mass = np.array([link._variant_inertial[v][0] for v in variant_idx], dtype=gs.np_float)
+            links_inertial_pos = np.array([link._variant_inertial[v][1] for v in variant_idx], dtype=gs.np_float)
+            links_inertial_i = np.array([link._variant_inertial[v][2] for v in variant_idx], dtype=gs.np_float)
 
-            # Process each link in this heterogeneous entity (currently only single-link supported)
-            for link in entity.links:
-                i_l = link.idx
+            # Update links_info with per-environment values
+            # Note: when batch_links_info is True, the shape is (n_links, B)
+            kernel_update_heterogeneous_link_info(
+                link.idx,
+                geom_starts,
+                geom_ends,
+                vgeom_starts,
+                vgeom_ends,
+                links_inertial_mass,
+                links_inertial_pos,
+                links_inertial_i,
+                self.links_info,
+            )
 
-                # Build per-env arrays for geom/vgeom ranges
-                links_geom_start = np_geom_start[variant_idx]
-                links_geom_end = np_geom_end[variant_idx]
-                links_vgeom_start = np_vgeom_start[variant_idx]
-                links_vgeom_end = np_vgeom_end[variant_idx]
+            # Set active_envs on geoms — indicates which environments each geom is active in
+            for geom in link.geoms:
+                active_envs_mask = (geom_starts <= geom.idx) & (geom.idx < geom_ends)
+                geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                (geom.active_envs_idx,) = np.where(active_envs_mask)
 
-                # Build per-env arrays for inertial properties
-                links_inertial_mass = np.array(
-                    [entity.variants_inertial_mass[v] for v in variant_idx], dtype=gs.np_float
-                )
-                links_inertial_pos = np.array([entity.variants_inertial_pos[v] for v in variant_idx], dtype=gs.np_float)
-                links_inertial_i = np.array([entity.variants_inertial_i[v] for v in variant_idx], dtype=gs.np_float)
-
-                # Update links_info with per-environment values
-                # Note: when batch_links_info is True, the shape is (n_links, B)
-                kernel_update_heterogeneous_link_info(
-                    i_l,
-                    links_geom_start,
-                    links_geom_end,
-                    links_vgeom_start,
-                    links_vgeom_end,
-                    links_inertial_mass,
-                    links_inertial_pos,
-                    links_inertial_i,
-                    self.links_info,
-                )
-
-                # Update active_envs_idx for geoms and vgeoms - indicates which environments each geom is active in
-                for geom in link.geoms:
-                    active_envs_mask = (links_geom_start <= geom.idx) & (geom.idx < links_geom_end)
-                    geom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                    (geom.active_envs_idx,) = np.where(active_envs_mask)
-
-                for vgeom in link.vgeoms:
-                    active_envs_mask = (links_vgeom_start <= vgeom.idx) & (vgeom.idx < links_vgeom_end)
-                    vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
-                    (vgeom.active_envs_idx,) = np.where(active_envs_mask)
+            # Set active_envs on vgeoms
+            for vgeom in link.vgeoms:
+                active_envs_mask = (vgeom_starts <= vgeom.idx) & (vgeom.idx < vgeom_ends)
+                vgeom.active_envs_mask = torch.tensor(active_envs_mask, device=gs.device)
+                (vgeom.active_envs_idx,) = np.where(active_envs_mask)
 
     def _init_vert_fields(self):
         self.verts_info = self.data_manager.verts_info
