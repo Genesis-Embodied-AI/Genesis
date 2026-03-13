@@ -101,6 +101,7 @@ class KinematicEntity(Entity):
 
         self._is_built: bool = False
         self._is_attached: bool = False
+        self._variant_init_qpos: list[np.ndarray] | None = None
 
         self._load_model()
 
@@ -138,39 +139,103 @@ class KinematicEntity(Entity):
         self._load_heterogeneous_morphs()
 
     def _load_heterogeneous_morphs(self):
-        """
-        Load heterogeneous morphs (additional geometry variants for parallel environments).
-        Each variant is loaded as additional geoms/vgeoms attached to the single link.
+        """Load heterogeneous morphs (additional geometry variants for parallel environments).
 
+        Each variant is loaded as additional geoms/vgeoms attached to links.
         Variant tracking (geom/vgeom ranges, inertial) is stored on the Link itself.
-        RigidEntity overrides _add_heterogeneous_variant to add collision geoms.
         """
         if not self._enable_heterogeneous:
             return
 
-        # Heterogeneous simulation only supports single-link entities.
-        if len(self._links) != 1:
-            gs.raise_exception("morph_heterogeneous only supports single-link entities.")
+        # Init variant tracking on ALL links
+        for link in self._links:
+            link._init_variant_tracking()
 
-        link = self._links[0]
-        link._init_variant_tracking()
+        # Track per-variant init_qpos for per-environment dispatch (primary first)
+        self._variant_init_qpos = [self.init_qpos.copy()]
+
+        n_links = len(self._links)
 
         # Load additional heterogeneous variants
         for morph in self._morph_heterogeneous:
-            if isinstance(morph, gs.morphs.Mesh):
+            if isinstance(morph, (gs.morphs.URDF, gs.morphs.MJCF)):
+                # Parse variant scene file
+                morph._enable_mujoco_compatibility = self._morph._enable_mujoco_compatibility
+                v_l_infos, v_links_j_infos, v_links_g_infos, _ = self._parse_scene(morph, self._surface)
+
+                # Validate that the variant has the same joint structure as the primary
+                if len(v_l_infos) != n_links:
+                    gs.raise_exception(
+                        f"Heterogeneous variant has {len(v_l_infos)} links, "
+                        f"but primary has {n_links}. All variants must have the same link count."
+                    )
+                for i_l, (link, v_j_infos) in enumerate(zip(self._links, v_links_j_infos)):
+                    primary_joints = link.joints
+                    if len(v_j_infos) != len(primary_joints):
+                        gs.raise_exception(
+                            f"Heterogeneous variant link {i_l} has {len(v_j_infos)} joints, "
+                            f"but primary has {len(primary_joints)}."
+                        )
+                    for p_joint, v_j_info in zip(primary_joints, v_j_infos):
+                        if p_joint.name != v_j_info["name"]:
+                            gs.raise_exception(
+                                f"Joint name mismatch at link {i_l}: primary has '{p_joint.name}', "
+                                f"variant has '{v_j_info['name']}'. All variants must have the same joint names."
+                            )
+                        if p_joint.type != v_j_info["type"]:
+                            gs.raise_exception(
+                                f"Joint type mismatch for '{p_joint.name}': primary has {p_joint.type}, "
+                                f"variant has {v_j_info['type']}."
+                            )
+                        if p_joint.n_dofs != v_j_info["n_dofs"]:
+                            gs.raise_exception(
+                                f"DoF count mismatch for joint '{p_joint.name}': primary has {p_joint.n_dofs}, "
+                                f"variant has {v_j_info['n_dofs']}."
+                            )
+
+                # Extract variant's init_qpos from parsed joint infos
+                variant_init_qpos_parts = []
+                for v_j_infos in v_links_j_infos:
+                    for j_info in v_j_infos:
+                        variant_init_qpos_parts.append(j_info["init_qpos"])
+                if variant_init_qpos_parts:
+                    self._variant_init_qpos.append(np.concatenate(variant_init_qpos_parts))
+                else:
+                    self._variant_init_qpos.append(np.array([]))
+
+                # Add geoms per link
+                for link, v_l_info, v_g_infos in zip(self._links, v_l_infos, v_links_g_infos):
+                    is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))
+                    cg_infos, vg_infos = self._separate_geom_infos(morph, v_g_infos, is_robot)
+                    self._add_heterogeneous_variant(link, cg_infos, vg_infos)
+                    self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
+
+            elif isinstance(morph, gs.morphs.Mesh):
                 g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
+                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
+                init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
+                self._variant_init_qpos.append(init_qpos)
             elif isinstance(morph, gs.morphs.Primitive):
                 g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
+                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
+                init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
+                self._variant_init_qpos.append(init_qpos)
             else:
                 gs.raise_exception(
-                    f"morph_heterogeneous only supports Primitive and Mesh, got: {type(morph).__name__}."
+                    f"Heterogeneous morphs only support URDF, MJCF, Primitive, and Mesh, got: {type(morph).__name__}."
                 )
 
-            cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
-            self._add_heterogeneous_variant(link, cg_infos, vg_infos)
+        # For multi-link entities, reassign indices and recompute variant ranges
+        if len(self._links) > 1:
+            self._reassign_heterogeneous_indices()
 
     def _add_heterogeneous_variant(self, link, cg_infos, vg_infos):
-        """Add a heterogeneous variant to the link. RigidEntity overrides to add collision geoms."""
+        """Add a heterogeneous variant's visual geoms to a link.
+
+        RigidEntity overrides to additionally add collision geoms.
+        """
         for g_info in vg_infos:
             link._add_vgeom(
                 vmesh=g_info["vmesh"],
@@ -178,6 +243,37 @@ class KinematicEntity(Entity):
                 init_quat=g_info.get("quat", gu.identity_quat()),
             )
         link._record_variant_vgeom_range(len(vg_infos))
+
+    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_info):
+        """Hook for subclasses after a scene variant's geoms have been added to a link."""
+
+    def _reassign_heterogeneous_indices(self):
+        """Reassign vgeom indices for multi-link heterogeneous entities.
+
+        RigidEntity overrides to additionally handle collision geom indices.
+        """
+        running_vgeom_idx = self._vgeom_start
+        running_vvert = self._vvert_start
+        running_vface = self._vface_start
+
+        for link in self._links:
+            for vgeom in link.vgeoms:
+                vgeom._idx = running_vgeom_idx
+                vgeom._vvert_start = running_vvert
+                vgeom._vface_start = running_vface
+                running_vgeom_idx += 1
+                running_vvert += vgeom.n_vverts
+                running_vface += vgeom.n_vfaces
+
+        for link in self._links:
+            if link._variant_vgeom_ranges is None:
+                continue
+            vgeom_counts = [end - start for start, end in link._variant_vgeom_ranges]
+            vgeom_cursor = link.vgeoms[0].idx if link.vgeoms else 0
+            link._variant_vgeom_ranges = []
+            for count in vgeom_counts:
+                link._variant_vgeom_ranges.append((vgeom_cursor, vgeom_cursor + count))
+                vgeom_cursor += count
 
     def _load_model(self):
         self._links = gs.List()
@@ -1788,6 +1884,64 @@ class RigidEntity(KinematicEntity):
 
         # Record geom range on the link (vgeom range already recorded by parent)
         link._record_variant_geom_range(len(cg_infos))
+
+    def _reassign_heterogeneous_indices(self):
+        """Reassign collision and visual geom indices for multi-link heterogeneous entities."""
+        # Reassign collision geom indices sequentially
+        running_idx = self._geom_start
+        running_cell = self._cell_start
+        running_vert = self._vert_start
+        running_face = self._face_start
+        running_edge = self._edge_start
+        running_free_vs = self._free_verts_state_start
+        running_fixed_vs = self._fixed_verts_state_start
+
+        for link in self._links:
+            for geom in link.geoms:
+                geom._idx = running_idx
+                geom._cell_start = running_cell
+                geom._vert_start = running_vert
+                geom._face_start = running_face
+                geom._edge_start = running_edge
+                if link.is_fixed and not self._batch_fixed_verts:
+                    geom._verts_state_start = running_fixed_vs
+                    running_fixed_vs += geom.n_verts
+                else:
+                    geom._verts_state_start = running_free_vs
+                    running_free_vs += geom.n_verts
+                running_idx += 1
+                running_cell += geom.n_cells
+                running_vert += geom.n_verts
+                running_face += geom.n_faces
+                running_edge += geom.n_edges
+
+        # Reassign visual geom indices and recompute variant ranges via parent
+        super()._reassign_heterogeneous_indices()
+
+        # Recompute collision geom variant ranges from counts and reassigned indices
+        for link in self._links:
+            if link._variant_geom_ranges is None:
+                continue
+            geom_counts = [end - start for start, end in link._variant_geom_ranges]
+            geom_cursor = link.geoms[0].idx if link.geoms else 0
+            link._variant_geom_ranges = []
+            for count in geom_counts:
+                link._variant_geom_ranges.append((geom_cursor, geom_cursor + count))
+                geom_cursor += count
+
+    def _on_heterogeneous_scene_variant_loaded(self, link, morph, v_l_info):
+        """Store parsed inertial from the variant file for use during link._build()."""
+        if link._variant_scene_inertial is None:
+            link._variant_scene_inertial = []
+        link._variant_scene_inertial.append(
+            (
+                morph,
+                v_l_info.get("inertial_mass"),
+                v_l_info.get("inertial_pos"),
+                v_l_info.get("inertial_quat"),
+                v_l_info.get("inertial_i"),
+            )
+        )
 
     def _load_model(self):
         self._equalities = gs.List()

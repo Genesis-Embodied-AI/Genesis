@@ -137,7 +137,7 @@ def parse_urdf(morph, surface):
                 l_info["inertial_quat"] = gu.R_to_quat(link.inertial.origin[:3, :3])
             if link.inertial.inertia is not None:
                 l_info["inertial_i"] = link.inertial.inertia
-            if link.inertial.mass is not None:
+            if link.inertial.mass is not None and link.inertial.mass > gs.EPS:
                 l_info["inertial_mass"] = link.inertial.mass
 
         for geom_prop in (*link.collisions, *link.visuals):

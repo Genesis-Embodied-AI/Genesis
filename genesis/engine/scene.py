@@ -365,13 +365,19 @@ class Scene(RBC):
         if is_heterogeneous:
             morph = tuple(morph)
             morph_for_checks = morph[0]
-            if not isinstance(material, gs.materials.Rigid):
-                gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
-            for m in morph:
-                if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
-                    gs.raise_exception(
-                        f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
-                    )
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
+                gs.raise_exception(
+                    "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
+                )
+            if not all(
+                isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)) for m in morph
+            ):
+                gs.raise_exception("Heterogeneous morphs only support Primitive, Mesh, URDF and MJCF types.")
+            if len(set(isinstance(m, (gs.morphs.URDF, gs.morphs.MJCF)) for m in morph)) > 1:
+                gs.raise_exception(
+                    "Heterogeneous morphs must be consistent: either all articulated robots (ie URDF, MJCF) or all "
+                    "basic objects (ie Primitive, Mesh)."
+                )
         else:
             morph_for_checks = morph
 
@@ -463,10 +469,12 @@ class Scene(RBC):
             gs.raise_exception()
 
         # Set material-dependent default options
-        if isinstance(morph, gs.morphs.FileMorph):
-            # Rigid entities will convexify geom by default
-            if morph.convexify is None:
-                morph.convexify = isinstance(material, gs.materials.Rigid)
+        morphs_to_configure = morph if is_heterogeneous else (morph,)
+        for morph_variant in morphs_to_configure:
+            if isinstance(morph_variant, gs.morphs.FileMorph):
+                # Rigid entities will convexify geom by default
+                if morph_variant.convexify is None:
+                    morph_variant.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 

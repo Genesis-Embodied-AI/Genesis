@@ -676,7 +676,8 @@ class RigidSolver(KinematicSolver):
             # Build per-env inertial arrays from pre-computed per-variant inertial
             links_inertial_mass = np.array([link._variant_inertial[v][0] for v in variant_idx], dtype=gs.np_float)
             links_inertial_pos = np.array([link._variant_inertial[v][1] for v in variant_idx], dtype=gs.np_float)
-            links_inertial_i = np.array([link._variant_inertial[v][2] for v in variant_idx], dtype=gs.np_float)
+            links_inertial_quat = np.array([link._variant_inertial[v][2] for v in variant_idx], dtype=gs.np_float)
+            links_inertial_i = np.array([link._variant_inertial[v][3] for v in variant_idx], dtype=gs.np_float)
 
             # Update links_info with per-environment values
             # Note: when batch_links_info is True, the shape is (n_links, B)
@@ -688,6 +689,7 @@ class RigidSolver(KinematicSolver):
                 vgeom_ends,
                 links_inertial_mass,
                 links_inertial_pos,
+                links_inertial_quat,
                 links_inertial_i,
                 self.links_info,
             )
