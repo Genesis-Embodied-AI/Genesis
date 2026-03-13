@@ -1,14 +1,14 @@
 import math
 from typing import Literal
 
-import numpy as np
 import numba as nb
+import numpy as np
+import quadrants as qd
 import torch
 import torch.nn.functional as F
 
-import quadrants as qd
-
 import genesis as gs
+from genesis.typing import Vec3FType
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
@@ -2008,6 +2008,58 @@ def random_quaternion(batch_size):
     q3 = np.sqrt(u1) * np.sin(2 * np.pi * u3)
     q4 = np.sqrt(u1) * np.cos(2 * np.pi * u3)
     return np.stack((q1, q2, q3, q4), axis=1)
+
+
+def generate_grid_points_on_plane(
+    lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int
+) -> tuple[np.ndarray, float, float]:
+    """
+    Build an nx-by-ny grid of points on the plane defined by the bounds and normal.
+
+    Parameters
+    ----------
+    lo: array-like[float, float, float]
+        Lower bound of the plane
+    hi: array-like[float, float, float]
+        Upper bound of the plane
+    normal: array-like[float, float, float]
+        Normal of the plane
+    nx: int
+        Number of grid points in x direction
+    ny: int
+        Number of grid points in y direction
+
+    Returns
+    -------
+    grid: np.ndarray, shape (ny, nx, 3)
+        Grid points on the plane
+    """
+    # Compute tangent axes
+    normal = np.asarray(normal, dtype=gs.np_float)
+    n_norm = np.linalg.norm(normal)
+    if n_norm < gs.EPS:
+        gs.raise_exception(f"normal must be non-zero, got: {normal}")
+    normal = normal / n_norm
+    t0, t1 = orthogonals(normal)
+
+    # Compute lower and upper bounds in local basis
+    rot = np.stack((t0, t1, normal), axis=0, dtype=gs.np_float)
+    bounds = np.stack((lo, hi), axis=1, dtype=gs.np_float)
+    (lo_u, hi_u), (lo_v, hi_v), (lo_w, hi_w) = rot @ bounds
+
+    # Make sure that bounds are orthogonal to plane normal
+    extent_w = abs(hi_w - lo_w)
+    if extent_w > gs.EPS:
+        gs.logger.warning(f"Bounds does not lie on a plane orthogonal to normal (normal-axis mismatch={extent_w:.6e}).")
+    plane_w = 0.5 * (lo_w + hi_w)
+
+    # Sample point grid on plane
+    u_vals = np.linspace(lo_u, hi_u, num=nx, dtype=gs.np_float)
+    v_vals = np.linspace(lo_v, hi_v, num=ny, dtype=gs.np_float)
+    vv, uu = np.meshgrid(v_vals, u_vals, indexing="ij")
+    grid = t0 * np.expand_dims(uu, axis=-1) + t1 * np.expand_dims(vv, axis=-1) + normal * plane_w
+
+    return grid
 
 
 # ------------------------------------------------------------------------------------

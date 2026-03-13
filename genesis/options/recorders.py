@@ -3,10 +3,17 @@ from typing import Annotated, Any
 from pydantic import BeforeValidator, Field, StrictBool
 
 import genesis as gs
-from genesis.typing import NonNegativeInt, PathType, PositiveFloat, PositiveInt, PositiveVec2IType
+from genesis.typing import (
+    NonNegativeInt,
+    PathType,
+    PositiveFloat,
+    PositiveInt,
+    PositiveVec2IType,
+    Vec3FArrayType,
+    Vec3FType,
+)
 
 from .options import Options
-
 
 IS_PYAV_AVAILABLE = False
 try:
@@ -281,3 +288,37 @@ class MPLImagePlot(BasePlotterOptions):
     """
 
     pass
+
+
+class MPLVectorFieldPlot(BasePlotterOptions):
+    """
+    Live visualization of 3D vectors projected onto a 2D plane, colored by magnitude.
+
+    At initialization, provide the normal direction (view axis) and the 3D positions of each vector.
+    The data_func should return an array of shape (N, 3) with the 3D vector at each position (e.g. displacement or force).
+
+    Parameters
+    ----------
+    title: str
+        The title of the plot.
+    window_size: tuple[int, int]
+        The size of the window in pixels.
+    positions: array-like of shape (N, 3)
+        The 3D positions of each vector (e.g. probe positions in link-local frame).
+    normal: tuple[float, float, float]
+        The normal direction for projection (view axis). Vectors and positions are projected onto the plane
+        perpendicular to this axis. Default: (0, 0, 1).
+    scale_factor: float, optional
+        The scale factor to apply to the vectors. Defaults to 0.1.
+    max_magnitude: float, optional
+        Maximum magnitude for the colorbar (colors are fixed to [0, max_magnitude]). Defaults to 1.0.
+    save_to_filename: str | None
+        If provided, the animation will be saved to a file with the given filename.
+    show_window: bool | None
+        Whether to show the window. If not provided, it will be set to True if a display is connected, False otherwise.
+    """
+
+    positions: Vec3FArrayType
+    normal: Vec3FType = (0.0, 0.0, 1.0)
+    scale_factor: PositiveFloat = 1.0
+    max_magnitude: PositiveFloat = 1.0

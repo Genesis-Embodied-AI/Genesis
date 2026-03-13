@@ -83,7 +83,7 @@ def kernel_cast_rays(
         ray_start_world = qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
 
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
+        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
@@ -124,7 +124,7 @@ def kernel_cast_rays(
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * qd_normalize(
-                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
+                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), eps
                 )
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
