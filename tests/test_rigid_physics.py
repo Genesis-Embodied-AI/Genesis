@@ -17,7 +17,7 @@ import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.ext import urdfpy
 from genesis.utils import urdf as uu
-from genesis.utils.misc import get_assets_dir, tensor_to_array, qd_to_numpy, qd_to_torch
+from genesis.utils.misc import get_assets_dir, qd_to_numpy, qd_to_torch, tensor_to_array
 
 from .utils import (
     assert_allclose,
@@ -4683,6 +4683,53 @@ def test_heterogeneous_fewer_envs_than_variants():
     assert mass.shape == (scene.n_envs,)
     # Different box sizes should have different masses
     assert mass[0] != mass[1]
+
+
+@pytest.mark.required
+def test_heterogeneous_mass_setters(tol):
+    """Test entity/link mass setters with heterogeneous morphs."""
+    scene = gs.Scene(show_viewer=False)
+    het_obj = scene.add_entity(
+        morph=[
+            gs.morphs.Box(size=(0.01, 0.01, 0.01)),
+            gs.morphs.Box(size=(0.02, 0.02, 0.02)),
+            gs.morphs.Sphere(radius=0.01),
+            gs.morphs.Sphere(radius=0.02),
+        ],
+    )
+    scene.build(n_envs=4)
+
+    link = next(link for link in het_obj.links if not link.is_fixed)
+
+    # Invalid shape should raise before any per-env state is set.
+    with pytest.raises(gs.GenesisException):
+        link.set_mass((1.0, 2.0))
+
+    het_obj.set_mass(1.0)
+    assert_allclose(het_obj.get_mass(), 1.0, tol=tol)
+
+    # Link-level setter should support per-environment mass targets.
+    target_mass = (0.2, 0.4, 0.6, 0.8)
+    link.set_mass(target_mass)
+    assert_allclose(link.get_mass(), target_mass, tol=tol)
+
+
+@pytest.mark.required
+def test_non_batched_mass_setters(tol):
+    """Test link mass setter with non-batched links info (batch_links_info=False)."""
+    scene = gs.Scene(show_viewer=False, rigid_options=gs.options.RigidOptions(batch_links_info=False))
+    obj = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1)))
+    scene.build(n_envs=4)
+
+    link = next(link for link in obj.links if not link.is_fixed)
+
+    # Scalar set_mass should work and apply uniformly across all envs.
+    link.set_mass(2.0)
+    assert_allclose(link.get_mass(), 2.0, tol=tol)
+
+    # Per-env array mass should raise a clear exception.
+    with pytest.raises(gs.GenesisException):
+        link.set_mass((1.0, 2.0, 3.0, 4.0))
 
 
 @pytest.mark.required

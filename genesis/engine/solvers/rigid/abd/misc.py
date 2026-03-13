@@ -534,28 +534,6 @@ def kernel_init_geom_fields(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def kernel_adjust_link_inertia(
-    link_idx: qd.i32,
-    ratio: qd.f32,
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    if qd.static(static_rigid_sim_config.batch_links_info):
-        for i_b in range(links_info.root_idx.shape[0]):
-            for j in qd.static(range(2)):
-                links_info.invweight[link_idx, i_b][j] /= ratio
-            links_info.inertial_mass[link_idx, i_b] *= ratio
-            for j1, j2 in qd.static(qd.ndrange(3, 3)):
-                links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
-    else:
-        for j in qd.static(range(2)):
-            links_info.invweight[link_idx][j] /= ratio
-        links_info.inertial_mass[link_idx] *= ratio
-        for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            links_info.inertial_i[link_idx][j1, j2] *= ratio
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vgeom_fields(
     vgeoms_pos: qd.types.ndarray(),
     vgeoms_quat: qd.types.ndarray(),

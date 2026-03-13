@@ -48,7 +48,6 @@ from .abd.misc import (
     kernel_init_vert_fields,
     kernel_init_vvert_fields,
     kernel_init_geom_fields,
-    kernel_adjust_link_inertia,
     kernel_init_vgeom_fields,
     kernel_init_entity_fields,
     kernel_init_equality_fields,
@@ -151,6 +150,7 @@ from .abd.accessor import (
     kernel_update_drone_propeller_vgeoms,
     kernel_set_geom_friction,
     kernel_set_geoms_friction,
+    kernel_adjust_link_inertia,
 )
 from .abd.diff import (
     func_copy_cartesian_space,
@@ -1691,6 +1691,34 @@ class RigidSolver(KinematicSolver):
         if self.n_envs == 0 and self._options.batch_links_info:
             mass = mass[None]
         kernel_set_links_inertial_mass(mass, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
+
+    def set_links_inertia(self, ratio, links_idx=None, envs_idx=None):
+        if gs.use_zerocopy:
+            mass_data = qd_to_torch(self.links_info.inertial_mass, transpose=True, copy=False)
+            inertial_i_data = qd_to_torch(self.links_info.inertial_i, transpose=True, copy=False)
+            invweight_data = qd_to_torch(self.links_info.invweight, transpose=True, copy=False)
+            links_mask = indices_to_mask(links_idx)
+            if self._options.batch_links_info:
+                mask = (0, *links_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *links_mask)
+            else:
+                mask = links_mask
+            ratio_t = broadcast_tensor(ratio, gs.tc_float, mass_data[mask].shape)
+            assign_indexed_tensor(mass_data, mask, mass_data[mask] * ratio_t)
+            assign_indexed_tensor(inertial_i_data, mask, inertial_i_data[mask] * ratio_t[..., None, None])
+            assign_indexed_tensor(invweight_data, mask, invweight_data[mask] / ratio_t[..., None])
+        else:
+            ratio, links_idx, envs_idx = self._sanitize_io_variables(
+                ratio,
+                links_idx,
+                self.n_links,
+                "links_idx",
+                envs_idx,
+                batched=self._options.batch_links_info,
+                skip_allocation=True,
+            )
+            if self.n_envs == 0 and self._options.batch_links_info:
+                ratio = ratio[None]
+            kernel_adjust_link_inertia(ratio, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
