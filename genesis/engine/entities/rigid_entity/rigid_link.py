@@ -6,17 +6,18 @@ import trimesh
 
 import genesis as gs
 from genesis.repr_base import RBC
+from genesis.typing import LaxPositiveFArrayType
 from genesis.utils import geom as gu
+from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 from genesis.utils.urdf import compose_inertial_properties, rotate_inertia
-
-from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+
     from .rigid_entity import KinematicEntity, RigidEntity
     from .rigid_joint import RigidJoint
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
@@ -890,9 +891,14 @@ class RigidLink(KinematicLink):
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def set_mass(self, mass):
+    def set_mass(self, mass: LaxPositiveFArrayType):
         """
         Set the mass of the link.
+
+        Parameters
+        ----------
+        mass : float | array_like, shape (n_envs,)
+            The mass to set.
         """
         from genesis.engine.solvers.rigid.rigid_solver import kernel_adjust_link_inertia
 
@@ -900,14 +906,38 @@ class RigidLink(KinematicLink):
             gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
 
-        if mass < gs.EPS:
+        mass = tensor_to_array(mass)
+
+        if np.any(mass < gs.EPS):
             gs.raise_exception(f"Attempt to set mass of link '{self.name}' to {mass}. Mass must be strictly positive.")
 
-        ratio = float(mass / self._inertial_mass)
-        self._inertial_mass *= ratio
-        if self._invweight is not None:
-            self._invweight /= ratio
-        self._inertial_i *= ratio
+        if mass.ndim > 0 and (mass.ndim != 1 or mass.shape[0] != self._solver.n_envs):
+            gs.raise_exception(
+                f"Attempt to set mass of link '{self.name}' with shape {mass.shape}. "
+                f"Expected shape ({self._solver.n_envs},)."
+            )
+
+        ratio = mass / self._inertial_mass
+
+        n_envs = self._solver.n_envs
+        if ratio.ndim == 0:
+            ratio_scalar = float(ratio)
+            self._inertial_mass *= ratio_scalar
+            if self._invweight is not None:
+                self._invweight /= ratio_scalar
+            self._inertial_i *= ratio_scalar
+            ratio = np.full((max(n_envs, 1),), fill_value=ratio_scalar, dtype=gs.np_float)
+        else:
+            self._inertial_mass = np.asarray(self._inertial_mass, dtype=gs.np_float) * ratio
+            if self._invweight is not None:
+                invweight = np.asarray(self._invweight, dtype=gs.np_float)
+                if invweight.ndim == 1:
+                    invweight = np.broadcast_to(invweight[None, :], (n_envs, invweight.shape[0])).copy()
+                self._invweight = invweight / ratio[:, None]
+            inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
+            if inertial_i.ndim == 2:
+                inertial_i = np.broadcast_to(inertial_i[None, :, :], (n_envs, 3, 3)).copy()
+            self._inertial_i = inertial_i * ratio[:, None, None]
 
         kernel_adjust_link_inertia(
             link_idx=self.idx,
