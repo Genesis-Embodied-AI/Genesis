@@ -521,7 +521,17 @@ class KinematicEntity(Entity):
             try:
                 # Mujoco's unified MJCF+URDF parser for URDF files.
                 # Note that Mujoco URDF parser completely ignores equality constraints.
-                l_infos, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+                l_infos_mj, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
+
+                # Unset link inertial properties that are actually undefined to avoid recomputation
+                for l_info_gs in l_infos:
+                    for l_info_mj in l_infos_mj:
+                        if l_info_gs["name"] == l_info_mj["name"]:
+                            for key, value in l_info_gs.items():
+                                if value is None:
+                                    l_info_mj[key] = None
+                            break
+                l_infos = l_infos_mj
 
                 # Mujoco is not parsing actuators properties
                 for j_info_gs in chain.from_iterable(links_j_infos):
@@ -529,6 +539,7 @@ class KinematicEntity(Entity):
                         if j_info_mj["name"] == j_info_gs["name"]:
                             for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
                                 j_info_mj[name] = j_info_gs[name]
+                            break
                 links_j_infos = links_j_infos_mj
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
