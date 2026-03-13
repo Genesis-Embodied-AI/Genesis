@@ -1067,7 +1067,11 @@ class StructGJKInfo(metaclass=BASE_METACLASS):
     # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
     # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
     # we consider the projection invalid, because it means numerical errors are too large.
-    polytope_max_reprojection_error: V_ANNOTATION
+    # We check both relative and absolute errors: the relative error catches numerically degenerate faces,
+    # while the absolute error prevents false rejections on smooth geometries (e.g. spheres) where
+    # polytope faces become extremely small near convergence, amplifying the relative error.
+    polytope_max_rel_reprojection_error: V_ANNOTATION
+    polytope_max_abs_reprojection_error: V_ANNOTATION
     # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
     # tolerance to be considered as a valid parallel contact.
     contact_face_tol: V_ANNOTATION
@@ -1106,8 +1110,11 @@ def get_gjk_info(**kwargs):
         collision_eps=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["collision_eps"]),
         simplex_max_degeneracy_sq=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["simplex_max_degeneracy_sq"]),
         polytope_max_faces=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["polytope_max_faces"]),
-        polytope_max_reprojection_error=V_SCALAR_FROM(
-            dtype=gs.qd_float, value=kwargs["polytope_max_reprojection_error"]
+        polytope_max_rel_reprojection_error=V_SCALAR_FROM(
+            dtype=gs.qd_float, value=kwargs["polytope_max_rel_reprojection_error"]
+        ),
+        polytope_max_abs_reprojection_error=V_SCALAR_FROM(
+            dtype=gs.qd_float, value=kwargs["polytope_max_abs_reprojection_error"]
         ),
         contact_face_tol=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_face_tol"]),
         contact_edge_tol=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_edge_tol"]),

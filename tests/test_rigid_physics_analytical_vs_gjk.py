@@ -1,33 +1,31 @@
 """
 Unit test comparing analytical capsule-capsule contact detection with GJK.
 
-This test creates a modified version of narrowphase.py in a temporary file that
-forces capsule-capsule and sphere-capsule collisions to use GJK instead of
-analytical methods, allowing direct comparison between the two approaches.
+This test creates a modified version of narrowphase.py in a temporary file that forces capsule-capsule and
+sphere-capsule collisions to use GJK instead of analytical methods, allowing direct comparison between the two
+approaches.
 
 # errno
 
-We abuse errno in this test, because it is considerably easier, and needs much less code, than
-attempting to add a new tensor into one of the existing structures, and have that work for both
-ndarray and field, via monkey-patching.
+We abuse errno in this test, because it is considerably easier, and needs much less code, than attempting to add a
+new tensor into one of the existing structures, and have that work for both ndarray and field, via monkey-patching.
 
-errno is NOT designed for how we use it. Nevertheless with a couple of reasonable-ish assumptions
-we can work with it.
+errno is NOT designed for how we use it. Nevertheless with a couple of reasonable-ish assumptions we can work with it.
 
-Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including
-test code) will ever set bit 16 of errno to any value except 0.
-Assumption 2: when taking a step, nothing in Genesis production code will set bit 16 of errno to any value
-at all - including 0 - when running normally.
+Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including test code) will
+ever set bit 16 of errno to any value except 0.
+Assumption 2: when taking a step, nothing in Genesis production code will set bit 16 of errno to any value at all -
+including 0 - when running normally.
 
-Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them,
-our tests will almost certainly fail.
+Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them, our tests will
+almost certainly fail.
 
-Note that as part of our use of errno, we take full responsibilty ourselves for resetting it to 0 before each
-test scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example
-by setting errno to 0 in set_qpos.
+Note that as part of our use of errno, we take full responsibility ourselves for resetting it to 0 before each test
+scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example by setting errno
+to 0 in set_qpos.
 
-Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity,
-we make resetting errno explicit in this test.
+Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity, we make
+resetting errno explicit in this test.
 """
 
 import copy
@@ -44,7 +42,7 @@ from .utils import assert_allclose
 from .conftest import TOL_SINGLE
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity import RigidGeom
+    from genesis.engine.entities import RigidEntity
 
 
 ERRNO_CALLED_GJK = 1 << 16
@@ -254,20 +252,32 @@ def create_modified_narrowphase_file(tmp_path: Path):
     return temp_narrowphase_path
 
 
-def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidGeom":
+def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidEntity":
     sphere_mjcf = create_sphere_mjcf("sphere", (0, 0, 0), radius)
     sphere_path = tmp_path / "sphere.xml"
     ET.ElementTree(sphere_mjcf).write(sphere_path)
-    entity_sphere = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=sphere_path)))
-    return entity_sphere
+    entity_sphere = scene.add_entity(
+        gs.morphs.MJCF(
+            file=sphere_path,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    return cast("RigidEntity", entity_sphere)
 
 
-def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float) -> "RigidGeom":
+def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float) -> "RigidEntity":
     capsule_mjcf = create_capsule_mjcf("capsule", (0, 0, 0), (0, 0, 0), radius, half_length)
     capsule_path = tmp_path / "sphere.xml"
     ET.ElementTree(capsule_mjcf).write(capsule_path)
-    entity_capsule = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=capsule_path)))
-    return entity_capsule
+    entity_capsule = scene.add_entity(
+        gs.morphs.MJCF(
+            file=capsule_path,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    return cast("RigidEntity", entity_capsule)
 
 
 class AnalyticalVsGJKSceneCreator:
@@ -284,13 +294,15 @@ class AnalyticalVsGJKSceneCreator:
     def setup_scenes(self) -> tuple[gs.Scene, gs.Scene]:
         """Build both scenes WITHOUT any monkey-patching."""
         # Scene 1: Using ORIGINAL analytical collision detection
-        self.scene_analytical = gs.Scene(show_viewer=self.show_viewer)
+        self.scene_analytical = gs.Scene(
+            show_viewer=self.show_viewer,
+        )
         self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
-            show_viewer=self.show_viewer,
             rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
+            show_viewer=self.show_viewer,
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
@@ -320,12 +332,10 @@ class AnalyticalVsGJKSceneCreator:
     def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
         self.entities_analytical[entity_idx].set_qpos((*pos, *quat))
-        self.entities_analytical[entity_idx].zero_all_dofs_velocity()
 
     def update_pos_quat_gjk(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
         self.entities_gjk[entity_idx].set_qpos((*pos, *quat))
-        self.entities_gjk[entity_idx].zero_all_dofs_velocity()
 
     def step_analytical(self):
         # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
@@ -381,6 +391,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path, show_viewer=show_viewer
     )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
+    assert scene_analytical.rigid_solver.collider is not None
+    assert scene_gjk.rigid_solver.collider is not None
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
@@ -511,9 +523,10 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
 
     _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
-
     scene.build()
-    cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)], dtype=gs.np_float))
+    assert scene.rigid_solver.collider is not None
+
+    cap2.set_pos((0.15, 0, 0))
     scene.step()
 
     contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
@@ -545,7 +558,7 @@ def create_sphere_mjcf(name, pos, radius):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
+def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
@@ -595,6 +608,8 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         show_viewer=show_viewer,
     )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
+    assert scene_analytical.rigid_solver.collider is not None
+    assert scene_gjk.rigid_solver.collider is not None
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
@@ -671,3 +686,55 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Sphere radius: {sphere_radius}\n"
                 f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
             ) from e
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
+    """
+    Regression test for sphere-sphere GJK collision detection.
+
+    Smooth geometries like spheres produce extremely small polytope faces near EPA convergence,
+    which amplifies the relative reprojection error and causes false contact rejections.
+    The diagonal_3d case (pos_b=(0.08, 0.06, 0.06)) is the original bug report configuration.
+
+    Uses asymmetric radii (r_a=0.10, r_b=0.08, combined_r=0.18) for all cases.
+    """
+    test_cases = [
+        # (pos_b, should_collide, description, exp_pen, exp_normal)
+        # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634
+        ((0.08, 0.06, 0.06), True, "diagonal_3d", 0.0634, (0.08, 0.06, 0.06)),
+        # Axis-aligned overlap: dist = 0.15, pen = 0.03
+        ((0.15, 0, 0), True, "axis_aligned", 0.03, (1, 0, 0)),
+        # Near-touching: dist = 0.17, pen = 0.01
+        ((0.17, 0, 0), True, "near_touching", 0.01, (1, 0, 0)),
+        # No collision: dist = 0.25
+        ((0.25, 0, 0), False, "separated", None, None),
+        # Concentric spheres: fully degenerate, just check collision is detected
+        ((0, 0, 0), True, "concentric", None, None),
+    ]
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, 1.0, 0.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    entity_a = scene_add_sphere(tmp_path, scene, radius=0.10)
+    entity_b = scene_add_sphere(tmp_path, scene, radius=0.08)
+    scene.build()
+    assert scene.rigid_solver.collider is not None
+
+    for pos_b, should_collide, description, exp_pen, exp_normal in test_cases:
+        entity_a.set_pos(0.0)
+        entity_b.set_pos(pos_b)
+
+        scene.step()
+
+        contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        assert len(contacts["geom_a"]) == should_collide
+        _check_expected_values(contacts, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
