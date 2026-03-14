@@ -104,6 +104,7 @@ class RayTracer(RendererOptions):
     env_surface: Surface | None = None
     env_radius: float = 1000.0
     env_pos: Vec3FType = (0.0, 0.0, 0.0)
+    env_euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
     env_quat: UnitVec4FType | None = None
 
     # sphere lights
@@ -114,13 +115,10 @@ class RayTracer(RendererOptions):
     # lower bound for direct face normal vs vertex normal for face normal interpolation
     normal_diff_clamp: float = Field(default=180.0, ge=0.0, le=180.0)
 
-    def __init__(self, *, env_euler: Vec3FType | None = None, **data) -> None:
-        super().__init__(env_euler=env_euler, **data)
-
     @model_validator(mode="before")
     @classmethod
     def _resolve_env_euler(cls, data: dict) -> dict:
-        env_euler = data.pop("env_euler", None)
+        env_euler = data.get("env_euler")
         env_quat = data.get("env_quat")
         if env_euler is not None and env_quat is not None:
             gs.raise_exception("'env_euler' and 'env_quat' cannot both be set.")

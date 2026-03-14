@@ -6,7 +6,7 @@ import numpy as np
 from pydantic import Field, StrictBool, model_validator
 
 import genesis as gs
-from genesis.typing import UnitInterval
+from genesis.typing import FArrayType, UnitInterval, ValidFloat
 from genesis.utils import mesh as mu
 
 from .misc import FoamOptions
@@ -77,6 +77,13 @@ class Surface(Options):
 
     _color_target: ClassVar[str] = "diffuse_texture"
 
+    # Shortcut fields — resolved to texture fields by _resolve_shortcuts, excluded from serialization.
+    color: FArrayType | None = Field(default=None, exclude=True, repr=False)
+    opacity: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    roughness: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    metallic: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    emissive: FArrayType | None = Field(default=None, exclude=True, repr=False)
+
     ior: float | None = None
     default_roughness: UnitInterval = 1.0
     vis_mode: Literal["visual", "collision", "particle", "sdf", "recon"] | None = None
@@ -88,53 +95,37 @@ class Surface(Options):
     generate_foam: StrictBool = False
     foam_options: FoamOptions = Field(default_factory=FoamOptions)
 
-    def __init__(
-        self,
-        *,
-        color: tuple | None = None,
-        opacity: float | None = None,
-        roughness: float | None = None,
-        metallic: float | None = None,
-        emissive: tuple | None = None,
-        **data,
-    ) -> None:
-        super().__init__(
-            color=color,
-            opacity=opacity,
-            roughness=roughness,
-            metallic=metallic,
-            emissive=emissive,
-            **data,
-        )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _resolve_shortcuts(cls, data: dict) -> dict:
-        color_target = cls._color_target
-        color = data.pop("color", None)
-        if color is not None:
-            if data.get(color_target) is not None:
+    @model_validator(mode="after")
+    def _resolve_shortcuts(self) -> Self:
+        color_target = type(self)._color_target
+        if self.color is not None:
+            if getattr(self, color_target) is not None:
                 gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
-            data[color_target] = ColorTexture(color=tuple(color))
+            setattr(self, color_target, ColorTexture(color=tuple(self.color)))
 
         for shortcut, texture_field in (
             ("opacity", "opacity_texture"),
             ("roughness", "roughness_texture"),
             ("metallic", "metallic_texture"),
         ):
-            value = data.pop(shortcut, None)
+            value = getattr(self, shortcut, None)
             if value is not None:
-                if data.get(texture_field) is not None:
-                    gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
-                data[texture_field] = ColorTexture(color=(float(value),))
+                if texture_field in self.model_fields:
+                    if getattr(self, texture_field) is not None:
+                        gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
+                    setattr(self, texture_field, ColorTexture(color=(float(value),)))
 
-        emissive = data.pop("emissive", None)
-        if emissive is not None:
-            if data.get("emissive_texture") is not None:
-                gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
-            data["emissive_texture"] = ColorTexture(color=tuple(emissive))
+        if self.emissive is not None:
+            if "emissive_texture" in self.model_fields:
+                if self.emissive_texture is not None:
+                    gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
+                self.emissive_texture = ColorTexture(color=tuple(self.emissive))
 
-        return data
+        # Sync default_roughness with roughness shortcut unless explicitly set
+        if self.roughness is not None and "default_roughness" not in self.model_fields_set:
+            self.default_roughness = float(self.roughness)
+
+        return self
 
     @property
     def texture(self) -> Texture | None:
@@ -311,6 +302,10 @@ class Glass(Surface):
 
     _color_target: ClassVar[str] = "specular_texture"
 
+    roughness: UnitInterval | None = Field(default=0.0, exclude=True, repr=False)
+    ior: float | None = 1.5
+    thickness: ValidFloat | None = Field(default=None, exclude=True, repr=False)
+
     subsurface: StrictBool = False
     specular_texture: Texture | None = None
     diffuse_texture: Texture | None = None
@@ -320,27 +315,14 @@ class Glass(Surface):
     normal_texture: Texture | None = None
     emissive_texture: Texture | None = None
 
-    def __init__(self, *, roughness: float = 0.0, ior: float = 1.5, thickness: float | None = None, **data) -> None:
-        super().__init__(
-            roughness=roughness,
-            ior=ior,
-            thickness=thickness,
-            default_roughness=data.pop("default_roughness", roughness),
-            **data,
-        )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _resolve_glass_shortcuts(cls, data: dict) -> dict:
-        thickness = data.pop("thickness", None)
-        if thickness is not None:
-            if data.get("thickness_texture") is not None:
-                gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
-            data["thickness_texture"] = ColorTexture(color=(float(thickness),))
-        return data
-
     @model_validator(mode="after")
     def _post_init(self) -> Self:
+        # Handle thickness shortcut
+        if self.thickness is not None:
+            if self.thickness_texture is not None:
+                gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
+            self.thickness_texture = ColorTexture(color=(float(self.thickness),))
+
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
             self.specular_texture.check_dim(3)
@@ -422,15 +404,14 @@ class Metal(Surface):
         Emissive texture of the surface.
     """
 
+    roughness: UnitInterval | None = Field(default=0.1, exclude=True, repr=False)
+
     metal_type: MetalType = "iron"
     diffuse_texture: Texture | None = None
     opacity_texture: Texture | None = None
     roughness_texture: Texture | None = None
     normal_texture: Texture | None = None
     emissive_texture: Texture | None = None
-
-    def __init__(self, *, roughness: float = 0.1, **data) -> None:
-        super().__init__(roughness=roughness, default_roughness=data.pop("default_roughness", roughness), **data)
 
     @property
     def texture(self) -> Texture | None:
@@ -513,15 +494,14 @@ class Plastic(Surface):
         Emissive texture of the surface.
     """
 
+    ior: float | None = 1.0
+
     diffuse_texture: Texture | None = None
     specular_texture: Texture | None = None
     opacity_texture: Texture | None = None
     roughness_texture: Texture | None = None
     normal_texture: Texture | None = None
     emissive_texture: Texture | None = None
-
-    def __init__(self, *, ior: float = 1.0, **data) -> None:
-        super().__init__(ior=ior, **data)
 
     @property
     def texture(self) -> Texture | None:
@@ -609,6 +589,8 @@ class BSDF(Surface):
         Emissive texture of the surface.
     """
 
+    ior: float | None = 1.0
+
     diffuse_texture: Texture | None = None
     opacity_texture: Texture | None = None
     roughness_texture: Texture | None = None
@@ -617,9 +599,6 @@ class BSDF(Surface):
     emissive_texture: Texture | None = None
     specular_trans: float = 0.0
     diffuse_trans: float = 0.0
-
-    def __init__(self, *, ior: float = 1.0, **data) -> None:
-        super().__init__(ior=ior, **data)
 
     @property
     def texture(self) -> Texture | None:
@@ -744,10 +723,8 @@ class Rough(Plastic):
     Shortcut for a rough plastic surface.
     """
 
-    def __init__(self, *, roughness: float = 1.0, ior: float = 1.5, **data) -> None:
-        super().__init__(
-            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
-        )
+    roughness: UnitInterval | None = Field(default=1.0, exclude=True, repr=False)
+    ior: float | None = 1.5
 
 
 class Smooth(Plastic):
@@ -755,10 +732,8 @@ class Smooth(Plastic):
     Shortcut for a smooth plastic surface.
     """
 
-    def __init__(self, *, roughness: float = 0.1, ior: float = 1.5, **data) -> None:
-        super().__init__(
-            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
-        )
+    roughness: UnitInterval | None = Field(default=0.1, exclude=True, repr=False)
+    ior: float | None = 1.5
 
 
 class Reflective(Plastic):
@@ -766,10 +741,8 @@ class Reflective(Plastic):
     Shortcut for a reflective (smoother than `Smooth`) plastic surface.
     """
 
-    def __init__(self, *, roughness: float = 0.01, ior: float = 2.0, **data) -> None:
-        super().__init__(
-            roughness=roughness, ior=ior, default_roughness=data.pop("default_roughness", roughness), **data
-        )
+    roughness: UnitInterval | None = Field(default=0.01, exclude=True, repr=False)
+    ior: float | None = 2.0
 
 
 class Collision(Plastic):
@@ -777,8 +750,7 @@ class Collision(Plastic):
     Default surface type for collision geometry with a grey color by default.
     """
 
-    def __init__(self, *, color: tuple = (0.5, 0.5, 0.5), **data) -> None:
-        super().__init__(color=color, **data)
+    color: FArrayType | None = Field(default=(0.5, 0.5, 0.5), exclude=True, repr=False)
 
 
 class Water(Glass):
@@ -786,14 +758,9 @@ class Water(Glass):
     Shortcut for a water surface (using Glass surface with proper values).
     """
 
-    def __init__(self, *, color: tuple = (0.61, 0.98, 0.93), roughness: float = 0.2, ior: float = 1.2, **data) -> None:
-        super().__init__(
-            color=color,
-            roughness=roughness,
-            ior=ior,
-            default_roughness=data.pop("default_roughness", roughness),
-            **data,
-        )
+    color: FArrayType | None = Field(default=(0.61, 0.98, 0.93), exclude=True, repr=False)
+    roughness: UnitInterval | None = Field(default=0.2, exclude=True, repr=False)
+    ior: float | None = 1.2
 
 
 class Iron(Metal):
@@ -809,8 +776,7 @@ class Aluminium(Metal):
     Shortcut for a metallic surface with `metal_type = 'aluminium'`.
     """
 
-    def __init__(self, *, metal_type: MetalType = "aluminium", **data) -> None:
-        super().__init__(metal_type=metal_type, **data)
+    metal_type: MetalType = "aluminium"
 
 
 class Copper(Metal):
@@ -818,8 +784,7 @@ class Copper(Metal):
     Shortcut for a metallic surface with `metal_type = 'copper'`.
     """
 
-    def __init__(self, *, metal_type: MetalType = "copper", **data) -> None:
-        super().__init__(metal_type=metal_type, **data)
+    metal_type: MetalType = "copper"
 
 
 class Gold(Metal):
@@ -827,5 +792,4 @@ class Gold(Metal):
     Shortcut for a metallic surface with `metal_type = 'gold'`.
     """
 
-    def __init__(self, *, metal_type: MetalType = "gold", **data) -> None:
-        super().__init__(metal_type=metal_type, **data)
+    metal_type: MetalType = "gold"

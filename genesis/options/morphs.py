@@ -7,6 +7,7 @@ rigid object / MPM object / FEM object.
 
 import os
 from typing import Annotated, Any, ClassVar, Literal
+from typing_extensions import Self
 
 import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
@@ -93,6 +94,7 @@ class Morph(Options):
 
     # Note: pos, quat store only initial values at creation time, and are unaffected by sim
     pos: Vec3FType = (0.0, 0.0, 0.0)
+    euler: Vec3FType | None = Field(default=None, exclude=True, repr=False)
     quat: UnitVec4FType | None = None
     visualization: StrictBool = True
     collision: StrictBool = True
@@ -101,7 +103,10 @@ class Morph(Options):
     @model_validator(mode="before")
     @classmethod
     def _resolve_orientation(cls, data: dict) -> dict:
-        euler = data.pop("euler", None)
+        is_free = data.pop("is_free", None)
+        if is_free is not None:
+            gs.logger.warning("'is_free' is deprecated and will be removed in the future.")
+        euler = data.get("euler")
         quat = data.get("quat")
         if euler is not None and quat is not None:
             gs.raise_exception("'euler' and 'quat' cannot both be set.")
@@ -110,11 +115,6 @@ class Morph(Options):
         elif quat is None:
             data["quat"] = (1.0, 0.0, 0.0, 0.0)
         return data
-
-    def __init__(self, *, euler: Vec3FType | None = None, is_free: bool | None = None, **data):
-        super().__init__(euler=euler, **data)
-        if is_free is not None:
-            gs.logger.warning("'is_free' is deprecated and will be removed in the future.")
 
     def model_post_init(self, context: Any) -> None:
         if not self.visualization and not self.collision:
@@ -737,38 +737,35 @@ class Mesh(FileMorph, TetGenMixin):
     group_by_material: StrictBool = False
     merge_submeshes_for_collision: StrictBool = False
 
-    @model_validator(mode="before")
-    @classmethod
-    def _resolve_zup(cls, data: dict) -> dict:
-        file = data.get("file", "")
+    @model_validator(mode="after")
+    def _resolve_zup(self) -> Self:
+        file = self.file
         is_gltf = isinstance(file, str) and str(file).lower().endswith(GLTF_FORMATS)
 
         if is_gltf:
-            if data.get("file_meshes_are_zup"):
+            if self.file_meshes_are_zup:
                 gs.logger.warning(
                     "Specifying 'file_meshes_are_zup' for GLTF/GLB files is not supported. A rotation will be applied "
                     "explicitly on the morph instead. Please consider fixing your asset to use Y-UP convention."
                 )
                 y_up_quat = (1.0, -1.0, 0.0, 0.0)
-                quat = data.get("quat")
-                if quat is None and data.get("euler") is None:
-                    data["quat"] = y_up_quat
-                elif quat is not None:
-                    data["quat"] = tuple(
+                if self.quat is None:
+                    self.quat = y_up_quat
+                else:
+                    self.quat = tuple(
                         gu.transform_quat_by_quat(
-                            np.array(y_up_quat, dtype=gs.np_float), np.array(quat, dtype=gs.np_float)
+                            np.array(y_up_quat, dtype=gs.np_float), np.array(self.quat, dtype=gs.np_float)
                         )
                     )
-                scale = data.get("scale")
-                if scale is not None:
-                    scale_arr = np.atleast_1d(np.array(scale))
+                if self.scale is not None:
+                    scale_arr = np.atleast_1d(np.array(self.scale))
                     if scale_arr.size == 3:
-                        data["scale"] = (scale_arr[0], scale_arr[2], scale_arr[1])
-            data["file_meshes_are_zup"] = False
-        elif data.get("file_meshes_are_zup") is None:
-            data["file_meshes_are_zup"] = True
+                        self.scale = (scale_arr[0], scale_arr[2], scale_arr[1])
+            self.file_meshes_are_zup = False
+        elif self.file_meshes_are_zup is None:
+            self.file_meshes_are_zup = True
 
-        return data
+        return self
 
 
 class MeshSet(Mesh):
