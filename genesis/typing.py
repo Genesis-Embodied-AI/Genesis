@@ -1,22 +1,33 @@
+import math
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Annotated, Mapping, Sequence
 
 import numpy as np
 
-from pydantic import Field, BeforeValidator, StrictInt, GetPydanticSchema
+from pydantic import Field, BeforeValidator, GetPydanticSchema
 from pydantic_core import core_schema, PydanticCustomError
+
+
+def _coerce_int(v):
+    """Accept numpy integers, reject booleans and floats."""
+    if isinstance(v, (bool, np.bool_)):
+        raise PydanticCustomError("invalid_type", "Input should be a valid integer, not boolean", {"value": v})
+    if isinstance(v, np.integer):
+        return int(v)
+    return v
 
 
 def _normalize(vec):
     if not _is_sequence(vec):
         raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
-    norm = 0.0
+    sq_norm = 0.0
     for e in vec:
         if _is_sequence(e):
             raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
-        norm += e**2
-    if norm > 0:
-        vec = tuple(e / norm for e in vec)
+        sq_norm += e**2
+    if sq_norm > 0:
+        inv_norm = 1.0 / math.sqrt(sq_norm)
+        vec = tuple(e * inv_norm for e in vec)
         return vec
     raise PydanticCustomError("zero_division", "Cannot be normalized", {"value": vec})
 
@@ -35,38 +46,39 @@ def _is_sequence(v):
 
 # type aliases
 if TYPE_CHECKING:
-    ValidFloat = float
-    NonNegativeFloat = float
-    PositiveFloat = float
-    NonNegativeInt = int
-    PositiveInt = int
+    ValidFloat = float | np.floating
+    NonNegativeFloat = ValidFloat
+    PositiveFloat = ValidFloat
+    StrictInt = int | np.integer
+    NonNegativeInt = StrictInt
+    PositiveInt = StrictInt
     NumericType = int | float | bool | np.number
-    NumArrayType = Sequence[NumericType]
-    IArrayType = Sequence[int | np.integer]
-    FArrayType = Sequence[float | np.floating]
+    NumArrayType = Sequence[NumericType] | np.ndarray
+    IArrayType = Sequence[StrictInt] | np.ndarray
+    FArrayType = Sequence[ValidFloat] | np.ndarray
     PositiveFArrayType = FArrayType
     Vec2IType = IArrayType
     PositiveVec2IType = IArrayType
     Vec2FType = FArrayType
     PositiveVec2FType = FArrayType
     Vec3FType = FArrayType
-    LaxVec3FType = FArrayType | float
+    LaxVec3FType = FArrayType | ValidFloat
     UnitVec3FType = FArrayType
     UnitVec4FType = FArrayType
-    UnitInterval = float
+    UnitInterval = ValidFloat
     UnitIntervalArrayType = FArrayType
-    LaxUnitIntervalArrayType = FArrayType | float
-    LaxFArrayType = FArrayType | float
+    LaxUnitIntervalArrayType = FArrayType | ValidFloat
+    LaxFArrayType = FArrayType | ValidFloat
     LaxPositiveFArrayType = LaxFArrayType
     UnitIntervalVec3Type = FArrayType
     UnitIntervalVec4Type = FArrayType
     Vec4FType = FArrayType
-    Vec3FArrayType = Sequence[Sequence[NumericType]]
+    Vec3FArrayType = Sequence[Sequence[NumericType]] | np.ndarray
     UnitVec3FArrayType = Vec3FArrayType
     Vec3FLaxArrayType = Vec3FArrayType | Vec3FType
     UnitVec3FLaxArrayType = Vec3FLaxArrayType
     RotationMatrixType = Vec3FArrayType
-    Matrix4x4Type = Sequence[Sequence[NumericType]]
+    Matrix4x4Type = Sequence[Sequence[NumericType]] | np.ndarray
     StrArrayType = Sequence[str]
     NDArrayType = np.ndarray
     PathType = str | PurePath
@@ -74,8 +86,9 @@ else:
     ValidFloat = Annotated[float, Field(allow_inf_nan=False, strict=False)]
     NonNegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=False)]
     PositiveFloat = Annotated[float, Field(gt=0, allow_inf_nan=False, strict=False)]
-    NonNegativeInt = Annotated[int, Field(ge=0, strict=True)]
-    PositiveInt = Annotated[int, Field(gt=0, strict=True)]
+    StrictInt = Annotated[int, BeforeValidator(_coerce_int), Field(strict=True)]
+    NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+    PositiveInt = Annotated[StrictInt, Field(gt=0)]
     NumericType = int | float | bool
     NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
     IArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=1, strict=False)]
