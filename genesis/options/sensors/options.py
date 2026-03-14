@@ -1,21 +1,23 @@
 from typing import TYPE_CHECKING, Annotated, Any
 
 import numpy as np
-from pydantic import Field, BeforeValidator, StrictBool, StrictInt, model_validator
+from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_validator
 
 import genesis as gs
 from genesis.typing import (
-    _is_sequence,
-    UnitIntervalVec3Type,
-    UnitIntervalVec4Type,
     FArrayType,
+    IArrayType,
     LaxVec3FType,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveFloat,
     RotationMatrixType,
+    UnitIntervalVec3Type,
+    UnitIntervalVec4Type,
+    Vec3FArrayType,
     Vec3FType,
     Vec4FType,
+    _is_sequence,
 )
 
 from ..options import Options
@@ -287,6 +289,48 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
         self.bias = self.acc_bias + self.gyro_bias + self.mag_bias
         self.random_walk = self.acc_random_walk + self.gyro_random_walk + self.mag_random_walk
         self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
+
+
+class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+    """
+    Proximity sensor that reports distance and nearest point from probe positions to tracked mesh surfaces.
+
+    Attached to a rigid entity link. Takes a list of local probe positions and a list of global link indices
+    to track; for each probe, outputs the distance and nearest point (world frame) to the closest mesh
+    surface among the tracked links. If no mesh is within max_range, reports max_range and the probe
+    position as nearest point.
+
+    Parameters
+    ----------
+    probe_local_pos : array-like[array-like[float, float, float]]
+        Probe positions in link-local frame. One (x, y, z) per probe.
+    track_link_idx : array-like[int]
+        Global link indices (solver link space) whose mesh geoms are used for distance queries.
+    max_range : float
+        Maximum reporting range in meters. When no mesh is within this distance, distance is
+        clamped to max_range and nearest_point is the probe position. Default: 10.0.
+    debug_sphere_radius: float, optional
+        The radius of each debug sphere drawn in the scene. Defaults to 0.008.
+    debug_color: array-like[float, float, float, float], optional
+        The rgba color of the debug sphere. Defaults to (0.2, 0.6, 1.0, 0.6).
+    """
+
+    probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
+    track_link_idx: IArrayType = Field(default_factory=tuple, min_length=1)
+    max_range: NonNegativeFloat = 10.0
+
+    debug_sphere_radius: NonNegativeFloat = 0.008
+    debug_color: UnitIntervalVec4Type = (0.2, 0.6, 1.0, 0.6)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if scene.sim is None:
+            return
+        solver = scene.sim.rigid_solver
+        n_links = solver.n_links
+        for i, link_idx in enumerate(self.track_link_idx):
+            if not (0 <= link_idx < n_links):
+                gs.raise_exception(f"ProximityOptions.track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")
 
 
 class Raycaster(RigidSensorOptionsMixin):

@@ -1046,3 +1046,52 @@ def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
 
     data = elastomer_grid_sensor.read()
     assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Proximity Sensors ------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_proximity_sensor(n_envs, show_viewer, tol):
+    """Test proximity sensor returns distance and nearest_point with correct shapes and plausible values."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=1e-2, gravity=(0.0, 0.0, -10.0)),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.15)),
+    )
+    cylinder = scene.add_entity(
+        gs.morphs.Cylinder(radius=0.05, height=0.1, pos=(0.25, 0.0, 0.15)),
+    )
+    # Sensor on box (entity 1), track cylinder (entity 2 -> global link index 2)
+    proximity = scene.add_sensor(
+        gs.sensors.ProximityOptions(
+            entity_idx=box.idx,
+            link_idx_local=0,
+            probe_local_pos=[(0.05, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            track_link_idx=[cylinder.base_link_idx],
+            max_range=10.0,
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    for _ in range(5):
+        scene.step()
+
+    data = proximity.read()
+    gt = proximity.read_ground_truth()
+    assert hasattr(data, "distance") and hasattr(data, "nearest_point")
+    expected_dist_shape = (2,) if n_envs == 0 else (n_envs, 2)
+    expected_point_shape = (2, 3) if n_envs == 0 else (n_envs, 2, 3)
+    assert data.distance.shape == expected_dist_shape
+    assert data.nearest_point.shape == expected_point_shape
+    assert_allclose(data.distance, gt.distance, tol=tol)
+    assert_allclose(data.nearest_point, gt.nearest_point, tol=tol)
+    assert (data.distance >= 0).all().item() and (data.distance <= 10.0).all().item()
+    assert torch.isfinite(data.nearest_point).all().item()
