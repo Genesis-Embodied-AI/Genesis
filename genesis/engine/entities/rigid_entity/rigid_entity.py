@@ -523,14 +523,15 @@ class KinematicEntity(Entity):
                 # Note that Mujoco URDF parser completely ignores equality constraints.
                 l_infos_mj, links_j_infos_mj, links_g_infos_mj, _ = mju.parse_xml(morph_, surface)
 
-                # Unset link inertial properties that are actually undefined to avoid recomputation
-                for l_info_gs in l_infos:
-                    for l_info_mj in l_infos_mj:
-                        if l_info_gs["name"] == l_info_mj["name"]:
-                            for key, value in l_info_gs.items():
-                                if value is None:
-                                    l_info_mj[key] = None
-                            break
+                # Unset link inertial properties that are actually undefined to force recomputation by genesis
+                if not morph._enable_mujoco_compatibility:
+                    for l_info_gs in l_infos:
+                        for l_info_mj in l_infos_mj:
+                            if l_info_gs["name"] == l_info_mj["name"]:
+                                for key, value in l_info_gs.items():
+                                    if value is None:
+                                        l_info_mj[key] = None
+                                break
                 l_infos = l_infos_mj
 
                 # Mujoco is not parsing actuators properties
@@ -658,7 +659,8 @@ class KinematicEntity(Entity):
             j_info["dofs_frictionloss"] = np.zeros(6)
             j_info["dofs_damping"] = np.zeros(6)
             if isinstance(morph, gs.morphs.Drone):
-                mass_tot = sum(l_info["inertial_mass"] for l_info in l_infos)
+                # FIXME: This pattern not ideal because the inertial mass may be unknown at this point.
+                mass_tot = sum(l_info.get("inertial_mass") or 0.0 for l_info in l_infos)
                 j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
             j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)

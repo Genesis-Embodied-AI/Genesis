@@ -4675,7 +4675,8 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
                     ET.SubElement(group, "origin", xyz=origin_xyz)
         inertial_props = links_inertial[i_link] if links_inertial else None
         inertial = ET.SubElement(link, "inertial")
-        ET.SubElement(inertial, "mass", value=str(inertial_props.get("mass", 0)) if inertial_props else "0")
+        if inertial_props and "mass" in inertial_props:
+            ET.SubElement(inertial, "mass", value=str(inertial_props["mass"]))
         if inertial_props and "origin_xyz" in inertial_props:
             ET.SubElement(inertial, "origin", xyz=inertial_props["origin_xyz"])
         ET.SubElement(
