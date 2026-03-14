@@ -34,7 +34,7 @@ PROBE_PALM_LOCAL = [
 MAX_RANGE = 0.5
 
 # Objects
-DUCK_POS = (0.25, 0.0, 0.6)
+DUCK_POS = (0.25, -0.2, 0.6)
 BOX_POS = (-0.2, 0.15, 0.4)
 
 
@@ -45,17 +45,12 @@ def main():
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
-    gs.init(
-        backend=gs.gpu if args.gpu else gs.cpu,
-        precision="32",
-        logging_level="info",
-    )
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 1.0, 1.0),
+            camera_pos=(1.5, 0.6, 1.0),
             camera_lookat=(0.0, 0.0, 0.5),
-            max_FPS=60,
         ),
         rigid_options=gs.options.RigidOptions(
             gravity=(0.0, 0.0, 0.0),
@@ -87,10 +82,6 @@ def main():
         surface=gs.surfaces.Default(color=(0.3, 0.7, 0.4, 1.0)),
     )
 
-    # Proximity sensor on palm: measure distance to duck and box (mesh geoms only; box is BOX type)
-    # Cylinder has MESH geom; Box has BOX geom - proximity only considers MESH. So we need at least
-    # one mesh: the duck. Box won't be in track_link_idx for mesh distance. We track both link indices
-    # anyway so when/if non-mesh is supported, it works. For now only duck mesh is queried.
     track_links = [duck.base_link_idx, box.base_link_idx]
     sensors = []
     for link_name in (
@@ -140,7 +131,7 @@ def main():
             Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, -KEY_DPOS, 0),)),
             Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, KEY_DPOS),)),
             Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -KEY_DPOS),)),
-            Keybind("reset", Key.U, KeyAction.RELEASE, callback=reset_hand),
+            Keybind("reset", Key.U, KeyAction.PRESS, callback=reset_hand),
             Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
         )
 

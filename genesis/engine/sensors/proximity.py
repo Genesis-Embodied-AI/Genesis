@@ -25,7 +25,6 @@ from .kinematic_tactile import _func_closest_point_on_triangle
 from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
-    from genesis.options.sensors import SensorOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
@@ -85,8 +84,6 @@ def _kernel_proximity(
             geom_end = links_info.geom_end[I_l]
 
             for i_g in range(geom_start, geom_end):
-                if geoms_info.type[i_g] != 6:  # GEOM_TYPE.MESH
-                    continue
                 face_start = geoms_info.face_start[i_g]
                 face_end = geoms_info.face_end[i_g]
 
@@ -120,12 +117,12 @@ def _kernel_proximity(
 class ProximitySensorMetadataMixin:
     """Shared metadata for proximity sensors: probe layout and tracked links."""
 
+    total_n_probes: int = 0
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
     n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    total_n_probes: int = 0
     track_link_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     track_link_end: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     track_link_flat: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
@@ -147,12 +144,12 @@ class ProximityData(NamedTuple):
     ----------
     distance : torch.Tensor, shape ([n_envs,] n_probes)
         Distance in meters to the nearest point on any tracked mesh (or max_range if none in range).
-    nearest_point : torch.Tensor, shape ([n_envs,] n_probes, 3)
-        Nearest point in world frame.
+    points: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Nearest points in world frame for each probe to tracked meshes.
     """
 
     distance: torch.Tensor
-    nearest_point: torch.Tensor
+    points: torch.Tensor
 
 
 @register_sensor(ProximityOptions, ProximityMetadata, ProximityData)
@@ -290,15 +287,20 @@ class ProximitySensor(
         link_quat = self._link.get_quat(env_idx).squeeze()
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
         data = self.read_ground_truth(env_idx)
-        nearest = tensor_to_array(data.nearest_point)
+        points = tensor_to_array(data.points)
 
         self._debug_objects.append(
             context.draw_debug_spheres(
-                poss=np.concatenate([probe_world, nearest]),
+                poss=np.concatenate([probe_world, points]),
                 radius=self._options.debug_sphere_radius,
                 color=self._options.debug_color,
             )
         )
         for i in range(len(probe_world)):
-            line_obj = context.draw_debug_line(probe_world[i], nearest[i], radius=0.002, color=(0.5, 0.5, 0.5, 0.5))
+            line_obj = context.draw_debug_line(
+                probe_world[i],
+                points[i],
+                radius=self._options.debug_sphere_radius / 4.0,
+                color=self._options.debug_color,
+            )
             self._debug_objects.append(line_obj)

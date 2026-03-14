@@ -308,7 +308,7 @@ class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorO
         Global link indices (solver link space) whose mesh geoms are used for distance queries.
     max_range : float
         Maximum reporting range in meters. When no mesh is within this distance, distance is
-        clamped to max_range and nearest_point is the probe position. Default: 10.0.
+        clamped to max_range and nearest points is the probe position. Default: 10.0.
     debug_sphere_radius: float, optional
         The radius of each debug sphere drawn in the scene. Defaults to 0.008.
     debug_color: array-like[float, float, float, float], optional
@@ -316,10 +316,10 @@ class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorO
     """
 
     probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    track_link_idx: IArrayType = Field(default_factory=tuple, min_length=1)
-    max_range: NonNegativeFloat = 10.0
+    track_link_idx: IArrayType = Field(default_factory=tuple)
+    max_range: PositiveFloat = 10.0
 
-    debug_sphere_radius: NonNegativeFloat = 0.008
+    debug_sphere_radius: PositiveFloat = 0.008
     debug_color: UnitIntervalVec4Type = (0.2, 0.6, 1.0, 0.6)
 
     def validate_scene(self, scene: "Scene"):
