@@ -86,7 +86,9 @@ class Collider:
         self._diff_normal_tolerance = 1e-2
 
         self._init_static_config()
-        self._use_split_narrowphase = self._collider_static_config.needs_mpr_gjk and gs.device.type == "cuda"
+        self._use_split_narrowphase = (
+            self._collider_static_config.needs_convex_convex_except_box_plane and gs.device.type == "cuda"
+        )
         self._init_collision_fields()
 
         self._sdf = SDF(rigid_solver)
@@ -96,9 +98,12 @@ class Collider:
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.needs_mpr_gjk:
+        if self._collider_static_config.needs_convex_convex_except_box_plane:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.needs_mpr_gjk:
+        if (
+            self._collider_static_config.has_terrain
+            or self._collider_static_config.needs_convex_convex_except_box_plane
+        ):
             self._support_field.activate()
 
         if self._use_split_narrowphase:
@@ -148,7 +153,7 @@ class Collider:
             self._n_possible_pairs,
             self._collision_pair_idx,
             has_terrain,
-            needs_mpr_gjk,
+            needs_convex_convex_except_box_plane,
             has_convex_specialization,
             has_nonconvex_nonterrain,
         ) = self._compute_collision_pair_idx()
@@ -157,7 +162,7 @@ class Collider:
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_terrain,
-            needs_mpr_gjk=needs_mpr_gjk,
+            needs_convex_convex_except_box_plane=needs_convex_convex_except_box_plane,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
@@ -244,7 +249,7 @@ class Collider:
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
 
         Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
-        for has_terrain, needs_mpr_gjk, has_convex_specialization, has_nonconvex_nonterrain.
+        for has_terrain, needs_convex_convex_except_box_plane, has_convex_specialization, has_nonconvex_nonterrain.
         """
         # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
@@ -434,9 +439,9 @@ class Collider:
             specialized = is_plane_box
             if self._solver._options.box_box_detection:
                 specialized = specialized | (is_box_a & is_box_b)
-            needs_mpr_gjk = bool(np.any(both_convex & ~specialized))
+            needs_convex_convex_except_box_plane = bool(np.any(both_convex & ~specialized))
         else:
-            needs_mpr_gjk = False
+            needs_convex_convex_except_box_plane = False
 
         if self._solver._options.box_box_detection:
             spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
@@ -463,7 +468,7 @@ class Collider:
             n_possible_pairs,
             collision_pair_idx,
             has_any_vs_terrain,
-            needs_mpr_gjk,
+            needs_convex_convex_except_box_plane,
             has_convex_specialization,
             has_nonconvex_vs_nonterrain,
         )
@@ -650,7 +655,7 @@ class Collider:
             self._call_multicontact()
             narrowphase._func_prepare_gjk_rerun(self._collider_state)
             self._call_multicontact()
-        elif self._collider_static_config.needs_mpr_gjk:
+        elif self._collider_static_config.needs_convex_convex_except_box_plane:
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
