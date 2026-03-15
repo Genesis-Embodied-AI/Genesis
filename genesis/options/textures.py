@@ -1,13 +1,17 @@
 import os
-from typing import Optional, List, Union
+from functools import cached_property
+from typing import Annotated, Sequence, Literal, Iterable, cast
 
 import numpy as np
 from PIL import Image
+from pydantic import model_validator, computed_field, BeforeValidator, Field
 
 import genesis as gs
 import genesis.utils.mesh as mu
+from genesis.typing import LaxUnitIntervalArrayType, LaxFArrayType, UnitIntervalArrayType, NDArrayType
 
 from .options import Options
+
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".hdr", ".exr")
 HDR_EXTENSIONS = (".hdr", ".exr")
@@ -25,19 +29,21 @@ class Texture(Options):
     def __init__(self, **data):
         super().__init__(**data)
 
-    def check_dim(self, dim):
+    def check_dim(self, dim: int) -> "Texture | None":
         raise NotImplementedError
 
-    def check_simplify(self):
+    def check_simplify(self) -> "Texture":
         raise NotImplementedError
 
-    def apply_cutoff(self, cutoff):
+    def apply_cutoff(self, cutoff: float) -> None:
         raise NotImplementedError
 
-    def is_black(self):
+    @cached_property
+    def is_black(self) -> bool:
         raise NotImplementedError
 
-    def requires_uv(self):
+    @cached_property
+    def requires_uv(self) -> bool:
         raise NotImplementedError
 
 
@@ -52,33 +58,31 @@ class ColorTexture(Texture):
         Default is (1.0, 1.0, 1.0).
     """
 
-    color: Union[float, List[float]] = (1.0, 1.0, 1.0)
+    color: LaxFArrayType = (1.0, 1.0, 1.0)
 
-    def __init__(self, **data):
-        super().__init__(**data)
-        if isinstance(self.color, float):
-            self.color = (self.color,)
-        else:
-            self.color = tuple(self.color)  # Use tuple to store image color since it is more efficient
-
-    def check_dim(self, dim):
+    def check_dim(self, dim: int) -> Texture | None:
         if len(self.color) > dim:
             self.color, res = self.color[:dim], self.color[dim]
             return ColorTexture(color=res)
         return None
 
-    def check_simplify(self):
+    def check_simplify(self) -> "ColorTexture":
         return self
 
-    def apply_cutoff(self, cutoff):
+    def apply_cutoff(self, cutoff: float) -> None:
         if cutoff is None:
             return
         self.color = tuple(1.0 if c >= cutoff else 0.0 for c in self.color)
 
-    def is_black(self):
+    @computed_field
+    @cached_property
+    def is_black(self) -> bool:
+        assert gs.EPS is not None
         return all(c < gs.EPS for c in self.color)
 
-    def requires_uv(self):
+    @computed_field
+    @cached_property
+    def requires_uv(self) -> bool:
         return False
 
 
@@ -101,114 +105,146 @@ class ImageTexture(Texture):
         - 'linear': All generic images, such as opacity, roughness and normal, should be encoded with 'linear'.
     """
 
-    image_path: Optional[str] = None
-    image_array: Optional[np.ndarray] = None
-    image_color: Optional[Union[float, List[float]]] = None
-    encoding: str = "srgb"
+    image_path: str | None = None
+    image_array: NDArrayType | None
+    image_color: UnitIntervalArrayType
+    encoding: Annotated[Literal["srgb", "linear"], BeforeValidator(lambda e: str(e).lower())] = "srgb"
 
-    class Config:
-        arbitrary_types_allowed = True
+    def __init__(
+        self,
+        *,
+        image_path: str | None = None,
+        image_array: np.ndarray | None = None,
+        image_color: LaxUnitIntervalArrayType | float | None = None,
+        encoding: str = "srgb",
+        **data,
+    ) -> None:
+        super().__init__(
+            image_path=image_path,
+            image_array=image_array,
+            image_color=image_color,
+            encoding=encoding,
+            **data,
+        )
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_and_load(cls, data: dict) -> dict:
+        image_path, image_array = data.get("image_path"), data.get("image_array")
 
-        if not (self.image_path is None) ^ (self.image_array is None):
+        if not ((image_path is not None) ^ (image_array is not None)):
             gs.raise_exception("Please set either `image_path` or `image_array`.")
 
-        if self.image_path is not None:
-            input_image_path = self.image_path
-            if not os.path.exists(self.image_path):
-                self.image_path = os.path.join(gs.utils.get_assets_dir(), self.image_path)
+        if image_path is not None:
+            # Look for absolute image path
+            if not os.path.exists(image_path):
+                candidate_image_path = os.path.join(gs.utils.get_assets_dir(), image_path)
+                if not os.path.exists(candidate_image_path):
+                    gs.raise_exception(
+                        f"File not found in either current directory or assets directory: '{image_path}'."
+                    )
+                image_path = candidate_image_path
 
-            if not os.path.exists(self.image_path):
-                gs.raise_exception(
-                    f"File not found in either current directory or assets directory: '{input_image_path}'."
-                )
-
-            # Load image_path as actual image_array, unless for special texture images (e.g. `.hdr` and `.exr`) that are only supported by raytracers
-            if self.image_path.endswith(HDR_EXTENSIONS):
-                self.encoding = "linear"  # .exr or .hdr images should be encoded with 'linear'
-                if self.image_path.endswith((".exr")):
-                    self.image_path = mu.check_exr_compression(self.image_path)
+            # Load image_path as actual image_array, unless for special texture images (e.g. `.hdr` and `.exr`) that
+            # are only supported by Raytracer.
+            if image_path.endswith(HDR_EXTENSIONS):
+                data.setdefault("encoding", "linear")
+                if data["encoding"] != "linear":
+                    gs.raise_exception("HDR images requires linear encoding.")
+                if image_path.endswith((".exr")):
+                    image_path = mu.check_exr_compression(image_path)
             else:
-                self.image_array = np.array(Image.open(self.image_path))
-
-        elif self.image_array is not None:
-            if not isinstance(self.image_array, np.ndarray):
+                image_array = np.array(Image.open(image_path))
+        else:
+            # Normalize image array
+            if not isinstance(image_array, np.ndarray):
                 gs.raise_exception("`image_array` needs to be a numpy array.")
-            arr = self.image_array
-            if arr.dtype != np.uint8:
-                if np.issubdtype(arr.dtype, np.floating):
-                    if arr.max() <= 1.0:
-                        arr = (arr * 255.0).round()
-                    arr = np.clip(arr, 0.0, 255.0).astype(np.uint8)
-                elif arr.dtype == np.bool_:
-                    arr = arr.astype(np.uint8) * 255
-                elif np.issubdtype(arr.dtype, np.integer):
-                    arr = np.clip(arr, 0, 255).astype(np.uint8)
+            if image_array.dtype != np.uint8:
+                if np.issubdtype(image_array.dtype, np.floating):
+                    if image_array.max() <= 1.0:
+                        image_array = (image_array * 255.0).round()
+                    image_array = np.clip(image_array, 0.0, 255.0).astype(np.uint8)
+                elif np.issubdtype(image_array.dtype, np.integer):
+                    image_array = np.clip(image_array, 0, 255).astype(np.uint8)
+                elif image_array.dtype == np.bool_:
+                    image_array = image_array.astype(np.uint8) * 255
                 else:
                     gs.raise_exception(
-                        f"Unsupported image dtype {arr.dtype}. "
-                        "Only uint8, integer, floating-point, or bool types are supported."
+                        f"Unsupported image dtype {image_array.dtype}. Only uint8, integer, floating-point, or bool "
+                        "types are supported."
                     )
-            self.image_array = arr
+        data["image_path"], data["image_array"] = image_path, image_array
 
-        # just calculate channel
-        if self.image_array is None:  # Using 'image_path'
-            self._mean_color = np.array([1.0, 1.0, 1.0], dtype=np.float16)
-            self._channel = 3
+        # Resolve image color
+        image_color = data.get("image_color")
+        if image_array is None:
+            channel = 3
+        elif image_array.ndim == 3:
+            channel = image_array.shape[2]
         else:
-            self._mean_color = (np.mean(self.image_array, axis=(0, 1), dtype=np.float32) / 255.0).astype(np.float16)
-            self._channel = self.image_array.shape[2] if self.image_array.ndim == 3 else 1
-
-        # build image color
-        if self.image_color is None:
-            self.image_color = (1.0,) * self._channel
+            channel = 1
+        if image_color is None:
+            image_color = 1.0
+        if isinstance(image_color, Iterable):
+            image_color = tuple(image_color)[:channel]
         else:
-            if isinstance(self.image_color, float):
-                self.image_color = (self.image_color,) * self._channel
-            else:
-                self.image_color = tuple(self.image_color[: self._channel])
+            image_color = (image_color,) * channel
+        data["image_color"] = image_color
 
-        self.encoding = self.encoding.lower()
-        if self.encoding not in ["srgb", "linear"]:
-            gs.raise_exception(f"Invalid image encoding: {self.encoding}.")
+        return data
 
-    def check_dim(self, dim):
+    @computed_field
+    @cached_property
+    def is_black(self) -> bool:
+        assert gs.EPS is not None
+        assert self.image_color is not None
+        if all(c < gs.EPS for c in self.image_color):
+            return True
+        assert self.image_array is not None
+        if np.max(self.image_array) == 0:
+            return True
+        return False
+
+    @computed_field
+    @cached_property
+    def requires_uv(self) -> bool:
+        return True
+
+    @computed_field
+    @property
+    def channel(self) -> int:
+        if self.image_array is None:
+            return 3
+        return self.image_array.shape[2] if self.image_array.ndim == 3 else 1
+
+    @computed_field
+    @cached_property
+    def mean_color(self) -> NDArrayType:
+        if self.image_array is None:
+            return np.ones(3, dtype=np.float16)
+        return cast(np.ndarray, (np.mean(self.image_array, axis=(0, 1), dtype=np.float32) / 255).astype(np.float16))
+
+    def check_dim(self, dim: int) -> Texture | None:
         if self.image_array is not None:
-            if self._channel > dim:
+            if self.channel > dim:
                 self.image_array, res_array = self.image_array[:, :, :dim], self.image_array[:, :, dim]
                 self.image_color, res_color = self.image_color[:dim], self.image_color[dim:]
-                self._channel = dim
                 return ImageTexture(image_array=res_array, image_color=res_color, encoding="linear").check_simplify()
         return None
 
-    def check_simplify(self):
+    def check_simplify(self) -> "ImageTexture | ColorTexture":
         if self.image_array is None:
             return self
         max_color = np.max(self.image_array, axis=(0, 1))
         min_color = np.min(self.image_array, axis=(0, 1))
         if np.all(min_color == max_color):
             return ColorTexture(color=max_color.reshape(-1) / 255.0 * self.image_color)
-        else:
-            return self
+        return self
 
     def apply_cutoff(self, cutoff):
         if cutoff is None or self.image_array is None:  # Cutoff does not apply on image file.
             return
         self.image_array = np.where(self.image_array >= 255.0 * cutoff, 255, 0).astype(np.uint8)
-
-    def is_black(self):
-        return all(c < gs.EPS for c in self.image_color) or np.max(self.image_array) == 0
-
-    def requires_uv(self):
-        return True
-
-    def mean_color(self):
-        return self._mean_color
-
-    def channel(self):
-        return self._channel
 
 
 class BatchTexture(Texture):
@@ -221,19 +257,16 @@ class BatchTexture(Texture):
         List of textures.
     """
 
-    textures: Optional[List[Optional[Texture]]]
-
-    def __init__(self, **data):
-        super().__init__(**data)
+    textures: Annotated[list[Texture | None], BeforeValidator(list)] = Field(default_factory=list)
 
     @staticmethod
     def from_images(
-        image_paths: Optional[List[str]] = None,
-        image_folder: Optional[str] = None,
-        image_arrays: Optional[List[np.ndarray]] = None,
-        image_colors: Optional[Union[List[float], List[List[float]]]] = None,
-        encoding: str = "srgb",
-    ):
+        image_paths: Sequence[str] | None = None,
+        image_folder: str | None = None,
+        image_arrays: Sequence[np.ndarray] | None = None,
+        image_colors: Sequence[float] | Sequence[Sequence[float] | None] | None = None,
+        encoding: Literal["srgb", "linear"] = "srgb",
+    ) -> "BatchTexture":
         """
         Create a batch texture from images.
 
@@ -272,7 +305,11 @@ class BatchTexture(Texture):
                 if image_path.lower().endswith(IMAGE_EXTENSIONS)
             ]
 
-        num_images = len(image_paths) if image_paths is not None else len(image_arrays)
+        if image_paths is not None:
+            num_images = len(image_paths)
+        else:
+            assert image_arrays is not None
+            num_images = len(image_arrays)
         if num_images == 0:
             gs.raise_exception("No images found.")
 
@@ -284,11 +321,13 @@ class BatchTexture(Texture):
                     gs.raise_exception("The number of image colors must be the same as the number of images.")
         else:
             image_colors = [None] * num_images
+        assert image_colors is not None
 
         if image_paths is not None:
             for image_path, image_color in zip(image_paths, image_colors):
                 image_textures.append(ImageTexture(image_path=image_path, image_color=image_color, encoding=encoding))
         else:
+            assert image_arrays is not None
             for image_array, image_color in zip(image_arrays, image_colors):
                 image_textures.append(ImageTexture(image_array=image_array, image_color=image_color, encoding=encoding))
 
@@ -296,8 +335,8 @@ class BatchTexture(Texture):
 
     @staticmethod
     def from_colors(
-        colors: List[List[float]],
-    ):
+        colors: Sequence[Sequence[float]],
+    ) -> "BatchTexture":
         """
         Create a batch texture from colors.
 
@@ -306,26 +345,31 @@ class BatchTexture(Texture):
         colors : List[List[float]]
             List of colors.
         """
-        color_textures = [ColorTexture(color=color) for color in colors]
-        return BatchTexture(textures=color_textures)
+        return BatchTexture(textures=[ColorTexture(color=color) for color in colors])
 
-    def check_dim(self, dim):
-        return BatchTexture(textures=[texture.check_dim(dim) for texture in self.textures]).check_simplify()
+    @computed_field
+    @cached_property
+    def is_black(self) -> bool:
+        return all(texture is None or texture.is_black for texture in self.textures)
 
-    def check_simplify(self):
+    @computed_field
+    @cached_property
+    def requires_uv(self) -> bool:
+        return any(texture is not None and texture.requires_uv for texture in self.textures)
+
+    def check_dim(self, dim: int) -> "BatchTexture":
+        return BatchTexture(
+            textures=[texture.check_dim(dim) if texture is not None else None for texture in self.textures]
+        ).check_simplify()
+
+    def check_simplify(self) -> "BatchTexture":
         self.textures = [texture.check_simplify() if texture is not None else None for texture in self.textures]
         return self
 
-    def apply_cutoff(self, cutoff):
+    def apply_cutoff(self, cutoff: float) -> None:
         for texture in self.textures:
             if texture is not None:
                 texture.apply_cutoff(cutoff)
 
-    def is_black(self):
-        return all(texture.is_black() if texture is not None else True for texture in self.textures)
-
-    def requires_uv(self):
-        return any(texture is not None and texture.requires_uv() for texture in self.textures)
-
-    def merge(self, other: "BatchTexture"):
+    def merge(self, other: "BatchTexture") -> None:
         self.textures.extend(other.textures)

@@ -1,5 +1,33 @@
 # Genesis Release Note
 
+## 0.4.2
+
+This release introduces a new type of tactile sensors based on [FOTS](https://arxiv.org/pdf/2404.19217), and add support of parallel simulation of heterogeneous articulated robots. Beyond that, the performance of the simulation has been significantly improved, especially when rigid option 'noslip' is enabled.
+
+### New Features
+
+* Add ElastomerDisplacementSensor. (@Milotrince) (#2447)
+* Support articulated assets in heterogeneous parallel simulation. (@Kashu7100, @ACMLCZH) (#2472, #2535)
+
+### Bug Fixes
+
+* Fix GJK multi-contact in mujoco-compatibility mode. (@SonSang, @duburcqa) (#2514, #2516)
+* Add support of morph option "fixed" for USD without explicit root and filter out invisible geometries from collision. (@ACMLCZH) (#2528)
+* More robust collision detection on 32bits precision. (@SonSang) (#2525)
+* Fix parsing of URDF with undefined inertial properties. (@duburcqa) (#2544)
+
+### Miscellaneous
+
+* Propagate interactive viewer exceptions when running in thread. (@duburcqa) (#2510)
+* More robust and versatile interactive viewer keybinding. (@duburcqa) (#2512)
+* Migrate 'gs view' to kinematic entity to reduce compile time. (@duburcqa) (#2522)
+* Fix Python-scope field read to avoid GPU-CPU sync. (@erizmr) (#2518)
+* Faster initialisation of collision pairs validity mask. (@ACMLCZH) (#2534)
+* Introduce structured options with validation. (@duburcqa) (#2536)
+* Accelerate noslip simulation on GPU backend. (@erizmr) (#2532)
+* Speedup rigid constraint solver. (@erizmr) (#2524)
+* Add dexterous hand benchmark. (@hughperkins) (#2500)
+
 ## 0.4.1
 
 This release mainly improves experimental IPC coupler integration. Avatar entity has been re-introduced after being broken for months. Finally, Quadrants' dynamic arrays are now support on Apple Metal to avoid systematic scene compilation.
@@ -38,7 +66,7 @@ This release mainly improves experimental IPC coupler integration. Avatar entity
 * More comprehensive performance benchmarks. (@hughperkins) (#2470)
 * Aggregate speed benchmark wandb uploads into a single run. (@hughperkins) (#2482)
 
-## 0.4.1
+## 0.4.0
 
 This release polishes our newly introduced USD parser and external interactive viewer plugin mechanism. Beyond that, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%) and robots using capsule/sphere collision geometries (up to 20%).
 

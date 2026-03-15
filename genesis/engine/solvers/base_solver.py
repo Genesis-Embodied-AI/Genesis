@@ -166,7 +166,7 @@ class Solver(RBC):
         return len(self._entities)
 
     def _repr_brief(self):
-        repr_str = f"{self._repr_type()}: {self._uid}, n_entities: {self.n_entities}"
+        repr_str = f"{self.__repr_name__()}: {self._uid}, n_entities: {self.n_entities}"
         return repr_str
 
 

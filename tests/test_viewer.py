@@ -120,7 +120,7 @@ def test_default_viewer_plugin():
     # Press key with modifiers to toggle flag off
     pyrender_viewer.dispatch_event("on_key_press", Key._1, KeyMod.SHIFT | KeyMod.CTRL)
     # Press key toggle world frame
-    pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
+    pyrender_viewer.dispatch_event("on_key_release", Key.W, 0)
 
     wait_for_viewer_events(pyrender_viewer, lambda: flags[0] and flags[1])
 

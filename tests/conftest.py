@@ -416,7 +416,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         else SUPPRESS
     )
     parser.addoption("--mem-monitoring-filepath", type=str, help=help_text)
-    parser.addoption("--ref", type=str, default=None, help="Label added to benchmark output filenames.")
     parser.addoption(
         "--speed-test-filepath",
         type=str,
@@ -428,10 +427,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 # Note: moving this out of conftest.py, e.g. into profiling.py, does not appear to work.
-@pytest.fixture(scope="session")
-def pytorch_profiler_step(pytestconfig):
+@pytest.fixture(scope="function")
+def pytorch_profiler_step(pytestconfig, request):
     if os.environ.get("GS_PROFILING", "0") == "1":
-        for res in profiling.pytorch_profiler(pytestconfig):
+        for res in profiling.pytorch_profiler(pytestconfig, request):
             yield res
     else:
         noop = lambda: None  # noqa: E731
@@ -614,6 +613,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
+
+    # Avoid numba cache collision
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / ".cache" / "numba"))
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
     monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))

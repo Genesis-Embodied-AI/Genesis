@@ -140,7 +140,7 @@ def main():
         for j in range(4):
             x = (i + 1.7) * grid_spacing
             y = (j - 1.5) * grid_spacing
-            box = scene.add_entity(
+            scene.add_entity(
                 morph=gs.morphs.Box(
                     pos=(x, y, cube_height),
                     size=(cube_size, cube_size, cube_size),
@@ -206,7 +206,7 @@ def main():
         pose = gu.trans_quat_to_T(target_pos, target_quat)
         scene.visualizer.context.update_debug_objects((target_ik,), (pose,))
         qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
-        franka.control_dofs_position(qpos[:-2], dofs_idx_local=motor_dofs_idx)
+        franka.control_dofs_position(qpos[motor_dofs_idx], dofs_idx_local=motor_dofs_idx)
 
     def set_gripper(close: bool):
         gripper_close[()] = close

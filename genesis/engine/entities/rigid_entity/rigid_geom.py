@@ -802,7 +802,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
+        return f"{self.__repr_name__()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
 class RigidVisGeom(RBC):
@@ -1066,4 +1066,4 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
+        return f"{self.__repr_name__()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"

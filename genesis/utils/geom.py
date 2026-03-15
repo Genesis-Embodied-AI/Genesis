@@ -1,14 +1,14 @@
 import math
 from typing import Literal
 
-import numpy as np
 import numba as nb
+import numpy as np
+import quadrants as qd
 import torch
 import torch.nn.functional as F
 
-import quadrants as qd
-
 import genesis as gs
+from genesis.typing import Vec3FType
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
@@ -387,6 +387,8 @@ def motion_cross_motion(s_ang, s_vel, m_ang, m_vel):
 def qd_orthogonals(a):
     """
     Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
+
+    Note that `a` is assumed to be normalized.
     """
     b = qd.Vector.zero(gs.qd_float, 3)
     if qd.abs(a[1]) < 0.5:
@@ -1436,12 +1438,12 @@ def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]
 
     if is_batched:
         # Pre-allocate output arrays
-        batch_shape = A.shape[:-2]
-        U_out = np.empty((*batch_shape, M, N), dtype=A.dtype)
+        B = A.shape[:-2]
+        U_out = np.empty((*B, M, N), dtype=A.dtype)
         if side == "right":
-            P_out = np.empty((*batch_shape, N, N), dtype=A.dtype)
+            P_out = np.empty((*B, N, N), dtype=A.dtype)
         else:
-            P_out = np.empty((*batch_shape, M, M), dtype=A.dtype)
+            P_out = np.empty((*B, M, M), dtype=A.dtype)
 
         # Call batched numba function
         _np_polar_core_batched(A, pure_rotation, side_int, U_out, P_out)
@@ -2008,6 +2010,58 @@ def random_quaternion(batch_size):
     return np.stack((q1, q2, q3, q4), axis=1)
 
 
+def generate_grid_points_on_plane(
+    lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int
+) -> tuple[np.ndarray, float, float]:
+    """
+    Build an nx-by-ny grid of points on the plane defined by the bounds and normal.
+
+    Parameters
+    ----------
+    lo: array-like[float, float, float]
+        Lower bound of the plane
+    hi: array-like[float, float, float]
+        Upper bound of the plane
+    normal: array-like[float, float, float]
+        Normal of the plane
+    nx: int
+        Number of grid points in x direction
+    ny: int
+        Number of grid points in y direction
+
+    Returns
+    -------
+    grid: np.ndarray, shape (ny, nx, 3)
+        Grid points on the plane
+    """
+    # Compute tangent axes
+    normal = np.asarray(normal, dtype=gs.np_float)
+    n_norm = np.linalg.norm(normal)
+    if n_norm < gs.EPS:
+        gs.raise_exception(f"normal must be non-zero, got: {normal}")
+    normal = normal / n_norm
+    t0, t1 = orthogonals(normal)
+
+    # Compute lower and upper bounds in local basis
+    rot = np.stack((t0, t1, normal), axis=0, dtype=gs.np_float)
+    bounds = np.stack((lo, hi), axis=1, dtype=gs.np_float)
+    (lo_u, hi_u), (lo_v, hi_v), (lo_w, hi_w) = rot @ bounds
+
+    # Make sure that bounds are orthogonal to plane normal
+    extent_w = abs(hi_w - lo_w)
+    if extent_w > gs.EPS:
+        gs.logger.warning(f"Bounds does not lie on a plane orthogonal to normal (normal-axis mismatch={extent_w:.6e}).")
+    plane_w = 0.5 * (lo_w + hi_w)
+
+    # Sample point grid on plane
+    u_vals = np.linspace(lo_u, hi_u, num=nx, dtype=gs.np_float)
+    v_vals = np.linspace(lo_v, hi_v, num=ny, dtype=gs.np_float)
+    vv, uu = np.meshgrid(v_vals, u_vals, indexing="ij")
+    grid = t0 * np.expand_dims(uu, axis=-1) + t1 * np.expand_dims(vv, axis=-1) + normal * plane_w
+
+    return grid
+
+
 # ------------------------------------------------------------------------------------
 # ------------------------------------- misc ----------------------------------------
 # ------------------------------------------------------------------------------------
@@ -2240,7 +2294,7 @@ def cubic_spline_1d(x, y, xv):
 
 
 @nb.jit(nopython=True, cache=True)
-def orthogonals(a):
+def orthogonals(a) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
 

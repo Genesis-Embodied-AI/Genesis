@@ -300,7 +300,7 @@ class Keybind:
 
     name: str
     key: Key
-    key_action: KeyAction = KeyAction.PRESS
+    key_action: KeyAction = KeyAction.RELEASE
     key_mods: tuple[KeyMod] | None = None
     callback: Callable[..., None] | None = None
     args: tuple[Any, ...] = ()
