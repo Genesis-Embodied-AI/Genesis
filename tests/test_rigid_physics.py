@@ -4024,14 +4024,8 @@ def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_
     SAFETY_FACTOR = 2.5
 
     rigid_options = gs.options.RigidOptions(noslip_iterations=5)
-    if not mesh_boxes:
-        rigid_options.use_gjk_collision = False
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            gravity=(0.0, 0.0, GRAVITY),
-        ),
         rigid_options=rigid_options,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3 * scale, 3 * scale, 3 * scale),
