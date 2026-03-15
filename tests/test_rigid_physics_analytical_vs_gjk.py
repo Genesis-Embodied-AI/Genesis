@@ -274,13 +274,13 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Insert errno marker in contact0's GJK path (before gjk.func_gjk call, uses i_b)
     lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in contact0")
 
-    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b_env)
+    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b)
     lines = insert_errno_before_call(
         lines,
         "_func_multicontact_gjk_full(",
         ERRNO_CALLED_GJK_K2,
         "MODIFIED: GJK path in multicontact",
-        "i_b_env",
+        "i_b",
     )
 
     # Insert errno before GJK calls in func_convex_convex_contact (uses i_b)

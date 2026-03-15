@@ -975,7 +975,7 @@ def _func_multicontact_run_detection(
     i_ga,
     i_gb,
     i_scratch,
-    i_b_env,
+    i_b,
     ga_pos: qd.types.vector(3, dtype=gs.qd_float),
     ga_quat: qd.types.vector(4, dtype=gs.qd_float),
     gb_pos: qd.types.vector(3, dtype=gs.qd_float),
@@ -1008,7 +1008,7 @@ def _func_multicontact_run_detection(
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
     used_gjk = False
     tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b_env, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
     )
 
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
@@ -1048,7 +1048,7 @@ def _func_multicontact_run_detection(
             support_field_info,
             normal,
             i_gb,
-            i_b_env,
+            i_b,
             gb_pos,
             gb_quat,
         )
@@ -1059,7 +1059,7 @@ def _func_multicontact_run_detection(
         if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.MJ_MPR)):
             if not use_gjk:
                 is_mpr_updated = False
-                normal_ws = collider_state.contact_cache.normal[i_pair, i_b_env]
+                normal_ws = collider_state.contact_cache.normal[i_pair, i_b]
                 is_mpr_guess_direction_available = (qd.abs(normal_ws) > EPS).any()
                 for i_mpr in range(2):
                     if i_mpr == 1:
@@ -1128,7 +1128,7 @@ def _func_multicontact_run_detection(
 @qd.func
 def _func_multicontact_mpr(
     i_scratch,
-    i_b_env,
+    i_b,
     i_ga,
     i_gb,
     i_pair,
@@ -1161,20 +1161,20 @@ def _func_multicontact_mpr(
     is upgraded to the GJK queue for reprocessing instead."""
     EPS = rigid_global_info.EPS[None]
 
-    ga_pos_original = geoms_state.pos[i_ga, i_b_env]
-    ga_quat_original = geoms_state.quat[i_ga, i_b_env]
-    gb_pos_original = geoms_state.pos[i_gb, i_b_env]
-    gb_quat_original = geoms_state.quat[i_gb, i_b_env]
+    ga_pos_original = geoms_state.pos[i_ga, i_b]
+    ga_quat_original = geoms_state.quat[i_ga, i_b]
+    gb_pos_original = geoms_state.pos[i_gb, i_b]
+    gb_quat_original = geoms_state.quat[i_gb, i_b]
 
     tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b_env, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
     )
 
     axis_0, axis_1 = func_contact_orthogonals(
         i_ga,
         i_gb,
         normal_0,
-        i_b_env,
+        i_b,
         links_state,
         links_info,
         geoms_state,
@@ -1214,7 +1214,7 @@ def _func_multicontact_mpr(
                 i_ga,
                 i_gb,
                 i_scratch,
-                i_b_env,
+                i_b,
                 ga_pos_current,
                 ga_quat_current,
                 gb_pos_current,
@@ -1300,12 +1300,12 @@ def _func_multicontact_mpr(
     if needs_gjk_upgrade:
         local_idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_queue_size_k2[0], 1)
         idx = collider_state.narrowphase_work_queues.gjk_queue_size[0] + local_idx
-        collider_state.narrowphase_work_queues.gjk_i_b[idx] = i_b_env
+        collider_state.narrowphase_work_queues.gjk_i_b[idx] = i_b
         collider_state.narrowphase_work_queues.gjk_i_ga[idx] = i_ga
         collider_state.narrowphase_work_queues.gjk_i_gb[idx] = i_gb
         collider_state.narrowphase_work_queues.gjk_i_pair[idx] = i_pair
     else:
-        start_idx = qd.atomic_add(collider_state.n_contacts[i_b_env], n_con)
+        start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
         if start_idx + n_con <= collider_info.max_contact_pairs[None]:
             for i in range(n_con):
                 i_c = start_idx + i
@@ -1319,7 +1319,7 @@ def _func_multicontact_mpr(
                     normal_i,
                     pos_i,
                     local_penetration[i, 0],
-                    i_b_env,
+                    i_b,
                     i_c,
                     i_pair,
                     geoms_state,
@@ -1328,13 +1328,13 @@ def _func_multicontact_mpr(
                     collider_info,
                 )
         else:
-            errno[i_b_env] = errno[i_b_env] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @qd.func
 def _func_multicontact_gjk_full(
     i_scratch,
-    i_b_env,
+    i_b,
     i_ga,
     i_gb,
     i_pair,
@@ -1372,17 +1372,17 @@ def _func_multicontact_gjk_full(
     )
 
     tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b_env, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
     )
     diff_pos_tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b_env, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
+        i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
     )
     diff_normal_tolerance = collider_info.diff_normal_tolerance[None]
 
-    ga_pos_original = geoms_state.pos[i_ga, i_b_env]
-    ga_quat_original = geoms_state.quat[i_ga, i_b_env]
-    gb_pos_original = geoms_state.pos[i_gb, i_b_env]
-    gb_quat_original = geoms_state.quat[i_gb, i_b_env]
+    ga_pos_original = geoms_state.pos[i_ga, i_b]
+    ga_quat_original = geoms_state.quat[i_ga, i_b]
+    gb_pos_original = geoms_state.pos[i_gb, i_b]
+    gb_quat_original = geoms_state.quat[i_gb, i_b]
 
     ga_pos_current = ga_pos_original
     ga_quat_current = ga_quat_original
@@ -1425,7 +1425,7 @@ def _func_multicontact_gjk_full(
                     i_ga,
                     i_gb,
                     i_scratch,
-                    i_b_env,
+                    i_b,
                     ga_pos_current,
                     ga_quat_current,
                     gb_pos_current,
@@ -1482,7 +1482,7 @@ def _func_multicontact_gjk_full(
                             i_ga,
                             i_gb,
                             normal,
-                            i_b_env,
+                            i_b,
                             links_state,
                             links_info,
                             geoms_state,
@@ -1495,9 +1495,9 @@ def _func_multicontact_gjk_full(
                     if qd.static(
                         collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
                     ):
-                        collider_state.contact_cache.normal[i_pair, i_b_env] = normal
+                        collider_state.contact_cache.normal[i_pair, i_b] = normal
                 else:
-                    collider_state.contact_cache.normal[i_pair, i_b_env] = qd.Vector.zero(gs.qd_float, 3)
+                    collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
             elif not gjk_multi_done and multi_contact and is_col:
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
@@ -1546,7 +1546,7 @@ def _func_multicontact_gjk_full(
                         n_con = n_con + 1
 
     if n_con > 0:
-        start_idx = qd.atomic_add(collider_state.n_contacts[i_b_env], n_con)
+        start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
         if start_idx + n_con <= collider_info.max_contact_pairs[None]:
             for i in range(n_con):
                 i_c = start_idx + i
@@ -1560,7 +1560,7 @@ def _func_multicontact_gjk_full(
                     normal_i,
                     pos_i,
                     local_penetration[i, 0],
-                    i_b_env,
+                    i_b,
                     i_c,
                     i_pair,
                     geoms_state,
@@ -1569,7 +1569,7 @@ def _func_multicontact_gjk_full(
                     collider_info,
                 )
         else:
-            errno[i_b_env] = errno[i_b_env] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -1598,21 +1598,21 @@ def _func_narrowphase_multicontact_mixed(
     n_total_threads: qd.template(),
     max_items_per_thread: qd.template(),
 ):
-    for i_b in range(n_total_threads):
-        if i_b < qd.static(n_gjk_threads):
+    for i_tid in range(n_total_threads):
+        if i_tid < qd.static(n_gjk_threads):
             # GJK partition: pull from gjk_queue
             for _iter in range(max_items_per_thread):
                 idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_work_counter[0], 1)
                 if idx >= collider_state.narrowphase_work_queues.gjk_queue_size[0]:
                     break
-                i_b_env = collider_state.narrowphase_work_queues.gjk_i_b[idx]
+                i_b = collider_state.narrowphase_work_queues.gjk_i_b[idx]
                 i_ga = collider_state.narrowphase_work_queues.gjk_i_ga[idx]
                 i_gb = collider_state.narrowphase_work_queues.gjk_i_gb[idx]
                 i_pair = collider_state.narrowphase_work_queues.gjk_i_pair[idx]
 
                 _func_multicontact_gjk_full(
+                    i_tid,
                     i_b,
-                    i_b_env,
                     i_ga,
                     i_gb,
                     i_pair,
@@ -1643,7 +1643,7 @@ def _func_narrowphase_multicontact_mixed(
                 idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_work_counter[0], 1)
                 if idx >= collider_state.narrowphase_work_queues.mpr_queue_size[0]:
                     break
-                i_b_env = collider_state.narrowphase_work_queues.mpr_i_b[idx]
+                i_b = collider_state.narrowphase_work_queues.mpr_i_b[idx]
                 i_ga = collider_state.narrowphase_work_queues.mpr_i_ga[idx]
                 i_gb = collider_state.narrowphase_work_queues.mpr_i_gb[idx]
                 i_pair = collider_state.narrowphase_work_queues.mpr_i_pair[idx]
@@ -1652,8 +1652,8 @@ def _func_narrowphase_multicontact_mixed(
                 penetration_0 = collider_state.narrowphase_work_queues.mpr_penetration_0[idx]
 
                 _func_multicontact_mpr(
+                    i_tid,
                     i_b,
-                    i_b_env,
                     i_ga,
                     i_gb,
                     i_pair,
