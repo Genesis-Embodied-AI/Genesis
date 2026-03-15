@@ -901,7 +901,8 @@ def func_convex_convex_contact(
                 ):
                     contact_point_a = (
                         gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot)
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                            gu.qd_inv_quat(qrot),
                         )
                         + contact_pos_0
                     )
