@@ -13,6 +13,7 @@ import torch
 import trimesh
 
 import genesis as gs
+
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
@@ -42,6 +43,7 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
+    func_sort_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -84,6 +86,9 @@ class Collider:
         self._diff_normal_tolerance = 1e-2
 
         self._init_static_config()
+        self._use_split_narrowphase = (
+            self._collider_static_config.has_non_box_plane_convex_convex and gs.device.type == "cuda"
+        )
         self._init_collision_fields()
 
         self._sdf = SDF(rigid_solver)
@@ -93,10 +98,13 @@ class Collider:
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.has_convex_convex:
+        if self._collider_static_config.has_non_box_plane_convex_convex:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.has_convex_convex:
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
+
+        if self._use_split_narrowphase:
+            self._init_multicontact_gjk_state()
 
         if gs.use_zerocopy:
             self._contact_data: dict[str, torch.Tensor] = {}
@@ -142,7 +150,7 @@ class Collider:
             self._n_possible_pairs,
             self._collision_pair_idx,
             has_terrain,
-            has_convex_convex,
+            has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_nonterrain,
         ) = self._compute_collision_pair_idx()
@@ -151,7 +159,7 @@ class Collider:
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_terrain,
-            has_convex_convex=has_convex_convex,
+            has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
@@ -194,7 +202,34 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
-        self.reset()
+        # Contact0 & multicontact scratch states only needed when split narrowphase is active
+        if self._use_split_narrowphase:
+            gpu_props = torch.cuda.get_device_properties(gs.device)
+            gpu_cuda_cores = gpu_props.multi_processor_count * 128
+            self._contact0_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
+            self._contact0_grid_size = self._solver._B * self._contact0_n_chunks
+            self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
+            self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
+
+            gjk_only = self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
+            if gjk_only:
+                self._multicontact_n_gjk_threads = gpu_cuda_cores
+                self._multicontact_n_total_threads = self._multicontact_n_gjk_threads
+            else:
+                self._multicontact_n_gjk_threads = 4000
+                self._multicontact_n_total_threads = 40000
+            self._multicontact_max_items_per_thread = 128
+            self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
+
+    def _init_multicontact_gjk_state(self):
+        """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
+        self._multicontact_gjk_state = array_class.get_gjk_state(
+            self._multicontact_n_gjk_threads,
+            self._solver._static_rigid_sim_config,
+            self._gjk._gjk_info,
+            True,
+            self._solver._static_rigid_sim_config.requires_grad,
+        )
 
     def _compute_collision_pair_idx(self):
         """
@@ -204,7 +239,7 @@ class Collider:
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
 
         Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
-        for has_terrain, has_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
+        for has_terrain, has_non_box_plane_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
         """
         # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
@@ -384,7 +419,19 @@ class Collider:
         has_any_vs_terrain = bool(
             np.any((valid_type_a == gs.GEOM_TYPE.TERRAIN) | (valid_type_b == gs.GEOM_TYPE.TERRAIN))
         )
-        has_convex_vs_convex = bool(np.any(valid_convex_a & valid_convex_b))
+        both_convex = valid_convex_a & valid_convex_b
+        if np.any(both_convex):
+            is_box_a = valid_type_a == gs.GEOM_TYPE.BOX
+            is_box_b = valid_type_b == gs.GEOM_TYPE.BOX
+            is_plane_a = valid_type_a == gs.GEOM_TYPE.PLANE
+            is_plane_b = valid_type_b == gs.GEOM_TYPE.PLANE
+            is_plane_box = (is_plane_a & is_box_b) | (is_box_a & is_plane_b)
+            specialized = is_plane_box
+            if self._solver._options.box_box_detection:
+                specialized = specialized | (is_box_a & is_box_b)
+            has_non_box_plane_convex_convex = bool(np.any(both_convex & ~specialized))
+        else:
+            has_non_box_plane_convex_convex = False
 
         if self._solver._options.box_box_detection:
             spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
@@ -411,7 +458,7 @@ class Collider:
             n_possible_pairs,
             collision_pair_idx,
             has_any_vs_terrain,
-            has_convex_vs_convex,
+            has_non_box_plane_convex_convex,
             has_convex_specialization,
             has_nonconvex_vs_nonterrain,
         )
@@ -521,6 +568,33 @@ class Collider:
             self._collider_state,
         )
 
+    def _call_multicontact(self):
+        narrowphase._func_narrowphase_multicontact_mixed(
+            self._solver.links_state,
+            self._solver.links_info,
+            self._solver.geoms_state,
+            self._solver.geoms_info,
+            self._solver.geoms_init_AABB,
+            self._solver.verts_info,
+            self._solver.faces_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._collider_state,
+            self._collider_info,
+            self._collider_static_config,
+            self._multicontact_mpr_state,
+            self._mpr._mpr_info,
+            self._multicontact_gjk_state,
+            self._gjk._gjk_info,
+            self._gjk._gjk_static_config,
+            self._support_field._support_field_info,
+            self._multicontact_gjk_state.diff_contact_input,
+            self._solver._errno,
+            self._multicontact_n_gjk_threads,
+            self._multicontact_n_total_threads,
+            self._multicontact_max_items_per_thread,
+        )
+
     def detection(self) -> None:
         rigid_solver.kernel_update_geom_aabbs(
             self._solver.geoms_state,
@@ -545,7 +619,33 @@ class Collider:
             self._collider_info,
             self._solver._errno,
         )
-        if self._collider_static_config.has_convex_convex:
+        if self._use_split_narrowphase:
+            narrowphase._func_reset_narrowphase_work_queues(
+                self._collider_state,
+            )
+            narrowphase._func_narrowphase_contact0(
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver.geoms_init_AABB,
+                self._solver.verts_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._collider_state,
+                self._collider_info,
+                self._collider_static_config,
+                self._contact0_mpr_state,
+                self._mpr._mpr_info,
+                self._contact0_gjk_state,
+                self._gjk._gjk_info,
+                self._support_field._support_field_info,
+                self._solver._errno,
+                self._solver._B,
+                self._contact0_n_chunks,
+            )
+            self._call_multicontact()
+            narrowphase._func_prepare_gjk_rerun(self._collider_state)
+            self._call_multicontact()
+        elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
@@ -613,6 +713,12 @@ class Collider:
                 self._collider_static_config,
                 self._sdf._sdf_info,
                 self._solver._errno,
+            )
+
+        if self._use_split_narrowphase:
+            func_sort_contacts(
+                self._collider_state,
+                self._solver._static_rigid_sim_config,
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):

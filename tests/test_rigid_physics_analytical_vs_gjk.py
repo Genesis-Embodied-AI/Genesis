@@ -45,7 +45,8 @@ if TYPE_CHECKING:
     from genesis.engine.entities import RigidEntity
 
 
-ERRNO_CALLED_GJK = 1 << 16
+ERRNO_CALLED_GJK_K1 = 1 << 16
+ERRNO_CALLED_GJK_K2 = 1 << 17
 POS_TOL = 1e-2  # otherwise tests fail
 
 # Tolerances for checking results against hand-computed expected values.
@@ -112,13 +113,26 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 
 
 def find_and_disable_condition(lines, function_name):
-    """Find function call, look back for if/elif, and disable the entire multi-line condition."""
-    # Find the line with the function call
+    """Find function call, look back for if/elif, and disable the entire multi-line condition.
+
+    Skips occurrences whose guarding condition has already been disabled (contains 'False and').
+    """
+    # Find the line with the function call, skipping already-disabled occurrences
     call_line_idx = None
     for i, line in enumerate(lines):
         if function_name in line and "(" in line:
-            call_line_idx = i
-            break
+            # Look backwards for the guarding if/elif
+            for j in range(i - 1, -1, -1):
+                stripped = lines[j].strip()
+                if stripped.startswith("if ") or stripped.startswith("elif "):
+                    if "False and" in stripped:
+                        break  # Already disabled, skip this occurrence
+                    call_line_idx = i
+                    break
+                if stripped.startswith("else:"):
+                    break
+            if call_line_idx is not None:
+                break
 
     if call_line_idx is None:
         raise ValueError(f"Could not find function call: {function_name}")
@@ -178,29 +192,55 @@ def find_and_disable_condition(lines, function_name):
     return lines
 
 
-def insert_errno_before_call(lines, function_call_pattern, errno_value, comment):
+def find_and_disable_all_conditions(lines, function_name):
+    """Disable ALL if/elif conditions guarding calls to function_name."""
+    while True:
+        try:
+            lines = find_and_disable_condition(lines, function_name)
+        except ValueError:
+            break
+    return lines
+
+
+def insert_errno_before_call(lines, function_call_pattern, errno_value, comment, index_var="i_b"):
     """Insert errno marker on the line before a function call."""
     call_line_idx = None
     for i, line in enumerate(lines):
         if function_call_pattern in line:
-            # Find the position of the pattern in the line
             idx = line.find(function_call_pattern)
             if idx != -1:
-                # Make sure it's not part of a longer identifier
-                # Check that the character before the pattern (if any) is not alphanumeric or underscore
                 if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
+                    stripped = line.strip()
+                    if stripped.startswith("def ") or stripped.startswith("@"):
+                        continue
                     call_line_idx = i
                     break
     else:
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
-    # Get indentation from the call line
     indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
-
-    # Insert errno marker on the line before the call
-    errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
+    errno_line = f"{' ' * indent_size}errno[{index_var}] |= {errno_value}  # {comment}"
     lines.insert(call_line_idx, errno_line)
 
+    return lines
+
+
+def insert_errno_before_all_calls(lines, function_call_pattern, errno_value, comment):
+    """Insert errno marker before ALL occurrences of a function call.
+
+    Finds all call sites first, then inserts markers from bottom to top to preserve indices.
+    """
+    call_indices = []
+    for i, line in enumerate(lines):
+        if function_call_pattern in line:
+            idx = line.find(function_call_pattern)
+            if idx != -1:
+                if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
+                    call_indices.append(i)
+    for call_line_idx in reversed(call_indices):
+        indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
+        errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
+        lines.insert(call_line_idx, errno_line)
     return lines
 
 
@@ -225,25 +265,37 @@ def create_modified_narrowphase_file(tmp_path: Path):
 
     lines = content.split("\n")
 
-    # Disable capsule-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_capsule_capsule_contact")
+    # Disable capsule-capsule analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_capsule_capsule_contact")
 
-    # Disable sphere-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_sphere_capsule_contact")
+    # Disable sphere-capsule analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
-    # Insert errno before GJK calls
+    # Insert errno marker in contact0's GJK path (before gjk.func_gjk call, uses i_b)
+    lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in contact0")
+
+    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b)
     lines = insert_errno_before_call(
-        lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
+        lines,
+        "_func_multicontact_gjk_full(",
+        ERRNO_CALLED_GJK_K2,
+        "MODIFIED: GJK path in multicontact",
+        "i_b",
+    )
+
+    # Insert errno before GJK calls in func_convex_convex_contact (uses i_b)
+    lines = insert_errno_before_call(
+        lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
     )
     lines = insert_errno_before_call(
-        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
+        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
     )
 
     content = "\n".join(lines)
 
     # Debug: Check if errno was actually inserted
-    errno_count = content.count(f"errno[i_b] |= {ERRNO_CALLED_GJK}")
-    assert errno_count >= 1
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K1}") >= 1, "contact0 GJK errno marker not inserted"
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K2}") >= 1, "multicontact GJK errno marker not inserted"
 
     temp_narrowphase_path = tmp_path / "narrow.py"
     with open(temp_narrowphase_path, "w") as f:
@@ -325,6 +377,16 @@ class AnalyticalVsGJKSceneCreator:
 
         self.monkeypatch.setattr(
             narrowphase,
+            "_func_narrowphase_contact0",
+            narrowphase_modified._func_narrowphase_contact0,
+        )
+        self.monkeypatch.setattr(
+            narrowphase,
+            "_func_narrowphase_multicontact_mixed",
+            narrowphase_modified._func_narrowphase_multicontact_mixed,
+        )
+        self.monkeypatch.setattr(
+            narrowphase,
             "func_narrow_phase_convex_vs_convex",
             narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )
@@ -342,14 +404,21 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
-        assert (errno_val & ERRNO_CALLED_GJK) == 0, "Analytical scene should not use GJK."
+        assert (errno_val & (ERRNO_CALLED_GJK_K1 | ERRNO_CALLED_GJK_K2)) == 0, "Analytical scene should not use GJK."
 
-    def step_gjk(self):
+    def step_gjk(self, expect_collision: bool = True):
         # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        assert (errno_val & ERRNO_CALLED_GJK) != 0, "GJK scene should use GJK."
+        use_split_narrowphase = self.scene_gjk._sim.rigid_solver.collider._use_split_narrowphase
+        if use_split_narrowphase:
+            # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
+            assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in contact0."
+        if expect_collision:
+            # On GPU: multicontact is reached when contact0 detects a collision and enqueues the pair.
+            # On CPU: the monolithic kernel calls gjk.func_gjk_contact directly (skipping gjk.func_gjk).
+            assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK for contact generation."
 
 
 @pytest.mark.required
@@ -428,7 +497,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
-            scene_creator.step_gjk()
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
@@ -646,7 +715,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
-            scene_creator.step_gjk()
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]

@@ -402,6 +402,7 @@ class StructContactData(metaclass=BASE_METACLASS):
     force: V_ANNOTATION
     link_a: V_ANNOTATION
     link_b: V_ANNOTATION
+    pair_idx: V_ANNOTATION
 
 
 def get_contact_data(solver, max_contact_pairs, requires_grad):
@@ -419,6 +420,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
         force=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B)),
         link_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         link_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
+        pair_idx=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
     )
 
 
@@ -447,9 +449,8 @@ class StructDiffContactInput(metaclass=BASE_METACLASS):
     ref_penetration: V_ANNOTATION
 
 
-def get_diff_contact_input(solver, max_contacts_per_pair, is_active):
-    _B = solver._B
-    shape = maybe_shape((_B, max_contacts_per_pair), is_active and solver._requires_grad)
+def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
+    shape = maybe_shape((_B, max_contacts_per_pair), is_active and requires_grad)
     return StructDiffContactInput(
         geom_a=V(dtype=gs.qd_int, shape=shape),
         geom_b=V(dtype=gs.qd_int, shape=shape),
@@ -564,6 +565,53 @@ def get_contact_island_state(solver, collider):
 
 
 @DATA_ORIENTED
+class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
+    mpr_i_b: V_ANNOTATION
+    mpr_i_ga: V_ANNOTATION
+    mpr_i_gb: V_ANNOTATION
+    mpr_i_pair: V_ANNOTATION
+    mpr_contact_pos_0: V_ANNOTATION
+    mpr_normal_0: V_ANNOTATION
+    mpr_penetration_0: V_ANNOTATION
+    gjk_i_b: V_ANNOTATION
+    gjk_i_ga: V_ANNOTATION
+    gjk_i_gb: V_ANNOTATION
+    gjk_i_pair: V_ANNOTATION
+    gjk_contact_pos_0: V_ANNOTATION
+    gjk_normal_0: V_ANNOTATION
+    gjk_penetration_0: V_ANNOTATION
+    mpr_queue_size: V_ANNOTATION
+    gjk_queue_size: V_ANNOTATION
+    gjk_queue_size_k2: V_ANNOTATION
+    mpr_work_counter: V_ANNOTATION
+    gjk_work_counter: V_ANNOTATION
+
+
+def get_narrowphase_work_queues(max_entries):
+    return StructNarrowphaseWorkQueues(
+        mpr_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
+        mpr_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_i_pair=V(dtype=gs.qd_int, shape=(max_entries,)),
+        gjk_contact_pos_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_normal_0=V_VEC(3, dtype=gs.qd_float, shape=(max_entries,)),
+        gjk_penetration_0=V(dtype=gs.qd_float, shape=(max_entries,)),
+        mpr_queue_size=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_queue_size=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_queue_size_k2=V(dtype=gs.qd_int, shape=(1,)),
+        mpr_work_counter=V(dtype=gs.qd_int, shape=(1,)),
+        gjk_work_counter=V(dtype=gs.qd_int, shape=(1,)),
+    )
+
+
+@DATA_ORIENTED
 class StructColliderState(metaclass=BASE_METACLASS):
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
@@ -588,6 +636,9 @@ class StructColliderState(metaclass=BASE_METACLASS):
     contact_cache: StructContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
+    narrowphase_work_queues: StructNarrowphaseWorkQueues
+    contact_sort_key: V_ANNOTATION
+    contact_sort_idx: V_ANNOTATION
 
 
 def get_collider_state(
@@ -640,7 +691,12 @@ def get_collider_state(
         contact_cache=get_contact_cache(solver, n_possible_pairs),
         broad_collision_pairs=V_VEC(2, dtype=gs.qd_int, shape=(max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
-        diff_contact_input=get_diff_contact_input(solver, max(max_contact_pairs, 1), is_active=True),
+        diff_contact_input=get_diff_contact_input(_B, max(max_contact_pairs, 1), True, requires_grad),
+        narrowphase_work_queues=get_narrowphase_work_queues(
+            max(max_collision_pairs_broad * _B, 1) if collider_static_config.has_non_box_plane_convex_convex else 1
+        ),
+        contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
+        contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
     )
 
 
@@ -700,7 +756,12 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
 @qd.data_oriented
 class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
-    has_convex_convex: bool
+    # True when the scene has convex-convex collision pairs not handled by
+    # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
+    # at scene build time by iterating all geom pairs in collider._init_static_config().
+    # On GPU, the split narrowphase path runs (contact0 + multicontact + sort).
+    # On CPU, falls back to the monolithic func_narrow_phase_convex_vs_convex.
+    has_non_box_plane_convex_convex: bool
     has_convex_specialization: bool
     has_nonconvex_nonterrain: bool
     # maximum number of contact pairs per collision pair
@@ -770,8 +831,7 @@ class StructMDVertex(metaclass=BASE_METACLASS):
     mink: V_ANNOTATION
 
 
-def get_gjk_simplex_vertex(solver, is_active):
-    _B = solver._B
+def get_gjk_simplex_vertex(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
     return StructMDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -784,8 +844,7 @@ def get_gjk_simplex_vertex(solver, is_active):
     )
 
 
-def get_epa_polytope_vertex(solver, gjk_info, is_active):
-    _B = solver._B
+def get_epa_polytope_vertex(_B, gjk_info, is_active):
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
     shape = maybe_shape((_B, max_num_polytope_verts), is_active)
     return StructMDVertex(
@@ -805,8 +864,7 @@ class StructGJKSimplex(metaclass=BASE_METACLASS):
     dist: V_ANNOTATION
 
 
-def get_gjk_simplex(solver, is_active):
-    _B = solver._B
+def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
     return StructGJKSimplex(
         nverts=V(dtype=gs.qd_int, shape=shape),
@@ -820,8 +878,7 @@ class StructGJKSimplexBuffer(metaclass=BASE_METACLASS):
     sdist: V_ANNOTATION
 
 
-def get_gjk_simplex_buffer(solver, is_active):
-    _B = solver._B
+def get_gjk_simplex_buffer(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
     return StructGJKSimplexBuffer(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -838,8 +895,7 @@ class StructEPAPolytope(metaclass=BASE_METACLASS):
     horizon_w: V_ANNOTATION
 
 
-def get_epa_polytope(solver, is_active):
-    _B = solver._B
+def get_epa_polytope(_B, is_active):
     shape = maybe_shape((_B,), is_active)
     return StructEPAPolytope(
         nverts=V(dtype=gs.qd_int, shape=shape),
@@ -860,8 +916,7 @@ class StructEPAPolytopeFace(metaclass=BASE_METACLASS):
     visited: V_ANNOTATION
 
 
-def get_epa_polytope_face(solver, polytope_max_faces, is_active):
-    _B = solver._B
+def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     shape = maybe_shape((_B, polytope_max_faces), is_active)
     return StructEPAPolytopeFace(
         verts_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
@@ -879,8 +934,7 @@ class StructEPAPolytopeHorizonData(metaclass=BASE_METACLASS):
     edge_idx: V_ANNOTATION
 
 
-def get_epa_polytope_horizon_data(solver, polytope_max_horizons, is_active):
-    _B = solver._B
+def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
     return StructEPAPolytopeHorizonData(
         face_idx=V(dtype=gs.qd_int, shape=shape),
@@ -899,8 +953,7 @@ class StructContactFace(metaclass=BASE_METACLASS):
     id2: V_ANNOTATION
 
 
-def get_contact_face(solver, max_contact_polygon_verts, is_active):
-    _B = solver._B
+def get_contact_face(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactFace(
         vert1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -920,8 +973,7 @@ class StructContactNormal(metaclass=BASE_METACLASS):
     id: V_ANNOTATION
 
 
-def get_contact_normal(solver, max_contact_polygon_verts, is_active):
-    _B = solver._B
+def get_contact_normal(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactNormal(
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -936,8 +988,7 @@ class StructContactHalfspace(metaclass=BASE_METACLASS):
     dist: V_ANNOTATION
 
 
-def get_contact_halfspace(solver, max_contact_polygon_verts, is_active):
-    _B = solver._B
+def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactHalfspace(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -951,8 +1002,7 @@ class StructWitness(metaclass=BASE_METACLASS):
     point_obj2: V_ANNOTATION
 
 
-def get_witness(solver, max_contacts_per_pair, is_active):
-    _B = solver._B
+def get_witness(_B, max_contacts_per_pair, is_active):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
     return StructWitness(
         point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -995,40 +1045,38 @@ class StructGJKState(metaclass=BASE_METACLASS):
     diff_penetration: V_ANNOTATION
 
 
-def get_gjk_state(solver, static_rigid_sim_config, gjk_info, is_active):
-    _B = solver._B
+def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_grad=False):
     enable_mujoco_compatibility = static_rigid_sim_config.enable_mujoco_compatibility
     polytope_max_faces = gjk_info.polytope_max_faces[None]
     max_contacts_per_pair = gjk_info.max_contacts_per_pair[None]
     max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]
-    requires_grad = solver._static_rigid_sim_config.requires_grad
 
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
     return StructGJKState(
         # GJK simplex
         support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
-        simplex_vertex=get_gjk_simplex_vertex(solver, is_active),
-        simplex_buffer=get_gjk_simplex_buffer(solver, is_active),
-        simplex=get_gjk_simplex(solver, is_active),
+        simplex_vertex=get_gjk_simplex_vertex(_B, is_active),
+        simplex_buffer=get_gjk_simplex_buffer(_B, is_active),
+        simplex=get_gjk_simplex(_B, is_active),
         last_searched_simplex_vertex_id=V(dtype=gs.qd_int, shape=(_B,)),
-        simplex_vertex_intersect=get_gjk_simplex_vertex(solver, is_active),
-        simplex_buffer_intersect=get_gjk_simplex_buffer(solver, is_active),
+        simplex_vertex_intersect=get_gjk_simplex_vertex(_B, is_active),
+        simplex_buffer_intersect=get_gjk_simplex_buffer(_B, is_active),
         nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
         # EPA polytope
-        polytope=get_epa_polytope(solver, is_active),
-        polytope_verts=get_epa_polytope_vertex(solver, gjk_info, is_active),
-        polytope_faces=get_epa_polytope_face(solver, polytope_max_faces, is_active),
+        polytope=get_epa_polytope(_B, is_active),
+        polytope_verts=get_epa_polytope_vertex(_B, gjk_info, is_active),
+        polytope_faces=get_epa_polytope_face(_B, polytope_max_faces, is_active),
         polytope_faces_map=V(dtype=gs.qd_int, shape=(_B, polytope_max_faces)),
-        polytope_horizon_data=get_epa_polytope_horizon_data(solver, 6 + gjk_info.epa_max_iterations[None], is_active),
-        polytope_horizon_stack=get_epa_polytope_horizon_data(solver, polytope_max_faces * 3, is_active),
+        polytope_horizon_data=get_epa_polytope_horizon_data(_B, 6 + gjk_info.epa_max_iterations[None], is_active),
+        polytope_horizon_stack=get_epa_polytope_horizon_data(_B, polytope_max_faces * 3, is_active),
         # Multi-contact detection (MuJoCo compatibility)
-        contact_faces=get_contact_face(solver, max_contact_polygon_verts, is_active),
-        contact_normals=get_contact_normal(solver, max_contact_polygon_verts, is_active),
-        contact_halfspaces=get_contact_halfspace(solver, max_contact_polygon_verts, is_active),
+        contact_faces=get_contact_face(_B, max_contact_polygon_verts, is_active),
+        contact_normals=get_contact_normal(_B, max_contact_polygon_verts, is_active),
+        contact_halfspaces=get_contact_halfspace(_B, max_contact_polygon_verts, is_active),
         contact_clipped_polygons=V_VEC(3, dtype=gs.qd_float, shape=(_B, 2, max_contact_polygon_verts)),
         multi_contact_flag=V(dtype=gs.qd_bool, shape=(_B,)),
         # Final results
-        witness=get_witness(solver, max_contacts_per_pair, is_active),
+        witness=get_witness(_B, max_contacts_per_pair, is_active),
         n_witness=V(dtype=gs.qd_int, shape=(_B,)),
         n_contacts=V(dtype=gs.qd_int, shape=(_B,)),
         contact_pos=V_VEC(3, dtype=gs.qd_float, shape=(_B, max_contacts_per_pair)),
@@ -1036,9 +1084,63 @@ def get_gjk_state(solver, static_rigid_sim_config, gjk_info, is_active):
         is_col=V(dtype=gs.qd_bool, shape=(_B,)),
         penetration=V(dtype=gs.qd_float, shape=(_B,)),
         distance=V(dtype=gs.qd_float, shape=(_B,)),
-        diff_contact_input=get_diff_contact_input(solver, max(max_contacts_per_pair, 1), is_active),
+        diff_contact_input=get_diff_contact_input(_B, max(max_contacts_per_pair, 1), is_active, requires_grad),
         n_diff_contact_input=V(dtype=gs.qd_int, shape=(_B,)),
         diff_penetration=V(dtype=gs.qd_float, shape=maybe_shape((_B, max_contacts_per_pair), requires_grad)),
+    )
+
+
+def get_gjk_state_contact_only(_B):
+    """Minimal GJK state for contact detection only (no EPA, no multi-contact).
+
+    Used by kernel 1 to run func_gjk as a boolean overlap test. All EPA polytope,
+    multi-contact, and differentiable fields are allocated at dummy size (1,) since
+    func_gjk never accesses them.
+    """
+    _dummy_B = 1
+
+    return StructGJKState(
+        support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
+        simplex_vertex=get_gjk_simplex_vertex(_B, is_active=True),
+        simplex_buffer=get_gjk_simplex_buffer(_B, is_active=True),
+        simplex=get_gjk_simplex(_B, is_active=True),
+        last_searched_simplex_vertex_id=V(dtype=gs.qd_int, shape=(_B,)),
+        simplex_vertex_intersect=get_gjk_simplex_vertex(_B, is_active=True),
+        simplex_buffer_intersect=get_gjk_simplex_buffer(_B, is_active=True),
+        nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
+        # EPA — dummy allocations, never accessed by func_gjk
+        polytope=get_epa_polytope(_dummy_B, is_active=True),
+        polytope_verts=StructMDVertex(
+            obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            local_obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            local_obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+            id1=V(dtype=gs.qd_int, shape=(1, 1)),
+            id2=V(dtype=gs.qd_int, shape=(1, 1)),
+            mink=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        ),
+        polytope_faces=get_epa_polytope_face(_dummy_B, 1, is_active=True),
+        polytope_faces_map=V(dtype=gs.qd_int, shape=(1, 1)),
+        polytope_horizon_data=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
+        polytope_horizon_stack=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
+        # Multi-contact — dummy
+        contact_faces=get_contact_face(_dummy_B, 1, is_active=True),
+        contact_normals=get_contact_normal(_dummy_B, 1, is_active=True),
+        contact_halfspaces=get_contact_halfspace(_dummy_B, 1, is_active=True),
+        contact_clipped_polygons=V_VEC(3, dtype=gs.qd_float, shape=(1, 2, 1)),
+        multi_contact_flag=V(dtype=gs.qd_bool, shape=(_B,)),
+        # Results — full _B for fields func_gjk writes; dummy for EPA-only fields
+        witness=get_witness(_B, 1, is_active=True),
+        n_witness=V(dtype=gs.qd_int, shape=(_B,)),
+        n_contacts=V(dtype=gs.qd_int, shape=(1,)),
+        contact_pos=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        normal=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
+        is_col=V(dtype=gs.qd_bool, shape=(1,)),
+        penetration=V(dtype=gs.qd_float, shape=(1,)),
+        distance=V(dtype=gs.qd_float, shape=(_B,)),
+        diff_contact_input=get_diff_contact_input(_dummy_B, 1, is_active=False),
+        n_diff_contact_input=V(dtype=gs.qd_int, shape=(1,)),
+        diff_penetration=V(dtype=gs.qd_float, shape=()),
     )
 
 

@@ -1,4 +1,3 @@
-import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -7,6 +6,7 @@ import torch
 from frozendict import frozendict
 
 import genesis as gs
+
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch

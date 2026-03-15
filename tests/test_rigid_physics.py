@@ -4016,21 +4016,15 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.04, 1.0])
 @pytest.mark.parametrize("friction", [0.5, 2.0])
+@pytest.mark.parametrize("mesh_boxes", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, friction, show_viewer, tol):
+def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_tmp_path):
     GRAVITY = -9.81
     # FIXME: we need apply a larger force than expected to keep the boxes static
     SAFETY_FACTOR = 2.5
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(
-            dt=0.01,
-            gravity=(0.0, 0.0, GRAVITY),
-        ),
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=False,
-            noslip_iterations=5,
-        ),
+        rigid_options=gs.options.RigidOptions(noslip_iterations=5),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3 * scale, 3 * scale, 3 * scale),
             camera_lookat=(scale, 0.0, 0.0),
@@ -4042,12 +4036,23 @@ def test_noslip_iterations(scale, friction, show_viewer, tol):
     )
 
     for i in range(3):
-        scene.add_entity(
-            gs.morphs.Box(
-                size=(scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i))),
+        box_size = (scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i)))
+        if mesh_boxes:
+            mesh_path = str(asset_tmp_path / f"noslip_box_{scale}_{i}.obj")
+            trimesh.creation.box(extents=box_size).export(mesh_path, file_type="obj")
+            morph = gs.morphs.Mesh(
+                file=mesh_path,
+                pos=(i * scale, 0, 0),
+                fixed=(i == 0),
+            )
+        else:
+            morph = gs.morphs.Box(
+                size=box_size,
                 pos=(i * (1 - 1e-3) * scale, 0, 0),
                 fixed=(i == 0),
-            ),
+            )
+        scene.add_entity(
+            morph,
             material=gs.materials.Rigid(
                 rho=200.0,
                 friction=friction,
@@ -4057,7 +4062,12 @@ def test_noslip_iterations(scale, friction, show_viewer, tol):
             ),
             visualize_contact=True,
         )
-    _, box_1, box_2 = scene.entities
+
+    mesh_path = str(asset_tmp_path / f"noslip_faraway_{scale}.obj")
+    trimesh.creation.box(extents=(scale, scale, scale)).export(mesh_path, file_type="obj")
+    scene.add_entity(gs.morphs.Mesh(file=mesh_path, pos=(100 * scale, 100 * scale, 0)))
+
+    _, box_1, box_2 = scene.entities[:3]
     scene.build()
 
     # Compute the force that must be applied to get the box in place without slipping
