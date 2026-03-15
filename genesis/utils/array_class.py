@@ -235,6 +235,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     Ma_ws: V_ANNOTATION
     grad: V_ANNOTATION
     Mgrad: V_ANNOTATION
+    MinvJT: V_ANNOTATION
     search: V_ANNOTATION
     efc_D: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
@@ -302,7 +303,7 @@ def get_constraint_state(constraint_solver, solver):
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
     efc_b_shape = maybe_shape((len_constraints_, _B), solver._options.noslip_iterations > 0)
-    jac_relevant_dofs_shape = maybe_shape((len_constraints_, solver.n_dofs_, _B), constraint_solver.sparse_solve)
+    jac_relevant_dofs_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
 
     if math.prod(jac_shape) > np.iinfo(np.int32).max:
@@ -340,6 +341,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
+        MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
         search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
@@ -1188,7 +1190,11 @@ class StructGJKInfo(metaclass=BASE_METACLASS):
     # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
     # coordinates and compare it with the original projected point. If the difference is larger than this threshold,
     # we consider the projection invalid, because it means numerical errors are too large.
-    polytope_max_reprojection_error: V_ANNOTATION
+    # We check both relative and absolute errors: the relative error catches numerically degenerate faces,
+    # while the absolute error prevents false rejections on smooth geometries (e.g. spheres) where
+    # polytope faces become extremely small near convergence, amplifying the relative error.
+    polytope_max_rel_reprojection_error: V_ANNOTATION
+    polytope_max_abs_reprojection_error: V_ANNOTATION
     # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
     # tolerance to be considered as a valid parallel contact.
     contact_face_tol: V_ANNOTATION
@@ -1227,8 +1233,11 @@ def get_gjk_info(**kwargs):
         collision_eps=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["collision_eps"]),
         simplex_max_degeneracy_sq=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["simplex_max_degeneracy_sq"]),
         polytope_max_faces=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["polytope_max_faces"]),
-        polytope_max_reprojection_error=V_SCALAR_FROM(
-            dtype=gs.qd_float, value=kwargs["polytope_max_reprojection_error"]
+        polytope_max_rel_reprojection_error=V_SCALAR_FROM(
+            dtype=gs.qd_float, value=kwargs["polytope_max_rel_reprojection_error"]
+        ),
+        polytope_max_abs_reprojection_error=V_SCALAR_FROM(
+            dtype=gs.qd_float, value=kwargs["polytope_max_abs_reprojection_error"]
         ),
         contact_face_tol=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_face_tol"]),
         contact_edge_tol=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["contact_edge_tol"]),

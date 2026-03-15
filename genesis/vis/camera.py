@@ -789,7 +789,7 @@ class Camera(RBC):
         return transform
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: idx: {self._idx}, pos: {self.pos}, lookat: {self.lookat}"
+        return f"{self.__repr_name__()}: idx: {self._idx}, pos: {self.pos}, lookat: {self.lookat}"
 
     @property
     def is_built(self):

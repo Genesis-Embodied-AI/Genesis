@@ -95,7 +95,8 @@ class GJK:
             # This value has been experimentally determined based on the examples that we currently have (e.g. pyramid,
             # tower, ...). We observed the error usually reaches around 5e-4, so we set the threshold to 1e-4 to be
             # safe. However, this value could be further tuned based on the future examples.
-            polytope_max_reprojection_error=1e-4,
+            polytope_max_rel_reprojection_error=1e-4,
+            polytope_max_abs_reprojection_error=1e-4,
             # The values are matching MuJoCo for compatibility. Increasing this value could be useful for detecting
             # contact manifolds even when the normals are not perfectly aligned, but we observed that it leads to more
             # false positives and thus not a perfect solution for the multi-contact detection.

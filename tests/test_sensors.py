@@ -182,7 +182,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_rigid_tactile_sensors_gravity_force(n_envs, show_viewer, tol):
+def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
@@ -643,6 +643,11 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
         assert (sensor_data.points.abs() > gs.EPS).any()
 
 
+# ------------------------------------------------------------------------------------------
+# -------------------------------------- Kinematic Tactile Sensors ---------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
@@ -699,7 +704,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
                 (0.0, 0.0, -BOX_SIZE / 2),  # bottom of box, center
             ),
             probe_local_normal=probe_normals,
-            radius=(
+            probe_radius=(
                 PROBE_RADIUS,
                 PROBE_RADIUS / 10,  # small radius which cannot detect sphere unless it's perfectly on top
                 BOX_SIZE / 3,  # large radius that can detect sphere when not aligned
@@ -717,7 +722,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
             entity_idx=sphere.idx,
             probe_local_pos=[(0.0, 0.0, -SPHERE_RADIUS)],
             probe_local_normal=[(0.0, 0.0, -1.0)],
-            radius=PROBE_RADIUS,
+            probe_radius=PROBE_RADIUS,
             stiffness=STIFFNESS,
             debug_sphere_color=(0.0, 0.0, 1.0, 0.5),
             draw_debug=show_viewer,
@@ -784,3 +789,260 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
     assert_allclose(sphere_data.force, sphere_ground_truth.force, tol=gs.EPS)
     assert_allclose(sphere_data.penetration, 0.0, tol=gs.EPS)
     assert_allclose(sphere_data.force, 0.0, tol=gs.EPS)
+
+
+def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
+    """Probe positions and outward normals on the bottom hemisphere (z <= 0 in link frame)."""
+    theta = (np.pi / 2) * (1 + torch.arange(n_theta, dtype=gs.tc_float, device=gs.device) / n_theta)
+    phi = torch.arange(n_phi, dtype=gs.tc_float, device=gs.device) * (2 * np.pi) / n_phi
+    theta, phi = torch.meshgrid(theta, phi, indexing="ij")
+    theta = theta.ravel()
+    phi = phi.ravel()
+    x = radius * theta.sin() * phi.cos()
+    y = radius * theta.sin() * phi.sin()
+    z = radius * theta.cos()
+    positions = torch.stack([x, y, z], dim=-1)
+    normals = positions / radius
+    return positions, normals
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
+    """Test ElastomerDisplacementSensor with bottom-hemisphere probes on a sphere penetrating the ground."""
+
+    SPHERE_RADIUS = 0.2
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.01
+    RING_ANGLE_DEG = 6.0
+    N_RING = 6
+    MAX_DELTAS = (1.0, 1.0, 60.0)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Sphere penetrating the ground (center below z=0 by PENETRATION)
+    sphere_init_pos = (0.0, 0.0, SPHERE_RADIUS - PENETRATION)
+    sphere_init_quat = (1.0, 0.0, 0.0, 0.0)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=sphere_init_pos,
+        ),
+    )
+
+    # One probe at bottom of sphere plus a ring at RING_ANGLE_DEG from bottom (angle from center)
+    angle_rad = torch.tensor(RING_ANGLE_DEG * torch.pi / 180, dtype=gs.tc_float, device=gs.device)
+    theta_ring = torch.pi - angle_rad
+    z_ring = SPHERE_RADIUS * theta_ring.cos()
+    r_xy = SPHERE_RADIUS * theta_ring.sin()
+    phi = torch.arange(N_RING, dtype=gs.tc_float, device=gs.device) * (2 * torch.pi) / N_RING
+    ring_positions = torch.stack([r_xy * phi.cos(), r_xy * phi.sin(), torch.full_like(phi, z_ring)], dim=-1)
+    ring_normals = ring_positions / SPHERE_RADIUS
+    bottom_pos = torch.tensor([[0.0, 0.0, -SPHERE_RADIUS]], dtype=gs.tc_float, device=gs.device)
+    bottom_normal = torch.tensor([[0.0, 0.0, -1.0]], dtype=gs.tc_float, device=gs.device)
+    probe_positions = torch.cat([bottom_pos, ring_positions], dim=0)
+    probe_normals = torch.cat([bottom_normal, ring_normals], dim=0)
+
+    sensor_kwargs = dict(
+        entity_idx=sphere.idx,
+        probe_local_pos=probe_positions,
+        probe_local_normal=probe_normals,
+        probe_radius=PROBE_RADIUS,
+        draw_debug=show_viewer,
+        dilate_coefficient=1e-2,
+        shear_coefficient=1e-2,
+        twist_coefficient=1e-2,
+    )
+    dilate_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=MAX_DELTAS[0],
+            shear_max_delta=0.0,
+            twist_max_delta=0.0,
+            **sensor_kwargs,
+        )
+    )
+    shear_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=0.0,
+            shear_max_delta=MAX_DELTAS[1],
+            twist_max_delta=0.0,
+            **sensor_kwargs,
+        )
+    )
+    twist_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=0.0,
+            shear_max_delta=0.0,
+            twist_max_delta=MAX_DELTAS[2],
+            **sensor_kwargs,
+        )
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=MAX_DELTAS[0],
+            shear_max_delta=MAX_DELTAS[1],
+            twist_max_delta=MAX_DELTAS[2],
+            **sensor_kwargs,
+        )
+    )
+
+    if show_viewer:
+        rec_kwargs = dict(
+            normal=(0.0, 0.0, -1.0),
+            scale_factor=10.0,
+            max_magnitude=1.0e-2,
+            positions=probe_positions,
+        )
+        dilate_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Dilate Sensor",
+                **rec_kwargs,
+            ),
+        )
+        shear_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Shear Sensor",
+                **rec_kwargs,
+            ),
+        )
+        twist_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Twist Sensor",
+                **rec_kwargs,
+            ),
+        )
+
+    scene.build(n_envs=n_envs)
+
+    dt = scene.dt
+
+    scene.step()
+
+    # test dilate displacement
+    dilate_data = dilate_sensor.read()
+    # Contact point in sphere link frame (south pole); direction away from contact for each probe
+    contact_pos = torch.tensor([0.0, 0.0, -PENETRATION], dtype=gs.tc_float, device=gs.device)
+    direction_away = probe_positions - contact_pos
+    direction_away = direction_away / (direction_away.norm(dim=-1, keepdim=True).clamp(min=1e-12))
+    dots = (dilate_data * direction_away).sum(dim=-1)
+    assert (dots < tol).all(), "All dilate displacements should point away from the contact"
+
+    # test shear displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((-0.2, 0.0, 0.0, 0.0, 0.0, 0.0))
+    scene.step()
+    # shear sensor should detect 0.5 m/s of shear displacement
+    assert_allclose(shear_sensor.read()[..., 0], 0.2 * dt, rtol=1.5)
+    assert_allclose(twist_sensor.read(), 0.0, tol=tol)
+
+    # test twist displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((0.0, 0.0, 0.0, 0.0, 0.0, 30.0))
+    scene.step()
+    # twist sensor should detect 0.05 m of twist displacement
+    assert_allclose(twist_sensor.read()[..., 1:, :2].norm(dim=-1), 0.2 * dt, rtol=1.5)
+    assert_allclose(twist_sensor.read()[..., 2], 0.0, tol=dt)
+    assert_allclose(shear_sensor.read(), 0.0, tol=tol)
+
+    # test combined displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((0.2, 0.0, 0.0, 0.0, 0.0, 0.2))
+    scene.step()
+    dilate_data = dilate_sensor.read()
+    shear_data = shear_sensor.read()
+    twist_data = twist_sensor.read()
+    combined_data = sensor.read()
+    assert_allclose(combined_data, dilate_data + shear_data + twist_data, tol=tol)
+
+    # test no contact
+    sphere.set_pos((0.0, 0.0, SPHERE_RADIUS + 0.05))
+    scene.step()
+    data = sensor.read()
+    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
+    """Test ElastomerDisplacementSensor with probes on a box resting on a sphere."""
+    SPHERE_RADIUS = 0.1
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.01
+    BOX_SIZE = 0.1
+    GRID_SIZE = (8, 8)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Sphere penetrating the ground (center below z=0 by PENETRATION)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            fixed=True,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION),
+        ),
+    )
+    sensor_kwargs = dict(
+        entity_idx=box.idx,
+        link_idx_local=0,
+        probe_local_normal=(0.0, 0.0, -1.0),
+        probe_radius=PROBE_RADIUS,
+        dilate_coefficient=1e-2,
+        shear_coefficient=1e-2,
+        twist_coefficient=1e-2,
+        draw_debug=show_viewer,
+    )
+    probe_local_pos = gu.generate_grid_points_on_plane(
+        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
+        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
+        normal=(0.0, 0.0, -1.0),
+        nx=GRID_SIZE[0],
+        ny=GRID_SIZE[1],
+    )
+    elastomer_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos,
+            **sensor_kwargs,
+        )
+    )
+    elastomer_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            **sensor_kwargs,
+        )
+    )
+    assert elastomer_grid_sensor._is_grid and not elastomer_sensor._is_grid
+    assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    # grid sensor should match
+    grid_data = elastomer_grid_sensor.read()
+    data = elastomer_sensor.read()
+
+    assert_allclose(data, grid_data, tol=tol)
+
+    # test no contact
+    box.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS * 2 + PENETRATION))
+    scene.step()
+
+    data = elastomer_grid_sensor.read()
+    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")

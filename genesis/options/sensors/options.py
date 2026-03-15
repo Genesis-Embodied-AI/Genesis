@@ -1,23 +1,41 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any
 
 import numpy as np
-from pydantic import Field, conlist
+from pydantic import Field, BeforeValidator, StrictBool, StrictInt, model_validator
 
 import genesis as gs
+from genesis.typing import (
+    _is_sequence,
+    UnitIntervalVec3Type,
+    UnitIntervalVec4Type,
+    FArrayType,
+    LaxVec3FType,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveFloat,
+    RotationMatrixType,
+    Vec3FType,
+    Vec4FType,
+)
 
 from ..options import Options
 from .raycaster import DepthCameraPattern, RaycastPattern
 
-Vec3FType = conlist(float, min_length=3, max_length=3)
-Vec4FType = conlist(float, min_length=4, max_length=4)
-Vec3FArrayType = conlist(Vec3FType, min_length=1)
-FArrayType = conlist(float, min_length=1)
-MaybeVec3FType = float | Vec3FType
-Matrix3x3Type = conlist(conlist(float, min_length=3, max_length=3), min_length=3, max_length=3)
-MaybeMatrix3x3Type = Matrix3x3Type | MaybeVec3FType
-
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+
+
+if TYPE_CHECKING:
+    NonNegativeUnboundedFloat = float
+    LaxNonNegativeUnboundedVec3FType = Vec3FType | float
+else:
+    NonNegativeUnboundedFloat = Annotated[float, Field(ge=0, strict=False)]
+    LaxNonNegativeUnboundedVec3FType = Annotated[
+        tuple[NonNegativeUnboundedFloat, NonNegativeUnboundedFloat, NonNegativeUnboundedFloat],
+        BeforeValidator(lambda v: v if _is_sequence(v) else (v,) * 3),
+        Field(strict=False),
+    ]
+CrossCouplingAxisType = RotationMatrixType | UnitIntervalVec3Type | float
 
 
 class SensorOptions(Options):
@@ -37,25 +55,26 @@ class SensorOptions(Options):
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
-    delay: float = 0.0
-    update_ground_truth_only: bool = False
-    draw_debug: bool = False
+    delay: NonNegativeFloat = 0.0
+    update_ground_truth_only: StrictBool = False
+    draw_debug: StrictBool = False
 
-    def validate(self, scene: "Scene"):
+    def validate_scene(self, scene: "Scene"):
         """
         Validate the sensor options values before the sensor is added to the scene.
 
         Use pydantic's model_post_init() for validation that does not require scene context.
         """
-        delay_hz = self.delay / scene._sim.dt
+        assert scene.sim is not None
+        delay_hz = self.delay / scene.sim.dt
         if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
             gs.logger.warning(
                 f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got {self.delay}"
-                f" and {scene._sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
+                f" and {scene.sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
             )
 
 
-class RigidSensorOptionsMixin:
+class RigidSensorOptionsMixin(SensorOptions):
     """
     Base options class for sensors that are attached to a RigidEntity.
 
@@ -71,26 +90,26 @@ class RigidSensorOptionsMixin:
         The rotational offset of the sensor from the RigidLink in degrees.
     """
 
-    entity_idx: int | None = -1
-    link_idx_local: int = 0
+    entity_idx: StrictInt | None = Field(default=-1, ge=-1)
+    link_idx_local: NonNegativeInt = 0
     pos_offset: Vec3FType = (0.0, 0.0, 0.0)
     euler_offset: Vec3FType = (0.0, 0.0, 0.0)
 
-    def validate(self, scene: "Scene"):
+    def validate_scene(self, scene: "Scene"):
         from genesis.engine.entities import RigidEntity
 
-        super().validate(scene)
-        if self.entity_idx is not None and self.entity_idx >= len(scene.entities):
-            gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
+        super().validate_scene(scene)
         if self.entity_idx is not None and self.entity_idx >= 0:
+            if self.entity_idx >= len(scene.entities):
+                gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
             entity = scene.entities[self.entity_idx]
             if not isinstance(entity, RigidEntity):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
-            if self.link_idx_local < 0 or self.link_idx_local >= entity.n_links:
+            if self.link_idx_local >= entity.n_links:
                 gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
-class NoisySensorOptionsMixin:
+class NoisySensorOptionsMixin(SensorOptions):
     """
     Base options class for analog sensors that are attached to a RigidEntity.
 
@@ -113,14 +132,14 @@ class NoisySensorOptionsMixin:
         Otherwise, the sensor data at the closest time step will be used. Default is False.
     """
 
-    resolution: float | FArrayType = 0.0
-    bias: float | FArrayType = 0.0
-    noise: float | FArrayType = 0.0
-    random_walk: float | FArrayType = 0.0
-    jitter: float = 0.0
-    interpolate: bool = False
+    resolution: FArrayType | float = 0.0
+    bias: FArrayType | float = 0.0
+    noise: FArrayType | float = 0.0
+    random_walk: FArrayType | float = 0.0
+    jitter: NonNegativeFloat = 0.0
+    interpolate: StrictBool = False
 
-    def model_post_init(self, _):
+    def model_post_init(self, context: Any) -> None:
         if self.jitter > 0 and not self.interpolate:
             gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
         if self.jitter > self.delay:
@@ -139,11 +158,11 @@ class Contact(RigidSensorOptionsMixin, SensorOptions):
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
-    debug_sphere_radius: float = 0.05
-    debug_color: Vec4FType = (1.0, 0.0, 1.0, 0.5)
+    debug_sphere_radius: PositiveFloat = 0.05
+    debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
 
 
-class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -159,91 +178,21 @@ class ContactForce(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptio
         The scale factor for the debug force arrow. Defaults to 0.01.
     """
 
-    min_force: MaybeVec3FType = 0.0
-    max_force: MaybeVec3FType = np.inf
+    resolution: LaxVec3FType = 0.0
 
-    debug_color: Vec4FType = (1.0, 0.0, 1.0, 0.5)
-    debug_scale: float = 0.01
+    min_force: LaxNonNegativeUnboundedVec3FType = 0.0
+    max_force: LaxNonNegativeUnboundedVec3FType = np.inf
 
-    def model_post_init(self, _):
-        if not (isinstance(self.min_force, float) or len(self.min_force) == 3):
-            gs.raise_exception(f"min_force must be a float or array-like of 3 floats, got: {self.min_force}")
-        if not (isinstance(self.max_force, float) or len(self.max_force) == 3):
-            gs.raise_exception(f"max_force must be a float or array-like of 3 floats, got: {self.max_force}")
-        if np.any(np.array(self.min_force) < 0):
-            gs.raise_exception(f"min_force must be non-negative, got: {self.min_force}")
+    debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
+    debug_scale: PositiveFloat = 0.01
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
         if np.any(np.array(self.max_force) <= np.array(self.min_force)):
             gs.raise_exception(f"min_force should be less than max_force, got: {self.min_force} and {self.max_force}")
-        if self.resolution is not None and not (isinstance(self.resolution, float) or len(self.resolution) == 3):
-            gs.raise_exception(f"resolution must be a float or array-like of 3 floats, got: {self.resolution}")
 
 
-class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
-    """
-    A tactile sensor which queries contact depth relative to given probe normals and within the radius of the probe
-    positions along a rigid entity link.
-
-    The returned force is an spring-like (kinematic) estimate based on contact depth, computed as
-    F = stiffness * penetration * probe_normal, as opposed to the actual impulse force on the link from the contact
-    obtained from the physics solver.
-
-    Note
-    ----
-    If this sensor is attached to a fixed entity, it will not detect contacts with other fixed entities.
-
-    Parameters
-    ----------
-    probe_local_pos : array-like[array-like[float, float, float]]
-        Probe positions in link-local frame. One (x, y, z) per probe.
-    probe_local_normal : array-like[array-like[float, float, float]]
-        Probe sensing directions in link-local frame. Penetration is measured along this axis.
-    radius : float | array-like[float]
-        Probe sensing radius in meters. Objects within this distance are detected. Default: 0.005 (5mm)
-    stiffness : float
-        User-defined coefficient for force estimation. Default: 1000.0.
-    """
-
-    probe_local_pos: Vec3FArrayType = [(0.0, 0.0, 0.0)]
-    probe_local_normal: Vec3FArrayType = [(0.0, 0.0, 1.0)]
-    radius: float | FArrayType = 0.005
-    stiffness: float = 1000.0
-
-    debug_sphere_color: Vec4FType = (1.0, 0.5, 0.0, 0.4)
-    debug_contact_color: Vec4FType = (1.0, 0.2, 0.0, 0.8)
-
-    def model_post_init(self, _):
-        if np.any(np.array(self.radius) < 0):
-            gs.raise_exception(f"radius must be non-negative, got: {self.radius}")
-        if self.stiffness < 0:
-            gs.raise_exception(f"stiffness must be non-negative, got: {self.stiffness}")
-
-        probe_local_pos = self._validate_probe_arrays(self.probe_local_pos)
-        probe_local_normal = self._validate_probe_arrays(self.probe_local_normal)
-        norms = np.linalg.norm(probe_local_normal, axis=1)
-        if np.any(norms < gs.EPS):
-            gs.raise_exception(f"probe_local_normal must be non-zero vectors, got: {probe_local_normal}")
-
-        if len(probe_local_pos) != len(probe_local_normal):
-            gs.raise_exception(
-                "probe_local_pos and probe_local_normal must have the same length. "
-                f"Got {len(probe_local_pos)} positions and {len(probe_local_normal)} normals."
-            )
-        if not isinstance(self.radius, float) and len(self.radius) != len(probe_local_pos):
-            gs.raise_exception(
-                "If radius is array-like, it must have the same length as probe_local_pos. "
-                f"Got {len(self.radius)} radii and {len(probe_local_pos)} probe positions."
-            )
-
-    def _validate_probe_arrays(self, values: Vec3FArrayType) -> np.ndarray:
-        array = np.array(values, dtype=float)
-        if array.ndim != 2 or array.shape[1] != 3:
-            gs.raise_exception(f"Probe locals array must have shape (N, 3), got: {array.shape}")
-        if array.shape[0] == 0:
-            gs.raise_exception("Probe locals array must have at least one entry")
-        return array
-
-
-class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -302,50 +251,45 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
     """
 
     # Accelerometer
-    acc_resolution: MaybeVec3FType = 0.0
-    acc_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
-    acc_noise: MaybeVec3FType = 0.0
-    acc_bias: MaybeVec3FType = 0.0
-    acc_random_walk: MaybeVec3FType = 0.0
+    acc_resolution: LaxVec3FType = 0.0
+    acc_cross_axis_coupling: CrossCouplingAxisType = 0.0
+    acc_noise: LaxVec3FType = 0.0
+    acc_bias: LaxVec3FType = 0.0
+    acc_random_walk: LaxVec3FType = 0.0
 
     # Gyroscope
-    gyro_resolution: MaybeVec3FType = 0.0
-    gyro_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
-    gyro_noise: MaybeVec3FType = 0.0
-    gyro_bias: MaybeVec3FType = 0.0
-    gyro_random_walk: MaybeVec3FType = 0.0
+    gyro_resolution: LaxVec3FType = 0.0
+    gyro_cross_axis_coupling: CrossCouplingAxisType = 0.0
+    gyro_noise: LaxVec3FType = 0.0
+    gyro_bias: LaxVec3FType = 0.0
+    gyro_random_walk: LaxVec3FType = 0.0
 
     # Magnetometer (New)
-    mag_resolution: MaybeVec3FType = 0.0
-    mag_cross_axis_coupling: MaybeMatrix3x3Type = 0.0
-    mag_noise: MaybeVec3FType = 0.0
-    mag_bias: MaybeVec3FType = 0.0
-    mag_random_walk: MaybeVec3FType = 0.0
-    magnetic_field: MaybeVec3FType = (0.0, 0.0, 0.5)
+    mag_resolution: LaxVec3FType = 0.0
+    mag_cross_axis_coupling: CrossCouplingAxisType = 0.0
+    mag_noise: LaxVec3FType = 0.0
+    mag_bias: LaxVec3FType = 0.0
+    mag_random_walk: LaxVec3FType = 0.0
+    magnetic_field: LaxVec3FType = (0.0, 0.0, 0.5)
 
-    debug_acc_color: Vec4FType = (1.0, 0.0, 0.0, 0.6)
-    debug_acc_scale: float = 0.01
-    debug_gyro_color: Vec4FType = (0.0, 1.0, 0.0, 0.6)
-    debug_gyro_scale: float = 0.01
-    debug_mag_color: Vec4FType = (0.0, 0.0, 1.0, 0.6)
-    debug_mag_scale: float = 0.5
+    debug_acc_color: UnitIntervalVec4Type = (1.0, 0.0, 0.0, 0.6)
+    debug_acc_scale: PositiveFloat = 0.01
+    debug_gyro_color: UnitIntervalVec4Type = (0.0, 1.0, 0.0, 0.6)
+    debug_gyro_scale: PositiveFloat = 0.01
+    debug_mag_color: UnitIntervalVec4Type = (0.0, 0.0, 1.0, 0.6)
+    debug_mag_scale: PositiveFloat = 0.5
 
-    def model_post_init(self, _):
-        self._validate_cross_axis_coupling(self.acc_cross_axis_coupling)
-        self._validate_cross_axis_coupling(self.gyro_cross_axis_coupling)
-        self._validate_cross_axis_coupling(self.mag_cross_axis_coupling)
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
 
-    def _validate_cross_axis_coupling(self, cross_axis_coupling):
-        cross_axis_coupling_np = np.array(cross_axis_coupling)
-        if cross_axis_coupling_np.shape not in ((), (3,), (3, 3)):
-            gs.raise_exception(
-                f"cross_axis_coupling shape should be (), (3,), or (3, 3), got: {cross_axis_coupling_np.shape}"
-            )
-        if np.any(cross_axis_coupling_np < 0.0) or np.any(cross_axis_coupling_np > 1.0):
-            gs.raise_exception(f"cross_axis_coupling values should be between 0.0 and 1.0, got: {cross_axis_coupling}")
+        # FIXME: Resolution should be made private or converted to properties in mixin to prevent setting them directly
+        self.resolution = self.acc_resolution + self.gyro_resolution + self.mag_resolution
+        self.bias = self.acc_bias + self.gyro_bias + self.mag_bias
+        self.random_walk = self.acc_random_walk + self.gyro_random_walk + self.mag_random_walk
+        self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
 
 
-class Raycaster(RigidSensorOptionsMixin, SensorOptions):
+class Raycaster(RigidSensorOptionsMixin):
     """
     Raycaster sensor that performs ray casting to get distance measurements and point clouds.
 
@@ -370,18 +314,23 @@ class Raycaster(RigidSensorOptionsMixin, SensorOptions):
     """
 
     pattern: RaycastPattern
-    min_range: float = 0.0
-    max_range: float = 20.0
-    no_hit_value: float = Field(default_factory=lambda data: data["max_range"])
-    return_world_frame: bool = False
+    min_range: NonNegativeFloat = 0.0
+    max_range: PositiveFloat = 20.0
+    no_hit_value: float
+    return_world_frame: StrictBool = False
 
-    debug_sphere_radius: float = 0.02
+    debug_sphere_radius: PositiveFloat = 0.02
     debug_ray_start_color: Vec4FType = (0.5, 0.5, 1.0, 1.0)
     debug_ray_hit_color: Vec4FType = (1.0, 0.5, 0.5, 1.0)
 
-    def model_post_init(self, _):
-        if self.min_range < 0.0:
-            gs.raise_exception(f"[{type(self).__name__}] min_range should be non-negative. Got: {self.min_range}.")
+    @model_validator(mode="before")
+    @classmethod
+    def default_no_hit_value(cls, data: dict) -> dict:
+        if "no_hit_value" not in data:
+            data["no_hit_value"] = data.get("max_range", cls.model_fields["max_range"].default)
+        return data
+
+    def model_post_init(self, context: Any) -> None:
         if self.max_range <= self.min_range:
             gs.raise_exception(
                 f"[{type(self).__name__}] max_range {self.max_range} should be greater than min_range {self.min_range}."

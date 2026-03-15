@@ -30,7 +30,7 @@ class ToolEntityState:
         self.ang = self.ang.detach()
 
     # def __repr__(self):
-    #     return f'{self._repr_type()}\n' \
+    #     return f'{self.__repr_name__()}\n' \
     #            f'entity : {_repr(self.entity)}\n' \
     #            f'pos    : {_repr(self.pos)}\n' \
     #            f'quat   : {_repr(self.quat)}\n' \

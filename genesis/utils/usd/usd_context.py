@@ -190,7 +190,7 @@ class UsdContext:
         Apply material properties from USD to a Genesis surface object.
         """
         geom_path = str(geom_prim.GetPath())
-        applied_surface = surface.copy()
+        applied_surface = surface.model_copy()
 
         if geom_path in self._prim_material_bindings:
             surface_id = self._prim_material_bindings[geom_path]

@@ -17,7 +17,3 @@ class Material(RBC):
     @property
     def uid(self):
         return self._uid
-
-    @classmethod
-    def _repr_type(cls):
-        return f"<gs.{cls.__module__.split('.')[-2]}.{cls.__name__}>"

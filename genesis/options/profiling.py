@@ -1,3 +1,5 @@
+from pydantic import StrictBool
+
 from .options import Options
 
 
@@ -13,5 +15,5 @@ class ProfilingOptions(Options):
         Exponential decay momentum for FPS moving average
     """
 
-    show_FPS: bool = True
+    show_FPS: StrictBool = True
     FPS_tracker_alpha: float = 0.95

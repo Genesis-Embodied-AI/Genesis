@@ -145,7 +145,7 @@ def check_gs_textures(gs_texture1, gs_texture2, default_value, material_name, te
 
 def check_gs_surfaces(gs_surface1, gs_surface2, material_name):
     """Check if two gs.Surface objects are equal."""
-    check_gs_textures(gs_surface1.get_texture(), gs_surface2.get_texture(), 1.0, material_name, "color")
+    check_gs_textures(gs_surface1.texture, gs_surface2.texture, 1.0, material_name, "color")
     check_gs_textures(gs_surface1.opacity_texture, gs_surface2.opacity_texture, 1.0, material_name, "opacity")
     check_gs_textures(gs_surface1.roughness_texture, gs_surface2.roughness_texture, 1.0, material_name, "roughness")
     check_gs_textures(gs_surface1.metallic_texture, gs_surface2.metallic_texture, 0.0, material_name, "metallic")
@@ -513,7 +513,7 @@ def test_glb_parse_material(glb_file):
 
         assert isinstance(tm_material, trimesh.visual.material.PBRMaterial)
         check_gs_tm_textures(
-            gs_material.get_texture(),
+            gs_material.texture,
             tm_material.baseColorFactor,
             np.array(tm_material.baseColorTexture),
             1.0,

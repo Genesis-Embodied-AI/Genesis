@@ -75,10 +75,6 @@ class Base(Material):
         # will be set when added to solver
         self._idx = None
 
-    @classmethod
-    def _repr_type(cls):
-        return f"<gs.materials.MPM.{cls.__name__}>"
-
     @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
         raise NotImplementedError
