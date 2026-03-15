@@ -223,16 +223,12 @@ class Collider:
 
     def _init_multicontact_gjk_state(self):
         """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
-
-        class _SolverProxy:
-            def __init__(self, _B, requires_grad):
-                self._B = _B
-                self._requires_grad = requires_grad
-                self._static_rigid_sim_config = type("_", (), {"requires_grad": requires_grad})()
-
-        proxy = _SolverProxy(self._multicontact_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
         self._multicontact_gjk_state = array_class.get_gjk_state(
-            proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, is_active=True
+            self._multicontact_n_gjk_threads,
+            self._solver._static_rigid_sim_config,
+            self._gjk._gjk_info,
+            True,
+            self._solver._static_rigid_sim_config.requires_grad,
         )
 
     def _compute_collision_pair_idx(self):

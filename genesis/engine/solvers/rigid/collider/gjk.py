@@ -113,7 +113,11 @@ class GJK:
 
         # Initialize GJK state
         self._gjk_state = array_class.get_gjk_state(
-            rigid_solver, rigid_solver._static_rigid_sim_config, self._gjk_info, False
+            rigid_solver._B,
+            rigid_solver._static_rigid_sim_config,
+            self._gjk_info,
+            False,
+            rigid_solver._static_rigid_sim_config.requires_grad,
         )
 
         self._is_active = False
@@ -123,7 +127,11 @@ class GJK:
             return
 
         self._gjk_state = array_class.get_gjk_state(
-            self._solver, self._solver._static_rigid_sim_config, self._gjk_info, True
+            self._solver._B,
+            self._solver._static_rigid_sim_config,
+            self._gjk_info,
+            True,
+            self._solver._static_rigid_sim_config.requires_grad,
         )
         self._is_active = True
 
