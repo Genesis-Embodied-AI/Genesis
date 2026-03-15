@@ -280,7 +280,7 @@ def create_modified_narrowphase_file(tmp_path: Path):
         "_func_multicontact_gjk_full(",
         ERRNO_CALLED_GJK_K2,
         "MODIFIED: GJK path in multicontact",
-        index_var="i_b_env",
+        "i_b_env",
     )
 
     # Insert errno before GJK calls in func_convex_convex_contact (uses i_b)
@@ -497,7 +497,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
-            scene_creator.step_gjk(expect_collision=should_collide)
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
@@ -715,7 +715,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
-            scene_creator.step_gjk(expect_collision=should_collide)
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
