@@ -636,15 +636,27 @@ def func_convex_convex_contact(
             if (multi_contact and is_col_0) or (i_detection == 0):
                 if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                     is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                        i_ga, i_gb, ga_pos_current, ga_quat_current, gb_pos_current, gb_quat_current,
-                        geoms_info, rigid_global_info,
+                        i_ga,
+                        i_gb,
+                        ga_pos_current,
+                        ga_quat_current,
+                        gb_pos_current,
+                        gb_quat_current,
+                        geoms_info,
+                        rigid_global_info,
                     )
                 elif (
                     geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
                 ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
                     is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                        i_ga, i_gb, ga_pos_current, ga_quat_current, gb_pos_current, gb_quat_current,
-                        geoms_info, rigid_global_info,
+                        i_ga,
+                        i_gb,
+                        ga_pos_current,
+                        ga_quat_current,
+                        gb_pos_current,
+                        gb_quat_current,
+                        geoms_info,
+                        rigid_global_info,
                     )
                 elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                     plane_dir = qd.Vector(
@@ -1001,13 +1013,27 @@ def _func_multicontact_run_detection(
 
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, geoms_info, rigid_global_info,
+            i_ga,
+            i_gb,
+            ga_pos,
+            ga_quat,
+            gb_pos,
+            gb_quat,
+            geoms_info,
+            rigid_global_info,
         )
     elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
         geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
     ):
         is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, geoms_info, rigid_global_info,
+            i_ga,
+            i_gb,
+            ga_pos,
+            ga_quat,
+            gb_pos,
+            gb_quat,
+            geoms_info,
+            rigid_global_info,
         )
     elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
         plane_dir = qd.Vector(
@@ -1069,11 +1095,25 @@ def _func_multicontact_run_detection(
             if use_gjk:
                 if qd.static(not static_rigid_sim_config.requires_grad):
                     gjk.func_gjk_contact(
-                        geoms_state, geoms_info, verts_info, faces_info,
-                        rigid_global_info, static_rigid_sim_config,
-                        collider_state, collider_static_config,
-                        gjk_state, gjk_info, gjk_static_config, support_field_info,
-                        i_ga, i_gb, i_b_scratch, ga_pos, ga_quat, gb_pos, gb_quat,
+                        geoms_state,
+                        geoms_info,
+                        verts_info,
+                        faces_info,
+                        rigid_global_info,
+                        static_rigid_sim_config,
+                        collider_state,
+                        collider_static_config,
+                        gjk_state,
+                        gjk_info,
+                        gjk_static_config,
+                        support_field_info,
+                        i_ga,
+                        i_gb,
+                        i_b_scratch,
+                        ga_pos,
+                        ga_quat,
+                        gb_pos,
+                        gb_quat,
                     )
                     is_col = gjk_state.is_col[i_b_scratch] == 1
                     penetration = gjk_state.penetration[i_b_scratch]
@@ -1165,9 +1205,7 @@ def _func_multicontact_mpr(
             axis = (2 * (i_det % 2) - 1) * axis_0 + (1 - 2 * ((i_det // 2) % 2)) * axis_1
             qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
 
-            ga_pos_current, ga_quat_current = func_rotate_frame(
-                ga_pos_original, ga_quat_original, contact_pos_0, qrot
-            )
+            ga_pos_current, ga_quat_current = func_rotate_frame(ga_pos_original, ga_quat_original, contact_pos_0, qrot)
             gb_pos_current, gb_quat_current = func_rotate_frame(
                 gb_pos_original, gb_quat_original, contact_pos_0, gu.qd_inv_quat(qrot)
             )
@@ -1804,13 +1842,27 @@ def _func_narrowphase_contact0(
 
             if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-                    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, geoms_info, rigid_global_info,
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    geoms_info,
+                    rigid_global_info,
                 )
             elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
                 geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
             ):
                 is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-                    i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, geoms_info, rigid_global_info,
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    geoms_info,
+                    rigid_global_info,
                 )
             elif geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
                 plane_dir = qd.Vector(
