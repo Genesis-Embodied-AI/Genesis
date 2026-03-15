@@ -115,10 +115,10 @@ def gs_static_child(args: list[str]):
     scene.rigid_solver.collider.detection()
     actual_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
     assert actual_contacts == args.expected_num_contacts
-    if scene.rigid_solver.collider._collider_static_config.needs_kernel1:
-        from genesis.engine.solvers.rigid.collider import func_narrowphase_kernel1_contact0
+    if scene.rigid_solver.collider._collider_static_config.needs_mpr_gjk:
+        from genesis.engine.solvers.rigid.collider import _func_narrowphase_contact0
 
-        kernel_to_check = func_narrowphase_kernel1_contact0
+        kernel_to_check = _func_narrowphase_contact0
     else:
         from genesis.engine.solvers.rigid.collider import func_narrow_phase_convex_specializations
 

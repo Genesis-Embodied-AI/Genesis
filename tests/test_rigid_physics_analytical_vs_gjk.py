@@ -271,15 +271,15 @@ def create_modified_narrowphase_file(tmp_path: Path):
     # Disable sphere-capsule analytical path in all kernels
     lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
-    # Insert errno marker in kernel1's GJK path (before gjk.func_gjk call, uses i_b)
-    lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in kernel1")
+    # Insert errno marker in contact0's GJK path (before gjk.func_gjk call, uses i_b)
+    lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in contact0")
 
-    # Insert errno markers in kernel2's GJK path (before func_kernel2_gjk_full, uses i_b_env)
+    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b_env)
     lines = insert_errno_before_call(
         lines,
-        "func_kernel2_gjk_full(",
+        "_func_multicontact_gjk_full(",
         ERRNO_CALLED_GJK_K2,
-        "MODIFIED: GJK path in kernel2",
+        "MODIFIED: GJK path in multicontact",
         index_var="i_b_env",
     )
 
@@ -294,8 +294,8 @@ def create_modified_narrowphase_file(tmp_path: Path):
     content = "\n".join(lines)
 
     # Debug: Check if errno was actually inserted
-    assert content.count(f"|= {ERRNO_CALLED_GJK_K1}") >= 1, "kernel1 GJK errno marker not inserted"
-    assert content.count(f"|= {ERRNO_CALLED_GJK_K2}") >= 1, "kernel2 GJK errno marker not inserted"
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K1}") >= 1, "contact0 GJK errno marker not inserted"
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K2}") >= 1, "multicontact GJK errno marker not inserted"
 
     temp_narrowphase_path = tmp_path / "narrow.py"
     with open(temp_narrowphase_path, "w") as f:
@@ -377,13 +377,13 @@ class AnalyticalVsGJKSceneCreator:
 
         self.monkeypatch.setattr(
             narrowphase,
-            "func_narrowphase_kernel1_contact0",
-            narrowphase_modified.func_narrowphase_kernel1_contact0,
+            "_func_narrowphase_contact0",
+            narrowphase_modified._func_narrowphase_contact0,
         )
         self.monkeypatch.setattr(
             narrowphase,
-            "func_narrowphase_kernel2_mixed",
-            narrowphase_modified.func_narrowphase_kernel2_mixed,
+            "_func_narrowphase_multicontact_mixed",
+            narrowphase_modified._func_narrowphase_multicontact_mixed,
         )
         self.monkeypatch.setattr(
             narrowphase,
@@ -414,9 +414,9 @@ class AnalyticalVsGJKSceneCreator:
         use_split_kernels = self.scene_gjk._sim.rigid_solver.collider._use_split_kernels
         if use_split_kernels:
             # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
-            assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in kernel1."
+            assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in contact0."
         if expect_collision:
-            # On GPU: kernel2 is reached when kernel1 detects a collision and enqueues the pair.
+            # On GPU: multicontact is reached when contact0 detects a collision and enqueues the pair.
             # On CPU: the monolithic kernel calls gjk.func_gjk_contact directly (skipping gjk.func_gjk).
             assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK for contact generation."
 

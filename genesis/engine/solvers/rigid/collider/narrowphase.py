@@ -971,7 +971,7 @@ def func_convex_convex_contact(
 
 
 @qd.func
-def func_kernel2_run_detection(
+def _func_multicontact_run_detection(
     i_ga,
     i_gb,
     i_b_scratch,
@@ -1126,7 +1126,7 @@ def func_kernel2_run_detection(
 
 
 @qd.func
-def func_kernel2_mpr_multicontact(
+def _func_multicontact_mpr(
     i_b_scratch,
     i_b_env,
     i_ga,
@@ -1212,7 +1212,7 @@ def func_kernel2_mpr_multicontact(
                 pos=gb_pos_original, quat=gb_quat_original, contact_pos=contact_pos_0, qrot=gu.qd_inv_quat(qrot)
             )
 
-            is_col, normal, contact_pos, penetration, _used_gjk = func_kernel2_run_detection(
+            is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
                 i_ga,
                 i_gb,
                 i_b_scratch,
@@ -1342,7 +1342,7 @@ def func_kernel2_mpr_multicontact(
 
 
 @qd.func
-def func_kernel2_gjk_full(
+def _func_multicontact_gjk_full(
     i_b_scratch,
     i_b_env,
     i_ga,
@@ -1431,7 +1431,7 @@ def func_kernel2_gjk_full(
                 )
 
             if (multi_contact and is_col_0) or (i_detection == 0):
-                is_col, normal, contact_pos, penetration, _used_gjk = func_kernel2_run_detection(
+                is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
                     i_ga,
                     i_gb,
                     i_b_scratch,
@@ -1591,7 +1591,7 @@ def func_kernel2_gjk_full(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_narrowphase_kernel2_mixed(
+def _func_narrowphase_multicontact_mixed(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -1628,7 +1628,7 @@ def func_narrowphase_kernel2_mixed(
                 i_gb = collider_state.narrowphase_work_queues.gjk_i_gb[idx]
                 i_pair = collider_state.narrowphase_work_queues.gjk_i_pair[idx]
 
-                func_kernel2_gjk_full(
+                _func_multicontact_gjk_full(
                     i_b,
                     i_b_env,
                     i_ga,
@@ -1669,7 +1669,7 @@ def func_narrowphase_kernel2_mixed(
                 normal_0 = collider_state.narrowphase_work_queues.mpr_normal_0[idx]
                 penetration_0 = collider_state.narrowphase_work_queues.mpr_penetration_0[idx]
 
-                func_kernel2_mpr_multicontact(
+                _func_multicontact_mpr(
                     i_b,
                     i_b_env,
                     i_ga,
@@ -1701,7 +1701,7 @@ def func_narrowphase_kernel2_mixed(
 
 
 @qd.kernel
-def func_reset_narrowphase_work_queues(
+def _func_reset_narrowphase_work_queues(
     collider_state: array_class.ColliderState,
 ):
     for _i in range(1):
@@ -1713,7 +1713,7 @@ def func_reset_narrowphase_work_queues(
 
 
 @qd.kernel
-def func_prepare_gjk_rerun(
+def _func_prepare_gjk_rerun(
     collider_state: array_class.ColliderState,
 ):
     for _i in range(1):
@@ -1726,7 +1726,7 @@ def func_prepare_gjk_rerun(
 
 
 @qd.func
-def func_enqueue_for_multicontact(
+def _func_enqueue_for_multicontact(
     collider_state: array_class.ColliderState,
     prefer_gjk,
     i_b,
@@ -1758,7 +1758,7 @@ def func_enqueue_for_multicontact(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_narrowphase_kernel1_contact0(
+def _func_narrowphase_contact0(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     geoms_init_AABB: array_class.GeomsInitAABB,
@@ -1961,10 +1961,10 @@ def func_narrowphase_kernel1_contact0(
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
                 if prefer_gjk:
-                    # GJK algorithm: always enqueue to GJK queue — kernel2
+                    # GJK algorithm: always enqueue to GJK queue — multicontact
                     # runs full GJK detection regardless of multi_contact.
                     if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                        func_enqueue_for_multicontact(
+                        _func_enqueue_for_multicontact(
                             collider_state,
                             True,
                             i_b,
@@ -1976,9 +1976,9 @@ def func_narrowphase_kernel1_contact0(
                             penetration,
                         )
                 elif multi_contact:
-                    # Enqueue for kernel2 — kernel2 will write all contacts
+                    # Enqueue for multicontact — multicontact will write all contacts
                     # (including contact 0) contiguously via a single atomic reservation.
-                    func_enqueue_for_multicontact(
+                    _func_enqueue_for_multicontact(
                         collider_state,
                         False,
                         i_b,

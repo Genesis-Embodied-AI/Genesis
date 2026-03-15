@@ -86,7 +86,7 @@ class Collider:
         self._diff_normal_tolerance = 1e-2
 
         self._init_static_config()
-        self._use_split_kernels = self._collider_static_config.needs_kernel1 and gs.device.type == "cuda"
+        self._use_split_narrowphase = self._collider_static_config.needs_mpr_gjk and gs.device.type == "cuda"
         self._init_collision_fields()
 
         self._sdf = SDF(rigid_solver)
@@ -96,13 +96,13 @@ class Collider:
 
         if self._collider_static_config.has_nonconvex_nonterrain:
             self._sdf.activate()
-        if self._collider_static_config.needs_kernel1:
+        if self._collider_static_config.needs_mpr_gjk:
             self._gjk.activate()
-        if self._collider_static_config.has_terrain or self._collider_static_config.needs_kernel1:
+        if self._collider_static_config.has_terrain or self._collider_static_config.needs_mpr_gjk:
             self._support_field.activate()
 
-        if self._use_split_kernels:
-            self._init_kernel2_gjk_state()
+        if self._use_split_narrowphase:
+            self._init_multicontact_gjk_state()
 
         if gs.use_zerocopy:
             self._contact_data: dict[str, torch.Tensor] = {}
@@ -148,7 +148,7 @@ class Collider:
             self._n_possible_pairs,
             self._collision_pair_idx,
             has_terrain,
-            needs_kernel1,
+            needs_mpr_gjk,
             has_convex_specialization,
             has_nonconvex_nonterrain,
         ) = self._compute_collision_pair_idx()
@@ -157,7 +157,7 @@ class Collider:
         # Note that updating any of them will trigger recompilation.
         self._collider_static_config = array_class.StructColliderStaticConfig(
             has_terrain=has_terrain,
-            needs_kernel1=needs_kernel1,
+            needs_mpr_gjk=needs_mpr_gjk,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
             n_contacts_per_pair=n_contacts_per_pair,
@@ -200,29 +200,29 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
-        # Kernel 1 & 2 scratch states only needed when split-kernel narrowphase is active
-        if self._use_split_kernels:
+        # Contact0 & multicontact scratch states only needed when split narrowphase is active
+        if self._use_split_narrowphase:
             gpu_props = torch.cuda.get_device_properties(gs.device)
             gpu_cuda_cores = gpu_props.multi_processor_count * 128
-            self._kernel1_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
-            self._kernel1_grid_size = self._solver._B * self._kernel1_n_chunks
-            self._kernel1_mpr_state = array_class.get_mpr_state(self._kernel1_grid_size)
-            self._kernel1_gjk_state = array_class.get_gjk_state_contact_only(self._kernel1_grid_size)
+            self._contact0_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
+            self._contact0_grid_size = self._solver._B * self._contact0_n_chunks
+            self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
+            self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
             gjk_only = self._collider_static_config.ccd_algorithm in (
                 CCD_ALGORITHM_CODE.GJK,
                 CCD_ALGORITHM_CODE.MJ_GJK,
             )
             if gjk_only:
-                self._kernel2_n_gjk_threads = gpu_cuda_cores
-                self._kernel2_n_total_threads = self._kernel2_n_gjk_threads
+                self._multicontact_n_gjk_threads = gpu_cuda_cores
+                self._multicontact_n_total_threads = self._multicontact_n_gjk_threads
             else:
-                self._kernel2_n_gjk_threads = 4000
-                self._kernel2_n_total_threads = 40000
-            self._kernel2_max_items_per_thread = 128
-            self._kernel2_mpr_state = array_class.get_mpr_state(self._kernel2_n_total_threads)
+                self._multicontact_n_gjk_threads = 4000
+                self._multicontact_n_total_threads = 40000
+            self._multicontact_max_items_per_thread = 128
+            self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
 
-    def _init_kernel2_gjk_state(self):
+    def _init_multicontact_gjk_state(self):
         """Kernel 2 GJK state. Must be called after self._gjk is initialized."""
 
         class _SolverProxy:
@@ -231,8 +231,8 @@ class Collider:
                 self._requires_grad = requires_grad
                 self._static_rigid_sim_config = type("_", (), {"requires_grad": requires_grad})()
 
-        proxy = _SolverProxy(self._kernel2_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
-        self._kernel2_gjk_state = array_class.get_gjk_state(
+        proxy = _SolverProxy(self._multicontact_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
+        self._multicontact_gjk_state = array_class.get_gjk_state(
             proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, True
         )
 
@@ -244,7 +244,7 @@ class Collider:
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
 
         Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
-        for has_terrain, needs_kernel1, has_convex_specialization, has_nonconvex_nonterrain.
+        for has_terrain, needs_mpr_gjk, has_convex_specialization, has_nonconvex_nonterrain.
         """
         # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
@@ -434,9 +434,9 @@ class Collider:
             specialized = is_plane_box
             if self._solver._options.box_box_detection:
                 specialized = specialized | (is_box_a & is_box_b)
-            needs_kernel1 = bool(np.any(both_convex & ~specialized))
+            needs_mpr_gjk = bool(np.any(both_convex & ~specialized))
         else:
-            needs_kernel1 = False
+            needs_mpr_gjk = False
 
         if self._solver._options.box_box_detection:
             spec_types = [gs.GEOM_TYPE.TERRAIN, gs.GEOM_TYPE.BOX]
@@ -463,7 +463,7 @@ class Collider:
             n_possible_pairs,
             collision_pair_idx,
             has_any_vs_terrain,
-            needs_kernel1,
+            needs_mpr_gjk,
             has_convex_specialization,
             has_nonconvex_vs_nonterrain,
         )
@@ -573,8 +573,8 @@ class Collider:
             self._collider_state,
         )
 
-    def _call_kernel2_mixed(self):
-        narrowphase.func_narrowphase_kernel2_mixed(
+    def _call_multicontact(self):
+        narrowphase._func_narrowphase_multicontact_mixed(
             self._solver.links_state,
             self._solver.links_info,
             self._solver.geoms_state,
@@ -587,17 +587,17 @@ class Collider:
             self._collider_state,
             self._collider_info,
             self._collider_static_config,
-            self._kernel2_mpr_state,
+            self._multicontact_mpr_state,
             self._mpr._mpr_info,
-            self._kernel2_gjk_state,
+            self._multicontact_gjk_state,
             self._gjk._gjk_info,
             self._gjk._gjk_static_config,
             self._support_field._support_field_info,
-            self._kernel2_gjk_state.diff_contact_input,
+            self._multicontact_gjk_state.diff_contact_input,
             self._solver._errno,
-            self._kernel2_n_gjk_threads,
-            self._kernel2_n_total_threads,
-            self._kernel2_max_items_per_thread,
+            self._multicontact_n_gjk_threads,
+            self._multicontact_n_total_threads,
+            self._multicontact_max_items_per_thread,
         )
 
     def detection(self) -> None:
@@ -624,11 +624,11 @@ class Collider:
             self._collider_info,
             self._solver._errno,
         )
-        if self._use_split_kernels:
-            narrowphase.func_reset_narrowphase_work_queues(
+        if self._use_split_narrowphase:
+            narrowphase._func_reset_narrowphase_work_queues(
                 self._collider_state,
             )
-            narrowphase.func_narrowphase_kernel1_contact0(
+            narrowphase._func_narrowphase_contact0(
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
@@ -638,19 +638,19 @@ class Collider:
                 self._collider_state,
                 self._collider_info,
                 self._collider_static_config,
-                self._kernel1_mpr_state,
+                self._contact0_mpr_state,
                 self._mpr._mpr_info,
-                self._kernel1_gjk_state,
+                self._contact0_gjk_state,
                 self._gjk._gjk_info,
                 self._support_field._support_field_info,
                 self._solver._errno,
                 self._solver._B,
-                self._kernel1_n_chunks,
+                self._contact0_n_chunks,
             )
-            self._call_kernel2_mixed()
-            narrowphase.func_prepare_gjk_rerun(self._collider_state)
-            self._call_kernel2_mixed()
-        elif self._collider_static_config.needs_kernel1:
+            self._call_multicontact()
+            narrowphase._func_prepare_gjk_rerun(self._collider_state)
+            self._call_multicontact()
+        elif self._collider_static_config.needs_mpr_gjk:
             narrowphase.func_narrow_phase_convex_vs_convex(
                 self._solver.links_state,
                 self._solver.links_info,
@@ -720,7 +720,7 @@ class Collider:
                 self._solver._errno,
             )
 
-        if self._use_split_kernels:
+        if self._use_split_narrowphase:
             func_sort_contacts(
                 self._collider_state,
                 self._solver._static_rigid_sim_config,
