@@ -37,7 +37,11 @@ def main():
     parser.add_argument("--simulate-all-links", "-l", action="store_true", help="Simulate all link temperatures")
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu if args.gpu else gs.cpu, precision="32", logging_level="info")
+    gs.init(
+        backend=gs.gpu if args.gpu else gs.cpu,
+        precision="32",
+        logging_level="info",
+    )
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -62,12 +66,12 @@ def main():
         ),
     )
 
-    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.02], dtype=np.float32)
+    pusher_pos_init = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.02], dtype=np.float32)
     pusher = scene.add_entity(
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
-            pos=pusher_start,
+            pos=pusher_pos_init,
         ),
         surface=gs.surfaces.Default(color=(1.0, 0.2, 0.2, 1.0)),
     )
@@ -135,29 +139,30 @@ def main():
 
     scene.build()
 
+    # Register keybindings
     is_running = True
     if args.vis:
-        target_pos = pusher_start.copy()
-        next_obj_idx = 0
+        target_pos = pusher_pos_init.copy()
+        obj_idx = 0
 
         def stop():
             nonlocal is_running
             is_running = False
 
         def reset_pose():
-            target_pos[:] = pusher_start
+            target_pos[:] = pusher_pos_init
+            pusher.set_dofs_position(pusher_pos_init, dofs_idx_local=slice(0, 3))
 
         def translate(index: int, is_negative: bool):
             target_pos[index] += (-1 if is_negative else 1) * (KEY_DPOS if index < 2 else KEY_DPOS_Z)
 
         def drop_object():
-            nonlocal next_obj_idx
-            idx = next_obj_idx % len(objects)
-            drop_pos = target_pos.copy()
-            drop_pos[2] = PLATFORM_HEIGHT * 2
-            objects[idx].set_pos(drop_pos)
-            objects[idx].set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
-            next_obj_idx += 1
+            nonlocal obj_idx
+            drop_pos = pusher.get_pos()
+            drop_pos[2] += 0.2 * (obj_idx + 1)
+            objects[obj_idx].set_pos(drop_pos)
+            objects[obj_idx].set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+            obj_idx = (obj_idx + 1) % len(objects)
 
         scene.viewer.register_keybinds(
             Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
@@ -184,9 +189,7 @@ def main():
         print(f"Running headless for {args.seconds}s ...")
     print()
 
-    steps = int(args.seconds / scene.sim_options.dt) if not args.vis else None
-    step = 0
-
+    # Simulation loop
     try:
         while is_running:
             if args.vis:
@@ -197,18 +200,13 @@ def main():
 
             data = temperature_sensor.read()
             t_min, t_max = float(data.min()), float(data.max())
-            if step % 100 == 0:
-                print(
-                    f"step={step}, time={step * scene.sim_options.dt:.2f}s: "
-                    f"Grid temperature range [{t_min:.1f}, {t_max:.1f}] °C"
-                )
-                if args.simulate_all_links:
-                    print(f"Link temperatures: {temperature_sensor.link_temperatures}")
+            print(f"time={scene.t:.2f}s: Temperature range [{t_min:.1f}, {t_max:.1f}] °C")
+            if args.simulate_all_links:
+                print(f"Link temperatures: {temperature_sensor.link_temperatures}")
 
-            step += 1
             if "PYTEST_VERSION" in os.environ:
                 break
-            if not args.vis and step >= steps:
+            if not args.vis and scene.t > args.seconds:
                 break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted.")
