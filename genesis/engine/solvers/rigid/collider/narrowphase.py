@@ -1314,10 +1314,7 @@ def _func_multicontact_mpr(
                 pos_i = qd.Vector(
                     [local_contact_pos[i, 0], local_contact_pos[i, 1], local_contact_pos[i, 2]], dt=gs.qd_float
                 )
-                normal_i = qd.Vector(
-                    [local_normal[i, 0], local_normal[i, 1], local_normal[i, 2]],
-                    dt=gs.qd_float,
-                )
+                normal_i = qd.Vector([local_normal[i, 0], local_normal[i, 1], local_normal[i, 2]], dt=gs.qd_float)
                 func_set_contact(
                     i_ga,
                     i_gb,
@@ -1561,10 +1558,7 @@ def _func_multicontact_gjk_full(
                 pos_i = qd.Vector(
                     [local_contact_pos[i, 0], local_contact_pos[i, 1], local_contact_pos[i, 2]], dt=gs.qd_float
                 )
-                normal_i = qd.Vector(
-                    [local_normal[i, 0], local_normal[i, 1], local_normal[i, 2]],
-                    dt=gs.qd_float,
-                )
+                normal_i = qd.Vector([local_normal[i, 0], local_normal[i, 1], local_normal[i, 2]], dt=gs.qd_float)
                 func_set_contact(
                     i_ga,
                     i_gb,
