@@ -974,7 +974,7 @@ def func_convex_convex_contact(
 def _func_multicontact_run_detection(
     i_ga,
     i_gb,
-    i_b_scratch,
+    i_scratch,
     i_b_env,
     ga_pos: qd.types.vector(3, dtype=gs.qd_float),
     ga_quat: qd.types.vector(4, dtype=gs.qd_float),
@@ -1082,7 +1082,7 @@ def _func_multicontact_run_detection(
                             support_field_info,
                             i_ga,
                             i_gb,
-                            i_b_scratch,
+                            i_scratch,
                             normal_ws,
                             ga_pos,
                             ga_quat,
@@ -1109,17 +1109,17 @@ def _func_multicontact_run_detection(
                         support_field_info,
                         i_ga,
                         i_gb,
-                        i_b_scratch,
+                        i_scratch,
                         ga_pos,
                         ga_quat,
                         gb_pos,
                         gb_quat,
                     )
-                    is_col = gjk_state.is_col[i_b_scratch] == 1
-                    penetration = gjk_state.penetration[i_b_scratch]
+                    is_col = gjk_state.is_col[i_scratch] == 1
+                    penetration = gjk_state.penetration[i_scratch]
                     if is_col:
-                        contact_pos = gjk_state.contact_pos[i_b_scratch, 0]
-                        normal = gjk_state.normal[i_b_scratch, 0]
+                        contact_pos = gjk_state.contact_pos[i_scratch, 0]
+                        normal = gjk_state.normal[i_scratch, 0]
                     used_gjk = True
 
     return is_col, normal, contact_pos, penetration, used_gjk
@@ -1127,7 +1127,7 @@ def _func_multicontact_run_detection(
 
 @qd.func
 def _func_multicontact_mpr(
-    i_b_scratch,
+    i_scratch,
     i_b_env,
     i_ga,
     i_gb,
@@ -1213,7 +1213,7 @@ def _func_multicontact_mpr(
             is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
                 i_ga,
                 i_gb,
-                i_b_scratch,
+                i_scratch,
                 i_b_env,
                 ga_pos_current,
                 ga_quat_current,
@@ -1333,7 +1333,7 @@ def _func_multicontact_mpr(
 
 @qd.func
 def _func_multicontact_gjk_full(
-    i_b_scratch,
+    i_scratch,
     i_b_env,
     i_ga,
     i_gb,
@@ -1424,7 +1424,7 @@ def _func_multicontact_gjk_full(
                 is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
                     i_ga,
                     i_gb,
-                    i_b_scratch,
+                    i_scratch,
                     i_b_env,
                     ga_pos_current,
                     ga_quat_current,
@@ -1452,16 +1452,16 @@ def _func_multicontact_gjk_full(
                 )
 
                 if is_col and _used_gjk:
-                    n_contacts_gjk = gjk_state.n_contacts[i_b_scratch]
-                    if gjk_state.multi_contact_flag[i_b_scratch]:
+                    n_contacts_gjk = gjk_state.n_contacts[i_scratch]
+                    if gjk_state.multi_contact_flag[i_scratch]:
                         for i_c in range(n_contacts_gjk):
                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                local_contact_pos[n_con, 0] = gjk_state.contact_pos[i_b_scratch, i_c][0]
-                                local_contact_pos[n_con, 1] = gjk_state.contact_pos[i_b_scratch, i_c][1]
-                                local_contact_pos[n_con, 2] = gjk_state.contact_pos[i_b_scratch, i_c][2]
-                                local_normal[n_con, 0] = gjk_state.normal[i_b_scratch, i_c][0]
-                                local_normal[n_con, 1] = gjk_state.normal[i_b_scratch, i_c][1]
-                                local_normal[n_con, 2] = gjk_state.normal[i_b_scratch, i_c][2]
+                                local_contact_pos[n_con, 0] = gjk_state.contact_pos[i_scratch, i_c][0]
+                                local_contact_pos[n_con, 1] = gjk_state.contact_pos[i_scratch, i_c][1]
+                                local_contact_pos[n_con, 2] = gjk_state.contact_pos[i_scratch, i_c][2]
+                                local_normal[n_con, 0] = gjk_state.normal[i_scratch, i_c][0]
+                                local_normal[n_con, 1] = gjk_state.normal[i_scratch, i_c][1]
+                                local_normal[n_con, 2] = gjk_state.normal[i_scratch, i_c][2]
                                 local_penetration[n_con, 0] = penetration
                                 n_con = n_con + 1
                         gjk_multi_done = True
