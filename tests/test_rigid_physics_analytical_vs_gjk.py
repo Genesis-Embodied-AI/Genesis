@@ -411,8 +411,8 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        use_split_kernels = self.scene_gjk._sim.rigid_solver.collider._use_split_kernels
-        if use_split_kernels:
+        use_split_narrowphase = self.scene_gjk._sim.rigid_solver.collider._use_split_narrowphase
+        if use_split_narrowphase:
             # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
             assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in contact0."
         if expect_collision:
