@@ -235,7 +235,7 @@ class Collider:
 
         proxy = _SolverProxy(self._multicontact_n_gjk_threads, self._solver._static_rigid_sim_config.requires_grad)
         self._multicontact_gjk_state = array_class.get_gjk_state(
-            proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, True
+            proxy, self._solver._static_rigid_sim_config, self._gjk._gjk_info, is_active=True
         )
 
     def _compute_collision_pair_idx(self):

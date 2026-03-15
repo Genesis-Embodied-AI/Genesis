@@ -1236,8 +1236,8 @@ def _func_multicontact_mpr(
                 gjk_static_config,
                 support_field_info,
                 i_pair,
-                False,
-                False,
+                use_gjk=False,
+                is_initial_detection=False,
             )
 
             if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
@@ -1448,8 +1448,8 @@ def _func_multicontact_gjk_full(
                     gjk_static_config,
                     support_field_info,
                     i_pair,
-                    True,
-                    i_detection == 0,
+                    use_gjk=True,
+                    is_initial_detection=i_detection == 0,
                 )
 
                 if is_col and _used_gjk:
@@ -1891,7 +1891,7 @@ def _func_narrowphase_contact0(
                         ga_quat,
                         gb_pos,
                         gb_quat,
-                        False,
+                        shrink_sphere=False,
                     )
                     is_col = distance < gjk_info.collision_eps[None]
 
@@ -1957,7 +1957,7 @@ def _func_narrowphase_contact0(
                             contact_pos,
                             normal,
                             penetration,
-                            True,
+                            prefer_gjk=True,
                         )
                 elif multi_contact:
                     # Enqueue for multicontact — multicontact will write all contacts
@@ -1971,7 +1971,7 @@ def _func_narrowphase_contact0(
                         contact_pos,
                         normal,
                         penetration,
-                        False,
+                        prefer_gjk=False,
                     )
                 else:
                     func_add_contact(
@@ -1987,7 +1987,7 @@ def _func_narrowphase_contact0(
                         collider_state,
                         collider_info,
                         errno,
-                        True,
+                        use_atomic=True,
                     )
             elif not is_col:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
