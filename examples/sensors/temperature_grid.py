@@ -32,12 +32,12 @@ OBJ_SIZE = 0.1
 def main():
     parser = argparse.ArgumentParser(description="Interactive TemperatureGrid sensor visualization")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--cpu", action="store_true", help="Run on CPU instead of GPU")
+    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     parser.add_argument("--simulate-all-links", "-l", action="store_true", help="Simulate all link temperatures")
     args = parser.parse_args()
 
-    gs.init(backend=gs.cpu if args.cpu else gs.gpu, precision="32", logging_level="info")
+    gs.init(backend=gs.gpu if args.gpu else gs.cpu, precision="32", logging_level="info")
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
