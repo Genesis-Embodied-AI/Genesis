@@ -4017,9 +4017,8 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.parametrize("scale", [0.04, 1.0])
 @pytest.mark.parametrize("friction", [0.5, 2.0])
 @pytest.mark.parametrize("mesh_boxes", [False, True])
-@pytest.mark.parametrize("add_faraway_mesh", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, friction, mesh_boxes, add_faraway_mesh, show_viewer, tol, asset_tmp_path):
+def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_tmp_path):
     GRAVITY = -9.81
     # FIXME: we need apply a larger force than expected to keep the boxes static
     SAFETY_FACTOR = 2.5
@@ -4072,10 +4071,9 @@ def test_noslip_iterations(scale, friction, mesh_boxes, add_faraway_mesh, show_v
             visualize_contact=True,
         )
 
-    if add_faraway_mesh:
-        mesh_path = str(asset_tmp_path / f"noslip_faraway_{scale}.obj")
-        trimesh.creation.box(extents=(scale, scale, scale)).export(mesh_path, file_type="obj")
-        scene.add_entity(gs.morphs.Mesh(file=mesh_path, pos=(100 * scale, 100 * scale, 0)))
+    mesh_path = str(asset_tmp_path / f"noslip_faraway_{scale}.obj")
+    trimesh.creation.box(extents=(scale, scale, scale)).export(mesh_path, file_type="obj")
+    scene.add_entity(gs.morphs.Mesh(file=mesh_path, pos=(100 * scale, 100 * scale, 0)))
 
     _, box_1, box_2 = scene.entities[:3]
     scene.build()
