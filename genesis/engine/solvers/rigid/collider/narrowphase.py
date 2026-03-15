@@ -1259,8 +1259,7 @@ def _func_multicontact_mpr(
                     )
                     contact_point_b = (
                         gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
+                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0, qrot
                         )
                         + contact_pos_0
                     )
@@ -1281,8 +1280,7 @@ def _func_multicontact_mpr(
                 for i_c in range(n_con):
                     if not repeated:
                         prev = qd.Vector(
-                            [local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]],
-                            dt=gs.qd_float,
+                            [local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]], dt=gs.qd_float
                         )
                         if (contact_pos - prev).norm() < tolerance:
                             repeated = True
@@ -1512,8 +1510,7 @@ def _func_multicontact_gjk_full(
                     )
                     contact_point_b = (
                         gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
+                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0, qrot
                         )
                         + contact_pos_0
                     )
@@ -1532,8 +1529,7 @@ def _func_multicontact_gjk_full(
                 for i_c in range(n_con):
                     if not repeated:
                         prev = qd.Vector(
-                            [local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]],
-                            dt=gs.qd_float,
+                            [local_contact_pos[i_c, 0], local_contact_pos[i_c, 1], local_contact_pos[i_c, 2]], dt=gs.qd_float
                         )
                         if (contact_pos - prev).norm() < tolerance:
                             repeated = True
