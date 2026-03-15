@@ -4023,10 +4023,8 @@ def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_
     # FIXME: we need apply a larger force than expected to keep the boxes static
     SAFETY_FACTOR = 2.5
 
-    rigid_options = gs.options.RigidOptions(noslip_iterations=5)
-
     scene = gs.Scene(
-        rigid_options=rigid_options,
+        rigid_options=gs.options.RigidOptions(noslip_iterations=5),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3 * scale, 3 * scale, 3 * scale),
             camera_lookat=(scale, 0.0, 0.0),
