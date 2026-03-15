@@ -100,10 +100,7 @@ class Collider:
             self._sdf.activate()
         if self._collider_static_config.has_non_box_plane_convex_convex:
             self._gjk.activate()
-        if (
-            self._collider_static_config.has_terrain
-            or self._collider_static_config.has_non_box_plane_convex_convex
-        ):
+        if self._collider_static_config.has_terrain or self._collider_static_config.has_non_box_plane_convex_convex:
             self._support_field.activate()
 
         if self._use_split_narrowphase:

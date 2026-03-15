@@ -1007,9 +1007,7 @@ def _func_multicontact_run_detection(
     normal = qd.Vector.zero(gs.qd_float, 3)
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
     used_gjk = False
-    tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
-    )
+    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
 
     if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
@@ -1166,9 +1164,7 @@ def _func_multicontact_mpr(
     gb_pos_original = geoms_state.pos[i_gb, i_b]
     gb_quat_original = geoms_state.quat[i_gb, i_b]
 
-    tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
-    )
+    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
 
     axis_0, axis_1 = func_contact_orthogonals(
         i_ga,
@@ -1371,9 +1367,7 @@ def _func_multicontact_gjk_full(
         and geoms_info.type[i_gb] != gs.GEOM_TYPE.ELLIPSOID
     )
 
-    tolerance = func_compute_tolerance(
-        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
-    )
+    tolerance = func_compute_tolerance(i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB)
     diff_pos_tolerance = func_compute_tolerance(
         i_ga, i_gb, i_b, collider_info.diff_pos_tolerance[None], geoms_info, geoms_init_AABB
     )
