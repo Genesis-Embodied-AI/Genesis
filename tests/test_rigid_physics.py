@@ -4019,18 +4019,7 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.parametrize("mesh_boxes", [False, True])
 @pytest.mark.parametrize("add_faraway_mesh", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, friction, mesh_boxes, add_faraway_mesh, request, show_viewer, tol, asset_tmp_path):
-    if mesh_boxes or add_faraway_mesh:
-        request.node.add_marker(
-            pytest.mark.xfail(
-                reason=(
-                    "Fragile: GJK/MPR narrowphase and broadphase pair reordering make "
-                    "the PGS noslip solver sensitive to contact processing order."
-                ),
-                strict=False,
-            )
-        )
-
+def test_noslip_iterations(scale, friction, mesh_boxes, add_faraway_mesh, show_viewer, tol, asset_tmp_path):
     GRAVITY = -9.81
     # FIXME: we need apply a larger force than expected to keep the boxes static
     SAFETY_FACTOR = 2.5
