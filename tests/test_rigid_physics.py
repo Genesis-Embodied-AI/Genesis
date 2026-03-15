@@ -4673,22 +4673,21 @@ def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, lin
                 ET.SubElement(geom_el, tag, **attribs)
                 if origin_xyz:
                     ET.SubElement(group, "origin", xyz=origin_xyz)
-        inertial_props = links_inertial[i_link] if links_inertial else None
-        inertial = ET.SubElement(link, "inertial")
-        if inertial_props and "mass" in inertial_props:
+        if links_inertial:
+            inertial_props = links_inertial[i_link]
+            inertial = ET.SubElement(link, "inertial")
             ET.SubElement(inertial, "mass", value=str(inertial_props["mass"]))
-        if inertial_props and "origin_xyz" in inertial_props:
             ET.SubElement(inertial, "origin", xyz=inertial_props["origin_xyz"])
-        ET.SubElement(
-            inertial,
-            "inertia",
-            ixx=str(inertial_props.get("ixx", 0)) if inertial_props else "0",
-            ixy=str(inertial_props.get("ixy", 0)) if inertial_props else "0",
-            ixz=str(inertial_props.get("ixz", 0)) if inertial_props else "0",
-            iyy=str(inertial_props.get("iyy", 0)) if inertial_props else "0",
-            iyz=str(inertial_props.get("iyz", 0)) if inertial_props else "0",
-            izz=str(inertial_props.get("izz", 0)) if inertial_props else "0",
-        )
+            ET.SubElement(
+                inertial,
+                "inertia",
+                ixx=str(inertial_props.get("ixx", 0)),
+                ixy=str(inertial_props.get("ixy", 0)),
+                ixz=str(inertial_props.get("ixz", 0)),
+                iyy=str(inertial_props.get("iyy", 0)),
+                iyz=str(inertial_props.get("iyz", 0)),
+                izz=str(inertial_props.get("izz", 0)),
+            )
 
     joint = ET.SubElement(robot, "joint", name="joint1", type="prismatic")
     ET.SubElement(joint, "parent", link="base")
@@ -4710,43 +4709,43 @@ def test_heterogeneous_robots(show_viewer, tol):
     """
     GRAVITY = -9.81
 
-    # Variant A: 2 half-height box primitives per link (zero inertial => recomputed from geometry)
-    half_box = {"size": "0.04 0.04 0.02"}
-    box_geoms = [
-        # base link: 2 sub-boxes at z=±0.01
-        [("box", half_box, "0 0 0.01"), ("box", half_box, "0 0 -0.01")],
-        # moving link: 2 sub-boxes at (0.1, 0, ±0.01)
-        [("box", half_box, "0.1 0 0.01"), ("box", half_box, "0.1 0 -0.01")],
-    ]
-    urdf_boxes = _build_two_link_revolute_urdf("two_box_revolute", links_geoms=box_geoms)
-    # Variant B: sphere mesh collision with explicit inertial properties per link
-    sphere_mesh_path = os.path.join(get_assets_dir(), "meshes", "sphere.obj")
+    # Variant A: sphere mesh collision with explicit inertial properties per link
     sphere_base_mass, sphere_moving_mass = 0.5, 0.3
-    sphere_base_com = np.array([0.0, 0.01, 0.0])
-    sphere_moving_com = np.array([0.05, 0.0, 0.0])
+    sphere_base_com = (0.0, 0.01, 0.0)
+    sphere_moving_com = (0.05, 0.0, 0.0)
     sphere_base_inertia_diag = 1e-4
     sphere_moving_inertia_diag = 5e-5
-    sphere_inertial = [
-        {
-            "mass": sphere_base_mass,
-            "ixx": sphere_base_inertia_diag,
-            "iyy": sphere_base_inertia_diag,
-            "izz": sphere_base_inertia_diag,
-            "origin_xyz": f"{sphere_base_com[0]} {sphere_base_com[1]} {sphere_base_com[2]}",
-        },
-        {
-            "mass": sphere_moving_mass,
-            "ixx": sphere_moving_inertia_diag,
-            "iyy": sphere_moving_inertia_diag,
-            "izz": sphere_moving_inertia_diag,
-            "origin_xyz": f"{sphere_moving_com[0]} {sphere_moving_com[1]} {sphere_moving_com[2]}",
-        },
-    ]
     urdf_spheres = _build_two_link_revolute_urdf(
         "two_sphere_revolute",
         "mesh",
-        {"filename": sphere_mesh_path, "scale": "0.08 0.08 0.08"},
-        links_inertial=sphere_inertial,
+        {"filename": os.path.join(get_assets_dir(), "meshes", "sphere.obj"), "scale": "0.08 0.08 0.08"},
+        links_inertial=[
+            {
+                "mass": sphere_base_mass,
+                "ixx": sphere_base_inertia_diag,
+                "iyy": sphere_base_inertia_diag,
+                "izz": sphere_base_inertia_diag,
+                "origin_xyz": " ".join(map(str, sphere_base_com)),
+            },
+            {
+                "mass": sphere_moving_mass,
+                "ixx": sphere_moving_inertia_diag,
+                "iyy": sphere_moving_inertia_diag,
+                "izz": sphere_moving_inertia_diag,
+                "origin_xyz": " ".join(map(str, sphere_moving_com)),
+            },
+        ],
+    )
+
+    # Variant B: 2 half-height box primitives per link.
+    # Setting zero inertial to test recomputation from geometry for non-primary morph.
+    half_box = {"size": "0.04 0.04 0.02"}
+    urdf_boxes = _build_two_link_revolute_urdf(
+        "two_box_revolute",
+        links_geoms=[
+            [("box", half_box, "0 0 0.01"), ("box", half_box, "0 0 -0.01")],
+            [("box", half_box, "0.1 0 0.01"), ("box", half_box, "0.1 0 -0.01")],
+        ],
     )
 
     scene = gs.Scene(
@@ -4766,8 +4765,8 @@ def test_heterogeneous_robots(show_viewer, tol):
 
     scene.add_entity(gs.morphs.Plane())
     het_morph = (
-        gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
         gs.morphs.URDF(file=urdf_spheres, pos=(0.5, 0, 0.08)),
+        gs.morphs.URDF(file=urdf_boxes, pos=(0, 0, 0.02)),
     )
     het_obj = scene.add_entity(
         morph=het_morph,
@@ -4796,13 +4795,13 @@ def test_heterogeneous_robots(show_viewer, tol):
 
     # Verify initial z-positions match per-variant morph.pos (z is unaffected by env_spacing)
     het_pos_init = het_obj.get_pos()
-    assert_allclose(het_pos_init[0, 2], 0.02, tol=tol)
-    assert_allclose(het_pos_init[1, 2], 0.02, tol=tol)
-    assert_allclose(het_pos_init[2, 2], 0.08, tol=tol)
-    assert_allclose(het_pos_init[3, 2], 0.08, tol=tol)
+    assert_allclose(het_pos_init[0, 2], 0.08, tol=tol)
+    assert_allclose(het_pos_init[1, 2], 0.08, tol=tol)
+    assert_allclose(het_pos_init[2, 2], 0.02, tol=tol)
+    assert_allclose(het_pos_init[3, 2], 0.02, tol=tol)
     # Variant B has x-offset relative to variant A
-    assert_allclose(het_pos_init[2, 0] - het_pos_init[0, 0], 0.5, tol=tol)
-    assert_allclose(het_pos_init[3, 0] - het_pos_init[1, 0], 0.5, tol=tol)
+    assert_allclose(het_pos_init[0, 0] - het_pos_init[2, 0], 0.5, tol=tol)
+    assert_allclose(het_pos_init[1, 0] - het_pos_init[3, 0], 0.5, tol=tol)
     het_links_pos_init = het_obj.get_links_pos()
     assert_allclose(het_links_pos_init.diff(dim=-2), (0.1, 0, 0), tol=tol)
 
@@ -4827,22 +4826,22 @@ def test_heterogeneous_robots(show_viewer, tol):
     assert_allclose(mass[2], mass[3], tol=tol)
     assert not np.allclose(mass[0], mass[2], atol=tol, rtol=tol), "Variant A and B masses should differ"
     # Variant B total mass should match the explicit URDF inertial values
-    assert_allclose(mass[2], sphere_base_mass + sphere_moving_mass, tol=tol)
+    assert_allclose(mass[0], sphere_base_mass + sphere_moving_mass, tol=tol)
 
     # CoM position: variant B should match explicit URDF inertial origin_xyz
     com_pos = het_obj.get_links_pos(ref="link_com")
     origin_pos = het_obj.get_links_pos(ref="link_origin")
     com_offset = com_pos - origin_pos
-    # Variant B (envs 2,3): CoM offset matches URDF inertial origin
-    assert_allclose(com_offset[2, 0], sphere_base_com, tol=tol)
-    assert_allclose(com_offset[2, 1], sphere_moving_com, tol=tol)
-    assert_allclose(com_offset[3, 0], sphere_base_com, tol=tol)
-    assert_allclose(com_offset[3, 1], sphere_moving_com, tol=tol)
-    # Variant A (envs 0,1): symmetric split boxes => CoM at link origin for base, at geometry center for moving
-    assert_allclose(com_offset[0, 0], 0.0, tol=tol)
-    assert_allclose(com_offset[0, 1, 0], 0.1, tol=tol)  # x-offset of moving link geometry
+    # Variant A: CoM offset matches URDF inertial origin
+    assert_allclose(com_offset[0, 0], sphere_base_com, tol=tol)
+    assert_allclose(com_offset[0, 1], sphere_moving_com, tol=tol)
+    assert_allclose(com_offset[1, 0], sphere_base_com, tol=tol)
+    assert_allclose(com_offset[1, 1], sphere_moving_com, tol=tol)
+    # Variant B: symmetric split boxes => CoM at link origin for base, at geometry center for moving
+    assert_allclose(com_offset[2, 0], 0.0, tol=tol)
+    assert_allclose(com_offset[2, 1, 0], 0.1, tol=tol)  # x-offset of moving link geometry
     # Same-variant consistency
-    assert_allclose(com_offset[0], com_offset[1], tol=tol)
+    assert_allclose(com_offset[2], com_offset[3], tol=tol)
     # CoM differs between variants on base link (non-zero y-offset for variant B)
     with pytest.raises(AssertionError):
         assert_allclose(com_offset[0, 0], com_offset[2, 0], tol=tol)
@@ -4850,13 +4849,13 @@ def test_heterogeneous_robots(show_viewer, tol):
     # Inertia matrix: variant B should match explicit URDF values
     links_idx = slice(het_obj.link_start, het_obj.link_end)
     inertial_i = qd_to_numpy(scene.rigid_solver.links_info.inertial_i, None, links_idx, transpose=True)
-    # Variant B (envs 2,3): diagonal inertia matches URDF
-    assert_allclose(inertial_i[2, 0], np.eye(3) * sphere_base_inertia_diag, tol=tol)
-    assert_allclose(inertial_i[2, 1], np.eye(3) * sphere_moving_inertia_diag, tol=tol)
-    assert_allclose(inertial_i[3, 0], np.eye(3) * sphere_base_inertia_diag, tol=tol)
-    assert_allclose(inertial_i[3, 1], np.eye(3) * sphere_moving_inertia_diag, tol=tol)
+    # Variant A: diagonal inertia matches URDF
+    assert_allclose(inertial_i[[0, 1], 0], np.eye(3) * sphere_base_inertia_diag, tol=tol)
+    assert_allclose(inertial_i[[0, 1], 1], np.eye(3) * sphere_moving_inertia_diag, tol=tol)
+    # Variant B: Recomputed inertia from geometry
+    assert_allclose(inertial_i[[2, 3]], np.eye(3) * ((0.04**5 / 6.0) * het_obj.material.rho), tol=tol)
     # Same-variant consistency
-    assert_allclose(inertial_i[0], inertial_i[1], tol=tol)
+    assert_allclose(inertial_i[2], inertial_i[3], tol=tol)
     # Variants differ
     with pytest.raises(AssertionError):
         assert_allclose(inertial_i[0, 0], inertial_i[2, 0], tol=tol)
@@ -4866,15 +4865,15 @@ def test_heterogeneous_robots(show_viewer, tol):
         for _ in range(10):
             scene.step()
         pos = het_obj.get_pos()
-        assert_allclose(pos[:2], het_pos_init[:2], tol=2e-4)
-        assert_allclose(pos[2:, [0, 2]], het_pos_init[2:, [0, 2]], tol=1e-3)
-        assert_allclose(pos[2:, 1], het_pos_init[2:, 1], tol=0.02)
+        assert_allclose(pos[:2, [0, 2]], het_pos_init[:2, [0, 2]], tol=1e-3)
+        assert_allclose(pos[:2, 1], het_pos_init[:2, 1], tol=0.02)
+        assert_allclose(pos[2:], het_pos_init[2:], tol=2e-4)
         het_obj.set_quat(gu.euler_to_quat((90 * i, 0, 0)))
 
     # Apply control and simulate for a while
-    target_dof_pos = np.array((0.01, 0.02, 0.05, 0.1), dtype=gs.np_float)
-    het_obj.set_dofs_kp((100.0, 100.0, 1000.0, 1000.0), dofs_idx_local=-1)
-    het_obj.set_dofs_kv((10.0, 10.0, 100.0, 100.0), dofs_idx_local=-1)
+    target_dof_pos = np.array((0.05, 0.1, 0.01, 0.02), dtype=gs.np_float)
+    het_obj.set_dofs_kp((1000.0, 1000.0, 100.0, 100.0), dofs_idx_local=-1)
+    het_obj.set_dofs_kv((100.0, 100.0, 10.0, 10.0), dofs_idx_local=-1)
     het_obj.control_dofs_position(target_dof_pos, dofs_idx_local=-1)
     for _ in range(100):
         scene.step()

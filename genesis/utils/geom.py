@@ -2010,9 +2010,7 @@ def random_quaternion(batch_size):
     return np.stack((q1, q2, q3, q4), axis=1)
 
 
-def generate_grid_points_on_plane(
-    lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int
-) -> tuple[np.ndarray, float, float]:
+def generate_grid_points_on_plane(lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int) -> np.ndarray:
     """
     Build an nx-by-ny grid of points on the plane defined by the bounds and normal.
 
