@@ -28,7 +28,9 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -192,7 +194,9 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -1046,3 +1050,126 @@ def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
 
     data = elastomer_grid_sensor.read()
     assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Proximity Sensor -------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
+    """Test proximity sensor returns distance and nearest points with correct shapes and plausible values."""
+    SPHERE_RADIUS = 0.05
+    DISTANCE = 0.15
+    MAX_RANGE = 10.0
+    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.05)]
+    SPHERE_PROBE_POS = [(0.0, 0.0, SPHERE_RADIUS)]
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.0),
+        ),
+    )
+    # Tracked objects
+    sphere1 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE),
+        ),
+    )
+    sphere2 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE * 2.0),
+        ),
+    )
+    # Not tracked objects
+    sphere3 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, DISTANCE / 2.0, 0.0),
+        ),
+    )
+
+    box_prox_sensor = scene.add_sensor(
+        gs.sensors.ProximityOptions(
+            entity_idx=box.idx,
+            probe_local_pos=BOX_PROBE_POS,
+            track_link_idx=(sphere1.base_link_idx, sphere2.base_link_idx),
+            max_range=MAX_RANGE,
+        )
+    )
+    sphere_prox_sensor = scene.add_sensor(
+        gs.sensors.ProximityOptions(
+            entity_idx=sphere1.idx,
+            probe_local_pos=SPHERE_PROBE_POS,
+            track_link_idx=(box.base_link_idx,),
+            max_range=MAX_RANGE,
+            resolution=0.001,
+            bias=0.1,
+            noise=0.01,
+            random_walk=0.01,
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_noisy_data = sphere_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    for i in range(len(BOX_PROBE_POS)):
+        assert_allclose(box_prox_data.distance[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
+    assert_allclose(box_prox_data.points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    assert_allclose(sphere_prox_data.distance, DISTANCE, tol=tol)
+
+    with np.testing.assert_raises(AssertionError):
+        assert_allclose(sphere_prox_noisy_data.distance, sphere_prox_data.distance, tol=tol)
+
+    sphere1_pos = np.array((0.0, 0.0, DISTANCE * 3.0))
+    sphere1.set_pos(sphere1_pos)
+
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    assert_allclose(box_prox_data.distance[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
+    assert_allclose(box_prox_data.distance[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
+    assert_allclose(sphere_prox_data.distance, DISTANCE * 3.0, tol=tol)
+
+    box_pos = np.array((0.0, 0.0, -MAX_RANGE))
+    box.set_pos(box_pos)
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    assert_allclose(box_prox_data.distance, MAX_RANGE, tol=tol)
+    assert_allclose(sphere_prox_data.distance, MAX_RANGE, tol=tol)
+    for i in range(len(BOX_PROBE_POS)):
+        assert_allclose(
+            box_prox_data.points[..., i, :],
+            np.array(BOX_PROBE_POS[i]) + box_pos,
+            tol=tol,
+            err_msg="When out of range, points should be the probe position in world frame",
+        )
+    assert_allclose(
+        sphere_prox_data.points,
+        np.array(SPHERE_PROBE_POS) + sphere1_pos,
+        tol=tol,
+        err_msg="When out of range, points should be the probe position in world frame",
+    )
