@@ -426,7 +426,13 @@ def func_sort_contacts(
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Sort contacts within each env by contact position x-coordinate.
+    """Sort contacts within each env spatially by x-coordinate, moving
+    entire geom-pair groups as units.
+
+    Contacts from the same geom pair are contiguous after narrowphase.
+    We assign every contact in a group the x-position of the group's first
+    contact.  The stable insertion sort then reorders groups spatially while
+    preserving the narrowphase ordering within each group.
 
     Two-phase approach to minimise memory traffic:
     1. Insertion sort on a compact (key, index) pair — 8 bytes per swap
@@ -441,8 +447,17 @@ def func_sort_contacts(
         n = collider_state.n_contacts[i_b]
 
         # Phase 1: initialise and insertion-sort the (key, idx) arrays.
+        group_key = gs.qd_float(0.0)
         for i in range(n):
-            collider_state.contact_sort_key[i, i_b] = collider_state.contact_data.pos[i, i_b][0]
+            ga = collider_state.contact_data.geom_a[i, i_b]
+            gb = collider_state.contact_data.geom_b[i, i_b]
+            if (
+                i == 0
+                or ga != collider_state.contact_data.geom_a[i - 1, i_b]
+                or gb != collider_state.contact_data.geom_b[i - 1, i_b]
+            ):
+                group_key = collider_state.contact_data.pos[i, i_b][0]
+            collider_state.contact_sort_key[i, i_b] = group_key
             collider_state.contact_sort_idx[i, i_b] = i
 
         for i in range(1, n):
