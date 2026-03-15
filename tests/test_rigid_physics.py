@@ -4016,21 +4016,35 @@ def test_mesh_primitive_COM(show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.parametrize("scale", [0.04, 1.0])
 @pytest.mark.parametrize("friction", [0.5, 2.0])
+@pytest.mark.parametrize("mesh_boxes", [False, True])
+@pytest.mark.parametrize("add_faraway_mesh", [False, True])
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_noslip_iterations(scale, friction, show_viewer, tol):
+def test_noslip_iterations(scale, friction, mesh_boxes, add_faraway_mesh, request, show_viewer, tol, asset_tmp_path):
+    if mesh_boxes or add_faraway_mesh:
+        request.node.add_marker(
+            pytest.mark.xfail(
+                reason=(
+                    "Fragile: GJK/MPR narrowphase and broadphase pair reordering make "
+                    "the PGS noslip solver sensitive to contact processing order."
+                ),
+                strict=False,
+            )
+        )
+
     GRAVITY = -9.81
     # FIXME: we need apply a larger force than expected to keep the boxes static
     SAFETY_FACTOR = 2.5
+
+    rigid_options = gs.options.RigidOptions(noslip_iterations=5)
+    if not mesh_boxes:
+        rigid_options.use_gjk_collision = False
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        rigid_options=gs.options.RigidOptions(
-            use_gjk_collision=False,
-            noslip_iterations=5,
-        ),
+        rigid_options=rigid_options,
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3 * scale, 3 * scale, 3 * scale),
             camera_lookat=(scale, 0.0, 0.0),
@@ -4042,12 +4056,23 @@ def test_noslip_iterations(scale, friction, show_viewer, tol):
     )
 
     for i in range(3):
-        scene.add_entity(
-            gs.morphs.Box(
-                size=(scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i))),
+        box_size = (scale, scale * (1 + 0.3 * (2 - i)), scale * (1 + 0.3 * (2 - i)))
+        if mesh_boxes:
+            mesh_path = str(asset_tmp_path / f"noslip_box_{scale}_{i}.obj")
+            trimesh.creation.box(extents=box_size).export(mesh_path, file_type="obj")
+            morph = gs.morphs.Mesh(
+                file=mesh_path,
+                pos=(i * scale, 0, 0),
+                fixed=(i == 0),
+            )
+        else:
+            morph = gs.morphs.Box(
+                size=box_size,
                 pos=(i * (1 - 1e-3) * scale, 0, 0),
                 fixed=(i == 0),
-            ),
+            )
+        scene.add_entity(
+            morph,
             material=gs.materials.Rigid(
                 rho=200.0,
                 friction=friction,
@@ -4057,7 +4082,13 @@ def test_noslip_iterations(scale, friction, show_viewer, tol):
             ),
             visualize_contact=True,
         )
-    _, box_1, box_2 = scene.entities
+
+    if add_faraway_mesh:
+        mesh_path = str(asset_tmp_path / f"noslip_faraway_{scale}.obj")
+        trimesh.creation.box(extents=(scale, scale, scale)).export(mesh_path, file_type="obj")
+        scene.add_entity(gs.morphs.Mesh(file=mesh_path, pos=(100 * scale, 100 * scale, 0)))
+
+    _, box_1, box_2 = scene.entities[:3]
     scene.build()
 
     # Compute the force that must be applied to get the box in place without slipping
@@ -4096,153 +4127,6 @@ def test_noslip_iterations(scale, friction, show_viewer, tol):
     for box in (box_1, box_2):
         _, _, box_z = box.get_pos()
         assert box_z < -scale
-
-
-@pytest.mark.slow
-@pytest.mark.required
-@pytest.mark.parametrize("scale", [0.1, 10.0])
-@pytest.mark.parametrize("box_box_detection", [False, True])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.xfail(
-    reason=(
-        "Fragile: adding a distant non-contacting mesh entity changes the broadphase "
-        "pair list, which reorders box-box contacts within the same geom pair. The PGS "
-        "noslip solver with only 5 iterations is sensitive to this ordering — the same "
-        "contacts processed in a different order produce slightly different friction "
-        "forces that accumulate and cause the simulation to diverge."
-    ),
-    strict=False,
-)
-def test_noslip_iterations_mixed(scale, box_box_detection, show_viewer, tol, asset_tmp_path):
-    """Noslip test with box primitives plus a distant mesh cube, forcing the convex-convex kernel to run."""
-    mesh_path = str(asset_tmp_path / f"noslip_mixed_box_{scale}.obj")
-    tmesh = trimesh.creation.box(extents=(scale, scale, scale))
-    tmesh.export(mesh_path, file_type="obj")
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
-        rigid_options=gs.options.RigidOptions(
-            box_box_detection=box_box_detection,
-            noslip_iterations=5,
-        ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3 * scale, 3 * scale, 3 * scale),
-            camera_lookat=(scale, 0.0, 0.0),
-        ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-
-    for i in range(3):
-        scene.add_entity(
-            gs.morphs.Box(
-                size=(scale, scale, scale),
-                pos=(i * (1 - (not box_box_detection) * 1e-3) * scale, 0, 0),
-                fixed=(i == 0),
-            ),
-            surface=gs.surfaces.Default(
-                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
-            ),
-            visualize_contact=True,
-        )
-
-    scene.add_entity(
-        gs.morphs.Mesh(
-            file=mesh_path,
-            pos=(100 * scale, 100 * scale, 0),
-        ),
-    )
-
-    box_1, box_2 = scene.entities[1], scene.entities[2]
-    scene.build()
-
-    rho = 200
-    coeff_f = 1.0
-    n_box = 2
-    g = 9.81
-    safety = 2.5
-
-    for _ in range(2000):
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
-        scene.step()
-
-    _, _, box_1_z = box_1.get_pos()
-    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
-
-    safety = 0.9
-    for _ in range(300):
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
-        scene.step()
-
-    _, _, box_1_z = box_1.get_pos()
-    assert box_1_z < -scale
-
-
-@pytest.mark.slow
-@pytest.mark.required
-@pytest.mark.parametrize("scale", [0.1, 10.0])
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-@pytest.mark.xfail(
-    reason=(
-        "Fragile: mesh entities use GJK/MPR narrowphase which produces contacts "
-        "in an order that depends on the broadphase pair list. The PGS noslip "
-        "solver with finite iterations is sensitive to this ordering — different "
-        "contact orderings produce different friction forces that can accumulate "
-        "and cause divergence."
-    ),
-    strict=False,
-)
-def test_noslip_iterations_mesh(scale, show_viewer, tol, asset_tmp_path):
-    mesh_path = str(asset_tmp_path / f"noslip_box_{scale}.obj")
-    tmesh = trimesh.creation.box(extents=(scale, scale, scale))
-    tmesh.export(mesh_path, file_type="obj")
-
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01),
-        rigid_options=gs.options.RigidOptions(noslip_iterations=5),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3 * scale, 3 * scale, 3 * scale),
-            camera_lookat=(scale, 0.0, 0.0),
-        ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
-    )
-
-    for i in range(3):
-        scene.add_entity(
-            gs.morphs.Mesh(
-                file=mesh_path,
-                pos=(i * scale, 0, 0),
-                fixed=(i == 0),
-            ),
-            surface=gs.surfaces.Default(
-                color=(*np.random.rand(3), 1.0 if i != 1 else 0.7),
-            ),
-            visualize_contact=True,
-        )
-    box_1, box_2 = scene.entities[1:]
-    scene.build()
-
-    rho = 200
-    coeff_f = 1.0
-    n_box = 2
-    g = 9.81
-    safety = 2.5
-
-    for _ in range(2000):
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
-        scene.step()
-
-    _, _, box_1_z = box_1.get_pos()
-    assert_allclose(box_1_z, 0.0, atol=4e-2 * scale)
-
-    safety = 0.9
-    for _ in range(300):
-        box_2.control_dofs_force([-safety / coeff_f * n_box * rho * scale**3 * g], [0])
-        scene.step()
-
-    _, _, box_1_z = box_1.get_pos()
-    assert box_1_z < -scale
 
 
 @pytest.mark.required
