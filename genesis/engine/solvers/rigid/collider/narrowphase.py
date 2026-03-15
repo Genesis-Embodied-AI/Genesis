@@ -1712,7 +1712,6 @@ def _func_prepare_gjk_rerun(
 @qd.func
 def _func_enqueue_for_multicontact(
     collider_state: array_class.ColliderState,
-    prefer_gjk,
     i_b,
     i_ga,
     i_gb,
@@ -1720,6 +1719,7 @@ def _func_enqueue_for_multicontact(
     contact_pos_0: qd.types.vector(3, dtype=gs.qd_float),
     normal_0: qd.types.vector(3, dtype=gs.qd_float),
     penetration_0,
+    prefer_gjk: bool,
 ):
     if prefer_gjk:
         idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_queue_size[0], 1)
@@ -1950,7 +1950,6 @@ def _func_narrowphase_contact0(
                     if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         _func_enqueue_for_multicontact(
                             collider_state,
-                            True,
                             i_b,
                             i_ga,
                             i_gb,
@@ -1958,13 +1957,13 @@ def _func_narrowphase_contact0(
                             contact_pos,
                             normal,
                             penetration,
+                            True,
                         )
                 elif multi_contact:
                     # Enqueue for multicontact — multicontact will write all contacts
                     # (including contact 0) contiguously via a single atomic reservation.
                     _func_enqueue_for_multicontact(
                         collider_state,
-                        False,
                         i_b,
                         i_ga,
                         i_gb,
@@ -1972,6 +1971,7 @@ def _func_narrowphase_contact0(
                         contact_pos,
                         normal,
                         penetration,
+                        False,
                     )
                 else:
                     func_add_contact(
