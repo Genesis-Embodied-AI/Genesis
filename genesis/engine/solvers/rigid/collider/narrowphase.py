@@ -901,8 +901,7 @@ def func_convex_convex_contact(
                 ):
                     contact_point_a = (
                         gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot)
                         )
                         + contact_pos_0
                     )
@@ -1254,8 +1253,7 @@ def _func_multicontact_mpr(
                 ):
                     contact_point_a = (
                         gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot)
                         )
                         + contact_pos_0
                     )
@@ -1512,8 +1510,7 @@ def _func_multicontact_gjk_full(
                 ):
                     contact_point_a = (
                         gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot)
                         )
                         + contact_pos_0
                     )
