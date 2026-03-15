@@ -291,7 +291,7 @@ class IMU(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
         self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
 
 
-class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorOptions):
+class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin):
     """
     Proximity sensor that reports distance and nearest point from probe positions to tracked mesh surfaces.
 
@@ -324,10 +324,7 @@ class ProximityOptions(RigidSensorOptionsMixin, NoisySensorOptionsMixin, SensorO
 
     def validate_scene(self, scene: "Scene"):
         super().validate_scene(scene)
-        if scene.sim is None:
-            return
-        solver = scene.sim.rigid_solver
-        n_links = solver.n_links
+        n_links = scene.sim.rigid_solver.n_links
         for i, link_idx in enumerate(self.track_link_idx):
             if not (0 <= link_idx < n_links):
                 gs.raise_exception(f"ProximityOptions.track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")

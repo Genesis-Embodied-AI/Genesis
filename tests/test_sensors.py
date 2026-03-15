@@ -28,7 +28,9 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -192,7 +194,9 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -1067,22 +1071,36 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, 0.0),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     box = scene.add_entity(
-        gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.0)),
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.0),
+        ),
     )
     # Tracked objects
     sphere1 = scene.add_entity(
-        gs.morphs.Sphere(radius=SPHERE_RADIUS, pos=(0.0, 0.0, DISTANCE)),
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE),
+        ),
     )
     sphere2 = scene.add_entity(
-        gs.morphs.Sphere(radius=SPHERE_RADIUS, pos=(0.0, 0.0, DISTANCE * 2.0)),
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE * 2.0),
+        ),
     )
     # Not tracked objects
     sphere3 = scene.add_entity(
-        gs.morphs.Sphere(radius=SPHERE_RADIUS, pos=(0.0, DISTANCE / 2.0, 0.0)),
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, DISTANCE / 2.0, 0.0),
+        ),
     )
 
     box_prox_sensor = scene.add_sensor(
