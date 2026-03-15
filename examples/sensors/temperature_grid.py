@@ -17,14 +17,17 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 # Teleop
 KEY_DPOS = 0.05
 KEY_DPOS_Z = 0.01
+FORCE_SCALE = 100.0
 PUSHER_SIZE = 0.1
 
 # Temperature grid
 GRID_SIZE = (10, 10, 1)
 
 # Objects
-PLATFORM_SIZE = 1.5
-PLATFORM_HEIGHT = 0.3
+SANDBOX_SIZE = 1.5
+WALL_THICKNESS = 0.08
+WALL_HEIGHT = 0.3
+PLATFORM_HEIGHT = 0.1
 OBJ_Z = PLATFORM_HEIGHT * 1.4
 OBJ_SIZE = 0.1
 
@@ -45,7 +48,7 @@ def main():
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-PLATFORM_SIZE * 2, 0.0, PLATFORM_HEIGHT + 1.5),
+            camera_pos=(-SANDBOX_SIZE * 2, 0.0, PLATFORM_HEIGHT + 1.5),
             camera_lookat=(0.0, 0.0, PLATFORM_HEIGHT),
             max_FPS=60,
         ),
@@ -57,42 +60,65 @@ def main():
 
     scene.add_entity(gs.morphs.Plane())
 
+    # Sandbox: four fixed walls
+    for i in range(4):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(SANDBOX_SIZE + 2 * WALL_THICKNESS, WALL_THICKNESS, WALL_HEIGHT),
+                pos=(
+                    *((1 - 2 * (i % 2)) * (SANDBOX_SIZE / 2 + WALL_THICKNESS / 2), 0.0)[:: (2 * (i >= 2) - 1)],
+                    WALL_HEIGHT / 2,
+                ),
+                euler=(0, 0, 90 * (i >= 2)),
+                fixed=True,
+            ),
+            surface=gs.surfaces.Default(color=(0.5, 0.45, 0.4, 1.0)),
+        )
+
     platform = scene.add_entity(
         gs.morphs.Box(
-            size=(PLATFORM_SIZE, PLATFORM_SIZE, PLATFORM_HEIGHT),
+            size=(SANDBOX_SIZE, SANDBOX_SIZE, PLATFORM_HEIGHT),
             pos=(0.0, 0.0, PLATFORM_HEIGHT / 2),
             fixed=True,
             visualization=False,  # sensor debug_draw will be shown
         ),
+        material=gs.materials.Rigid(
+            friction=0.01,
+        ),
     )
 
-    pusher_pos_init = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.02], dtype=np.float32)
+    pusher_pos_init = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2], dtype=np.float32)
     pusher = scene.add_entity(
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
             pos=pusher_pos_init,
         ),
-        surface=gs.surfaces.Default(color=(1.0, 0.2, 0.2, 1.0)),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.2, 0.2, 1.0),
+        ),
+        material=gs.materials.Rigid(
+            friction=0.01,
+        ),
     )
 
     rect = scene.add_entity(
         gs.morphs.Box(
             size=(OBJ_SIZE, OBJ_SIZE * 2, OBJ_SIZE),
-            pos=(PLATFORM_SIZE / 4, 0, OBJ_Z),
+            pos=(SANDBOX_SIZE / 4, 0, OBJ_Z),
         ),
     )
     cylinder = scene.add_entity(
         gs.morphs.Cylinder(
             radius=OBJ_SIZE / 2,
             height=OBJ_SIZE * 1.2,
-            pos=(0, PLATFORM_SIZE / 4, OBJ_Z),
+            pos=(0, SANDBOX_SIZE / 4, OBJ_Z),
         ),
     )
     sphere = scene.add_entity(
         gs.morphs.Sphere(
             radius=OBJ_SIZE / 2,
-            pos=(-PLATFORM_SIZE / 4, -PLATFORM_SIZE / 4, OBJ_Z),
+            pos=(-SANDBOX_SIZE / 4, -SANDBOX_SIZE / 4, OBJ_Z),
         ),
     )
     objects = [rect, cylinder, sphere]
@@ -111,12 +137,12 @@ def main():
             base_temperature=22.0,
             conductivity=100.0,
             density=1000.0,
-            specific_heat=1.0,
-            emissivity=0.9,
+            specific_heat=0.2,
+            emissivity=0.4,
         ),
         pusher.base_link_idx: gs.sensors.TemperatureProperties(
-            base_temperature=80.0,
-            conductivity=600.0,
+            base_temperature=200.0,
+            conductivity=1000.0,
             density=2000.0,
             specific_heat=1.0,
             emissivity=0.8,
@@ -138,6 +164,11 @@ def main():
     )
 
     scene.build()
+
+    if args.vis:
+        pusher.set_dofs_kp(FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
+        pusher.set_dofs_kv(0.1 * FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
+        pusher.control_dofs_position(pusher.get_dofs_position())
 
     # Register keybindings
     is_running = True
@@ -177,7 +208,7 @@ def main():
         )
 
     print("\n=== Interactive TemperatureGrid ===")
-    print(f"Platform {PLATFORM_SIZE}m × {PLATFORM_SIZE}m with grid {GRID_SIZE}")
+    print(f"Platform {SANDBOX_SIZE}m × {SANDBOX_SIZE}m with grid {GRID_SIZE}")
     if args.vis:
         print()
         print("Keyboard Controls:")
@@ -193,8 +224,7 @@ def main():
     try:
         while is_running:
             if args.vis:
-                pusher.set_pos(target_pos)
-                pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+                pusher.control_dofs_position(target_pos, dofs_idx_local=slice(0, 3))
 
             scene.step()
 
