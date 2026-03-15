@@ -214,10 +214,7 @@ class Collider:
             self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
             self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
-            gjk_only = self._collider_static_config.ccd_algorithm in (
-                CCD_ALGORITHM_CODE.GJK,
-                CCD_ALGORITHM_CODE.MJ_GJK,
-            )
+            gjk_only = self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
             if gjk_only:
                 self._multicontact_n_gjk_threads = gpu_cuda_cores
                 self._multicontact_n_total_threads = self._multicontact_n_gjk_threads
