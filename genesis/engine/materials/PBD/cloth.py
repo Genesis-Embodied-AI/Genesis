@@ -1,9 +1,14 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 
 from .base import Base
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.pbd_entity import PBD2DEntity
 
-class Cloth(Base):
+
+class Cloth(Base["PBD2DEntity"]):
     """
     The cloth material class for PBD.
 

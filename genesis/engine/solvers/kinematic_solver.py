@@ -52,6 +52,7 @@ from .rigid.abd.accessor import (
 )
 
 if TYPE_CHECKING:
+    from genesis.engine.entities import KinematicEntity
     from genesis.engine.scene import Scene
     from genesis.engine.simulator import Simulator
 
@@ -104,7 +105,7 @@ class KinematicSolver(Solver):
     # ----------------------------------- add_entity -------------------------------------
     # ------------------------------------------------------------------------------------
 
-    def add_entity(self, idx, material, morph, surface, visualize_contact=False, name=None):
+    def add_entity(self, idx, material, morph, surface, visualize_contact=False, name=None) -> "KinematicEntity":
         morph_heterogeneous = []
         if isinstance(morph, (tuple, list)):
             morph, *morph_heterogeneous = morph

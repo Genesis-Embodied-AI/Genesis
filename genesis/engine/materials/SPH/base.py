@@ -1,10 +1,14 @@
 import sys
 import platform
+from typing import TYPE_CHECKING
 
 from ..base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.sph_entity import SPHEntity
 
-class Base(Material):
+
+class Base(Material["SPHEntity"]):
     """
     The base class of SPH materials.
 

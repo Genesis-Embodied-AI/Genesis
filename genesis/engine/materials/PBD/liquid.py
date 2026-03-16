@@ -1,10 +1,14 @@
 import platform
 import sys
+from typing import TYPE_CHECKING
 
 from .base import Base
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.pbd_entity import PBDParticleEntity
 
-class Liquid(Base):
+
+class Liquid(Base["PBDParticleEntity"]):
     """
     The liquid material class for PBD.
 

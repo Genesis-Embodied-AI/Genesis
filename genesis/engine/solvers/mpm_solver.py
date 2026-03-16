@@ -17,6 +17,7 @@ from genesis.utils.misc import DeprecationError
 from .base_solver import Solver
 
 if TYPE_CHECKING:
+    from genesis.engine.entities import MPMEntity
     from genesis.engine.scene import Scene
     from genesis.engine.solvers.base_solver import Solver
     from genesis.engine.simulator import Simulator
@@ -247,7 +248,7 @@ class MPMSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "MPMEntity":
         self.add_material(material)
 
         # create entity

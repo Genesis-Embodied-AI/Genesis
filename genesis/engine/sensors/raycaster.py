@@ -32,11 +32,12 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+
+    from .sensor_manager import SensorManager
 
 
 @qd.kernel
@@ -167,16 +168,9 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-@register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
-class RaycasterSensor(RigidSensorMixin, Sensor):
-    def __init__(
-        self,
-        options: RaycasterOptions,
-        shared_metadata: RaycasterSharedMetadata,
-        data_cls: Type[RaycasterData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, shared_metadata, data_cls, manager)
+class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+    def __init__(self, options: RaycasterOptions, shared_metadata: RaycasterSharedMetadata, manager: "SensorManager"):
+        super().__init__(options, shared_metadata, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 

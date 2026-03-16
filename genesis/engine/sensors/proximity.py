@@ -22,7 +22,6 @@ from .base_sensor import (
     SharedSensorMetadata,
 )
 from .kinematic_tactile import _func_closest_point_on_triangle
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -152,25 +151,17 @@ class ProximityData(NamedTuple):
     points: torch.Tensor
 
 
-@register_sensor(ProximityOptions, ProximityMetadata, ProximityData)
-@qd.data_oriented
 class ProximitySensor(
     RigidSensorMixin[ProximityMetadata],
     NoisySensorMixin[ProximityMetadata],
-    Sensor[ProximityMetadata],
+    Sensor[ProximityOptions, ProximityMetadata, ProximityData],
 ):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
 
-    def __init__(
-        self,
-        sensor_options: ProximityOptions,
-        sensor_idx: int,
-        data_cls: Type[ProximityData],
-        sensor_manager: "SensorManager",
-    ):
+    def __init__(self, sensor_options: ProximityOptions, sensor_idx: int, sensor_manager: "SensorManager"):
         self._probe_local_pos = torch.tensor(sensor_options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
         self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
         self._debug_objects: list = []
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:

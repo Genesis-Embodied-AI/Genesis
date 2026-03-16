@@ -4,7 +4,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable, Iterable, Literal
+from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from quadrants.lang import impl
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import Material
+from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
     KinematicOptions,
@@ -45,8 +45,10 @@ from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.rigid_entity import RigidEntity
+    from genesis.engine.sensors.base_sensor import Sensor
     from genesis.recorders import Recorder
-    from genesis.options.sensors import SensorOptions
+    from genesis.options.sensors.options import SensorOptions, SensorT
 
 
 @gs.assert_initialized
@@ -315,6 +317,28 @@ class Scene(RBC):
             # This scene may have been destroyed previously
             pass
 
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: None = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> "RigidEntity": ...
+
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: Material[EntityT] = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> EntityT: ...
+
     @gs.assert_unbuilt
     def add_entity(
         self,
@@ -324,7 +348,7 @@ class Scene(RBC):
         visualize_contact: bool = False,
         vis_mode: str | None = None,
         name: str | None = None,
-    ):
+    ) -> "Entity":
         """
         Add an entity to the scene.
 
@@ -608,7 +632,7 @@ class Scene(RBC):
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: "SensorOptions"):
+    def add_sensor(self, sensor_options: "SensorOptions[SensorT]") -> "SensorT":
         """
         Add a sensor to the scene.
 

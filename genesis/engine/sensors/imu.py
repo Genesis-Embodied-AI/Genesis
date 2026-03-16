@@ -21,14 +21,14 @@ from .base_sensor import (
     RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
-    _to_tuple,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
+
+    from .sensor_manager import SensorManager
 
 
 def _get_cross_axis_coupling_to_alignment_matrix(
@@ -80,26 +80,19 @@ class IMUData(NamedTuple):
     mag: torch.Tensor  # added magnetometer to complete 9-axis IMU
 
 
-@register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
     NoisySensorMixin[IMUSharedMetadata],
-    Sensor[IMUSharedMetadata],
+    Sensor[IMUOptions, IMUSharedMetadata, IMUData],
 ):
-    def __init__(
-        self,
-        options: IMUOptions,
-        shared_metadata: IMUSharedMetadata,
-        data_cls: Type[IMUData],
-        manager: "gs.SensorManager",
-    ):
+    def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
         # FIXME: Resolution should be made private in mixin, so that it cannot be set by the user directly.
         options.resolution = options.acc_resolution + options.gyro_resolution + options.mag_resolution
         options.bias = options.acc_bias + options.gyro_bias + options.mag_bias
         options.random_walk = options.acc_random_walk + options.gyro_random_walk + options.mag_random_walk
         options.noise = options.acc_noise + options.gyro_noise + options.mag_noise
 
-        super().__init__(options, shared_metadata, data_cls, manager)
+        super().__init__(options, shared_metadata, manager)
 
         self.debug_objects: list["Mesh"] = []
         self.quat_offset: torch.Tensor
