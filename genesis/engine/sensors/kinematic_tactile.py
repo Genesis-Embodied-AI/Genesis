@@ -24,7 +24,6 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
@@ -775,18 +774,12 @@ KinematicTactileSensorMetadataMixinT = TypeVar(
 
 
 class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT]):
-    def __init__(
-        self,
-        sensor_options: "SensorOptions",
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
+    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
         # Store n_probes before super().__init__() since _get_return_format() is called there
         self._probe_local_pos = torch.tensor(sensor_options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
         self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
 
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._debug_objects: list["Mesh | None"] = []
         self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
@@ -926,24 +919,16 @@ class KinematicContactProbeMetadata(
     stiffness: torch.Tensor = make_tensor_field((0,))
 
 
-@register_sensor(KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData)
-@qd.data_oriented
 class KinematicContactProbe(
     KinematicTactileSensorMixin[KinematicContactProbeMetadata],
     RigidSensorMixin[KinematicContactProbeMetadata],
     NoisySensorMixin[KinematicContactProbeMetadata],
-    Sensor[KinematicContactProbeMetadata],
+    Sensor[KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData],
 ):
     """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
 
-    def __init__(
-        self,
-        sensor_options: KinematicContactProbeOptions,
-        sensor_idx: int,
-        data_cls: Type[KinematicContactProbeData],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, sensor_options: KinematicContactProbeOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._n_probes,), (self._n_probes, 3)
@@ -1018,22 +1003,16 @@ class ElastomerDisplacementSensorMetadata(
     grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))  # buffer (B, max_grid_size) for FFT dilate copy
 
 
-@register_sensor(ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata, tuple)
-@qd.data_oriented
 class ElastomerDisplacementSensor(
-    KinematicTactileSensorMixin[KinematicContactProbeMetadata],
-    RigidSensorMixin[KinematicContactProbeMetadata],
-    NoisySensorMixin[KinematicContactProbeMetadata],
-    Sensor[KinematicContactProbeMetadata],
+    KinematicTactileSensorMixin[ElastomerDisplacementSensorMetadata],
+    RigidSensorMixin[ElastomerDisplacementSensorMetadata],
+    NoisySensorMixin[ElastomerDisplacementSensorMetadata],
+    Sensor[ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata],
 ):
     def __init__(
-        self,
-        sensor_options: ElastomerDisplacementSensorOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
+        self, sensor_options: ElastomerDisplacementSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"
     ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._is_grid = self._probe_local_pos.ndim > 2
         self._shape = self._probe_local_pos.shape[:-1]

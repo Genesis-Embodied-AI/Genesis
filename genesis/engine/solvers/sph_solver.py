@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 import quadrants as qd
 
@@ -8,6 +10,9 @@ from genesis.engine.entities import SPHEntity
 from genesis.engine.states.solvers import SPHSolverState
 
 from .base_solver import Solver
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import SPHEntity
 
 
 @qd.data_oriented
@@ -167,7 +172,7 @@ class SPHSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "SPHEntity":
         entity = SPHEntity(
             scene=self.scene,
             solver=self,

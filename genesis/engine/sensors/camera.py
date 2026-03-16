@@ -38,7 +38,7 @@ from .base_sensor import (
     RigidSensorMixin,
     RigidSensorMetadataMixin,
 )
-from .sensor_manager import register_sensor
+from .base_sensor import OptionsT
 
 
 if TYPE_CHECKING:
@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
     from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.raytracer import Raytracer
+
+    from .sensor_manager import SensorManager
 
 
 # ========================== Data Class ==========================
@@ -222,7 +224,7 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
+class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
@@ -233,14 +235,8 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
     - Shared read() method returning torch tensors
     """
 
-    def __init__(
-        self,
-        options: "SensorOptions",
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._stale: bool = True
 
     # ========================== Cache Integration (shared) ==========================
@@ -397,8 +393,9 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
 # ========================== Rasterizer Camera Sensor ==========================
 
 
-@register_sensor(RasterizerCameraOptions, RasterizerCameraSharedMetadata, CameraData)
-class RasterizerCameraSensor(BaseCameraSensor):
+class RasterizerCameraSensor(
+    BaseCameraSensor, Sensor[RasterizerCameraOptions, RasterizerCameraSharedMetadata, CameraData]
+):
     """
     Rasterizer camera sensor using OpenGL-based rendering.
 
@@ -406,14 +403,8 @@ class RasterizerCameraSensor(BaseCameraSensor):
     but operates independently from the scene visualizer.
     """
 
-    def __init__(
-        self,
-        options: RasterizerCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: RasterizerCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: RasterizerCameraOptions
         self._camera_node = None
         self._camera_target = None
@@ -571,20 +562,15 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
 
 # ========================== Raytracer Camera Sensor ==========================
-@register_sensor(RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData)
-class RaytracerCameraSensor(BaseCameraSensor):
+class RaytracerCameraSensor(
+    BaseCameraSensor, Sensor[RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData]
+):
     """
     Raytracer camera sensor using LuisaRender path tracing.
     """
 
-    def __init__(
-        self,
-        options: RaytracerCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: RaytracerCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: RaytracerCameraOptions
         self._camera_obj = None
 
@@ -724,22 +710,17 @@ class RaytracerCameraSensor(BaseCameraSensor):
 # ========================== Batch Renderer Camera Sensor ==========================
 
 
-@register_sensor(BatchRendererCameraOptions, BatchRendererCameraSharedMetadata, CameraData)
-class BatchRendererCameraSensor(BaseCameraSensor):
+class BatchRendererCameraSensor(
+    BaseCameraSensor, Sensor[BatchRendererCameraOptions, BatchRendererCameraSharedMetadata, CameraData]
+):
     """
     Batch renderer camera sensor using Madrona GPU batch rendering.
 
     Note: All batch renderer cameras must have the same resolution.
     """
 
-    def __init__(
-        self,
-        options: BatchRendererCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: BatchRendererCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: BatchRendererCameraOptions
         self._camera_obj = None
 

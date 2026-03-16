@@ -1,5 +1,6 @@
 import platform
 import sys
+from typing import TYPE_CHECKING
 
 import quadrants as qd
 
@@ -7,9 +8,12 @@ import genesis as gs
 
 from ..base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.mpm_entity import MPMEntity
+
 
 @qd.data_oriented
-class Base(Material):
+class Base(Material["MPMEntity"]):
     """
     The base class of MPM materials.
 

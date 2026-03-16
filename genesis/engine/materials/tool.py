@@ -1,10 +1,15 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 
 from .base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.tool_entity import ToolEntity
+
 
 @qd.data_oriented
-class Tool(Material):
+class Tool(Material["ToolEntity"]):
     def __init__(
         self,
         friction=0.0,

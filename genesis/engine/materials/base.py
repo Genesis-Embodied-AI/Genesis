@@ -1,8 +1,15 @@
+from typing import TYPE_CHECKING, Generic, TypeVar
+
 import genesis as gs
 from genesis.repr_base import RBC
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.base_entity import Entity
 
-class Material(RBC):
+EntityT = TypeVar("EntityT", bound="Entity")
+
+
+class Material(RBC, Generic[EntityT]):
     """
     The base class of materials.
 

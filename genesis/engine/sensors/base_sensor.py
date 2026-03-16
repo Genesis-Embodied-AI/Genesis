@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, Type, TypeVar, get_args, get_origin
+
+from typing_extensions import TypeVar as TypeVarWithDefault
 
 import numpy as np
 import torch
@@ -62,13 +64,20 @@ class SharedSensorMetadata:
 
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
+OptionsT = TypeVar("OptionsT", bound="SensorOptions")
+DataT = TypeVarWithDefault("DataT", default=tuple)
 
 
-class Sensor(RBC, Generic[SharedSensorMetadataT]):
+class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     """
     Base class for all types of sensors.
 
     To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating this class directly.
+
+    Each concrete sensor class declares its associated options, metadata, and data types via Generic type parameters::
+
+        class MySensor(Sensor[MyOptions, MyMetadata]):
+            ...  # DataT defaults to tuple; specify explicitly for NamedTuple returns
 
     Note
     -----
@@ -78,9 +87,30 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     the shared cache to return the correct data.
     """
 
-    def __init__(
-        self, sensor_options: "SensorOptions", sensor_idx: int, data_cls: Type[tuple], sensor_manager: "SensorManager"
-    ):
+    _options_cls: ClassVar[type]
+    _metadata_cls: ClassVar[type]
+    _return_data_class: ClassVar[type] = tuple
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        for base in cls.__orig_bases__:
+            origin = get_origin(base)
+            if origin is not None and issubclass(origin, Sensor):
+                args = get_args(base)
+                if len(args) >= 1 and not isinstance(args[0], TypeVar):
+                    cls._options_cls = args[0]
+                if len(args) >= 2 and not isinstance(args[1], TypeVar):
+                    cls._metadata_cls = args[1]
+                if len(args) >= 3 and not isinstance(args[2], TypeVar):
+                    cls._return_data_class = args[2]
+                break
+        # Auto-register if this class defines its own options (not inherited)
+        if "_options_cls" in cls.__dict__:
+            from .sensor_manager import SensorManager
+
+            SensorManager.SENSOR_TYPES_MAP[cls._options_cls] = cls
+
+    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
@@ -91,7 +121,6 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         self._delay_ts = round(self._options.delay / self._dt)
 
         self._cache_slices: list[slice] = []
-        self._return_data_class = data_cls
         return_format = self._get_return_format()
         assert len(return_format) > 0
         if isinstance(return_format[0], int):
@@ -192,14 +221,14 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     # =============================== public shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx=None):
+    def read(self, envs_idx=None) -> DataT:
         """
         Read the sensor data (with noise applied if applicable).
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx=None):
+    def read_ground_truth(self, envs_idx=None) -> DataT:
         """
         Read the ground truth sensor data (without noise).
         """

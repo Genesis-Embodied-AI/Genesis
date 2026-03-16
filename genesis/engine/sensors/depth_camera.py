@@ -2,12 +2,11 @@ import torch
 
 from genesis.options.sensors import DepthCamera as DepthCameraOptions
 
+from .base_sensor import Sensor
 from .raycaster import RaycasterData, RaycasterSensor, RaycasterSharedMetadata
-from .sensor_manager import register_sensor
 
 
-@register_sensor(DepthCameraOptions, RaycasterSharedMetadata, RaycasterData)
-class DepthCameraSensor(RaycasterSensor):
+class DepthCameraSensor(RaycasterSensor, Sensor[DepthCameraOptions, RaycasterSharedMetadata, RaycasterData]):
     def build(self):
         super().build()
 

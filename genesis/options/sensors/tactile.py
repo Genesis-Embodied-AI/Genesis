@@ -14,16 +14,21 @@ from genesis.typing import (
     NonNegativeFloat,
 )
 
-from .options import NoisySensorOptionsMixin, RigidSensorOptionsMixin, SensorOptions
+from .options import NoisySensorOptionsMixin, RigidSensorOptionsMixin, SensorOptions, SensorT
 
 
 if TYPE_CHECKING:
+    from genesis.engine.sensors.kinematic_tactile import (
+        ElastomerDisplacementSensor,
+        KinematicContactProbe as KinematicContactProbeSensor,
+    )
+
     Vec3FGridType = Sequence[Sequence[Sequence[NumericType]]]
 else:
     Vec3FGridType = Annotated[tuple[Vec3FArrayType, ...], Field(min_length=1, strict=False)]
 
 
-class KinematicTactileSensorMixin(SensorOptions):
+class KinematicTactileSensorMixin(SensorOptions[SensorT]):
     """
     Parameters
     ----------
@@ -44,7 +49,11 @@ class KinematicTactileSensorMixin(SensorOptions):
     debug_contact_color: UnitIntervalVec4Type = (1.0, 0.2, 0.0, 0.8)
 
 
-class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, KinematicTactileSensorMixin):
+class KinematicContactProbe(
+    RigidSensorOptionsMixin["KinematicContactProbeSensor"],
+    NoisySensorOptionsMixin["KinematicContactProbeSensor"],
+    KinematicTactileSensorMixin["KinematicContactProbeSensor"],
+):
     """
     A tactile sensor which queries contact depth relative to given probe normals and within the radius of the probe
     positions along a rigid entity link.
@@ -86,10 +95,9 @@ class KinematicContactProbe(RigidSensorOptionsMixin, NoisySensorOptionsMixin, Ki
 
 
 class ElastomerDisplacement(
-    RigidSensorOptionsMixin,
-    NoisySensorOptionsMixin,
-    KinematicTactileSensorMixin,
-    SensorOptions,
+    RigidSensorOptionsMixin["ElastomerDisplacementSensor"],
+    NoisySensorOptionsMixin["ElastomerDisplacementSensor"],
+    KinematicTactileSensorMixin["ElastomerDisplacementSensor"],
 ):
     """
     A tactile sensor which estimates the displacement of the elastomer based on the contact force and depth of

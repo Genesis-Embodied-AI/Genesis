@@ -7,13 +7,15 @@ import genesis as gs
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
+    from genesis.options.sensors import SensorOptions
     from genesis.vis.rasterizer_context import RasterizerContext
 
-    from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
+    from .base_sensor import Sensor, SharedSensorMetadata
 
 
 class SensorManager:
-    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], tuple[Type["Sensor"], Type["SharedSensorMetadata"], Type[tuple]]] = {}
+    # Maps sensor options class -> sensor class for runtime dispatch.
+    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], Type["Sensor"]] = {}
 
     def __init__(self, sim):
         self._sim = sim
@@ -29,11 +31,11 @@ class SensorManager:
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate_scene(self._sim.scene)
-        sensor_cls, metadata_cls, data_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
+        sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
-            self._sensors_metadata[sensor_cls] = metadata_cls()
-        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), data_cls, self)
+            self._sensors_metadata[sensor_cls] = sensor_cls._metadata_cls()
+        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
 
@@ -137,13 +139,3 @@ class SensorManager:
     @property
     def sensors(self):
         return gs.List([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
-
-
-def register_sensor(
-    options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"], data_cls: Type[tuple]
-):
-    def _impl(sensor_cls: Type["Sensor"]):
-        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls, data_cls
-        return sensor_cls
-
-    return _impl

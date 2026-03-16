@@ -2,7 +2,7 @@
 Camera sensor options for Rasterizer, Raytracer, and Batch Renderer backends.
 """
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, StrictBool
 
@@ -17,10 +17,17 @@ from genesis.typing import (
     Vec3FType,
 )
 
-from .options import RigidSensorOptionsMixin, SensorOptions
+from .options import RigidSensorOptionsMixin, SensorT
+
+if TYPE_CHECKING:
+    from genesis.engine.sensors.camera import (
+        BatchRendererCameraSensor,
+        RasterizerCameraSensor,
+        RaytracerCameraSensor,
+    )
 
 
-class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
+class BaseCameraOptions(RigidSensorOptionsMixin[SensorT]):
     """
     Base class for camera sensor options containing common properties.
 
@@ -58,7 +65,7 @@ class BaseCameraOptions(RigidSensorOptionsMixin, SensorOptions):
     offset_T: Matrix4x4Type | None = None
 
 
-class RasterizerCameraOptions(BaseCameraOptions):
+class RasterizerCameraOptions(BaseCameraOptions["RasterizerCameraSensor"]):
     """
     Options for Rasterizer camera sensor (OpenGL-based rendering).
 
@@ -81,7 +88,7 @@ class RasterizerCameraOptions(BaseCameraOptions):
             gs.raise_exception(f"far must be greater than near, got near={self.near}, far={self.far}")
 
 
-class RaytracerCameraOptions(BaseCameraOptions):
+class RaytracerCameraOptions(BaseCameraOptions["RaytracerCameraSensor"]):
     """
     Options for Raytracer camera sensor (LuisaRender path tracing).
 
@@ -122,7 +129,7 @@ class RaytracerCameraOptions(BaseCameraOptions):
     update_ground_truth_only: StrictBool = True
 
 
-class BatchRendererCameraOptions(BaseCameraOptions):
+class BatchRendererCameraOptions(BaseCameraOptions["BatchRendererCameraSensor"]):
     """
     Options for Batch Renderer camera sensor (Madrona GPU batch rendering).
 

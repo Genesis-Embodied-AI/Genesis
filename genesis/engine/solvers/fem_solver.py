@@ -1,5 +1,7 @@
 # pylint: disable=no-value-for-parameter
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import igl
 import quadrants as qd
@@ -14,6 +16,9 @@ from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
 
 from .base_solver import Solver
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import FEMEntity
 
 
 @qd.data_oriented
@@ -378,7 +383,7 @@ class FEMSolver(Solver):
     def is_active(self):
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
