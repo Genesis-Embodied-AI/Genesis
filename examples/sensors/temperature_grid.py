@@ -12,10 +12,12 @@ import os
 import numpy as np
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
+
 # Teleop
-KEY_DPOS = 0.05
+KEY_DPOS = 0.08
 KEY_DPOS_Z = 0.01
 FORCE_SCALE = 100.0
 PUSHER_SIZE = 0.1
@@ -48,7 +50,7 @@ def main():
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(-SANDBOX_SIZE * 2, 0.0, PLATFORM_HEIGHT + 1.5),
+            camera_pos=(-SANDBOX_SIZE * 2, 0.0, PLATFORM_HEIGHT + 2.5),
             camera_lookat=(0.0, 0.0, PLATFORM_HEIGHT),
             max_FPS=60,
         ),
@@ -227,6 +229,10 @@ def main():
                 pusher.control_dofs_position(target_pos, dofs_idx_local=slice(0, 3))
 
             scene.step()
+
+            if args.vis:
+                cur_pos = tensor_to_array(pusher.get_pos())
+                target_pos[:] = np.clip(target_pos - cur_pos, -KEY_DPOS, KEY_DPOS) + cur_pos
 
             data = temperature_sensor.read()
             t_min, t_max = float(data.min()), float(data.max())

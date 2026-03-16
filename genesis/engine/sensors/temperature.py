@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Type
 import numpy as np
 import quadrants as qd
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.array_class as array_class
@@ -799,7 +800,8 @@ class TemperatureGridSensor(
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         """
-        Draw each grid cell as a box colored by temperature (cool=blue, hot=red).
+        Draw a single flat mesh colored by temperature (cool=blue, hot=red).
+
         Only draws for the first rendered environment.
         """
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
@@ -819,11 +821,6 @@ class TemperatureGridSensor(
 
         voxel_size = tensor_to_array(self._shared_metadata.voxel_size[self._idx]).reshape(3)
 
-        # World poses: same rotation as link, translation = link_T @ local_pos
-        world_trans = (link_T[:3, :3] @ self._debug_cell_local_positions.T).T + link_T[:3, 3]
-        poses = np.tile(link_T[np.newaxis], (len(world_trans), 1, 1)).astype(np.float64)
-        poses[:, :3, 3] = world_trans
-
         # Per-cell color from temperature (blue=cool, red=hot)
         temps = self.read_ground_truth(env_idx)
         temps = tensor_to_array(temps).reshape(-1)
@@ -831,11 +828,25 @@ class TemperatureGridSensor(
         if t_range <= 0:
             t_range = 1.0
         norm = np.clip((temps - t_min) / t_range, 0.0, 1.0)
-        # Blue (0,0,1) -> Red (1,0,0)
-        colors = np.column_stack((norm, np.zeros_like(norm), 1.0 - norm, np.full_like(norm, 0.5)))
-        for i, pose in enumerate(poses):
-            mesh = mu.create_box(extents=voxel_size, color=tuple(float(c) for c in colors[i]))
-            self._debug_objects.append(context.draw_debug_mesh(mesh, T=pose))
+        colors_rgba = np.column_stack((norm, np.zeros_like(norm), 1.0 - norm, np.full_like(norm, 0.5)))
+
+        # Build a single mesh: one quad (2 triangles) per cell on the top face
+        n_cells = len(self._debug_cell_local_positions)
+        hx, hy, hz = voxel_size[0] / 2, voxel_size[1] / 2, voxel_size[2] / 2
+        quad_offsets = np.array([[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]])
+        vertices = (self._debug_cell_local_positions[:, np.newaxis, :] + quad_offsets[np.newaxis, :, :]).reshape(-1, 3)
+
+        idx = np.arange(n_cells, dtype=np.int64) * 4
+        faces = np.empty((n_cells * 2, 3), dtype=np.int64)
+        faces[0::2] = np.column_stack([idx, idx + 1, idx + 2])
+        faces[1::2] = np.column_stack([idx, idx + 2, idx + 3])
+
+        face_colors_u8 = np.empty((n_cells * 2, 4), dtype=np.uint8)
+        face_colors_u8[0::2] = (colors_rgba * 255).astype(np.uint8)
+        face_colors_u8[1::2] = face_colors_u8[0::2]
+
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, face_colors=face_colors_u8)
+        self._debug_objects.append(context.draw_debug_mesh(mesh, T=link_T))
 
     @property
     def link_temperatures(self) -> torch.Tensor:
