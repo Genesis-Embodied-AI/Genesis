@@ -42,7 +42,7 @@ if _IS_OLD_TORCH:
 # Global state
 _initialized: bool = False
 _scene_registry: list[weakref.ReferenceType["Scene"]] = []
-_module_registry: list[tuple[Callable[[], None], Callable[[], None]]] = []
+_module_registry: set[tuple[Callable[[], None], Callable[[], None]]] = set()
 _theme: str | None = None
 logger: Logger | None = None
 device: torch.device | None = None
@@ -431,14 +431,16 @@ def destroy():
 
 def register_external_module(init_fun: Callable[[], None], destroy_fun: Callable[[], None]) -> None:
     assert isinstance(init_fun, Callable) and isinstance(destroy_fun, Callable)
-    _module_registry.append((init_fun, destroy_fun))
+    _module_registry.add((init_fun, destroy_fun))
+
+    # Call init right away if Genesis is already initialized
+    if gs._initialized:
+        init_fun()
 
 
 def unregister_external_module(init_fun: Callable[[], None], destroy_fun: Callable[[], None]) -> None:
     assert isinstance(init_fun, Callable) and isinstance(destroy_fun, Callable)
-    for i in range(len(_module_registry))[::-1]:
-        if _module_registry[i] == (init_fun, destroy_fun):
-            del _module_registry[i]
+    _module_registry.remove((init_fun, destroy_fun))
 
 
 ########################## Exception and exit handling ##########################

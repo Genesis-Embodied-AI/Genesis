@@ -31,11 +31,6 @@ if TYPE_CHECKING:
     from genesis.engine.sensors.proximity import ProximitySensor
     from genesis.engine.sensors.raycaster import RaycasterSensor
 
-
-SensorT = TypeVar("SensorT", bound="Sensor")
-
-
-if TYPE_CHECKING:
     NonNegativeUnboundedFloat = float
     LaxNonNegativeUnboundedVec3FType = Vec3FType | float
 else:
@@ -46,6 +41,9 @@ else:
         Field(strict=False),
     ]
 CrossCouplingAxisType = RotationMatrixType | UnitIntervalVec3Type | float
+
+
+SensorT = TypeVar("SensorT", bound="Sensor")
 
 
 class SensorOptions(Options, Generic[SensorT]):
