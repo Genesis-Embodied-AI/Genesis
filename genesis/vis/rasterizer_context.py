@@ -767,7 +767,11 @@ class RasterizerContext:
                         )
                         self.add_static_node(
                             fem_entity,
-                            pyrender.Mesh.from_trimesh(mesh, double_sided=fem_entity.surface.double_sided),
+                            pyrender.Mesh.from_trimesh(
+                                mesh,
+                                smooth=fem_entity.surface.smooth,
+                                double_sided=fem_entity.surface.double_sided,
+                            ),
                             i_b=idx,
                         )
 
@@ -785,6 +789,9 @@ class RasterizerContext:
                         node = self.static_nodes[(idx, fem_entity.uid)]
                         update_data = self._scene.reorder_vertices(node, vertices)
                         buffer_updates[self._scene.get_buffer_id(node, "pos")] = update_data
+                        normal_data = self.jit.update_normal(node, update_data)
+                        if normal_data is not None:
+                            buffer_updates[self._scene.get_buffer_id(node, "normal")] = normal_data
 
     def update_sensors(self, buffer_updates):
         self.sim._sensor_manager.draw_debug(self, buffer_updates)
