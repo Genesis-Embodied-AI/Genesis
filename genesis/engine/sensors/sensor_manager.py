@@ -1,9 +1,13 @@
+import importlib
+import pkgutil
+import sys
 from typing import TYPE_CHECKING, Type
 
 import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.sensors.options import SENSOR_TYPES_MAP
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
@@ -14,9 +18,6 @@ if TYPE_CHECKING:
 
 
 class SensorManager:
-    # Maps sensor options class -> sensor class for runtime dispatch.
-    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], Type["Sensor"]] = {}
-
     def __init__(self, sim):
         self._sim = sim
         self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
@@ -31,13 +32,46 @@ class SensorManager:
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate_scene(self._sim.scene)
-        sensor_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
+        sensor_cls = SensorManager._resolve_sensor_cls(type(sensor_options))
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
             self._sensors_metadata[sensor_cls] = sensor_cls._metadata_cls()
         sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
+
+    @staticmethod
+    def _resolve_sensor_cls(options_cls: type) -> Type["Sensor"]:
+        """Resolve the sensor class for the given options class, triggering lazy discovery if needed."""
+        entry = SENSOR_TYPES_MAP.get(options_cls)
+
+        # Already resolved
+        if isinstance(entry, type):
+            return entry
+
+        # Pending — try to discover the sensor module from sibling modules of the options package
+        if isinstance(entry, tuple):
+            _sensor_class_name, options_module = entry
+            if "." in options_module:
+                pkg_name = options_module.rsplit(".", 1)[0]
+                pkg = sys.modules.get(pkg_name)
+                if pkg is not None:
+                    pkg_path = pkg.__dict__.get("__path__")
+                    if pkg_path is not None:
+                        for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
+                            if modname not in sys.modules:
+                                try:
+                                    importlib.import_module(modname)
+                                except Exception:
+                                    continue
+                            # Check if discovery succeeded (Sensor.__init_subclass__ overwrites tuple with class)
+                            if isinstance(SENSOR_TYPES_MAP.get(options_cls), type):
+                                return SENSOR_TYPES_MAP[options_cls]
+
+        gs.raise_exception(
+            f"No sensor class registered for {options_cls.__name__}. Ensure the sensor module is in the same "
+            "package as the options module, or import the sensor class manually before calling add_sensor()."
+        )
 
     def build(self):
         max_buffer_len = 0

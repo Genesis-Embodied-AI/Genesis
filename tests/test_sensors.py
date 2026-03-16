@@ -1,3 +1,9 @@
+import importlib
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -6,6 +12,119 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from .utils import assert_allclose, assert_equal
+
+# ------------------------------------------------------------------------------------------
+# -------------------------------- Lazy Sensor Discovery -----------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+def test_lazy_sensor_discovery(show_viewer, tmp_path):
+    """Test that add_sensor auto-discovers sensor classes from the options class's sibling modules."""
+    from genesis.engine.sensors.camera import RasterizerCameraSensor
+    from genesis.engine.sensors.contact_force import ContactSensor
+    from genesis.engine.sensors.depth_camera import DepthCameraSensor
+    from genesis.engine.sensors.imu import IMUSensor
+    from genesis.engine.sensors.sensor_manager import SensorManager
+    from genesis.options.sensors.options import SENSOR_TYPES_MAP
+
+    # Verify built-in registrations resolve to the exact sensor classes
+    assert SENSOR_TYPES_MAP[gs.sensors.Contact] is ContactSensor
+    assert SENSOR_TYPES_MAP[gs.sensors.IMU] is IMUSensor
+    assert SENSOR_TYPES_MAP[gs.sensors.RasterizerCameraOptions] is RasterizerCameraSensor
+    # DepthCamera inherits from Raycaster without re-parameterizing, registered only by sensor side
+    assert SENSOR_TYPES_MAP[gs.sensors.DepthCamera] is DepthCameraSensor
+
+    # Create a fake plugin package in a temp directory
+    pkg_dir = tmp_path / "fake_sensor_plugin"
+    pkg_dir.mkdir()
+
+    (pkg_dir / "__init__.py").write_text("")
+
+    (pkg_dir / "options.py").write_text(
+        textwrap.dedent(
+            """\
+        from genesis.options.sensors.options import SensorOptions
+
+        class FakeSensorOptions(SensorOptions["FakeSensor"]):
+            pass
+        """
+        )
+    )
+
+    (pkg_dir / "sensor.py").write_text(
+        textwrap.dedent(
+            """\
+        from dataclasses import dataclass
+
+        import genesis as gs
+        from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
+
+        from .options import FakeSensorOptions
+
+
+        @dataclass
+        class FakeSensorMetadata(SharedSensorMetadata):
+            pass
+
+
+        class FakeSensor(Sensor[FakeSensorOptions, FakeSensorMetadata]):
+            def _get_return_format(self):
+                return (1,)
+
+            @classmethod
+            def _get_cache_dtype(cls):
+                return gs.tc_float
+
+            @classmethod
+            def _update_shared_ground_truth_cache(cls, metadata, cache):
+                pass
+
+            @classmethod
+            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+                pass
+
+            @classmethod
+            def reset(cls, metadata, envs_idx):
+                pass
+
+            def build(self):
+                pass
+        """
+        )
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        # Import ONLY the options module (not the sensor module)
+        options_mod = importlib.import_module("fake_sensor_plugin.options")
+        FakeSensorOptions = options_mod.FakeSensorOptions
+
+        # Verify it's pending (tuple, not yet resolved to a class)
+        assert SENSOR_TYPES_MAP[FakeSensorOptions] == ("FakeSensor", "fake_sensor_plugin.options")
+
+        # Trigger lazy discovery via resolve
+        sensor_cls = SensorManager._resolve_sensor_cls(FakeSensorOptions)
+        assert sensor_cls.__name__ == "FakeSensor"
+
+        # Now the map entry should be the resolved class
+        assert SENSOR_TYPES_MAP[FakeSensorOptions] is sensor_cls
+
+        # Verify it works end-to-end with a scene
+        scene = gs.Scene(show_viewer=show_viewer)
+        scene.add_entity(gs.morphs.Plane())
+        sensor = scene.add_sensor(FakeSensorOptions())
+        scene.build()
+        scene.step()
+        data = sensor.read()
+        assert data.shape[-1] == 1
+    finally:
+        sys.path.remove(str(tmp_path))
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("fake_sensor_plugin"):
+                del sys.modules[mod_name]
+        SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+
 
 # ------------------------------------------------------------------------------------------
 # -------------------------------------- IMU Sensors ---------------------------------------

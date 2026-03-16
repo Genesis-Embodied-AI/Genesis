@@ -65,7 +65,7 @@ class SharedSensorMetadata:
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
 OptionsT = TypeVar("OptionsT", bound="SensorOptions")
-DataT = TypeVarWithDefault("DataT", default=tuple)
+DataT = TypeVarWithDefault("DataT", default=tuple, covariant=True)
 
 
 class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
@@ -76,7 +76,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
 
     Each concrete sensor class declares its associated options, metadata, and data types via Generic type parameters::
 
-        class MySensor(Sensor[MyOptions, MyMetadata]):
+        class MySensor(Sensor[MyOptions, MyMetadata, MyData]):
             ...  # DataT defaults to tuple; specify explicitly for NamedTuple returns
 
     Note
@@ -104,11 +104,14 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
                 if len(args) >= 3 and not isinstance(args[2], TypeVar):
                     cls._return_data_class = args[2]
                 break
-        # Auto-register if this class defines its own options (not inherited)
+        # Auto-register if this class defines its own options (not inherited).
+        # Enforce that concrete sensor classes also specify the metadata type parameter.
         if "_options_cls" in cls.__dict__:
-            from .sensor_manager import SensorManager
+            if "_metadata_cls" not in cls.__dict__:
+                raise TypeError(f"{cls.__name__} must specify Sensor[OptionsT, MetadataT, DataT=tuple].")
+            from genesis.options.sensors.options import SENSOR_TYPES_MAP
 
-            SensorManager.SENSOR_TYPES_MAP[cls._options_cls] = cls
+            SENSOR_TYPES_MAP[cls._options_cls] = cls
 
     def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
         self._options: "SensorOptions" = sensor_options
