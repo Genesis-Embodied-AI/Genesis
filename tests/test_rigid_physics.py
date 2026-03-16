@@ -361,6 +361,16 @@ def hinge_slide():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def ellipsoid():
+    mjcf = ET.Element("mujoco", model="ellipsoid")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="obj", pos="0 0 0.0")
+    ET.SubElement(body, "joint", name="root", type="free")
+    ET.SubElement(body, "geom", type="ellipsoid", size="0.05 0.05 0.02")
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -4192,6 +4202,49 @@ def test_axis_aligned_bounding_boxes(n_envs):
 
     robot_vaabb = robot.get_vAABB()
     assert_allclose(robot_vaabb, robot_aabb, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["ellipsoid"])
+def test_ellipsoid(xml_path, show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.05,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.4, 0.4, 0.3),
+            camera_lookat=(0.0, 0.0, 0.1),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    entity = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            pos=(0, 0, 0.2),
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    entity.set_dofs_velocity(4 * np.random.rand(3), dofs_idx_local=slice(3, 6))
+    entity.set_dofs_kv(0.1, dofs_idx_local=slice(3, 6))
+    entity.control_dofs_velocity(0.0, dofs_idx_local=slice(3, 6))
+
+    # AABB must match the ellipsoid semi-axes
+    aabb = entity.get_AABB()
+    aabb_extent = aabb[1] - aabb[0]
+    assert_allclose(aabb_extent, (0.10, 0.10, 0.04), atol=1e-3)
+
+    # Free-fall onto plane: ellipsoid must come to rest
+    for _ in range(300):
+        scene.step()
+
+    assert_allclose(entity.get_dofs_velocity(), 0, tol=5e-3)
+    assert (-0.005 < entity.get_AABB()[0, 2] < 0.0).all()
+    roll, pitch, _yaw = gu.quat_to_xyz(entity.get_quat(), rpy=True)
+    assert_allclose((roll, pitch), (0.0, 0.0), tol=5e-3)
 
 
 @pytest.mark.slow  # ~150s
