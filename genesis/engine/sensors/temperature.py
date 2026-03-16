@@ -348,7 +348,9 @@ def _kernel_contact_heat(
             other_link = lb if la == sensor_link_idx else la
             mat_other = link_to_material_idx[other_link]
             if mat_other >= 0:
-                T_other = qd.select(use_link_temps, link_temps[i_b, other_link], link_base_temperature[mat_other])
+                T_other = link_base_temperature[mat_other]
+                if use_link_temps:
+                    T_other = link_temps[i_b, other_link]
                 k_other = link_conductivity[mat_other]
                 k_eff = _qd_k_eff(k_sensor, k_other, eps)
                 p_world = collider_state.contact_data.pos[i_c, i_b]
@@ -821,8 +823,7 @@ class TemperatureGridSensor(
         link_quat = tensor_to_array(link_quat).reshape(4)
         link_T = gu.trans_quat_to_T(link_pos, link_quat)
 
-        i_s = self._idx
-        voxel_size = tensor_to_array(self._shared_metadata.voxel_size[i_s]).reshape(3)
+        voxel_size = tensor_to_array(self._shared_metadata.voxel_size[self._idx]).reshape(3)
 
         # World poses: same rotation as link, translation = link_T @ local_pos
         world_trans = (link_T[:3, :3] @ self._debug_cell_local_positions.T).T + link_T[:3, 3]
