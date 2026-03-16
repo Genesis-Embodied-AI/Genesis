@@ -214,18 +214,21 @@ def _func_support_ellipsoid(
     pos: qd.types.vector(3, dtype=gs.qd_float),
     quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
-    ellipsoid_center = pos
-    ellipsoid_scaled_axis = qd.Vector(
-        [
-            geoms_info.data[i_g][0] ** 2,
-            geoms_info.data[i_g][1] ** 2,
-            geoms_info.data[i_g][2] ** 2,
-        ],
-        dt=gs.qd_float,
-    )
-    ellipsoid_scaled_axis = gu.qd_transform_by_quat(ellipsoid_scaled_axis, quat)
-    dist = ellipsoid_scaled_axis / qd.sqrt(d.dot(1.0 / ellipsoid_scaled_axis))
-    return ellipsoid_center + d * dist
+    a = geoms_info.data[i_g][0]
+    b = geoms_info.data[i_g][1]
+    c = geoms_info.data[i_g][2]
+
+    # Transform direction to ellipsoid local frame
+    d_local = gu.qd_inv_transform_by_quat(d, quat)
+
+    # Support point in local frame: diag(a², b², c²) · d_local / ‖diag(a, b, c) · d_local‖
+    sx = a * a * d_local[0]
+    sy = b * b * d_local[1]
+    sz = c * c * d_local[2]
+    norm = qd.sqrt(a * a * d_local[0] ** 2 + b * b * d_local[1] ** 2 + c * c * d_local[2] ** 2)
+    s_local = qd.Vector([sx / norm, sy / norm, sz / norm], dt=gs.qd_float)
+
+    return pos + gu.qd_transform_by_quat(s_local, quat)
 
 
 @qd.func

@@ -520,8 +520,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             tmesh = trimesh.creation.icosphere(radius=1.0, subdivisions=2)
         else:
             tmesh = trimesh.creation.icosphere(radius=1.0)
-        mesh_params = dict(vertices=tmesh.vertices, faces=tmesh.faces)
         tmesh.apply_transform(np.diag([*geom_size, 1]))
+        mesh_params = dict(vertices=tmesh.vertices, faces=tmesh.faces)
         uv = None
         gs_type = gs.GEOM_TYPE.ELLIPSOID
         geom_data = geom_size * scale
