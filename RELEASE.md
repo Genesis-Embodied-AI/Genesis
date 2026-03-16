@@ -1,5 +1,29 @@
 # Genesis Release Note
 
+## 0.4.3
+
+This release introduces more sensors while significantly speeding up collision detection on GPU (up to 30%). As usual, a few bugs have been fixed.
+
+### New Features
+
+* Add ProximitySensor. (@Milotrince) (#2550)
+* Add TemperatureGridSensor. (@Milotrince) (#2457)
+
+### Bug Fixes
+
+* Fix rendering FEM vertex normals in interactive viewer. (@duburcqa) (#2555)
+* Fix support of ellipsoid geometry. (@duburcqa) (#2554)
+* Fix mujoco compatible URDF parsing. (@duburcqa) (#2547)
+* Fix typing, validation, and compatibility issues with structured options. (@duburcqa) (#2548)
+
+### Miscellaneous
+
+* Speed up rigid collision detection on GPU for generic convex meshes. (@hughperkins) (#2527)
+* Fix spurious Quadrants compilation warnings. (@duburcqa) (#2546)
+* Improve typing of 'add_entity', 'add_sensor'. (@duburcqa) (#2552)
+* Add init/destroy registration mechanism for external modules. (@duburcqa) (#2551)
+* More flexible and reliable sensor plugin registration mechanism. (@duburcqa) (#2553)
+
 ## 0.4.2
 
 This release introduces a new type of tactile sensors based on [FOTS](https://arxiv.org/pdf/2404.19217), and add support of parallel simulation of heterogeneous articulated robots. Beyond that, the performance of the simulation has been significantly improved, especially when rigid option 'noslip' is enabled.
