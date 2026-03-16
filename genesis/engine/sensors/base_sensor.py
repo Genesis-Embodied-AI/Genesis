@@ -109,9 +109,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         if "_options_cls" in cls.__dict__:
             if "_metadata_cls" not in cls.__dict__:
                 raise TypeError(f"{cls.__name__} must specify Sensor[OptionsT, MetadataT, DataT=tuple].")
-            from genesis.options.sensors.options import SENSOR_TYPES_MAP
+            from .sensor_manager import SensorManager
 
-            SENSOR_TYPES_MAP[cls._options_cls] = cls
+            SensorManager.SENSOR_TYPES_MAP[cls._options_cls] = cls
 
     def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
         self._options: "SensorOptions" = sensor_options

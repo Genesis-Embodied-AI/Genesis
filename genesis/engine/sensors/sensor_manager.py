@@ -1,34 +1,36 @@
 import importlib
 import pkgutil
 import sys
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 
 import genesis as gs
-from genesis.options.sensors.options import SENSOR_TYPES_MAP
+from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
-    from genesis.options.sensors import SensorOptions
     from genesis.vis.rasterizer_context import RasterizerContext
 
     from .base_sensor import Sensor, SharedSensorMetadata
 
 
 class SensorManager:
+    # Maps sensor options class -> sensor class for runtime dispatch.
+    SENSOR_TYPES_MAP: dict[type[SensorOptions], type["Sensor"]] = {}
+
     def __init__(self, sim):
         self._sim = sim
-        self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
-        self._sensors_metadata: dict[Type["Sensor"], SharedSensorMetadata | None] = {}
-        self._ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
-        self._cache: dict[Type[torch.dtype], torch.Tensor] = {}
-        self._buffered_data: dict[Type[torch.dtype], TensorRingBuffer] = {}
-        self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
-        self._should_update_cache_by_type: dict[Type["Sensor"], bool] = {}
-        self._is_last_cache_cloned: dict[tuple[bool, Type[torch.dtype]], bool] = {}
-        self._cloned_cache: dict[tuple[bool, Type[torch.dtype]], torch.Tensor] = {}
+        self._sensors_by_type: dict[type["Sensor"], list["Sensor"]] = {}
+        self._sensors_metadata: dict[type["Sensor"], SharedSensorMetadata | None] = {}
+        self._ground_truth_cache: dict[type[torch.dtype], torch.Tensor] = {}
+        self._cache: dict[type[torch.dtype], torch.Tensor] = {}
+        self._buffered_data: dict[type[torch.dtype], TensorRingBuffer] = {}
+        self._cache_slices_by_type: dict[type["Sensor"], slice] = {}
+        self._should_update_cache_by_type: dict[type["Sensor"], bool] = {}
+        self._is_last_cache_cloned: dict[tuple[bool, type[torch.dtype]], bool] = {}
+        self._cloned_cache: dict[tuple[bool, type[torch.dtype]], torch.Tensor] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
         sensor_options.validate_scene(self._sim.scene)
@@ -41,32 +43,34 @@ class SensorManager:
         return sensor
 
     @staticmethod
-    def _resolve_sensor_cls(options_cls: type) -> Type["Sensor"]:
+    def _resolve_sensor_cls(options_cls: type) -> type["Sensor"]:
         """Resolve the sensor class for the given options class, triggering lazy discovery if needed."""
-        entry = SENSOR_TYPES_MAP.get(options_cls)
+        sensor_cls = SensorManager.SENSOR_TYPES_MAP.get(options_cls)
+        if sensor_cls is not None:
+            return sensor_cls
 
-        # Already resolved
-        if isinstance(entry, type):
-            return entry
-
-        # Pending — try to discover the sensor module from sibling modules of the options package
-        if isinstance(entry, tuple):
-            _sensor_class_name, options_module = entry
-            if "." in options_module:
-                pkg_name = options_module.rsplit(".", 1)[0]
-                pkg = sys.modules.get(pkg_name)
-                if pkg is not None:
-                    pkg_path = pkg.__dict__.get("__path__")
-                    if pkg_path is not None:
-                        for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
-                            if modname not in sys.modules:
-                                try:
-                                    importlib.import_module(modname)
-                                except Exception:
-                                    continue
-                            # Check if discovery succeeded (Sensor.__init_subclass__ overwrites tuple with class)
-                            if isinstance(SENSOR_TYPES_MAP.get(options_cls), type):
-                                return SENSOR_TYPES_MAP[options_cls]
+        # Not registered yet — try to discover the sensor module from sibling modules of the options package.
+        # The sensor class name is extracted from the pydantic generic metadata on the options class bases.
+        options_module = options_cls.__module__
+        if "." in options_module:
+            for base in options_cls.__bases__:
+                meta = base.__pydantic_generic_metadata__
+                if meta["origin"] is not None and issubclass(meta["origin"], SensorOptions):
+                    if meta["args"] and isinstance(meta["args"][0], str):
+                        pkg_name = options_module.rsplit(".", 1)[0]
+                        pkg = sys.modules.get(pkg_name)
+                        if pkg is not None:
+                            pkg_path = pkg.__dict__.get("__path__")
+                            if pkg_path is not None:
+                                for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
+                                    if modname not in sys.modules:
+                                        try:
+                                            importlib.import_module(modname)
+                                        except Exception:
+                                            continue
+                                    if options_cls in SensorManager.SENSOR_TYPES_MAP:
+                                        return SensorManager.SENSOR_TYPES_MAP[options_cls]
+                    break
 
         gs.raise_exception(
             f"No sensor class registered for {options_cls.__name__}. Ensure the sensor module is in the same "

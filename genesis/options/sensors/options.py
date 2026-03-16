@@ -43,11 +43,6 @@ else:
 SensorT = TypeVar("SensorT", bound="Sensor")
 CrossCouplingAxisType = RotationMatrixType | UnitIntervalVec3Type | float
 
-# Unified sensor type registry: options_cls -> sensor_cls or pending (sensor_name, options_module).
-# SensorOptions.__init_subclass__ writes pending tuples, Sensor.__init_subclass__ overwrites with the resolved class.
-# SensorManager reads from this, triggering lazy discovery when a pending tuple is found.
-SENSOR_TYPES_MAP: dict[type, type | tuple[str, str]] = {}
-
 
 class SensorOptions(Options, Generic[SensorT]):
     """
@@ -70,17 +65,6 @@ class SensorOptions(Options, Generic[SensorT]):
     delay: NonNegativeFloat = 0.0
     update_ground_truth_only: StrictBool = False
     draw_debug: StrictBool = False
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        for base in cls.__bases__:
-            meta = base.__pydantic_generic_metadata__
-            origin = meta["origin"]
-            if origin is not None and issubclass(origin, SensorOptions):
-                args = meta["args"]
-                if args and isinstance(args[0], str):
-                    SENSOR_TYPES_MAP.setdefault(cls, (args[0], cls.__module__))
-                break
 
     def validate_scene(self, scene: "Scene"):
         """

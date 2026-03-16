@@ -10,7 +10,7 @@ import random
 import sys
 from dataclasses import field
 from itertools import combinations
-from typing import Any, NoReturn, Optional, Type, Sequence
+from typing import Any, NoReturn, Optional, Sequence
 
 import cpuinfo
 import quadrants as qd
@@ -300,7 +300,7 @@ def tensor_to_cpu(x):
     return x
 
 
-def tensor_to_array(x: torch.Tensor, dtype: Type[np.generic] | None = None) -> np.ndarray:
+def tensor_to_array(x: torch.Tensor, dtype: type[np.generic] | None = None) -> np.ndarray:
     return np.asarray(tensor_to_cpu(x), dtype=dtype)
 
 

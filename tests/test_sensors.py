@@ -26,14 +26,13 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
     from genesis.engine.sensors.depth_camera import DepthCameraSensor
     from genesis.engine.sensors.imu import IMUSensor
     from genesis.engine.sensors.sensor_manager import SensorManager
-    from genesis.options.sensors.options import SENSOR_TYPES_MAP
 
     # Verify built-in registrations resolve to the exact sensor classes
-    assert SENSOR_TYPES_MAP[gs.sensors.Contact] is ContactSensor
-    assert SENSOR_TYPES_MAP[gs.sensors.IMU] is IMUSensor
-    assert SENSOR_TYPES_MAP[gs.sensors.RasterizerCameraOptions] is RasterizerCameraSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.Contact] is ContactSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.IMU] is IMUSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.RasterizerCameraOptions] is RasterizerCameraSensor
     # DepthCamera inherits from Raycaster without re-parameterizing, registered only by sensor side
-    assert SENSOR_TYPES_MAP[gs.sensors.DepthCamera] is DepthCameraSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.DepthCamera] is DepthCameraSensor
 
     # Create a fake plugin package in a temp directory
     pkg_dir = tmp_path / "fake_sensor_plugin"
@@ -100,15 +99,15 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         options_mod = importlib.import_module("fake_sensor_plugin.options")
         FakeSensorOptions = options_mod.FakeSensorOptions
 
-        # Verify it's pending (tuple, not yet resolved to a class)
-        assert SENSOR_TYPES_MAP[FakeSensorOptions] == ("FakeSensor", "fake_sensor_plugin.options")
+        # Verify it's not yet registered
+        assert FakeSensorOptions not in SensorManager.SENSOR_TYPES_MAP
 
         # Trigger lazy discovery via resolve
         sensor_cls = SensorManager._resolve_sensor_cls(FakeSensorOptions)
         assert sensor_cls.__name__ == "FakeSensor"
 
-        # Now the map entry should be the resolved class
-        assert SENSOR_TYPES_MAP[FakeSensorOptions] is sensor_cls
+        # Now it should be registered
+        assert SensorManager.SENSOR_TYPES_MAP[FakeSensorOptions] is sensor_cls
 
         # Verify it works end-to-end with a scene
         scene = gs.Scene(show_viewer=show_viewer)
@@ -123,7 +122,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         for mod_name in list(sys.modules):
             if mod_name.startswith("fake_sensor_plugin"):
                 del sys.modules[mod_name]
-        SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+        SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
 
 
 # ------------------------------------------------------------------------------------------
