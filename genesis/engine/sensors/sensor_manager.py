@@ -1,7 +1,7 @@
 import importlib
 import pkgutil
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ForwardRef, get_args, get_origin
 
 import numpy as np
 import torch
@@ -49,28 +49,45 @@ class SensorManager:
         if sensor_cls is not None:
             return sensor_cls
 
-        # Not registered yet — try to discover the sensor module from sibling modules of the options package.
-        # The sensor class name is extracted from the pydantic generic metadata on the options class bases.
+        # Not registered yet — check that the options class specifies its sensor type, then try to discover it.
+        # The sensor class name is extracted from the generic metadata on the options class bases.
+        is_parameterized = False
+        for base in options_cls.__bases__:
+            meta = base.__pydantic_generic_metadata__
+            if meta["origin"] is not None and issubclass(meta["origin"], SensorOptions):
+                is_parameterized = bool(meta["args"]) and isinstance(meta["args"][0], str)
+                break
+        # Fallback: typing introspection on __orig_bases__ (for pydantic versions that flatten bases)
+        if not is_parameterized:
+            for base in options_cls.__orig_bases__:
+                origin = get_origin(base)
+                if origin is not None and issubclass(origin, SensorOptions):
+                    args = get_args(base)
+                    is_parameterized = bool(args) and isinstance(args[0], (str, ForwardRef))
+                    break
+
+        if not is_parameterized:
+            gs.raise_exception(
+                f"{options_cls.__name__} must parameterize its SensorOptions base with a sensor class, "
+                f"e.g. `class {options_cls.__name__}(SensorOptions['MySensor']): ...`"
+            )
+
+        # Try to discover the sensor module from sibling modules of the options package.
         options_module = options_cls.__module__
         if "." in options_module:
-            for base in options_cls.__bases__:
-                meta = base.__pydantic_generic_metadata__
-                if meta["origin"] is not None and issubclass(meta["origin"], SensorOptions):
-                    if meta["args"] and isinstance(meta["args"][0], str):
-                        pkg_name = options_module.rsplit(".", 1)[0]
-                        pkg = sys.modules.get(pkg_name)
-                        if pkg is not None:
-                            pkg_path = pkg.__dict__.get("__path__")
-                            if pkg_path is not None:
-                                for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
-                                    if modname not in sys.modules:
-                                        try:
-                                            importlib.import_module(modname)
-                                        except Exception:
-                                            continue
-                                    if options_cls in SensorManager.SENSOR_TYPES_MAP:
-                                        return SensorManager.SENSOR_TYPES_MAP[options_cls]
-                    break
+            pkg_name = options_module.rsplit(".", 1)[0]
+            pkg = sys.modules.get(pkg_name)
+            if pkg is not None:
+                pkg_path = pkg.__dict__.get("__path__")
+                if pkg_path is not None:
+                    for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
+                        if modname not in sys.modules:
+                            try:
+                                importlib.import_module(modname)
+                            except Exception:
+                                continue
+                        if options_cls in SensorManager.SENSOR_TYPES_MAP:
+                            return SensorManager.SENSOR_TYPES_MAP[options_cls]
 
         gs.raise_exception(
             f"No sensor class registered for {options_cls.__name__}. Ensure the sensor module is in the same "

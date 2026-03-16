@@ -40,8 +40,10 @@ else:
         BeforeValidator(lambda v: v if _is_sequence(v) else (v,) * 3),
         Field(strict=False),
     ]
-SensorT = TypeVar("SensorT", bound="Sensor")
 CrossCouplingAxisType = RotationMatrixType | UnitIntervalVec3Type | float
+
+
+SensorT = TypeVar("SensorT", bound="Sensor")
 
 
 class SensorOptions(Options, Generic[SensorT]):

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, Type
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import quadrants as qd
