@@ -17,6 +17,7 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Teleop
 KEY_DPOS = 0.015
+FORCE_SCALE = 10.0
 
 # Proximity sensor
 MAX_RANGE = 0.5
@@ -31,7 +32,7 @@ BOX_QUAT = (1, 0, 0, 0)
 def main():
     parser = argparse.ArgumentParser(description="Interactive Proximity sensor with Shadow Hand")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("--gpu", action="store_true", default=False, help="Run on GPU instead of CPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
@@ -53,22 +54,25 @@ def main():
     )
 
     hand_pos_init = np.array([0.0, 0.0, 0.35], dtype=np.float32)
+    hand_quat_init = gu.euler_to_quat((0.0, 0.0, -90.0))
     robot = scene.add_entity(
         morph=gs.morphs.URDF(
             file="urdf/shadow_hand/shadow_hand.urdf",
             pos=hand_pos_init,
-            euler=(0.0, 0.0, -90.0),
+            quat=hand_quat_init,
         ),
     )
     duck = scene.add_entity(
         material=gs.materials.Rigid(),
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
-            pos=DUCK_POS,
             scale=0.06,
+            pos=DUCK_POS,
             quat=DUCK_QUAT,
         ),
-        surface=gs.surfaces.Default(color=(0.95, 0.75, 0.2, 1.0)),
+        surface=gs.surfaces.Default(
+            color=(0.95, 0.75, 0.2, 1.0),
+        ),
     )
     box = scene.add_entity(
         material=gs.materials.Rigid(),
@@ -76,7 +80,9 @@ def main():
             size=(0.06, 0.06, 0.08),
             pos=BOX_POS,
         ),
-        surface=gs.surfaces.Default(color=(0.3, 0.7, 0.4, 1.0)),
+        surface=gs.surfaces.Default(
+            color=(0.3, 0.7, 0.4, 1.0),
+        ),
     )
 
     sensors = []
@@ -103,6 +109,13 @@ def main():
     scene.build()
 
     hand_pos = hand_pos_init.copy()
+    if args.vis:
+        for obj in (duck, box):
+            obj.set_dofs_kv((0.8, 0.8, 0.8, 0.02, 0.02, 0.02))
+            obj.control_dofs_position(0.0)
+        robot.set_dofs_kp(FORCE_SCALE / KEY_DPOS)
+        robot.set_dofs_kv(0.1 * FORCE_SCALE / KEY_DPOS)
+        robot.control_dofs_position(robot.get_dofs_position())
 
     # Register keybindings
     is_running = True
@@ -112,26 +125,23 @@ def main():
             nonlocal is_running
             is_running = False
 
-        def move(delta: tuple[float, float, float]):
-            hand_pos[0] += delta[0]
-            hand_pos[1] += delta[1]
-            hand_pos[2] += delta[2]
-            hand_pos[2] = max(0.05, min(0.6, hand_pos[2]))
+        def translate(index: int, is_negative: bool):
+            hand_pos[index] += (-1 if is_negative else 1) * KEY_DPOS
 
         def reset_pose():
-            hand_pos[:] = hand_pos_init
+            robot.set_pos(hand_pos_init)
             duck.set_pos(DUCK_POS)
             duck.set_quat(DUCK_QUAT)
             box.set_pos(BOX_POS)
             box.set_quat(BOX_QUAT)
 
         scene.viewer.register_keybinds(
-            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=move, args=((KEY_DPOS, 0, 0),)),
-            Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((-KEY_DPOS, 0, 0),)),
-            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, -KEY_DPOS, 0),)),
-            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, KEY_DPOS, 0),)),
-            Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -KEY_DPOS),)),
-            Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, KEY_DPOS),)),
+            Keybind("move_forward", Key.UP, KeyAction.HOLD, callback=translate, args=(0, False)),
+            Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=translate, args=(0, True)),
+            Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=translate, args=(1, True)),
+            Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
+            Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
+            Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
             Keybind("reset", Key.U, KeyAction.PRESS, callback=reset_pose),
             Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
         )
@@ -148,7 +158,7 @@ def main():
     try:
         while is_running:
             if args.vis:
-                robot.set_pos(hand_pos)
+                robot.control_dofs_position(hand_pos, dofs_idx_local=slice(0, 3))
             else:
                 distances = []
                 for sensor in sensors:

@@ -3,9 +3,8 @@ from pathlib import PurePath
 from typing import TYPE_CHECKING, Annotated, Mapping, Sequence
 
 import numpy as np
-
-from pydantic import Field, BeforeValidator, GetPydanticSchema
-from pydantic_core import core_schema, PydanticCustomError
+from pydantic import BeforeValidator, Field, GetPydanticSchema
+from pydantic_core import PydanticCustomError, core_schema
 
 
 def _coerce_int(v):
@@ -79,6 +78,7 @@ if TYPE_CHECKING:
     UnitVec3FLaxArrayType = Vec3FLaxArrayType
     RotationMatrixType = Vec3FArrayType
     Matrix4x4Type = Sequence[Sequence[NumericType]] | np.ndarray
+    Grid3DFloatType = Sequence[Sequence[Sequence[ValidFloat]]] | np.ndarray
     StrArrayType = Sequence[str]
     NDArrayType = np.ndarray
     PathType = str | PurePath
@@ -150,6 +150,10 @@ else:
         tuple[Vec4FType, Vec4FType, Vec4FType, Vec4FType],
         BeforeValidator(lambda v: tuple(tuple(row) for row in v) if isinstance(v, np.ndarray) else v),
         Field(strict=False),
+    ]
+    Grid3DFloatType = Annotated[
+        tuple[tuple[tuple[ValidFloat, ...], ...], ...],
+        Field(min_length=1, strict=False),
     ]
     NDArrayType = Annotated[
         np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))

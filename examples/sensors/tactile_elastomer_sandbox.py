@@ -9,8 +9,8 @@ import numpy as np
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.misc import tensor_to_array
 from genesis.recorders.plotters import IS_MATPLOTLIB_AVAILABLE
+from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Teleop
@@ -204,8 +204,8 @@ def main():
         pusher.set_dofs_kv(1.0, dofs_idx_local=slice(3, 6))
     pusher.control_dofs_position(pusher.get_dofs_position())
 
-    is_running = True
     # Register keybindings
+    is_running = True
     if args.vis:
         target_pos = pusher_pos_init.copy()
         obj_idx = 0
@@ -244,7 +244,6 @@ def main():
             Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
         )
 
-    # ── Print info ─────────────────────────────────────────────────────
     print("\n=== Interactive ElastomerDisplacementSensor ===")
     print(f"Sandbox {SANDBOX_SIZE}m × {SANDBOX_SIZE}m; pusher box with {tactile.n_probes} probes")
 
@@ -262,8 +261,6 @@ def main():
     print()
 
     # Simulation loop
-    num_steps = int(args.seconds / scene.sim_options.dt) if not args.vis else None
-
     try:
         while is_running:
             if args.vis:
@@ -279,7 +276,7 @@ def main():
 
             if "PYTEST_VERSION" in os.environ:
                 break
-            if not args.vis and scene.sim.substeps >= num_steps:
+            if not args.vis and scene.t > args.seconds:
                 break
     except KeyboardInterrupt:
         gs.logger.info("Simulation interrupted.")
