@@ -1814,3 +1814,36 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     for env_rgb in (rgb, rgb_debug):
         env_diff = np.abs(env_rgb[0].astype(np.float32) - env_rgb[1].astype(np.float32))
         assert env_diff.mean() > 5.0, "Per-env renders are too similar — env isolation may be broken"
+
+
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RAYTRACER])
+def test_raytracer_custom_lights(show_viewer):
+    scene = gs.Scene(
+        renderer=gs.renderers.RayTracer(
+            lights=[
+                # Light at z=3 with radius=3 puts the emissive mesh right at the ground plane (z=0).
+                # Sphere lights near scene geometry used to produce 100% NaN (all-white) frames.
+                {"pos": (0.0, -0.25, 3.0), "radius": 3.0, "color": (1.2, 1.0, 0.8), "intensity": 5.0},
+            ],
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    scene.add_entity(morph=gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    camera = scene.add_camera(
+        res=(320, 240),
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=30,
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    rgb, _, _, _ = camera.render(rgb=True, depth=False, segmentation=False, normal=False)
+    rgb = tensor_to_array(rgb).astype(np.float32)
+
+    # An all-white frame (every pixel == 255) is the NaN symptom. A valid render has
+    # a mix of values: dark background, lit surfaces, shadows, etc.
+    assert rgb.std() > 1.0, "RGB std too low — frame is likely all-white (NaN symptom)"
+    assert rgb.min() < 200, "RGB min too high — frame is likely all-white (NaN symptom)"

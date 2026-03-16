@@ -24,6 +24,11 @@ logging_class = {
 }
 rigid_as_deformable = True
 sphere_light_as_mesh = True
+# Fixed emissive mesh radius to avoid NaN in LuisaRender path tracer.
+# LuisaRender produces NaN when an emissive mesh is close to other scene geometry.
+# A small radius avoids this; the emission intensity is scaled by the area ratio
+# to preserve total light output.
+_LIGHT_MESH_RADIUS = 0.1
 
 
 class EnvironmentSphere:
@@ -154,11 +159,13 @@ class Raytracer:
         # light objects
         self.lights = []
         for light in options.lights:
+            # Scale emission intensity by area ratio to compensate for using a smaller mesh radius.
+            area_scale = (light.radius / _LIGHT_MESH_RADIUS) ** 2
             light_surface = gs.surfaces.Emission(
-                color=tuple(x * light.intensity for x in light.color),
+                color=tuple(x * light.intensity * area_scale for x in light.color),
             )
             light_surface.update_texture()
-            self.lights.append(SphereLight(radius=light.radius, pos=light.pos, surface=light_surface))
+            self.lights.append(SphereLight(radius=_LIGHT_MESH_RADIUS, pos=light.pos, surface=light_surface))
 
         # backend and device selection: aligning with genesis if possible
         backend = gs.backend.name

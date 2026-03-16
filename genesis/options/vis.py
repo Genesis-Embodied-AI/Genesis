@@ -1,5 +1,4 @@
-from typing import Annotated, Literal
-
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Mapping, Sequence, Union
 from pydantic import StrictBool, StrictInt, Field, model_validator
 
 import genesis as gs
@@ -7,6 +6,14 @@ from genesis.datatypes import List
 from genesis.typing import IArrayType, PositiveFloat, PositiveInt, PositiveVec2IType, Vec3FType, UnitIntervalVec3Type
 
 from .options import Options
+
+
+if TYPE_CHECKING:
+    LightType = Union[Mapping[str, Any], "DirectionalLight", "PointLight", "AmbientLight"]
+    LightArray = Sequence[LightType]
+else:
+    LightType = Annotated["DirectionalLight | PointLight | AmbientLight", Field(discriminator="type")]
+    LightArray = Annotated[List[LightType], Field(strict=False)]
 
 
 class ViewerOptions(Options):
@@ -73,9 +80,6 @@ class AmbientLight(Options):
     type: Literal["ambient"] = "ambient"
     color: UnitIntervalVec3Type
     intensity: float
-
-
-LightType = Annotated[DirectionalLight | PointLight | AmbientLight, Field(discriminator="type")]
 
 
 class VisOptions(Options):
@@ -152,9 +156,7 @@ class VisOptions(Options):
     contact_force_scale: PositiveFloat = 0.01
     n_support_neighbors: StrictInt = 12
     rendered_envs_idx: IArrayType | None = None
-    lights: Annotated[List[LightType], Field(strict=False)] = List(
-        (DirectionalLight(dir=(-1, -1, -1), color=(1.0, 1.0, 1.0), intensity=5.0),)
-    )
+    lights: LightArray = List((DirectionalLight(dir=(-1, -1, -1), color=(1.0, 1.0, 1.0), intensity=5.0),))
 
     @model_validator(mode="before")
     @classmethod
