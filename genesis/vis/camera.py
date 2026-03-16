@@ -486,7 +486,9 @@ class Camera(RBC):
                 ((rgb, rgb_arr), (depth, depth_arr), (segmentation, seg_color_arr), (normal, normal_arr))
             ):
                 if flag:
-                    if self._is_batched:
+                    if self._is_batched or (
+                        self._visualizer._context.env_separate_rigid and self._visualizer.scene.n_envs > 1
+                    ):
                         buffer = buffer[0]
                     buffer = tensor_to_array(buffer)
                     if img_type == IMAGE_TYPE.DEPTH:
@@ -503,7 +505,12 @@ class Camera(RBC):
                     "Missing frames in recording. Please call 'camera.render()' after 'every scene.step()'."
                 )
             self._recorded_t_prev == self._visualizer.scene._t
-            self._recorded_imgs.append(tensor_to_array(rgb_arr))
+            rgb_frame = tensor_to_array(rgb_arr)
+            if not self._is_batched and (
+                self._visualizer._context.env_separate_rigid and self._visualizer.scene.n_envs > 1
+            ):
+                rgb_frame = rgb_frame[0]
+            self._recorded_imgs.append(rgb_frame)
 
         return rgb_arr if rgb else None, depth_arr, seg_arr, normal_arr
 

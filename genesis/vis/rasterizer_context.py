@@ -307,13 +307,17 @@ class RasterizerContext:
         if not self.link_frame_shown:
             if self.sim.rigid_solver.is_active:
                 links = self.sim.rigid_solver.links
-                links_pos = qd_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
-                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat)
+                links_pos = (
+                    qd_to_numpy(self.sim.rigid_solver.links_state.pos, transpose=True) + self.scene.envs_offset[:, None]
+                )
+                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, transpose=True)
 
                 for link in links:
+                    link_pos = links_pos[self.rendered_envs_idx, link.idx]
+                    link_quat = links_quat[self.rendered_envs_idx, link.idx]
                     mesh = pyrender.Mesh.from_trimesh(
                         mesh=self.link_frame_mesh,
-                        poses=gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx]),
+                        poses=gu.trans_quat_to_T(link_pos, link_quat),
                         env_shared=not self.env_separate_rigid,
                         is_marker=True,
                     )
@@ -330,15 +334,20 @@ class RasterizerContext:
     def update_link_frame(self, buffer_updates):
         if self.link_frame_shown:
             if self.sim.rigid_solver.is_active:
-                links = self.sim.rigid_solver.links
+                links_pos = (
+                    qd_to_numpy(self.sim.rigid_solver.links_state.pos, transpose=True) + self.scene.envs_offset[:, None]
+                )
+                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, transpose=True)
 
-                links_pos = qd_to_numpy(self.sim.rigid_solver.links_state.pos) + self.scene.envs_offset
-                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat)
-
-                for link in links:
-                    link_T = gu.trans_quat_to_T(links_pos[link.idx], links_quat[link.idx])
-                    node = self._scene.get_buffer_id(self.link_frame_nodes[link.uid], "model")
-                    buffer_updates[node] = link_T.transpose((0, 2, 1))
+                for link in self.sim.rigid_solver.links:
+                    link_T = gu.trans_quat_to_T(
+                        links_pos[self.rendered_envs_idx, link.idx], links_quat[self.rendered_envs_idx, link.idx]
+                    )
+                    node = self.link_frame_nodes[link.uid]
+                    node.mesh.primitives[0].poses = link_T
+                    buf_id = self._scene.get_buffer_id(node, "model")
+                    if buf_id >= 0:
+                        buffer_updates[buf_id] = link_T.transpose((0, 2, 1))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active:
@@ -457,45 +466,47 @@ class RasterizerContext:
     def update_contact(self, buffer_updates):
         if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):
             # Extract all contact information at once
-            contacts_info = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
-
-            # Only visualize contact for the first scene
-            batch_idx = 0
-            if self.sim.rigid_solver.n_envs > 0:
-                contacts_info = {key: value[batch_idx] for key, value in contacts_info.items()}
-
-            # Early return if no contact
-            n_contacts = len(contacts_info["geom_a"])
-            if n_contacts == 0:
-                return
-
+            contacts_info_all = self.sim.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             geoms_aabb = qd_to_numpy(self.sim.rigid_solver.geoms_init_AABB)
-            ga_aabb = geoms_aabb[contacts_info["geom_a"]]
-            gb_aabb = geoms_aabb[contacts_info["geom_b"]]
-            ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
-            gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
-            normal_scale = np.minimum(ga_aabb_size, gb_aabb_size)
 
-            contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
-            contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
-            contact_force = contacts_info["force"]
+            for env_i, batch_idx in enumerate(self.rendered_envs_idx):
+                if self.sim.rigid_solver.n_envs > 0:
+                    contacts_info = {key: value[batch_idx] for key, value in contacts_info_all.items()}
+                else:
+                    contacts_info = contacts_info_all
 
-            for i_c in range(n_contacts):
-                for link_idx, sign in (
-                    (contacts_info["link_a"][i_c], -1),
-                    (contacts_info["link_b"][i_c], 1),
-                ):
-                    if self.sim.rigid_solver.links[link_idx].visualize_contact:
-                        self.draw_contact_arrow(
-                            pos=contact_pos[i_c],
-                            force=sign * contact_force[i_c],
-                        )
-                        self.draw_debug_arrow(
-                            pos=contact_pos[i_c],
-                            vec=-sign * contact_normal_scaled[i_c],
-                            color=(0.9, 0.0, 0.8, 1.0),
-                            persistent=False,
-                        )
+                n_contacts = len(contacts_info["geom_a"])
+                if n_contacts == 0:
+                    continue
+
+                ga_aabb = geoms_aabb[contacts_info["geom_a"]]
+                gb_aabb = geoms_aabb[contacts_info["geom_b"]]
+                ga_aabb_size = np.linalg.norm(ga_aabb[:, -1] - ga_aabb[:, 0], axis=1)
+                gb_aabb_size = np.linalg.norm(gb_aabb[:, -1] - gb_aabb[:, 0], axis=1)
+                normal_scale = np.minimum(ga_aabb_size, gb_aabb_size)
+
+                contact_pos = contacts_info["position"] + self.scene.envs_offset[batch_idx]
+                contact_normal_scaled = contacts_info["normal"] * normal_scale[:, None]
+                contact_force = contacts_info["force"]
+
+                for i_c in range(n_contacts):
+                    for link_idx, sign in (
+                        (contacts_info["link_a"][i_c], -1),
+                        (contacts_info["link_b"][i_c], 1),
+                    ):
+                        if self.sim.rigid_solver.links[link_idx].visualize_contact:
+                            self.draw_contact_arrow(
+                                pos=contact_pos[i_c],
+                                force=sign * contact_force[i_c],
+                                env_idx=env_i,
+                            )
+                            self.draw_debug_arrow(
+                                pos=contact_pos[i_c],
+                                vec=-sign * contact_normal_scaled[i_c],
+                                color=(0.9, 0.0, 0.8, 1.0),
+                                persistent=False,
+                                env_idx=env_i,
+                            )
 
     def on_mpm(self):
         if self.sim.mpm_solver.is_active:
@@ -808,17 +819,31 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_debug_arrow(self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
+    def draw_debug_arrow(
+        self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True, env_idx=None
+    ):
         length = np.linalg.norm(vec)
         if length > 0:
             mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
 
-            pose = np.zeros((1, 4, 4), dtype=np.float32)
-            pose[0, 3, 3] = 1.0
-            pose[0, :3, 3] = tensor_to_array(pos)
-            gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=pose[0, :3, :3])
+            # Build per-env poses when env_idx is specified for env_separate rendering
+            if env_idx is not None and self.env_separate_rigid:
+                n_envs = len(self.rendered_envs_idx)
+                poses = np.zeros((n_envs, 4, 4), dtype=np.float32)
+                poses[env_idx, 3, 3] = 1.0
+                poses[env_idx, :3, 3] = tensor_to_array(pos)
+                gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=poses[env_idx, :3, :3])
+                env_shared = False
+            else:
+                poses = np.zeros((1, 4, 4), dtype=np.float32)
+                poses[0, 3, 3] = 1.0
+                poses[0, :3, 3] = tensor_to_array(pos)
+                gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=poses[0, :3, :3])
+                env_shared = True
 
-            node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_arrow_{gs.UID()}", poses=pose, is_marker=True)
+            node = pyrender.Mesh.from_trimesh(
+                mesh, name=f"debug_arrow_{gs.UID()}", poses=poses, env_shared=env_shared, is_marker=True
+            )
             if persistent:
                 self.add_external_node(node)
             else:
@@ -857,9 +882,14 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0)):
+    def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0), env_idx=None):
         self.draw_debug_arrow(
-            pos, tensor_to_array(force) * self.contact_force_scale, radius, color=color, persistent=False
+            pos,
+            tensor_to_array(force) * self.contact_force_scale,
+            radius,
+            color=color,
+            persistent=False,
+            env_idx=env_idx,
         )
 
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):

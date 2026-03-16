@@ -165,7 +165,6 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
 def test_rasterizer_batched(show_viewer, png_snapshot):
     scene = gs.Scene(
         show_viewer=show_viewer,
@@ -209,7 +208,6 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
 def test_rasterizer_attached_batched(show_viewer, png_snapshot):
     scene = gs.Scene(show_viewer=show_viewer)
 

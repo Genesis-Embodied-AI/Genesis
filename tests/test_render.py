@@ -360,6 +360,9 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
 )
 @pytest.mark.parametrize("n_envs", [0, 4])
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
+    # Small discrepencies between different hardware due the different physics integration
+    png_snapshot.extension._std_err_threshold = 1.2
+
     CAM_RES = (256, 256)
     DIFF_TOL = 0.01
     NUM_STEPS = 5
@@ -978,6 +981,7 @@ def test_draw_debug(renderer, show_viewer):
         up=(0.0, 0.0, 1.0),
         res=(640, 640),
         env_idx=2,
+        debug=True,
         GUI=show_viewer,
     )
     scene.build(n_envs=3)
@@ -1661,3 +1665,98 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
 
     data = camera_sensor.read()
     assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("show_viewer", [False, True])
+def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
+    if show_viewer and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip("Interactive viewer not supported on this platform.")
+
+    CAM_RES = (256, 256)
+    N_ENVS = 4
+    RENDERED_ENVS = [1, 2]
+
+    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
+    # Each env has a distinct pose so per-env renders differ visually.
+    QPOS_PER_ENV = [
+        [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
+        [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
+        [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
+        [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
+    ]
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=RENDERED_ENVS,
+            env_separate_rigid=True,
+            show_world_frame=True,
+            show_link_frame=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 0.2, 1.5),
+            camera_lookat=(0.0, 0.0, 0.4),
+            res=CAM_RES,
+            run_in_thread=False,
+            enable_default_keybinds=False,
+            enable_help_text=False,
+        ),
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            # Add small negative offset to force contact with the ground
+            pos=(0.0, 0.0, -0.01),
+        ),
+        visualize_contact=True,
+    )
+
+    cam = scene.add_camera(res=CAM_RES, pos=(3.5, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=30)
+    cam_debug = scene.add_camera(res=CAM_RES, pos=(3.5, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=30, debug=True)
+    scene.build(n_envs=N_ENVS, env_spacing=(0.3, 0.3))
+
+    franka.set_dofs_position(QPOS_PER_ENV)
+    scene.step()
+
+    # Capture viewer screenshot when the interactive viewer is enabled
+    if show_viewer:
+        pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+        assert pyrender_viewer.is_active
+        pyrender_viewer.switch_to()
+        pyrender_viewer.on_draw()
+        viewer_rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+        assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
+
+    # Render both cameras
+    rgb, *_ = cam.render(rgb=True)
+    rgb_debug, *_ = cam_debug.render(rgb=True)
+
+    # With env_separate_rigid, renders are batched: (n_rendered_envs, H, W, 3)
+    assert rgb.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+    assert rgb_debug.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
+    for i in range(len(RENDERED_ENVS)):
+        assert rgb_array_to_png_bytes(rgb[i]) == png_snapshot
+
+    # Debug camera SHOULD show markers (frames, contact arrows) — snapshot per env validates markers
+    for i in range(len(RENDERED_ENVS)):
+        assert rgb_array_to_png_bytes(rgb_debug[i]) == png_snapshot
+
+    # Debug and non-debug must differ: markers add pixels that change between the two
+    for i in range(len(RENDERED_ENVS)):
+        marker_diff = np.abs(rgb[i].astype(np.float32) - rgb_debug[i].astype(np.float32))
+        n_diff_pixels = np.sum(marker_diff.max(axis=-1) > 0)
+        assert n_diff_pixels > 100, (
+            f"Debug and non-debug too similar for env {i} ({n_diff_pixels} pixels differ) — markers not visible"
+        )
+
+    # Per-env renders must differ since robots have different joint configurations
+    for env_rgb in (rgb, rgb_debug):
+        env_diff = np.abs(env_rgb[0].astype(np.float32) - env_rgb[1].astype(np.float32))
+        assert env_diff.mean() > 5.0, "Per-env renders are too similar — env isolation may be broken"

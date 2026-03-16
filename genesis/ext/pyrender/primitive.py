@@ -460,8 +460,9 @@ class Primitive(object):
             GL_STREAM_DRAW if self.stream_poses else GL_STATIC_DRAW,
         )
 
+        self._inst_attr_start = len(attr_sizes)
         for i in range(0, 4):
-            idx = i + len(attr_sizes)
+            idx = i + self._inst_attr_start
             glEnableVertexAttribArray(idx)
             glVertexAttribPointer(idx, 4, GL_FLOAT, GL_FALSE, FLOAT_SZ * 4 * 4, ctypes.c_void_p(4 * FLOAT_SZ * i))
             glVertexAttribDivisor(idx, 1)
