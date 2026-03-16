@@ -213,7 +213,7 @@ def _qd_polygon_area_from_points_3d(
     return area
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -290,7 +290,7 @@ def _qd_k_eff(k_a: gs.qd_float, k_b: gs.qd_float, eps: gs.qd_float) -> gs.qd_flo
     return 2.0 * k_a * k_b / (k_a + k_b + eps)
 
 
-@qd.kernel
+@qd.kernel(fastcache=True)
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -594,13 +594,15 @@ class TemperatureGridSensor(
                 self._shared_metadata.link_temps.copy_(base_T_per_link.unsqueeze(0).expand(n_batches, -1))
 
         # Per-sensor properties
+        assert self._link is not None
         aabb_world = self._link.get_AABB()
         if aabb_world.ndim == 2:
             aabb_world = aabb_world.unsqueeze(0)  # (1, 2, 3)
         aabb_min_w = aabb_world[0, 0]  # (3,)
         aabb_max_w = aabb_world[0, 1]  # (3,)
-        link_pos = self._link.get_pos(0)
-        link_quat = self._link.get_quat(0)
+        link_pos, link_quat = self._link.get_pos(), self._link.get_quat()
+        if link_pos.ndim == 2:
+            link_pos, link_quat = link_pos[0], link_quat[0]
         aabb_min_local = gu.inv_transform_by_trans_quat(aabb_min_w, link_pos, link_quat)
         aabb_max_local = gu.inv_transform_by_trans_quat(aabb_max_w, link_pos, link_quat)
         aabb_extent = (aabb_max_local - aabb_min_local).reshape(3)

@@ -84,7 +84,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 pass
 
             @classmethod
-            def reset(cls, metadata, envs_idx):
+            def reset(cls, metadata, shared_ground_truth_cache, envs_idx):
                 pass
 
             def build(self):

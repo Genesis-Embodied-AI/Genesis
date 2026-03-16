@@ -32,7 +32,7 @@ BOX_QUAT = (1, 0, 0, 0)
 def main():
     parser = argparse.ArgumentParser(description="Interactive Proximity sensor with Shadow Hand")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
-    parser.add_argument("--gpu", action="store_true", help="Run on GPU instead of CPU")
+    parser.add_argument("--gpu", action="store_true", default=False, help="Run on GPU instead of CPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
     args = parser.parse_args()
 
@@ -66,11 +66,13 @@ def main():
         material=gs.materials.Rigid(),
         morph=gs.morphs.Mesh(
             file="meshes/duck.obj",
-            pos=DUCK_POS,
             scale=0.06,
+            pos=DUCK_POS,
             quat=DUCK_QUAT,
         ),
-        surface=gs.surfaces.Default(color=(0.95, 0.75, 0.2, 1.0)),
+        surface=gs.surfaces.Default(
+            color=(0.95, 0.75, 0.2, 1.0),
+        ),
     )
     box = scene.add_entity(
         material=gs.materials.Rigid(),
@@ -78,7 +80,9 @@ def main():
             size=(0.06, 0.06, 0.08),
             pos=BOX_POS,
         ),
-        surface=gs.surfaces.Default(color=(0.3, 0.7, 0.4, 1.0)),
+        surface=gs.surfaces.Default(
+            color=(0.3, 0.7, 0.4, 1.0),
+        ),
     )
 
     sensors = []
@@ -106,8 +110,11 @@ def main():
 
     hand_pos = hand_pos_init.copy()
     if args.vis:
-        robot.set_dofs_kp(FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
-        robot.set_dofs_kv(0.1 * FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
+        for obj in (duck, box):
+            obj.set_dofs_kv((0.8, 0.8, 0.8, 0.02, 0.02, 0.02))
+            obj.control_dofs_position(0.0)
+        robot.set_dofs_kp(FORCE_SCALE / KEY_DPOS)
+        robot.set_dofs_kv(0.1 * FORCE_SCALE / KEY_DPOS)
         robot.control_dofs_position(robot.get_dofs_position())
 
     # Register keybindings
@@ -151,7 +158,6 @@ def main():
     try:
         while is_running:
             if args.vis:
-                robot.set_quat(hand_quat_init)
                 robot.control_dofs_position(hand_pos, dofs_idx_local=slice(0, 3))
             else:
                 distances = []
