@@ -23,7 +23,6 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
@@ -513,20 +512,13 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
 
 
-@register_sensor(TemperatureGridOptions, TemperatureGridSensorMetadata, tuple)
 class TemperatureGridSensor(
     RigidSensorMixin[TemperatureGridSensorMetadata],
     NoisySensorMixin[TemperatureGridSensorMetadata],
-    Sensor[TemperatureGridSensorMetadata],
+    Sensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
-    def __init__(
-        self,
-        sensor_options: TemperatureGridOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, sensor_options: TemperatureGridOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._link: "RigidLink | None" = None
         self._debug_objects: list = []
