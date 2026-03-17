@@ -18,12 +18,11 @@ import argparse
 import os
 
 import numpy as np
+from huggingface_hub import snapshot_download
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.vis.keybindings import Key, KeyAction, Keybind
-from huggingface_hub import snapshot_download
-
 
 DELTA_POS = 0.003
 DELTA_ROT = 0.02
@@ -220,18 +219,18 @@ def main():
         Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((DELTA_POS, 0, 0),)),
         Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -DELTA_POS, 0),)),
         Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, DELTA_POS, 0),)),
-        Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, DELTA_POS),)),
-        Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -DELTA_POS),)),
-        Keybind("yaw_left", Key.J, KeyAction.HOLD, callback=rotate, args=(2, DELTA_ROT)),
-        Keybind("yaw_right", Key.K, KeyAction.HOLD, callback=rotate, args=(2, -DELTA_ROT)),
+        Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, DELTA_POS),)),
+        Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -DELTA_POS),)),
+        Keybind("yaw_left", Key.N, KeyAction.HOLD, callback=rotate, args=(2, DELTA_ROT)),
+        Keybind("yaw_right", Key.M, KeyAction.HOLD, callback=rotate, args=(2, -DELTA_ROT)),
         Keybind("pitch_up", Key.U, KeyAction.HOLD, callback=rotate, args=(1, DELTA_ROT)),
         Keybind("pitch_down", Key.O, KeyAction.HOLD, callback=rotate, args=(1, -DELTA_ROT)),
         Keybind("roll_left", Key.L, KeyAction.HOLD, callback=rotate, args=(0, DELTA_ROT)),
         Keybind("roll_right", Key.SEMICOLON, KeyAction.HOLD, callback=rotate, args=(0, -DELTA_ROT)),
-        Keybind("reset_scene", Key.G, KeyAction.PRESS, callback=reset_scene),
+        Keybind("reset_scene", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_scene),
         Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=set_gripper, args=(True,)),
         Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=set_gripper, args=(False,)),
-        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         overwrite=True,
     )
 

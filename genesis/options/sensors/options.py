@@ -373,7 +373,7 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSens
         self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
 
 
-class ProximityOptions(RigidSensorOptionsMixin["ProximitySensor"], NoisySensorOptionsMixin["ProximitySensor"]):
+class Proximity(RigidSensorOptionsMixin["ProximitySensor"], NoisySensorOptionsMixin["ProximitySensor"]):
     """
     Proximity sensor that reports distance and nearest point from probe positions to tracked mesh surfaces.
 
@@ -409,7 +409,7 @@ class ProximityOptions(RigidSensorOptionsMixin["ProximitySensor"], NoisySensorOp
         n_links = scene.sim.rigid_solver.n_links
         for i, link_idx in enumerate(self.track_link_idx):
             if not (0 <= link_idx < n_links):
-                gs.raise_exception(f"ProximityOptions.track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")
+                gs.raise_exception(f"Proximity sensor track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")
 
 
 class Raycaster(RigidSensorOptionsMixin["RaycasterSensor"]):

@@ -9,7 +9,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_verts
-from genesis.options.sensors import ProximityOptions
+from genesis.options.sensors import Proximity as ProximityOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices
 

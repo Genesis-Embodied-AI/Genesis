@@ -358,7 +358,13 @@ class Viewer(pyglet.window.Window):
             self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
             self._message_opac = 1.0 + self._ticks_till_fade
             self.register_keybinds(
-                Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions, protected=True)
+                Keybind(
+                    HELP_TEXT_KEYBIND_NAME,
+                    HELP_TEXT_KEY,
+                    callback=self._toggle_instructions,
+                    protected=True,
+                    allow_overload=True,
+                )
             )
 
         # Setup viewer plugins
@@ -869,9 +875,10 @@ class Viewer(pyglet.window.Window):
 
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
-        self._held_keys[(symbol, modifiers)] = True
+        if (symbol, modifiers) not in self._held_keys:
+            self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
 
-        self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
+        self._held_keys[(symbol, modifiers)] = True
 
     def on_key_release(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key release."""
@@ -1366,7 +1373,7 @@ class Viewer(pyglet.window.Window):
             # f"{'[' + get_keycode_string(kb.key_code):>{7}}]: " + kb.name.replace("_", " ")
             f"{'[' + str(kb.key):>{7}}]: " + kb.name.replace("_", " ")
             for kb in self._keybindings.keybinds
-            if kb.name != HELP_TEXT_KEYBIND_NAME and kb.key_action != KeyAction.RELEASE
+            if kb.name != HELP_TEXT_KEYBIND_NAME
         ]
 
     def _toggle_instructions(self):

@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, Any
-
+from typing import Any, Callable
 
 import genesis as gs
 
@@ -242,6 +241,12 @@ class KeyMod(LabeledIntEnum):
 
 
 class KeyAction(LabeledIntEnum):
+    """
+    PRESS is triggered once when the key is initially pressed down.
+    HOLD is triggered repeatedly while the key is held down.
+    RELEASE is triggered once when the key is released.
+    """
+
     PRESS = 0, "press"
     HOLD = 1, "hold"
     RELEASE = 2, "release"
@@ -270,7 +275,7 @@ def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int
     int
         A unique hash for this key combination.
     """
-    return hash((key_code, modifiers, action in (KeyAction.PRESS, KeyAction.HOLD)))
+    return hash((key_code, modifiers, action))
 
 
 @dataclass
@@ -294,8 +299,13 @@ class Keybind:
         Positional arguments to pass to the callback.
     kwargs : dict
         Keyword arguments to pass to the callback.
-    protected : dict
+    protected : bool
         Whether this keybind can be overwritten without being deleted first.
+    allow_overload : bool
+        Whether this key can be shared with keybinds of a different action type (e.g. PRESS
+        and RELEASE on the same key). When False, any other keybind using the same key is
+        treated as a conflict: replaced if ``overwrite=True`` and the other keybind is not
+        protected, otherwise an error is raised.
     """
 
     name: str
@@ -306,6 +316,7 @@ class Keybind:
     args: tuple[Any, ...] = ()
     kwargs: dict = field(default_factory=dict)
     protected: bool = False
+    allow_overload: bool = True
 
     _modifiers: int | None = field(default=None, init=False, repr=False)
 
@@ -329,10 +340,15 @@ class Keybindings:
             self._keybinds[kb.name] = kb
 
     def register(self, keybind: Keybind, overwrite: bool) -> None:
-        for name, other_keybind in self._keybinds.items():
+        for name, other_keybind in list(self._keybinds.items()):
             if hash(keybind) == hash(other_keybind):
                 msg = (
                     f"Key '{keybind.key}' already assigned to '{other_keybind.name}' with overlapping action "
+                    f"'{other_keybind.key_action}'."
+                )
+            elif (not keybind.allow_overload or not other_keybind.allow_overload) and keybind.key == other_keybind.key:
+                msg = (
+                    f"Key '{keybind.key}' already assigned to '{other_keybind.name}' with action "
                     f"'{other_keybind.key_action}'."
                 )
             elif keybind.name == name:
@@ -348,8 +364,6 @@ class Keybindings:
                 raise ValueError(msg)
             gs.logger.warning(f"{msg}. Overwriting keybind.")
             self.remove(name)
-            break
-
         self._keybinds[keybind.name] = keybind
 
     def remove(self, name: str) -> None:

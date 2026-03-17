@@ -95,7 +95,7 @@ def main():
         "thumb_distal",
     ):
         sensor = scene.add_sensor(
-            gs.sensors.ProximityOptions(
+            gs.sensors.Proximity(
                 entity_idx=robot.idx,
                 link_idx_local=robot.get_link(link_name).idx_local,
                 probe_local_pos=((0.0, 0.0, 0.0),),
@@ -142,14 +142,14 @@ def main():
             Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=translate, args=(1, False)),
             Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
             Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
-            Keybind("reset", Key.U, KeyAction.PRESS, callback=reset_pose),
-            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+            Keybind("reset", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_pose),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
     print("\n=== Proximity sensor with Shadow Hand ===")
     print("Proximity sensors on hand palm and fingertips, tracking duck and box links")
     if args.vis:
-        print("Keyboard: [↑/↓/←/→] move hand XY, [n/m] up/down, [u] reset, [ESC] quit")
+        print("Keyboard: [↑/↓/←/→] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
     else:
         print(f"Running headless for {args.seconds}s ...")
     print()

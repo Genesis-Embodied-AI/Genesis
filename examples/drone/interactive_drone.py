@@ -78,9 +78,9 @@ def main():
         dir_arr = np.array(direction)
         return [
             Keybind(
-                name=f"{name}_press",
+                name=f"{name}_hold",
                 key=key,
-                key_action=KeyAction.PRESS,
+                key_action=KeyAction.HOLD,
                 callback=controller.add_direction,
                 args=(dir_arr,),
             ),
@@ -106,7 +106,7 @@ def main():
         *direction_keybinds("move_right", Key.RIGHT, (1.0, -1.0, 1.0, -1.0)),
         Keybind("accelerate", Key.SPACE, KeyAction.HOLD, callback=controller.accelerate),
         Keybind("decelerate", Key.LSHIFT, KeyAction.HOLD, callback=controller.decelerate),
-        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
     # Print control instructions
