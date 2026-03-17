@@ -17,7 +17,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key
 
-from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
 from .utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
@@ -69,13 +69,13 @@ def backend(pytestconfig, renderer_type):
 @pytest.fixture(scope="function", autouse=True)
 def skip_if_not_installed(renderer_type):
     if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
-        pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+        pytest.importorskip("gs_madrona", reason=SKIP_NO_MADRONA)
     if renderer_type == RENDERER_TYPE.RAYTRACER:
         # Cannot rely on 'pytest.importorskip' because LuisaRenderPy is not cleanly installed
         try:
             import LuisaRenderPy
         except ImportError:
-            pytest.skip("Python module 'LuisaRenderPy' not installed.")
+            pytest.skip(SKIP_NO_LUISA)
 
 
 @pytest.mark.required
@@ -1044,7 +1044,7 @@ def test_draw_debug(renderer, show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
@@ -1161,7 +1161,7 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
@@ -1354,7 +1354,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 @pytest.mark.slow  # ~500s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_batch_deformable_render(monkeypatch, png_snapshot):
     # Having many particles in the scene creates artifacts that are not deterministic between different hardware
     png_snapshot.extension._std_err_threshold = 2.0
@@ -1468,7 +1468,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not available")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("add_box", [False, True])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
@@ -1631,7 +1631,7 @@ def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_rasterizer_camera_sensor_with_viewer(renderer):
     """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
 
@@ -1672,7 +1672,7 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
 @pytest.mark.parametrize("force_show_viewer", [False, True])
 def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show_viewer):
     if force_show_viewer and not IS_INTERACTIVE_VIEWER_AVAILABLE:
-        pytest.skip("Interactive viewer not supported on this platform.")
+        pytest.skip(SKIP_NO_VIEWER)
 
     CAM_RES = (256, 256)
     RENDERED_ENVS = [1, 2]

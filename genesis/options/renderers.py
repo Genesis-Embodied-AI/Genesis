@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Mapping, Sequence
 
 import numpy as np
 from pydantic import Field, StrictBool, StrictInt, model_validator
@@ -9,6 +9,12 @@ from genesis.datatypes import List
 
 from .options import Options
 from .surfaces import Surface
+
+
+if TYPE_CHECKING:
+    LightArray = Sequence[Mapping[str, Any] | "SphereLight"]
+else:
+    LightArray = Annotated[List["SphereLight"], Field(strict=False)]
 
 
 class SphereLight(Options):
@@ -108,9 +114,7 @@ class RayTracer(RendererOptions):
     env_quat: UnitVec4FType | None = None
 
     # sphere lights
-    lights: Annotated[List[SphereLight], Field(strict=False)] = List(
-        (SphereLight(pos=(0.0, 0.0, 10.0), color=(1.0, 1.0, 1.0), intensity=10.0, radius=4.0),)
-    )
+    lights: LightArray = List((SphereLight(pos=(0.0, 0.0, 10.0), color=(1.0, 1.0, 1.0), intensity=10.0, radius=4.0),))
 
     # lower bound for direct face normal vs vertex normal for face normal interpolation
     normal_diff_clamp: float = Field(default=180.0, ge=0.0, le=180.0)
