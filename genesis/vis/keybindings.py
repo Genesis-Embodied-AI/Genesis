@@ -275,7 +275,7 @@ def get_key_hash(key_code: int, modifiers: int | None, action: KeyAction) -> int
     int
         A unique hash for this key combination.
     """
-    return hash((key_code, modifiers, action in (KeyAction.PRESS, KeyAction.HOLD)))
+    return hash((key_code, modifiers, action))
 
 
 @dataclass
