@@ -1765,6 +1765,28 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     assert rgb.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
     assert rgb_debug.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
 
+    # Batched set_pose: keep side view for env 0, switch to top-down view for env 1
+    rgb_before = rgb.copy()
+    cam.set_pose(
+        pos=[(3.5, 0.0, 2.5), (0.0, 0.0, 4.0)],
+        lookat=[(0.0, 0.0, 0.5), (0.0, 0.0, 0.0)],
+        up=[(0.0, 0.0, 1.0), (0.0, 1.0, 0.0)],
+    )
+    rgb_after, *_ = cam.render(rgb=True)
+    assert rgb_after.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # First env kept same pose — render should match; second env uses top-down view — render must differ
+    assert np.abs(rgb_after[0].astype(np.float32) - rgb_before[0].astype(np.float32)).mean() < 1.0
+    assert np.abs(rgb_after[1].astype(np.float32) - rgb_before[1].astype(np.float32)).mean() > 5.0
+
+    # Restore original camera pose for snapshot comparisons
+    cam.set_pose(
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    rgb, *_ = cam.render(rgb=True)
+    assert rgb is not None
+
     # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
     png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_OFF
     for rgb_i in rgb:
