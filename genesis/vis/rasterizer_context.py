@@ -101,6 +101,7 @@ class RasterizerContext:
 
         # nodes
         self.world_frame_node = None
+        self.link_frame_node = None
         self.link_frame_nodes = dict()
         self.frustum_nodes = dict()  # nodes camera frustums
         self.rigid_nodes = dict()
@@ -306,48 +307,67 @@ class RasterizerContext:
     def on_link_frame(self):
         if not self.link_frame_shown:
             if self.sim.rigid_solver.is_active:
-                links = self.sim.rigid_solver.links
-                links_pos = (
-                    qd_to_numpy(self.sim.rigid_solver.links_state.pos, transpose=True) + self.scene.envs_offset[:, None]
+                pos = qd_to_numpy(
+                    self.sim.rigid_solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True
                 )
-                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, transpose=True)
+                quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, self.rendered_envs_idx, transpose=True)
+                pos += self.scene.envs_offset[self.rendered_envs_idx, None]
+                all_T = gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
 
-                for link in links:
-                    link_pos = links_pos[self.rendered_envs_idx, link.idx]
-                    link_quat = links_quat[self.rendered_envs_idx, link.idx]
+                if self.env_separate_rigid:
+                    n_links = len(self.sim.rigid_solver.links)
+                    for i, link in enumerate(self.sim.rigid_solver.links):
+                        mesh = pyrender.Mesh.from_trimesh(
+                            mesh=self.link_frame_mesh,
+                            poses=all_T[i::n_links],
+                            env_shared=False,
+                            is_marker=True,
+                        )
+                        self.link_frame_nodes[link.uid] = self.add_node(mesh)
+                else:
                     mesh = pyrender.Mesh.from_trimesh(
                         mesh=self.link_frame_mesh,
-                        poses=gu.trans_quat_to_T(link_pos, link_quat),
-                        env_shared=not self.env_separate_rigid,
+                        poses=all_T,
                         is_marker=True,
                     )
-                    self.link_frame_nodes[link.uid] = self.add_node(mesh)
+                    self.link_frame_node = self.add_node(mesh)
             self.link_frame_shown = True
 
     def off_link_frame(self):
         if self.link_frame_shown:
-            for node in self.link_frame_nodes.values():
-                self.remove_node(node)
-            self.link_frame_nodes.clear()
+            if self.env_separate_rigid:
+                for node in self.link_frame_nodes.values():
+                    self.remove_node(node)
+                self.link_frame_nodes.clear()
+            else:
+                self.remove_node(self.link_frame_node)
+                self.link_frame_node = None
             self.link_frame_shown = False
 
     def update_link_frame(self, buffer_updates):
         if self.link_frame_shown:
             if self.sim.rigid_solver.is_active:
-                links_pos = (
-                    qd_to_numpy(self.sim.rigid_solver.links_state.pos, transpose=True) + self.scene.envs_offset[:, None]
+                pos = qd_to_numpy(
+                    self.sim.rigid_solver.links_state.pos, self.rendered_envs_idx, transpose=True, copy=True
                 )
-                links_quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, transpose=True)
+                quat = qd_to_numpy(self.sim.rigid_solver.links_state.quat, self.rendered_envs_idx, transpose=True)
+                pos += self.scene.envs_offset[self.rendered_envs_idx, None]
+                all_T = gu.trans_quat_to_T(pos.reshape(-1, 3), quat.reshape(-1, 4))
 
-                for link in self.sim.rigid_solver.links:
-                    link_T = gu.trans_quat_to_T(
-                        links_pos[self.rendered_envs_idx, link.idx], links_quat[self.rendered_envs_idx, link.idx]
-                    )
-                    node = self.link_frame_nodes[link.uid]
-                    node.mesh.primitives[0].poses = link_T
-                    buf_id = self._scene.get_buffer_id(node, "model")
+                if self.env_separate_rigid:
+                    n_links = len(self.sim.rigid_solver.links)
+                    for i, link in enumerate(self.sim.rigid_solver.links):
+                        link_T = all_T[i::n_links]
+                        node = self.link_frame_nodes[link.uid]
+                        node.mesh.primitives[0].poses = link_T
+                        buf_id = self._scene.get_buffer_id(node, "model")
+                        if buf_id >= 0:
+                            buffer_updates[buf_id] = link_T.transpose((0, 2, 1))
+                else:
+                    self.link_frame_node.mesh.primitives[0].poses = all_T
+                    buf_id = self._scene.get_buffer_id(self.link_frame_node, "model")
                     if buf_id >= 0:
-                        buffer_updates[buf_id] = link_T.transpose((0, 2, 1))
+                        buffer_updates[buf_id] = all_T.transpose((0, 2, 1))
 
     def on_tool(self):
         if self.sim.tool_solver.is_active:
