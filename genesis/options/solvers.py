@@ -506,6 +506,10 @@ class RigidOptions(Options):
     use_contact_island: StrictBool = False
     box_box_detection: StrictBool = False
 
+    # ComFree analytical contact solver parameters
+    comfree_stiffness: PositiveFloat = 1.0
+    comfree_damping: PositiveFloat = 0.9
+
     # hibernation threshold
     use_hibernation: StrictBool = False
     hibernation_thresh_vel: PositiveFloat = 1e-3

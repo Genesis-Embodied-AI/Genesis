@@ -26,6 +26,7 @@ from ..base_solver import Solver
 from ..kinematic_solver import KinematicSolver
 from .collider import Collider
 from .constraint import ConstraintSolver, ConstraintSolverIsland
+from .constraint.solver_comfree import ComFreeSolver
 from .abd.misc import (
     func_add_safe_backward,
     func_apply_coupling_force,
@@ -881,6 +882,9 @@ class RigidSolver(KinematicSolver):
         else:
             self.constraint_solver = ConstraintSolver(self)
 
+        if self._options.constraint_solver == gs.constraint_solver.ComFree:
+            self._comfree_solver = ComFreeSolver(self)
+
     def substep(self, f):
         # from genesis.utils.tools import create_timer
         from genesis.engine.couplers import SAPCoupler
@@ -996,6 +1000,12 @@ class RigidSolver(KinematicSolver):
         return collision_pairs
 
     def _func_constraint_force(self):
+        if self._options.constraint_solver == gs.constraint_solver.ComFree:
+            if self._enable_collision:
+                self.collider.detection()
+            self._comfree_solver.resolve()
+            return
+
         if not self._disable_constraint:
             if self._use_contact_island:
                 self.constraint_solver.clear()
