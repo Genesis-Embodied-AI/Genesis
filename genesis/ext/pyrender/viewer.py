@@ -358,7 +358,13 @@ class Viewer(pyglet.window.Window):
             self._ticks_till_fade = 2.0 / 3.0 * self.viewer_flags["refresh_rate"]
             self._message_opac = 1.0 + self._ticks_till_fade
             self.register_keybinds(
-                Keybind(HELP_TEXT_KEYBIND_NAME, HELP_TEXT_KEY, callback=self._toggle_instructions, protected=True)
+                Keybind(
+                    HELP_TEXT_KEYBIND_NAME,
+                    HELP_TEXT_KEY,
+                    callback=self._toggle_instructions,
+                    protected=True,
+                    allow_overload=True,
+                )
             )
 
         # Setup viewer plugins

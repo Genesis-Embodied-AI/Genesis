@@ -157,6 +157,35 @@ def test_default_viewer_plugin():
         overwrite=True,
     )
 
+    # allow_overload=False: conflicts with any same-key binding; overwrite=True clears all siblings
+    scene.viewer.register_keybinds(
+        Keybind(name="key3_press", key=Key._3, key_action=KeyAction.PRESS, callback=lambda: None),
+        Keybind(name="key3_release", key=Key._3, key_action=KeyAction.RELEASE, callback=lambda: None),
+    )
+    with pytest.raises(ValueError):
+        scene.viewer.register_keybinds(
+            Keybind(
+                name="key3_exclusive",
+                key=Key._3,
+                key_action=KeyAction.HOLD,
+                allow_overload=False,
+                callback=lambda: None,
+            ),
+            overwrite=False,
+        )
+    scene.viewer.register_keybinds(
+        Keybind(
+            name="key3_exclusive",
+            key=Key._3,
+            key_action=KeyAction.PRESS,
+            allow_overload=False,
+            callback=lambda: None,
+        ),
+        overwrite=True,
+    )
+    assert pyrender_viewer._keybindings.get_by_name("key3_press") is None
+    assert pyrender_viewer._keybindings.get_by_name("key3_release") is None
+
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
