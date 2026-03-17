@@ -173,6 +173,8 @@ class Raytracer:
             else:
                 backend = "cpu"
                 device_index = 0
+        elif sys.platform == "darwin":
+            backend = "metal"
         self.backend = backend
         self.device_index = device_index
 

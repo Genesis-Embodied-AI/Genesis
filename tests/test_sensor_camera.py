@@ -9,6 +9,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.geom import trans_to_T
 
+from .conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
 from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
 
 
@@ -271,7 +272,7 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 2])
-@pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
+@pytest.mark.skipif(not ENABLE_MADRONA, reason=SKIP_NO_MADRONA)
 def test_batch_renderer(n_envs, png_snapshot):
     CAM_RES = (128, 256)
 
@@ -374,7 +375,7 @@ def test_rasterizer_destroy():
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not ENABLE_MADRONA, reason="BatchRenderer is not supported because 'gs_madrona' is not available.")
+@pytest.mark.skipif(not ENABLE_MADRONA, reason=SKIP_NO_MADRONA)
 def test_batch_renderer_destroy():
     scene = gs.Scene(show_viewer=False)
     # FIXME: This test fails without any entities in the scene.
@@ -398,8 +399,7 @@ def test_batch_renderer_destroy():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
 def test_raytracer_destroy():
     scene = gs.Scene(
         renderer=gs.renderers.RayTracer(
@@ -430,8 +430,7 @@ def test_raytracer_destroy():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
 def test_raytracer_attached_without_offset_T():
     """Test that RaytracerCameraSensor works when attached without explicit offset_T.
 
@@ -488,9 +487,8 @@ def test_raytracer_attached_without_offset_T():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 1])
-@pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
+@pytest.mark.skipif(not ENABLE_RAYTRACER, reason=SKIP_NO_LUISA)
 def test_raytracer(n_envs, png_snapshot):
     # Relax pixel matching because RayTracer is not deterministic between different hardware (eg RTX6000 vs H100), even
     # without denoiser.

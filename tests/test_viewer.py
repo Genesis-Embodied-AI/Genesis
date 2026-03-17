@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
-from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
 from .utils import assert_allclose
 
 CAM_RES = (480, 320)
@@ -31,7 +31,7 @@ def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
 def test_interactive_viewer_disable_viewer_defaults():
     """Test that keyboard shortcuts can be disabled in the interactive viewer."""
@@ -59,7 +59,7 @@ def test_interactive_viewer_disable_viewer_defaults():
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_default_viewer_plugin():
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -159,7 +159,7 @@ def test_default_viewer_plugin():
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_mouse_interaction_plugin():
     DT = 0.01
     MASS = 100.0

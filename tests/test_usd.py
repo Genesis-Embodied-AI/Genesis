@@ -19,6 +19,7 @@ except ImportError as e:
 
 from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
+from .conftest import SKIP_NO_OMNIVERSE_KIT
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -833,7 +834,7 @@ def test_usd_parse_nodegraph(usd_file):
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
+@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason=SKIP_NO_OMNIVERSE_KIT)
 def test_usd_bake(usd_file, tmp_path):
     RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
     RETRY_DELAY = 30.0

@@ -164,6 +164,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
+    "--verbose",
+    "-r", "a",
     "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",
