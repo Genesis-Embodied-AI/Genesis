@@ -800,15 +800,18 @@ class PixelMatchSnapshotExtension(PNGImageSnapshotExtension):
         # Compute difference on blurred images
         img_err = np.minimum(np.abs(blurred_arrays[1] - blurred_arrays[0]), 255).astype(np.uint8)
 
-        if (
-            np.max(np.std(img_err.reshape((-1, img_err.shape[-1])), axis=0)) > self._std_err_threshold
-            and (np.abs(img_err) > np.finfo(np.float32).eps).sum() > self._ratio_err_threshold * img_err.size
-        ):
+        std_err = np.max(np.std(img_err.reshape((-1, img_err.shape[-1])), axis=0))
+        ratio_err = (np.abs(img_err) > np.finfo(np.float32).eps).sum()
+        if std_err > self._std_err_threshold and ratio_err > self._ratio_err_threshold * img_err.size:
             raw_bytes = BytesIO()
             img_delta = np.minimum(np.abs(img_arrays[1] - img_arrays[0]), 255).astype(np.uint8)
             img_obj = Image.fromarray(img_delta.squeeze(-1) if img_delta.shape[-1] == 1 else img_delta)
             img_obj.save(raw_bytes, "PNG")
             raw_bytes.seek(0)
+            print(
+                f"PNG snapshot mismatch [std_err={std_err:.2f} (thr={self._std_err_threshold:.2f}), "
+                f"ratio_err={ratio_err} (thr={self._ratio_err_threshold * img_err.size})]:"
+            )
             print(base64.b64encode(raw_bytes.read()))
             return False
         return True
