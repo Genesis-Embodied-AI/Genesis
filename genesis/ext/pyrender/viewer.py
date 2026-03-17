@@ -869,7 +869,7 @@ class Viewer(pyglet.window.Window):
 
     def on_key_press(self, symbol: int, modifiers: int) -> EVENT_HANDLE_STATE:
         """Record a key press."""
-        if not self._held_keys[(symbol, modifiers)]:
+        if (symbol, modifiers) not in self._held_keys:
             self._call_keybind_callback(symbol, modifiers, KeyAction.PRESS)
 
         self._held_keys[(symbol, modifiers)] = True

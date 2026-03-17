@@ -15,7 +15,7 @@ from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Teleop
-KEY_DPOS = 0.05
+KEY_DPOS = 0.1
 FORCE_SCALE = 100.0
 PUSHER_SIZE = 0.1
 
@@ -72,6 +72,9 @@ def main():
             pos=(0.0, 0.0, PLATFORM_HEIGHT / 2),
             fixed=True,
         ),
+        material=gs.materials.Rigid(
+            friction=0.01,
+        ),
     )
 
     probe_positions, probe_normals, probe_radii = _build_probe_grid(GRID_SIZE, PLATFORM_SIZE, PLATFORM_HEIGHT)
@@ -89,13 +92,16 @@ def main():
         )
     )
 
-    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.02], dtype=np.float32)
+    pusher_start = np.array([0.0, 0.0, PLATFORM_HEIGHT + PUSHER_SIZE / 2 - 0.01], dtype=np.float32)
 
     pusher = scene.add_entity(
         gs.morphs.Cylinder(
             radius=PUSHER_SIZE,
             height=PUSHER_SIZE,
             pos=pusher_start,
+        ),
+        material=gs.materials.Rigid(
+            friction=0.01,
         ),
         surface=gs.surfaces.Default(
             color=(0.15, 0.55, 0.95, 1.0),
