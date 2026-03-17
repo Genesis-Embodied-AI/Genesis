@@ -438,6 +438,15 @@ class RasterizerContext:
                     else:
                         mesh = geom.get_trimesh()
                     geom_T = geoms_T[geom.idx][geom_envs_idx]
+
+                    # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting
+                    env_shared = not self.env_separate_rigid
+                    if not env_shared and isinstance(entity.morph, gs.morphs.Plane):
+                        plane_normal = entity.morph.normal
+                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                            geom_T = geom_T[:1]
+                            env_shared = True
+
                     self.add_rigid_node(
                         geom,
                         pyrender.Mesh.from_trimesh(
@@ -448,7 +457,7 @@ class RasterizerContext:
                                 geom.surface.double_sided if "collision" not in entity.surface.vis_mode else False
                             ),
                             is_floor=isinstance(entity._morph, gs.morphs.Plane),
-                            env_shared=not self.env_separate_rigid,
+                            env_shared=env_shared,
                         ),
                     )
                     if isinstance(entity._morph, gs.morphs.Plane):
@@ -476,6 +485,13 @@ class RasterizerContext:
                         continue
 
                     geom_T = geoms_T[geom.idx][geom_envs_idx]
+
+                    # Keep single-instance for z-axis normal planes (see on_rigid)
+                    if isinstance(entity.morph, gs.morphs.Plane):
+                        plane_normal = entity.morph.normal
+                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                            geom_T = geom_T[:1]
+
                     node = self.rigid_nodes[geom.uid]
                     node.mesh._bounds = None
                     node.mesh.primitives[0].poses = geom_T

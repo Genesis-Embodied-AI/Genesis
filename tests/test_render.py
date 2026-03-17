@@ -1675,17 +1675,10 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
         pytest.skip("Interactive viewer not supported on this platform.")
 
     CAM_RES = (256, 256)
-    N_ENVS = 4
     RENDERED_ENVS = [1, 2]
 
-    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
-    # Each env has a distinct pose so per-env renders differ visually.
-    QPOS_PER_ENV = [
-        [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
-        [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
-        [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
-        [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
-    ]
+    # FIXME: Small discrepencies between different hardware due to contact visualization with onscreen viewer
+    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 2.5 if show_viewer else 1.0
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -1720,9 +1713,18 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
 
     cam = scene.add_camera(res=CAM_RES, pos=(3.5, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=30)
     cam_debug = scene.add_camera(res=CAM_RES, pos=(3.5, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=30, debug=True)
-    scene.build(n_envs=N_ENVS, env_spacing=(0.3, 0.3))
+    scene.build(n_envs=4, env_spacing=(0.3, 0.3))
 
-    franka.set_dofs_position(QPOS_PER_ENV)
+    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
+    # Each env has a distinct pose so per-env renders differ visually.
+    franka.set_dofs_position(
+        [
+            [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
+            [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
+            [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
+            [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
+        ]
+    )
     scene.step()
 
     # Capture viewer screenshot when the interactive viewer is enabled
@@ -1732,6 +1734,8 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
         pyrender_viewer.switch_to()
         pyrender_viewer.on_draw()
         viewer_rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+
+        png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
         assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
 
     # Render both cameras
@@ -1743,10 +1747,12 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
     assert rgb_debug.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
 
     # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_OFF
     for i in range(len(RENDERED_ENVS)):
         assert rgb_array_to_png_bytes(rgb[i]) == png_snapshot
 
     # Debug camera SHOULD show markers (frames, contact arrows) — snapshot per env validates markers
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
     for i in range(len(RENDERED_ENVS)):
         assert rgb_array_to_png_bytes(rgb_debug[i]) == png_snapshot
 
