@@ -251,17 +251,6 @@ class RigidSolver(KinematicSolver):
         self._sol_min_timeconst = TIME_CONSTANT_SAFETY_FACTOR * self._substep_dt
         self._sol_default_timeconst = max(options.constraint_timeconst, self._sol_min_timeconst)
 
-        if (
-            not self._disable_constraint
-            and self._enable_collision
-            and not options.use_gjk_collision
-            and self._substep_dt < 0.002
-        ):
-            gs.logger.warning(
-                "Using a simulation timestep smaller than 2ms is not recommended for 'use_gjk_collision=False' as "
-                "it could lead to numerically unstable collision detection."
-            )
-
         self.collider = None
         self.constraint_solver = None
 

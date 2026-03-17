@@ -380,6 +380,53 @@ class KinematicEntity(Entity):
         return g_infos
 
     def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
+        # Load meshes
+        meshes = gs.Mesh.from_morph_surface(morph, surface)
+
+        link_pos = np.array(morph.pos)
+        link_quat = np.array(morph.quat)
+
+        geom_pos = gu.zero_pos()
+        geom_quat = gu.identity_quat()
+
+        if morph.align:
+            # Compute COM and principal inertia axes from combined geometry.
+            combined_tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
+            # center_mass / moment_inertia are unreliable for non-watertight meshes; fall back to convex hull.
+            if not combined_tmesh.is_watertight:
+                combined_tmesh = combined_tmesh.convex_hull
+            com = combined_tmesh.center_mass
+            # T_align is a 4×4 transform that rotates principal inertia axes to coordinate axes
+            # and translates COM to origin: T_align = [[R_align, -R_align @ com], [0, 1]]
+            T_align = combined_tmesh.principal_inertia_transform
+            R_align = T_align[:3, :3]
+
+            # Ensure proper rotation (det = +1) to avoid reflections.
+            if np.linalg.det(R_align) < 0:
+                R_align[:, -1] *= -1
+                T_align[:3, :3] = R_align
+
+            # Check that the inertia-based orientation is consistent with the geometry shape.
+            # If the AABB after alignment exceeds 1.5× the minimum OBB volume, the principal
+            # inertia axes do not align with the geometry (e.g. hollow objects) — fall back to
+            # translation-only: center at COM but keep the original orientation.
+            aligned_tmesh = combined_tmesh.copy()
+            aligned_tmesh.apply_transform(T_align)
+            if aligned_tmesh.bounding_box.volume > 1.5 * combined_tmesh.bounding_box_oriented.volume:
+                R_align = np.eye(3)
+                T_align = gu.trans_to_T(-com)
+
+            # Move the link frame to COM with principal axes as coordinate axes.
+            # Each geom's local offset from the new link frame is exactly (T_align[:3,3], R_align):
+            # v_world = R_old @ v_mesh + pos_old
+            #         = (R_old @ R_align.T) @ (R_align @ v_mesh - R_align @ com) + (pos_old + R_old @ com)
+            #         = R_new @ (R_geom @ v_mesh + pos_geom) + pos_new
+            R_old = gu.quat_to_R(link_quat)
+            link_pos = link_pos + R_old @ com
+            link_quat = gu.R_to_quat(R_old @ R_align.T)
+            geom_pos = T_align[:3, 3].copy()
+            geom_quat = gu.R_to_quat(R_align)
+
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -389,10 +436,7 @@ class KinematicEntity(Entity):
             joint_type = gs.JOINT_TYPE.FREE
             n_qs = 7
             n_dofs = 6
-            init_qpos = np.concatenate([morph.pos, morph.quat])
-
-        # Load meshes
-        meshes = gs.Mesh.from_morph_surface(morph, surface)
+            init_qpos = np.concatenate([link_pos, link_quat])
 
         g_infos = []
         if morph.visualization:
@@ -402,6 +446,8 @@ class KinematicEntity(Entity):
                         contype=0,
                         conaffinity=0,
                         vmesh=mesh,
+                        pos=geom_pos,
+                        quat=geom_quat,
                     )
                 )
         if morph.collision:
@@ -419,6 +465,8 @@ class KinematicEntity(Entity):
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
                         sol_params=gu.default_solver_params(),
+                        pos=geom_pos,
+                        quat=geom_quat,
                     )
                 )
 
@@ -432,10 +480,8 @@ class KinematicEntity(Entity):
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name}_baselink",
-                pos=np.array(morph.pos),
-                quat=np.array(morph.quat),
-                inertial_pos=None,  # we will compute the COM later based on the geometry
-                inertial_quat=gu.identity_quat(),
+                pos=link_pos,
+                quat=link_quat,
                 parent_idx=-1,
             ),
             j_infos=[
