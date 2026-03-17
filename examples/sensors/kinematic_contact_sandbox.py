@@ -11,10 +11,12 @@ import os
 import numpy as np
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind
 
 # Teleop
 KEY_DPOS = 0.05
+FORCE_SCALE = 100.0
 PUSHER_SIZE = 0.1
 
 # Probe sensors
@@ -127,6 +129,12 @@ def main():
 
     scene.build()
 
+    if args.vis:
+        pusher.set_dofs_kp(FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
+        pusher.set_dofs_kv(0.1 * FORCE_SCALE / KEY_DPOS, dofs_idx_local=slice(0, 3))
+        pusher.set_dofs_kv(1.0, dofs_idx_local=slice(3, 6))
+        pusher.control_dofs_position(pusher.get_dofs_position())
+
     is_running = True
     # Register keybindings
     if args.vis:
@@ -139,6 +147,7 @@ def main():
 
         def reset_pose():
             target_pos[:] = pusher_start
+            pusher.set_dofs_position(pusher_start, dofs_idx_local=slice(0, 3))
 
         def translate(index: int, is_negative: bool):
             target_pos[index] += (-1 if is_negative else 1) * KEY_DPOS
@@ -160,8 +169,8 @@ def main():
             Keybind("move_down", Key.J, KeyAction.HOLD, callback=translate, args=(2, True)),
             Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
             Keybind("drop_object", Key.SPACE, KeyAction.PRESS, callback=drop_object),
-            Keybind("reset", Key.BACKSLASH, KeyAction.PRESS, callback=reset_pose),
-            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+            Keybind("reset", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_pose),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
     # ── Print info ─────────────────────────────────────────────────────
@@ -186,10 +195,13 @@ def main():
     try:
         while is_running:
             if args.vis:
-                pusher.set_pos(target_pos)
-                pusher.set_quat(np.array([1, 0, 0, 0], dtype=np.float32))
+                pusher.control_dofs_position(target_pos, dofs_idx_local=slice(0, 3))
 
             scene.step()
+
+            if args.vis:
+                cur_pos = tensor_to_array(pusher.get_pos())
+                target_pos[:] = np.clip(target_pos - cur_pos, -KEY_DPOS, KEY_DPOS) + cur_pos
 
             # Read probe data and print any active contacts
             data = probe.read()

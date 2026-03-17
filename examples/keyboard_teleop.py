@@ -146,14 +146,14 @@ if __name__ == "__main__":
         Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
         Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
         Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
-        Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
-        Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
-        Keybind("rotate_ccw", Key.J, KeyAction.HOLD, callback=rotate, args=(drot,)),
-        Keybind("rotate_cw", Key.K, KeyAction.HOLD, callback=rotate, args=(-drot,)),
-        Keybind("reset_scene", Key.U, KeyAction.HOLD, callback=reset_robot),
+        Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
+        Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
+        Keybind("rotate_ccw", Key.N, KeyAction.HOLD, callback=rotate, args=(drot,)),
+        Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(-drot,)),
+        Keybind("reset_scene", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_robot),
         Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
         Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
-        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
     ########################## run simulation ##########################

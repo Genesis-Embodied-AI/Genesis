@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Callable, Any
-
+from typing import Any, Callable
 
 import genesis as gs
 
@@ -242,6 +241,12 @@ class KeyMod(LabeledIntEnum):
 
 
 class KeyAction(LabeledIntEnum):
+    """
+    PRESS is triggered once when the key is initially pressed down.
+    HOLD is triggered repeatedly while the key is held down.
+    RELEASE is triggered once when the key is released.
+    """
+
     PRESS = 0, "press"
     HOLD = 1, "hold"
     RELEASE = 2, "release"

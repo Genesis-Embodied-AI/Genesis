@@ -1403,7 +1403,7 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
     )
 
     box_prox_sensor = scene.add_sensor(
-        gs.sensors.ProximityOptions(
+        gs.sensors.Proximity(
             entity_idx=box.idx,
             probe_local_pos=BOX_PROBE_POS,
             track_link_idx=(sphere1.base_link_idx, sphere2.base_link_idx),
@@ -1411,7 +1411,7 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
         )
     )
     sphere_prox_sensor = scene.add_sensor(
-        gs.sensors.ProximityOptions(
+        gs.sensors.Proximity(
             entity_idx=sphere1.idx,
             probe_local_pos=SPHERE_PROBE_POS,
             track_link_idx=(box.base_link_idx,),

@@ -241,7 +241,7 @@ def main():
             Keybind("move_up", Key.K, KeyAction.HOLD, callback=translate, args=(2, False)),
             Keybind("drop_object", Key.SPACE, KeyAction.RELEASE, callback=drop_object),
             Keybind("reset", Key.BACKSPACE, KeyAction.RELEASE, callback=reset_pose),
-            Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+            Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
     print("\n=== Interactive ElastomerDisplacementSensor ===")
