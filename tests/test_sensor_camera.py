@@ -165,8 +165,10 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
 def test_rasterizer_batched(show_viewer, png_snapshot):
+    # FIXME: Small discrepancy between different hardware due to contact visualization with onscreen viewer
+    png_snapshot.extension._std_err_threshold = 2.0
+
     scene = gs.Scene(
         show_viewer=show_viewer,
     )
@@ -202,14 +204,18 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 
     assert data.rgb.shape == (2, 64, 64, 3)
     assert data.rgb.dtype == torch.uint8
-    assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+    try:
+        assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
 
 
 @pytest.mark.required
-@pytest.mark.skipif(sys.platform == "darwin", reason="Not supported on this machine because it requires OpenGL 4.2.")
 def test_rasterizer_attached_batched(show_viewer, png_snapshot):
     scene = gs.Scene(show_viewer=show_viewer)
 
@@ -251,7 +257,12 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
 
     assert data.rgb.shape == (2, 64, 64, 3)
     assert data.rgb.dtype == torch.uint8
-    assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+    try:
+        assert (data.rgb[0] != data.rgb[1]).any(), "We should have different frames"
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+        raise
 
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot

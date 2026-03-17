@@ -111,6 +111,7 @@ class OffscreenRenderer(object):
         shadow=False,
         plane_reflection=False,
         env_separate_rigid=False,
+        skip_markers=False,
     ):
         """Render a scene with the given set of flags.
 
@@ -154,6 +155,9 @@ class OffscreenRenderer(object):
 
         if env_separate_rigid:
             flags |= RenderFlags.ENV_SEPARATE
+
+        if skip_markers:
+            flags |= RenderFlags.SKIP_MARKERS
 
         if seg:
             seg_node_map = self._seg_node_map
@@ -213,6 +217,8 @@ class OffscreenRenderer(object):
             flags = RenderFlags.FLAT | RenderFlags.OFFSCREEN
             if env_separate_rigid:
                 flags |= RenderFlags.ENV_SEPARATE
+            if skip_markers:
+                flags |= RenderFlags.SKIP_MARKERS
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
             if self._platform.supports_framebuffers():

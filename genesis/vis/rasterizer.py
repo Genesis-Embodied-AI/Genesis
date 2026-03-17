@@ -8,6 +8,7 @@ import OpenGL
 import genesis as gs
 from genesis.repr_base import RBC
 from genesis.ext import pyrender
+from genesis.vis.camera import Camera
 
 
 class Rasterizer(RBC):
@@ -72,6 +73,7 @@ class Rasterizer(RBC):
         self.update_camera(camera)
 
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = None, None, None, None
+        skip_markers = not camera.debug if isinstance(camera, Camera) else True
         if self._offscreen:
             # Set the context
             self._renderer.make_current()
@@ -79,8 +81,6 @@ class Rasterizer(RBC):
             # Update the context if not already done before
             self._context.jit.update_buffer(self._context.buffer)
             self._context.buffer.clear()
-
-            # Render
             try:
                 if rgb or depth or normal:
                     retval = self._renderer.render(
@@ -94,6 +94,7 @@ class Rasterizer(RBC):
                         depth=depth,
                         plane_reflection=rgb and self._context.plane_reflection,
                         shadow=rgb and self._context.shadow,
+                        skip_markers=skip_markers,
                     )
 
                 if segmentation:
@@ -108,6 +109,7 @@ class Rasterizer(RBC):
                         depth=False,
                         plane_reflection=False,
                         shadow=False,
+                        skip_markers=skip_markers,
                     )
             finally:
                 # Unset the context
@@ -122,6 +124,7 @@ class Rasterizer(RBC):
                     depth=depth,
                     normal=normal,
                     seg=False,
+                    skip_markers=skip_markers,
                 )
 
             if segmentation:
@@ -132,6 +135,7 @@ class Rasterizer(RBC):
                     depth=False,
                     normal=False,
                     seg=True,
+                    skip_markers=skip_markers,
                 )
 
         if segmentation:

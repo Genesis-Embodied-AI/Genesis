@@ -64,7 +64,9 @@ class RenderFlags(object):
     REFLECTIVE_FLOOR = 1 << 16
     """Render the reflection of floor"""
     ENV_SEPARATE = 1 << 17
-    """Render the reflection of floor"""
+    """Render each environment separately."""
+    SKIP_MARKERS = 1 << 18
+    """Skip rendering marker nodes (debug arrows, frames, etc.)."""
 
 
 class TextAlign:

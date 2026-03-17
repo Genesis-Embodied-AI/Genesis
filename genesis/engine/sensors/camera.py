@@ -107,7 +107,6 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
     def __init__(self, sensor: "BatchRendererCameraSensor"):
         super().__init__(sensor)
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
-        self.debug = False
         self.model = sensor._options.model
 
         # Initial pose
@@ -461,18 +460,11 @@ class RasterizerCameraSensor(
         """Create a simplified RasterizerContext for camera sensors."""
         if not scene.sim._rigid_only and scene.n_envs > 1:
             gs.raise_exception("Rasterizer with n_envs > 1, does not work when using non rigid simulation")
-        if sys.platform == "darwin":
-            if scene.n_envs > 1:
-                gs.raise_exception(
-                    "Rasterizer with n_envs > 1, does not work on Metal because it doesn't support OpenGL 4.2"
-                )
-            env_separate_rigid = False
-        else:
-            if scene.n_envs > 1:
-                gs.logger.warning(
-                    "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
-                )
-            env_separate_rigid = True
+        if scene.n_envs > 1:
+            gs.logger.warning(
+                "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
+            )
+        env_separate_rigid = True
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
