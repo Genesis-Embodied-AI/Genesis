@@ -398,7 +398,6 @@ def test_batch_renderer_destroy():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer_destroy():
     scene = gs.Scene(
@@ -430,7 +429,6 @@ def test_raytracer_destroy():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer_attached_without_offset_T():
     """Test that RaytracerCameraSensor works when attached without explicit offset_T.
@@ -488,7 +486,6 @@ def test_raytracer_attached_without_offset_T():
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.parametrize("n_envs", [0, 1])
 @pytest.mark.skipif(not ENABLE_RAYTRACER, reason="RayTracer is not supported because 'LuisaRenderPy' is not available.")
 def test_raytracer(n_envs, png_snapshot):
