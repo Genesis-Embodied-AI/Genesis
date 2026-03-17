@@ -1693,6 +1693,8 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer):
             env_separate_rigid=True,
             show_world_frame=True,
             show_link_frame=True,
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=False,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.2, 1.5),
