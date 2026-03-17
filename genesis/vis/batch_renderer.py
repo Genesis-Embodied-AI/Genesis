@@ -8,6 +8,7 @@ from genesis.repr_base import RBC
 from genesis.constants import IMAGE_TYPE
 from genesis.utils.misc import qd_to_torch
 
+from .camera import Camera
 from .rasterizer_context import SegmentationColorMap
 
 # Optional imports for platform-specific functionality
@@ -278,7 +279,9 @@ class BatchRenderer(RBC):
         gpu_id = gs.device.index if gs.device.index is not None else 0
 
         # Extract the complete list of non-debug cameras
-        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
+        self._cameras = gs.List(
+            [camera for camera in self._visualizer._cameras if not isinstance(camera, Camera) or not camera.debug]
+        )
         if not self._cameras:
             gs.raise_exception("Please add at least one camera when using BatchRender.")
 

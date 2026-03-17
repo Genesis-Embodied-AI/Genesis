@@ -526,10 +526,7 @@ class RasterizerContext:
                 contact_force = contacts_info["force"]
 
                 for i_c in range(n_contacts):
-                    for link_idx, sign in (
-                        (contacts_info["link_a"][i_c], -1),
-                        (contacts_info["link_b"][i_c], 1),
-                    ):
+                    for link_idx, sign in ((contacts_info["link_a"][i_c], -1), (contacts_info["link_b"][i_c], 1)):
                         if self.sim.rigid_solver.links[link_idx].visualize_contact:
                             self.draw_contact_arrow(
                                 pos=contact_pos[i_c],
@@ -858,23 +855,20 @@ class RasterizerContext:
     def draw_debug_arrow(
         self, pos, vec=(0.0, 0.0, 1.0), radius=0.006, color=(1.0, 0.0, 0.0, 0.5), persistent=True, env_idx=None
     ):
+        vec = tensor_to_array(vec, dtype=np.float32)
         length = np.linalg.norm(vec)
-        if length > 0:
+        if length > gs.EPS:
             mesh = mu.create_arrow(length=length, radius=radius, body_color=color, head_color=color)
 
             # Build per-env poses when env_idx is specified for env_separate rendering
+            pos = tensor_to_array(pos)
             if env_idx is not None and self.env_separate_rigid:
-                n_envs = len(self.rendered_envs_idx)
-                poses = np.zeros((n_envs, 4, 4), dtype=np.float32)
-                poses[env_idx, 3, 3] = 1.0
-                poses[env_idx, :3, 3] = tensor_to_array(pos)
-                gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=poses[env_idx, :3, :3])
+                poses = np.zeros((len(self.rendered_envs_idx), 4, 4), dtype=np.float32)
+                gu.trans_R_to_T(pos, gu.z_up_to_R(vec), out=poses[env_idx])
                 env_shared = False
             else:
                 poses = np.zeros((1, 4, 4), dtype=np.float32)
-                poses[0, 3, 3] = 1.0
-                poses[0, :3, 3] = tensor_to_array(pos)
-                gu.z_up_to_R(tensor_to_array(vec).astype(np.float32), out=poses[0, :3, :3])
+                gu.trans_R_to_T(pos, gu.z_up_to_R(vec), out=poses[0])
                 env_shared = True
 
             node = pyrender.Mesh.from_trimesh(
@@ -919,14 +913,8 @@ class RasterizerContext:
         return node
 
     def draw_contact_arrow(self, pos, radius=0.005, force=(0, 0, 1), color=(0.0, 0.9, 0.8, 1.0), env_idx=None):
-        self.draw_debug_arrow(
-            pos,
-            tensor_to_array(force) * self.contact_force_scale,
-            radius,
-            color=color,
-            persistent=False,
-            env_idx=env_idx,
-        )
+        length = (tensor_to_array(force) * self.contact_force_scale,)
+        self.draw_debug_arrow(pos, length, radius, color=color, persistent=False, env_idx=env_idx)
 
     def draw_debug_sphere(self, pos, radius=0.01, color=(1.0, 0.0, 0.0, 0.5), persistent=True):
         mesh = mu.create_sphere(radius=radius, color=color)
