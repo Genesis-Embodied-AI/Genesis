@@ -2026,6 +2026,7 @@ def test_apply_external_forces(xml_path, show_viewer):
     end_effector_link_idx = robot.links[-1].idx
     duck_link_idx = duck.links[0].idx
     duck_mass = duck.get_mass()
+    duck_init_link_pos = np.array(duck.base_link.pos)
     for step in range(801):
         ee_pos = rigid_solver.get_links_pos([end_effector_link_idx])[0]
         duck_pos = rigid_solver.get_links_pos([duck_link_idx])[0]
@@ -2035,7 +2036,7 @@ def test_apply_external_forces(xml_path, show_viewer):
             assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=0.01)
         elif step == 800:
             assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
-        assert_allclose(duck_pos, (1.0, 0.0, 1.0), tol=1e-3)
+        assert_allclose(duck_pos, duck_init_link_pos, tol=1e-3)
 
         if step >= 600:
             force = [-4.0, 4.0, 0.0]
@@ -2288,8 +2289,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             qvel = obj.get_dofs_velocity()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
-    qpos = obj.get_dofs_position()
-    assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
+    assert_allclose(obj.geoms[0].get_pos()[:2], (0.3, 0.0), atol=2e-3)
 
 
 @pytest.mark.slow  # ~160s
