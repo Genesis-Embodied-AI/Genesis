@@ -73,7 +73,7 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale, is_mesh_zup):
+    def export_mesh(self, scale: float, is_mesh_zup: bool) -> "gs.Mesh":
         uvs = None
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
@@ -99,9 +99,9 @@ class MeshInfo:
 
 class MeshInfoGroup:
     def __init__(self):
-        self.infos = dict()
+        self.infos: dict[str, MeshInfo] = {}
 
-    def get(self, name):
+    def get(self, name: str):
         first_created = False
         mesh_info = self.infos.get(name)
         if mesh_info is None:
@@ -109,7 +109,7 @@ class MeshInfoGroup:
             first_created = True
         return mesh_info, first_created
 
-    def export_meshes(self, scale, is_mesh_zup):
+    def export_meshes(self, scale, is_mesh_zup) -> "list[gs.Mesh]":
         return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
@@ -401,25 +401,36 @@ def postprocess_collision_geoms(
             if not (np.isnan(diffs).all(axis=0) | (np.abs(diffs) < gs.EPS).all(axis=0)).all():
                 is_merged = False
 
-        # Must apply geometry transform before merge concatenation
+        # Merge geometry into a single mesh, always preserving the first geom's local pose.
+        # Each submesh's vertices are expressed relative to the first geom's frame, so the
+        # merged geom inherits the first geom's pos/quat unchanged.
         if is_merged:
+            first_g_info = g_infos[0]
             tmeshes = []
-            metadata = set(g_infos[0]["mesh"].metadata.items())
+            metadata = set(first_g_info["mesh"].metadata.items())
+            T_first_inv = np.linalg.inv(
+                gs.utils.geom.trans_quat_to_T(
+                    first_g_info.get("pos", gu.zero_pos()),
+                    first_g_info.get("quat", gu.identity_quat()),
+                )
+            )
             for g_info in g_infos:
                 mesh = g_info["mesh"]
                 tmesh = mesh.trimesh
-                if "pos" in g_info or "quat" in g_info:
+                T_rel = T_first_inv @ gs.utils.geom.trans_quat_to_T(
+                    g_info.get("pos", gu.zero_pos()),
+                    g_info.get("quat", gu.identity_quat()),
+                )
+                if not np.allclose(T_rel, np.eye(4)):
                     tmesh = tmesh.copy()
-                    pos = g_info.get("pos", gu.zero_pos())
-                    quat = g_info.get("quat", gu.identity_quat())
-                    tmesh.apply_transform(gs.utils.geom.trans_quat_to_T(pos, quat))
+                    tmesh.apply_transform(T_rel)
                 metadata &= set(mesh.metadata.items())
                 tmeshes.append(tmesh)
 
             tmesh = trimesh.util.concatenate(tmeshes)
             metadata = dict(metadata) | {"merged": True}
             mesh = gs.Mesh.from_trimesh(mesh=tmesh, surface=gs.surfaces.Collision(), metadata=metadata)
-            g_infos = [{**g_infos[0], **dict(mesh=mesh, pos=gu.zero_pos(), quat=gu.identity_quat())}]
+            g_infos = [{**first_g_info, **dict(mesh=mesh)}]
 
         # Try again to convexify then apply convex decomposition if not possible
         if must_decompose and is_merged:
@@ -507,8 +518,8 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
-    meshes = []
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
+    meshes: list[gs.Mesh] = []
     scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
@@ -520,7 +531,7 @@ def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     return meshes
 
 
-def trimesh_to_mesh(mesh, scale, surface):
+def trimesh_to_mesh(mesh, scale, surface) -> "gs.Mesh":
     return gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface)
 
 

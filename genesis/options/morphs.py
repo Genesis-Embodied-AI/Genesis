@@ -704,6 +704,10 @@ class Mesh(FileMorph, TetGenMixin):
     group_by_material : bool, optional
         Whether to group submeshes by their visual material type defined in the asset file. Defaults to False.
         **This is only used for RigidEntity.**
+    align : bool, optional
+        Whether to reframe the mesh so that its link origin coincides with the center of mass and its axes are
+        aligned with the principal axes of inertia. This makes the inertia tensor diagonal, which improves
+        numerical stability. Defaults to True. **This is only used for RigidEntity.**
     order : int, optional
         The order of the FEM mesh. Defaults to 1. **This is only used for FEMEntity.**
     mindihedral : int, optional
@@ -736,6 +740,7 @@ class Mesh(FileMorph, TetGenMixin):
     conaffinity: StrictInt = Field(default=0xFFFF, ge=0, le=0xFFFFFFFF)
     group_by_material: StrictBool = False
     merge_submeshes_for_collision: StrictBool = False
+    align: StrictBool = True
 
     @model_validator(mode="after")
     def _resolve_zup(self) -> Self:

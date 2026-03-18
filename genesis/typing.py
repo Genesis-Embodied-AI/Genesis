@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     Vec3FLaxArrayType = Vec3FArrayType | Vec3FType
     UnitVec3FLaxArrayType = Vec3FLaxArrayType
     RotationMatrixType = Vec3FArrayType
+    Matrix3x3Type = Sequence[Sequence[NumericType]] | np.ndarray
     Matrix4x4Type = Sequence[Sequence[NumericType]] | np.ndarray
     Grid3DFloatType = Sequence[Sequence[Sequence[ValidFloat]]] | np.ndarray
     StrArrayType = Sequence[str]
@@ -145,6 +146,11 @@ else:
     ]
     RotationMatrixType = Annotated[
         tuple[UnitIntervalVec3Type, UnitIntervalVec3Type, UnitIntervalVec3Type], Field(strict=False)
+    ]
+    Matrix3x3Type = Annotated[
+        tuple[Vec3FType, Vec3FType, Vec3FType],
+        BeforeValidator(lambda v: tuple(tuple(row) for row in v) if isinstance(v, np.ndarray) else v),
+        Field(strict=False),
     ]
     Matrix4x4Type = Annotated[
         tuple[Vec4FType, Vec4FType, Vec4FType, Vec4FType],

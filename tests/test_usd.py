@@ -287,6 +287,7 @@ def build_mesh_scene(mesh_file: str, scale: float):
         euler=(-90, 0, 0),
         group_by_material=False,
         convexify=False,
+        align=False,
     )
     mesh_scene.add_entity(
         mesh_morph,

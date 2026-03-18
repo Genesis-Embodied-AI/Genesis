@@ -722,11 +722,11 @@ def func_apply_link_external_force(
 ):
     torque = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = links_state.i_pos[link_idx, env_idx].cross(force)
     if qd.static(ref == 2):  # link's origin
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = (links_state.pos[link_idx, env_idx] - links_state.root_COM[link_idx, env_idx]).cross(force)
 

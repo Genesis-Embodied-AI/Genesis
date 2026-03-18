@@ -105,7 +105,9 @@ class List(RBC, list[T], Generic[T]):
             common_ancestors = set.intersection(*[set(type(obj).__mro__) for obj in self])
             if common_ancestors:
                 common_class_name = next(
-                    base_cls.__repr_name__() for base_cls in type(self[0]).__mro__ if base_cls in common_ancestors
+                    base_cls.__repr_name__(self[0])
+                    for base_cls in type(self[0]).__mro__
+                    if base_cls in common_ancestors
                 )
                 header = f"{self.__repr_name__()} of {common_class_name}"
             else:

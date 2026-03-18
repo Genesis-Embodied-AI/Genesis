@@ -1,10 +1,9 @@
 import inspect
 import os
 import xml.etree.ElementTree as ET
-from copy import copy
 from itertools import chain
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Any
+from typing import TYPE_CHECKING, Literal, Any, Sequence
 from functools import wraps
 
 import quadrants as qd
@@ -29,7 +28,7 @@ from ..base_entity import Entity
 from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
-from .rigid_link import KinematicLink, RigidLink
+from .rigid_link import KinematicLink, RigidLink, compose_inertial_properties
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -380,6 +379,30 @@ class KinematicEntity(Entity):
         return g_infos
 
     def _load_mesh(self, morph, surface, load_geom_only_for_heterogeneous=False):
+        # Load meshes
+        meshes = gs.Mesh.from_morph_surface(morph, surface)
+
+        link_pos, link_quat = map(np.array, (morph.pos, morph.quat))
+        geom_pos, geom_quat = gu.zero_pos(), gu.identity_quat()
+
+        if morph.align and not morph.fixed and isinstance(meshes, Sequence):
+            # Translate the link frame to the mesh COM so that the inertia tensor origin coincides with the link frame.
+            # This makes the inertia tensor diagonal-dominant and improves numerical stability of the simulation.
+            geoms_inertial_info = []
+            for mesh in meshes:
+                tmesh = mesh.trimesh
+                if not tmesh.is_watertight:
+                    tmesh = tmesh.convex_hull
+                geoms_inertial_info.append(
+                    (tmesh.mass, tmesh.center_mass, tmesh.moment_inertia, gu.zero_pos(), gu.identity_quat())
+                )
+            _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
+            principal_quat = gu.R_to_quat(uu.principal_axes_rot(global_inertia))
+            link_pos = gu.transform_by_trans_quat(global_com, link_pos, link_quat)
+            link_quat = gu.transform_quat_by_quat(principal_quat, link_quat)
+            geom_pos = gu.inv_transform_by_quat(-global_com, principal_quat)
+            geom_quat = gu.inv_quat(principal_quat)
+
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
             n_qs = 0
@@ -389,10 +412,7 @@ class KinematicEntity(Entity):
             joint_type = gs.JOINT_TYPE.FREE
             n_qs = 7
             n_dofs = 6
-            init_qpos = np.concatenate([morph.pos, morph.quat])
-
-        # Load meshes
-        meshes = gs.Mesh.from_morph_surface(morph, surface)
+            init_qpos = np.concatenate([link_pos, link_quat])
 
         g_infos = []
         if morph.visualization:
@@ -402,6 +422,8 @@ class KinematicEntity(Entity):
                         contype=0,
                         conaffinity=0,
                         vmesh=mesh,
+                        pos=geom_pos,
+                        quat=geom_quat,
                     )
                 )
         if morph.collision:
@@ -419,6 +441,8 @@ class KinematicEntity(Entity):
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
                         sol_params=gu.default_solver_params(),
+                        pos=geom_pos,
+                        quat=geom_quat,
                     )
                 )
 
@@ -432,10 +456,8 @@ class KinematicEntity(Entity):
             l_info=dict(
                 is_robot=False,
                 name=f"{link_name}_baselink",
-                pos=np.array(morph.pos),
-                quat=np.array(morph.quat),
-                inertial_pos=None,  # we will compute the COM later based on the geometry
-                inertial_quat=gu.identity_quat(),
+                pos=link_pos,
+                quat=link_quat,
                 parent_idx=-1,
             ),
             j_infos=[

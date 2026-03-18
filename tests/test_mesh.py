@@ -224,17 +224,28 @@ def test_morph_scale(scale, mesh_file, tmp_path):
         assert robot_scaled.n_vgeoms == obj_scaled.n_vgeoms
 
     for i_vg in range(obj_orig.n_vgeoms):
-        mesh_orig = obj_orig.vgeoms[i_vg].vmesh.trimesh.copy()
-        mesh_orig.apply_transform(gu.trans_quat_to_T(obj_orig.base_link.pos, obj_orig.base_link.quat))
-        mesh_scaled = obj_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
-        mesh_scaled.apply_transform(gu.trans_quat_to_T(obj_scaled.base_link.pos, obj_scaled.base_link.quat))
+        vgeom_orig = obj_orig.vgeoms[i_vg]
+        mesh_orig = vgeom_orig.vmesh.trimesh.copy()
+        w_pos_orig, w_quat_orig = gu.transform_pos_quat_by_trans_quat(
+            vgeom_orig.init_pos, vgeom_orig.init_quat, obj_orig.base_link.pos, obj_orig.base_link.quat
+        )
+        mesh_orig.apply_transform(gu.trans_quat_to_T(w_pos_orig, w_quat_orig))
+
+        vgeom_scaled = obj_scaled.vgeoms[i_vg]
+        mesh_scaled = vgeom_scaled.vmesh.trimesh.copy()
+        w_pos_scaled, w_quat_scaled = gu.transform_pos_quat_by_trans_quat(
+            vgeom_scaled.init_pos, vgeom_scaled.init_quat, obj_scaled.base_link.pos, obj_scaled.base_link.quat
+        )
+        mesh_scaled.apply_transform(gu.trans_quat_to_T(w_pos_scaled, w_quat_scaled))
         assert_allclose(mesh_orig.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
         if is_isotropic:
-            mesh_robot_scaled = robot_scaled.vgeoms[i_vg].vmesh.trimesh.copy()
-            mesh_robot_scaled.apply_transform(
-                gu.trans_quat_to_T(robot_scaled.base_link.pos, robot_scaled.base_link.quat)
+            vgeom_robot = robot_scaled.vgeoms[i_vg]
+            mesh_robot_scaled = vgeom_robot.vmesh.trimesh.copy()
+            w_pos_robot, w_quat_robot = gu.transform_pos_quat_by_trans_quat(
+                vgeom_robot.init_pos, vgeom_robot.init_quat, robot_scaled.base_link.pos, robot_scaled.base_link.quat
             )
+            mesh_robot_scaled.apply_transform(gu.trans_quat_to_T(w_pos_robot, w_quat_robot))
             assert_allclose(mesh_robot_scaled.vertices, mesh_scaled.vertices, tol=gs.EPS)
 
 
@@ -353,7 +364,10 @@ def test_mesh_yup(show_viewer):
         tmeshes = []
         for vgeom in entity.vgeoms:
             tmesh = vgeom.vmesh.trimesh.copy()
-            tmesh.apply_transform(gu.trans_quat_to_T(vgeom.link.pos, vgeom.link.quat))
+            w_pos, w_quat = gu.transform_pos_quat_by_trans_quat(
+                vgeom.init_pos, vgeom.init_quat, vgeom.link.pos, vgeom.link.quat
+            )
+            tmesh.apply_transform(gu.trans_quat_to_T(w_pos, w_quat))
             tmeshes.append(tmesh)
         combined = trimesh.util.concatenate(tmeshes)
         assert_allclose(combined.center_mass, (-0.012, -0.142, 0.397), tol=0.002)

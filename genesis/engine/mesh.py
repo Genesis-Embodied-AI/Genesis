@@ -361,7 +361,7 @@ class Mesh(RBC):
         )
 
     @classmethod
-    def from_morph_surface(cls, morph, surface=None):
+    def from_morph_surface(cls, morph, surface=None) -> "list[gs.Mesh] | gs.Mesh":
         """
         Create a genesis.Mesh from morph and surface options.
 
@@ -392,7 +392,7 @@ class Mesh(RBC):
         elif isinstance(morph, gs.options.morphs.Sphere):
             tmesh = mu.create_sphere(radius=morph.radius)
         else:
-            gs.raise_exception()
+            gs.raise_exception(f"Morph {morph} not supported by this method.")
 
         return cls.from_trimesh(tmesh, surface=surface)
 

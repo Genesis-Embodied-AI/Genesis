@@ -16,6 +16,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.ext import urdfpy
+from genesis.utils import urdf as uu
 from genesis.utils.misc import get_assets_dir, tensor_to_array, qd_to_numpy, qd_to_torch
 
 from .utils import (
@@ -2002,7 +2003,7 @@ def test_apply_external_forces(xml_path, show_viewer):
         show_FPS=False,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     robot = scene.add_entity(
@@ -2026,6 +2027,7 @@ def test_apply_external_forces(xml_path, show_viewer):
     end_effector_link_idx = robot.links[-1].idx
     duck_link_idx = duck.links[0].idx
     duck_mass = duck.get_mass()
+    duck_init_link_pos, duck_init_link_R = duck.base_link.pos, gu.quat_to_R(duck.base_link.quat)
     for step in range(801):
         ee_pos = rigid_solver.get_links_pos([end_effector_link_idx])[0]
         duck_pos = rigid_solver.get_links_pos([duck_link_idx])[0]
@@ -2035,7 +2037,7 @@ def test_apply_external_forces(xml_path, show_viewer):
             assert_allclose(ee_pos, (0.0, 0.0, 0.82), tol=0.01)
         elif step == 800:
             assert_allclose(ee_pos, (-0.8 / math.sqrt(2), 0.8 / math.sqrt(2), 0.02), tol=0.02)
-        assert_allclose(duck_pos, (1.0, 0.0, 1.0), tol=1e-3)
+        assert_allclose(duck_pos, duck_init_link_pos, tol=1e-3)
 
         if step >= 600:
             force = [-4.0, 4.0, 0.0]
@@ -2051,7 +2053,7 @@ def test_apply_external_forces(xml_path, show_viewer):
             torque = [0.0, 0.0, 0.0]
 
         rigid_solver.apply_links_external_force(
-            force=(0, duck_mass * GRAVITY, 0), links_idx=[duck_link_idx], ref="link_com", local=True
+            force=duck_mass * GRAVITY * duck_init_link_R[2], links_idx=[duck_link_idx], ref="link_com", local=True
         )
         rigid_solver.apply_links_external_force(
             force=force, links_idx=[end_effector_link_idx], ref="link_origin", local=False
@@ -2062,8 +2064,8 @@ def test_apply_external_forces(xml_path, show_viewer):
         scene.step()
 
     rigid_solver.apply_links_external_torque(torque=(0, 1, 0), links_idx=[duck_link_idx], ref="link_com", local=True)
-    assert_allclose(rigid_solver.links_state.cfrc_applied_vel[duck_link_idx, 0].to_numpy(), 0, tol=gs.EPS)
-    assert_allclose(rigid_solver.links_state.cfrc_applied_ang[duck_link_idx, 0].to_numpy(), (0, 0, -1), tol=gs.EPS)
+    assert_allclose(rigid_solver.links_state.cfrc_applied_vel[duck_link_idx, 0], 0, tol=gs.EPS)
+    assert_allclose(rigid_solver.links_state.cfrc_applied_ang[duck_link_idx, 0], -duck_init_link_R[:, 1], tol=gs.EPS)
 
     with np.testing.assert_raises(ValueError):
         rigid_solver.apply_links_external_force(force=(0, 0, 0), links_idx=[duck_link_idx], ref="root_com", local=True)
@@ -2288,8 +2290,7 @@ def test_mesh_repair(convexify, show_viewer, gjk_collision):
             qvel = obj.get_dofs_velocity()
             assert_allclose(qvel[:3], 0, atol=tol_pos)
             assert_allclose(qvel[3:], 0, atol=tol_rot)
-    qpos = obj.get_dofs_position()
-    assert_allclose(qpos[:2], (0.3, 0.0), atol=2e-3)
+    assert_allclose(obj.geoms[0].get_pos()[:2], (0.3, 0.0), atol=2e-3)
 
 
 @pytest.mark.slow  # ~160s
@@ -4091,7 +4092,7 @@ def test_noslip_iterations(scale, friction, mesh_boxes, show_viewer, tol, asset_
     for box in (box_1, box_2):
         box.set_dofs_kp(1000.0 * total_mass, dofs_idx_local=slice(3, 6))
         box.set_dofs_kv(100.0 * total_mass, dofs_idx_local=slice(3, 6))
-        box.control_dofs_position(0.0, dofs_idx_local=slice(3, 6))
+        box.control_dofs_position(box.get_dofs_position(dofs_idx_local=slice(3, 6)), dofs_idx_local=slice(3, 6))
 
     # Recording rest positions after a few warmup steps
     for _ in range(50):
@@ -4245,6 +4246,59 @@ def test_ellipsoid(xml_path, show_viewer):
     assert (-0.005 < entity.get_AABB()[0, 2] < 0.0).all()
     roll, pitch, _yaw = gu.quat_to_xyz(entity.get_quat(), rpy=True)
     assert_allclose((roll, pitch), (0.0, 0.0), tol=5e-3)
+
+
+@pytest.mark.required
+def test_mesh_align(show_viewer):
+    INIT_POS = (0.0, 0.0, 0.8)
+
+    asset_path = get_hf_dataset(pattern="glb/mango.glb")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.8, 0.8, 0.7),
+            camera_lookat=(-0.3, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    mango = scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/glb/mango.glb",
+            scale=0.045,
+            pos=INIT_POS,
+            align=True,
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    # Alignment is transparent: geom/vgeom world-space pose must equal morph pos/quat regardless of align
+    geom, vgeom = mango.geoms[0], mango.vgeoms[0]
+    assert_allclose(geom.get_pos(), INIT_POS, atol=1e-3)
+    assert_allclose(geom.get_quat(), gu.identity_quat(), atol=1e-3)
+    assert_allclose(vgeom.get_pos(), INIT_POS, atol=1e-3)
+    assert_allclose(vgeom.get_quat(), gu.identity_quat(), atol=1e-3)
+
+    # With align=True, the link frame is placed at the geometry COM
+    assert_allclose(mango.get_links_pos(ref="link_com"), mango.get_pos(), tol=2e-3)
+    geom_inertia_i = qd_to_numpy(scene.rigid_solver.links_state.cinr_inertial, transpose=True)[0, 1]
+    geom_quat = tensor_to_array(mango.get_quat())
+    assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=0.1)
+
+    # Simulate
+    for _ in range(300):
+        scene.step()
+
+    assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
+    assert (-0.005 < mango.get_AABB()[0, 2] < 0.0).all()
 
 
 @pytest.mark.slow  # ~150s
