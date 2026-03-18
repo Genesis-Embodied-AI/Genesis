@@ -13,8 +13,8 @@ class RBC:
     (decorated by @property) of the class, ordered by length of the property name.
     """
 
-    @classmethod
-    def __repr_name__(cls):
+    def __repr_name__(self):
+        cls = type(self)
         class_name = cls.__qualname__
         _module, *submodule = cls.__module__.split(".")
         # Greedily strip redundant submodule segments (front first, then back)

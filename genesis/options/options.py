@@ -41,7 +41,7 @@ class Options(RBC, BaseModel):
             self._validation_error(e)
 
     def _validation_error(self, exception: ValidationError) -> None:
-        traces = [f"Validation error for {self.__repr_name__()}:"]
+        traces = [f"Validation error for {RBC.__repr_name__(self)}:"]
 
         # Aggregate invalid type errors
         err_invalid_infos = {}

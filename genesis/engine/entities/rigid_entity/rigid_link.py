@@ -68,18 +68,19 @@ def get_local_inertial_from_geom(geom: RigidGeom | RigidVisGeom, rho: float) -> 
     else:
         # MESH type
         if isinstance(geom, RigidVisGeom):
-            inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces, density=rho, process=False)
+            inertia_mesh = trimesh.Trimesh(geom.init_vverts, geom.init_vfaces, process=False)
         else:
-            inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces, density=rho, process=False)
+            inertia_mesh = trimesh.Trimesh(geom.init_verts, geom.init_faces, process=False)
 
         if not inertia_mesh.is_watertight:
-            inertia_mesh = trimesh.convex.convex_hull(inertia_mesh)
+            inertia_mesh = inertia_mesh.convex_hull
 
         # FIXME: without this check, some geom will have negative volume even after the above convex
         # hull operation, e.g. 'tests/test_examples.py::test_example[rigid/terrain_from_mesh.py-None]'
         if inertia_mesh.volume < 0.0:
             inertia_mesh.invert()
 
+        inertia_mesh.density = rho
         geom_mass = inertia_mesh.mass
         geom_com_local = inertia_mesh.center_mass
         geom_inertia_local = inertia_mesh.moment_inertia
@@ -93,10 +94,12 @@ def compose_inertial_properties(
     """
     Compose mass, center of mass, and inertia tensor from multiple geometries.
     """
-    geoms_mass, geoms_com_local, geoms_I_local, geoms_pos, geoms_quat = zip(*geoms_inertial_info)
+    global_mass = 0.0
+    if geoms_inertial_info:
+        geoms_mass, geoms_com_local, geoms_I_local, geoms_pos, geoms_quat = zip(*geoms_inertial_info)
+        geoms_mass = np.asarray(geoms_mass)
+        global_mass = geoms_mass.sum()
 
-    geoms_mass = np.asarray(geoms_mass)
-    global_mass = geoms_mass.sum()
     if global_mass == 0.0:
         return 0.0, np.zeros(3, dtype=np.float64), np.zeros((3, 3), dtype=np.float64)
 

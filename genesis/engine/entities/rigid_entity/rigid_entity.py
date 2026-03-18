@@ -396,13 +396,12 @@ class KinematicEntity(Entity):
                 geoms_inertial_info.append(
                     (tmesh.mass, tmesh.center_mass, tmesh.moment_inertia, gu.zero_pos(), gu.identity_quat())
                 )
-            global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
-            if global_mass > gs.EPS:
-                principal_quat = gu.R_to_quat(uu.principal_axes_rot(global_inertia))
-                link_pos = gu.transform_by_trans_quat(global_com, link_pos, link_quat)
-                link_quat = gu.transform_quat_by_quat(principal_quat, link_quat)
-                geom_pos = gu.inv_transform_by_quat(-global_com, principal_quat)
-                geom_quat = gu.inv_quat(principal_quat)
+            _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
+            principal_quat = gu.R_to_quat(uu.principal_axes_rot(global_inertia))
+            link_pos = gu.transform_by_trans_quat(global_com, link_pos, link_quat)
+            link_quat = gu.transform_quat_by_quat(principal_quat, link_quat)
+            geom_pos = gu.inv_transform_by_quat(-global_com, principal_quat)
+            geom_quat = gu.inv_quat(principal_quat)
 
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
