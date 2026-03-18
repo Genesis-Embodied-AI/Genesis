@@ -15,7 +15,8 @@ dependencies = [
     "numpy>=1.26.4",
     "frozendict",
     "trimesh",
-    "libigl",
+    # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
+    "libigl!=2.6.2",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
     "mujoco>=3.2.5",
