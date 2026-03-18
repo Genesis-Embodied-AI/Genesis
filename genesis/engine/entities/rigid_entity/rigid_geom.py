@@ -837,8 +837,8 @@ class RigidVisGeom(RBC):
         self._vvert_start = vvert_start
         self._vface_start = vface_start
 
-        self._init_pos = init_pos
-        self._init_quat = init_quat
+        self._init_pos: np.ndarray = init_pos
+        self._init_quat: np.ndarray = init_quat
 
         # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
         self.active_envs_mask: torch.Tensor | None = None

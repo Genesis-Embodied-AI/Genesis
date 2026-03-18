@@ -16,6 +16,7 @@ import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.ext import urdfpy
+from genesis.utils import urdf as uu
 from genesis.utils.misc import get_assets_dir, tensor_to_array, qd_to_numpy, qd_to_torch
 
 from .utils import (
@@ -4254,7 +4255,10 @@ def test_mesh_align(show_viewer):
     asset_path = get_hf_dataset(pattern="glb/mango.glb")
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01, substeps=10),
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+            substeps=4,
+        ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.8, 0.8, 0.8),
             camera_lookat=(-0.3, 0.0, 0.2),
@@ -4273,21 +4277,17 @@ def test_mesh_align(show_viewer):
     )
     scene.build()
 
-    # Alignment is transparent: geom/vgeom world-space pose must equal morph pos/quat regardless of align.
+    # Alignment is transparent: geom/vgeom world-space pose must equal morph pos/quat regardless of align
     geom, vgeom = mango.geoms[0], mango.vgeoms[0]
     assert_allclose(geom.get_pos(), INIT_POS, atol=1e-3)
     assert_allclose(geom.get_quat(), gu.identity_quat(), atol=1e-3)
     assert_allclose(vgeom.get_pos(), INIT_POS, atol=1e-3)
     assert_allclose(vgeom.get_quat(), gu.identity_quat(), atol=1e-3)
 
-    # With align=True (default), the link frame is placed at the geometry COM.
-    # Verify: applying the vgeom's world-space pose to the mesh COM should give the link world origin.
-    combined_vmesh = trimesh.util.concatenate([v.get_trimesh() for v in mango.vgeoms])
-    if not combined_vmesh.is_watertight:
-        combined_vmesh = combined_vmesh.convex_hull
-    R_vgeom = gu.quat_to_R(tensor_to_array(vgeom.get_quat()))
-    world_com = R_vgeom @ combined_vmesh.center_mass + tensor_to_array(vgeom.get_pos())
-    assert_allclose(world_com, mango.get_pos(), atol=1e-3)
+    # With align=True, the link frame is placed at the geometry COM
+    assert_allclose(mango.get_links_pos(ref="link_com"), mango.get_pos(), tol=2e-3)
+    geom_inertia_i = scene.rigid_solver.links_state.cinr_inertial.to_numpy()[1, 0]
+    assert_allclose(gu.R_to_xyz(gu.quat_to_R(mango.get_quat()) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=0.1)
 
     # Simulate
     for _ in range(250):

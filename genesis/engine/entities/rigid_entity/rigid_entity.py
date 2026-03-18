@@ -1,10 +1,9 @@
 import inspect
 import os
 import xml.etree.ElementTree as ET
-from copy import copy
 from itertools import chain
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Any
+from typing import TYPE_CHECKING, Literal, Any, Sequence
 from functools import wraps
 
 import quadrants as qd
@@ -29,7 +28,7 @@ from ..base_entity import Entity
 from .rigid_equality import RigidEquality
 from .rigid_geom import RigidGeom
 from .rigid_joint import RigidJoint
-from .rigid_link import KinematicLink, RigidLink
+from .rigid_link import KinematicLink, RigidLink, compose_inertial_properties
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
@@ -383,22 +382,27 @@ class KinematicEntity(Entity):
         # Load meshes
         meshes = gs.Mesh.from_morph_surface(morph, surface)
 
-        link_pos = np.array(morph.pos)
-        link_quat = np.array(morph.quat)
+        link_pos, link_quat = map(np.array, (morph.pos, morph.quat))
+        geom_pos, geom_quat = gu.zero_pos(), gu.identity_quat()
 
-        geom_pos = gu.zero_pos()
-        geom_quat = gu.identity_quat()
-
-        if morph.align:
-            # Translate the link frame to the mesh COM so that the inertia tensor origin
-            # coincides with the link frame. This makes the inertia tensor diagonal-dominant
-            # and improves numerical stability without altering the world-space geometry.
-            combined_tmesh = trimesh.util.concatenate([mesh.trimesh for mesh in meshes])
-            if not combined_tmesh.is_watertight:
-                combined_tmesh = combined_tmesh.convex_hull
-            com = combined_tmesh.center_mass.astype(gs.np_float)
-            link_pos = gu.transform_by_trans_quat(com, link_pos, link_quat)
-            geom_pos = -com
+        if morph.align and not morph.fixed and isinstance(meshes, Sequence):
+            # Translate the link frame to the mesh COM so that the inertia tensor origin coincides with the link frame.
+            # This makes the inertia tensor diagonal-dominant and improves numerical stability of the simulation.
+            geoms_inertial_info = []
+            for mesh in meshes:
+                tmesh = mesh.trimesh
+                if not tmesh.is_watertight:
+                    tmesh = tmesh.convex_hull
+                geoms_inertial_info.append(
+                    (tmesh.mass, tmesh.center_mass, tmesh.moment_inertia, gu.zero_pos(), gu.identity_quat())
+                )
+            global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
+            if global_mass > gs.EPS:
+                principal_quat = gu.R_to_quat(uu.principal_axes_rot(global_inertia))
+                link_pos = gu.transform_by_trans_quat(global_com, link_pos, link_quat)
+                link_quat = gu.transform_quat_by_quat(principal_quat, link_quat)
+                geom_pos = gu.inv_transform_by_quat(-global_com, principal_quat)
+                geom_quat = gu.inv_quat(principal_quat)
 
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED

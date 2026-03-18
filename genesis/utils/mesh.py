@@ -73,7 +73,7 @@ class MeshInfo:
         self.uvs.append(uvs)
         self.n_points += len(verts)
 
-    def export_mesh(self, scale, is_mesh_zup):
+    def export_mesh(self, scale: float, is_mesh_zup: bool) -> "gs.Mesh":
         uvs = None
         if self.uvs:
             for i, (uvs, verts) in enumerate(zip(self.uvs, self.verts)):
@@ -99,9 +99,9 @@ class MeshInfo:
 
 class MeshInfoGroup:
     def __init__(self):
-        self.infos = dict()
+        self.infos: dict[str, MeshInfo] = {}
 
-    def get(self, name):
+    def get(self, name: str):
         first_created = False
         mesh_info = self.infos.get(name)
         if mesh_info is None:
@@ -109,7 +109,7 @@ class MeshInfoGroup:
             first_created = True
         return mesh_info, first_created
 
-    def export_meshes(self, scale, is_mesh_zup):
+    def export_meshes(self, scale, is_mesh_zup) -> "list[gs.Mesh]":
         return [mesh_info.export_mesh(scale, is_mesh_zup) for mesh_info in self.infos.values()]
 
 
@@ -518,8 +518,8 @@ def postprocess_collision_geoms(
     return _g_infos
 
 
-def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
-    meshes = []
+def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface) -> "list[gs.Mesh]":
+    meshes: list[gs.Mesh] = []
     scene = trimesh.load(path, force="scene", group_material=group_by_material, process=False)
     for tmesh in scene.geometry.values():
         if not isinstance(tmesh, trimesh.Trimesh):
@@ -531,7 +531,7 @@ def parse_mesh_trimesh(path, group_by_material, scale, is_mesh_zup, surface):
     return meshes
 
 
-def trimesh_to_mesh(mesh, scale, surface):
+def trimesh_to_mesh(mesh, scale, surface) -> "gs.Mesh":
     return gs.Mesh.from_trimesh(mesh=mesh, scale=scale, surface=surface)
 
 

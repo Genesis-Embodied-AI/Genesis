@@ -932,8 +932,10 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
         if T is None:
             T = torch.zeros((*B, 4, 4), dtype=trans.dtype, device=trans.device)
     elif is_numpy:
+        dtype = np.result_type(trans, quat)
+        trans, quat = trans.astype(dtype), quat.astype(dtype)
         if T is None:
-            T = np.zeros((*B, 4, 4), dtype=trans.dtype)
+            T = np.zeros((*B, 4, 4), dtype=dtype)
     else:
         gs.raise_exception(
             f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(quat)=}"

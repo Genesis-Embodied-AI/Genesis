@@ -446,6 +446,19 @@ def rotate_inertia(I, R):
     return R @ I @ R.T
 
 
+def principal_axes_rot(I):
+    """Return rotation matrix R whose columns are the principal axes of inertia I (sorted by ascending eigenvalue).
+
+    The returned matrix is guaranteed to be right-handed (det = +1).
+    """
+    eigvals, eigvecs = np.linalg.eigh(I)
+    order = np.argsort(eigvals)
+    R = eigvecs[:, order]
+    if np.linalg.det(R) < 0:
+        R[:, 0] = -R[:, 0]
+    return R
+
+
 def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):
     """
     Compose inertial properties of two bodies.
