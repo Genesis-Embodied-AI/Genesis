@@ -4294,11 +4294,51 @@ def test_mesh_align(show_viewer):
     assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=0.1)
 
     # Simulate
-    for _ in range(300):
+    for _ in range(350):
         scene.step()
 
     assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
     assert (-0.005 < mango.get_AABB()[0, 2] < 0.0).all()
+
+
+@pytest.mark.required
+def test_urdf_align(show_viewer, tol):
+    INIT_POS = (0.0, 0.0, 0.7)
+
+    asset_path = get_hf_dataset(pattern="fork/*")
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.8, 0.8, 0.6),
+            camera_lookat=(-0.3, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    fork = scene.add_entity(
+        gs.morphs.URDF(
+            file=f"{asset_path}/fork/fork.urdf",
+            pos=INIT_POS,
+            align=True,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    # With align=True, the link frame origin is at the collision geometry COM
+    assert_allclose(fork.get_links_pos(ref="link_com"), fork.get_pos(), tol=tol)
+
+    # Simulate with initial angular velocity to check numerical stability
+    fork.set_dofs_velocity(10.0, dofs_idx_local=slice(3, 6))
+    for _ in range(100):
+        scene.step()
+
+    assert_allclose(fork.get_dofs_velocity(), 0, tol=0.05)
+    assert (-0.002 < fork.get_AABB()[0, 2] < 0.0).all()
 
 
 @pytest.mark.slow  # ~150s

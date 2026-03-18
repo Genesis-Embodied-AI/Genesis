@@ -702,7 +702,7 @@ class RigidLink(KinematicLink):
                     aabb_max = np.maximum(aabb_max, verts.max(axis=0))
 
         # Make sure that provided spatial inertia is consistent with the estimate from the geometries if not fixed
-        if hint_mass > MASS_EPS:
+        if (self._inertial_mass or hint_mass) > MASS_EPS and hint_mass > gs.EPS:
             if self._inertial_pos is not None:
                 tol = (aabb_max - aabb_min) * AABB_EPS + AABB_EPS
                 if not ((aabb_min - tol < self._inertial_pos) & (self._inertial_pos < aabb_max + tol)).all():
