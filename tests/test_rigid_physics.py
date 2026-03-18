@@ -4577,9 +4577,10 @@ def test_heterogeneous_mass_setters(tol):
     )
     scene.build(n_envs=4)
 
-    # Entity-level setter should update all environments (scalar target).
     het_obj.set_mass(1.0)
-    assert_allclose(het_obj.get_mass(), np.ones(scene.n_envs), tol=tol)
+    assert_allclose(
+        het_obj.get_mass(), 1.0, tol=tol, err_msg="entity.set_mass(1.0) should set same mass for all variants"
+    )
 
     # Link-level setter should support per-environment mass targets.
     link = next(link for link in het_obj.links if not link.is_fixed)

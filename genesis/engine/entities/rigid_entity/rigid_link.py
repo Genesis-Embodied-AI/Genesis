@@ -917,31 +917,20 @@ class RigidLink(KinematicLink):
                 f"Expected shape ({self._solver.n_envs},)."
             )
 
-        ratio = mass / self._inertial_mass
+        ratio = np.asarray(mass / self._inertial_mass, dtype=gs.np_float)
+        if self._solver.n_envs > 0 and ratio.ndim == 0:
+            ratio = np.full((self._solver.n_envs,), fill_value=float(ratio), dtype=gs.np_float)
 
-        n_envs = self._solver.n_envs
-        if ratio.ndim == 0:
-            ratio_scalar = float(ratio)
-            self._inertial_mass *= ratio_scalar
-            if self._invweight is not None:
-                self._invweight /= ratio_scalar
-            self._inertial_i *= ratio_scalar
-            ratio = np.full((max(n_envs, 1),), fill_value=ratio_scalar, dtype=gs.np_float)
-        else:
-            self._inertial_mass = np.asarray(self._inertial_mass, dtype=gs.np_float) * ratio
-            if self._invweight is not None:
-                invweight = np.asarray(self._invweight, dtype=gs.np_float)
-                if invweight.ndim == 1:
-                    invweight = np.broadcast_to(invweight[None, :], (n_envs, invweight.shape[0])).copy()
-                self._invweight = invweight / ratio[:, None]
-            inertial_i = np.asarray(self._inertial_i, dtype=gs.np_float)
-            if inertial_i.ndim == 2:
-                inertial_i = np.broadcast_to(inertial_i[None, :, :], (n_envs, 3, 3)).copy()
-            self._inertial_i = inertial_i * ratio[:, None, None]
+        self._inertial_mass = self._inertial_mass * ratio
+
+        if self._invweight is not None:
+            self._invweight = self._invweight / ratio[:, None]
+
+        self._inertial_i = self._inertial_i * ratio[:, None, None]
 
         kernel_adjust_link_inertia(
             link_idx=self.idx,
-            ratio=ratio,
+            ratio=ratio if ratio.ndim > 0 else ratio[None],
             links_info=self._solver.links_info,
             static_rigid_sim_config=self._solver._static_rigid_sim_config,
         )

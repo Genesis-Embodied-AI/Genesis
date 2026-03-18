@@ -549,10 +549,10 @@ def kernel_adjust_link_inertia(
                 links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio[i_b]
     else:
         for j in qd.static(range(2)):
-            links_info.invweight[link_idx][j] /= ratio[0]
-        links_info.inertial_mass[link_idx] *= ratio[0]
+            links_info.invweight[link_idx][j] /= ratio[None]
+        links_info.inertial_mass[link_idx] *= ratio[None]
         for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            links_info.inertial_i[link_idx][j1, j2] *= ratio[0]
+            links_info.inertial_i[link_idx][j1, j2] *= ratio[None]
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
