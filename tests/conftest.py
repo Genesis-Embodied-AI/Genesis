@@ -20,7 +20,6 @@ from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
 
-from . import profiling
 
 # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
 has_tkinter = False
@@ -468,19 +467,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="speed_test.txt",
         help="Base filepath for speed test reports (default: speed_test.txt).",
     )
-    if os.environ.get("GS_PROFILING", "0") == "1":
-        profiling.parser_add_options(parser)
-
-
-# Note: moving this out of conftest.py, e.g. into profiling.py, does not appear to work.
-@pytest.fixture(scope="function")
-def pytorch_profiler_step(pytestconfig, request):
-    if os.environ.get("GS_PROFILING", "0") == "1":
-        for res in profiling.pytorch_profiler(pytestconfig, request):
-            yield res
-    else:
-        noop = lambda: None  # noqa: E731
-        yield noop
 
 
 @pytest.fixture(scope="session")

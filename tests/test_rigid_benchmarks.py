@@ -1,5 +1,6 @@
 import os
 import time
+from collections import namedtuple
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,12 @@ from .utils import (
 STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
+
+SceneMeta = namedtuple(
+    "SceneMeta",
+    ["compile_time", "step_dt", "duration_warmup", "duration_record", "needs_sync"],
+    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD, False],
+)
 
 pytestmark = [
     pytest.mark.benchmarks,
@@ -194,66 +201,21 @@ def get_file_morph_options(**kwargs):
     return {**options, **kwargs}
 
 
-@pytest.fixture(scope="session")
-def stream_writers(printer_session, request):
-    report_path = Path(request.config.getoption("--speed-test-filepath"))
-
-    # Delete old unrelated worker-specific reports
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-    if worker_id == "gw0":
-        worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
-
-        for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
-            _, worker_id_ = path.stem.rsplit("-", 1)
-            worker_num = int(worker_id_[2:])
-            if worker_num >= worker_count:
-                path.unlink()
-
-    # Create new empty worker-specific report
-    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
-    report_path = report_path.with_name(f"{report_name}.txt")
-    if report_path.exists():
-        report_path.unlink()
-    fd = open(report_path, "w")
-
-    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
-
-    fd.close()
+# ---------------------------------------------------------------------------
+# Scene factories
+#
+# Each factory builds a complete scene and returns (scene, step_fn, metadata).
+#   - scene:    the built gs.Scene (useful for visualization, inspection)
+#   - step_fn:  callable that runs one simulation step including control logic
+#   - metadata: dict with compile_time, step_dt, and optional overrides for
+#               duration_warmup, duration_record, needs_sync
+#
+# **scene_kwargs are forwarded to gs.Scene(), allowing callers to control
+# show_viewer, vis_options, etc. without modifying these factories.
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="function")
-def factory_logger(stream_writers):
-    class Logger:
-        def __init__(self, hparams: dict[str, Any]):
-            self.hparams = {
-                **hparams,
-                "dtype": "ndarray" if gs.use_ndarray else "field",
-                "backend": str(gs.backend.name),
-            }
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            pass
-
-        def write(self, items):
-            nonlocal stream_writers
-
-            if stream_writers:
-                msg = (
-                    pprint_oneline(self.hparams, delimiter=" \t| ")
-                    + " \t| "
-                    + pprint_oneline(items, delimiter=" \t| ", digits=1)
-                )
-                for writer in stream_writers:
-                    writer(msg)
-
-    return Logger
-
-
-@pytest.fixture
-def go2(solver, n_envs, gjk, pytorch_profiler_step):
+def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -262,13 +224,10 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
+    scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(
         gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf"),
         vis_mode="collision",
@@ -295,27 +254,13 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
     )
     robot.set_qpos(init_qpos)
 
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
+    def step():
         scene.step()
-        pytorch_profiler_step()
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
+def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -324,8 +269,7 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -337,6 +281,7 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
             )
         ),
     )
+    ghost = None
     if with_kinematic:
         ghost = scene.add_entity(
             gs.morphs.URDF(file="urdf/anymal_c/urdf/anymal_c.urdf", pos=(0, -0.5, 0.8)),
@@ -357,55 +302,23 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
     else:
         rand_shape = None
 
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
+    def step():
         if rand_shape is not None:
             robot.control_dofs_position(
                 torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
             )
-        if with_kinematic:
+        if ghost is not None:
             ghost.set_dofs_position(
                 torch.rand(rand_shape, dtype=gs.tc_float, device=gs.device) * 0.1 - 0.05, motors_dof_idx
             )
         scene.step()
-        profiler_step()
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
-@pytest.fixture
-def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def anymal_random(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step)
-
-
-def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
+def make_franka(
+    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
+):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -415,8 +328,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -455,12 +367,8 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
     dofs_stiffness = franka.get_dofs_stiffness()
     dofs_damping = franka.get_dofs_damping()
 
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
+    def step():
         scene.step()
-        profiler_step()
         if accessors:
             franka.get_ang()
             franka.get_vel()
@@ -476,80 +384,16 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
             franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
             franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
 
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
-
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
-@pytest.fixture
-def franka(solver, n_envs, gjk, pytorch_profiler_step):
-    return _franka(
-        solver,
-        n_envs,
-        gjk,
-        is_collision_free=False,
-        is_randomized=False,
-        accessors=False,
-        profiler_step=pytorch_profiler_step,
-    )
-
-
-@pytest.fixture
-def franka_random(solver, n_envs, gjk, pytorch_profiler_step):
-    return _franka(
-        solver,
-        n_envs,
-        gjk,
-        is_collision_free=False,
-        is_randomized=True,
-        accessors=False,
-        profiler_step=pytorch_profiler_step,
-    )
-
-
-@pytest.fixture
-def franka_free(solver, n_envs, gjk, pytorch_profiler_step):
-    return _franka(
-        solver,
-        n_envs,
-        gjk,
-        is_collision_free=True,
-        is_randomized=False,
-        accessors=False,
-        profiler_step=pytorch_profiler_step,
-    )
-
-
-@pytest.fixture
-def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step):
-    return _franka(
-        solver,
-        n_envs,
-        gjk,
-        is_collision_free=True,
-        is_randomized=False,
-        accessors=True,
-        profiler_step=pytorch_profiler_step,
-    )
-
-
-def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
+def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
     scene.add_entity(
         gs.morphs.Mesh(
@@ -586,37 +430,13 @@ def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
     if n_envs > 0:
         duck.set_dofs_velocity(0.5 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
 
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
+    def step():
         scene.step()
-        profiler_step()
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
-@pytest.fixture
-def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler_step):
-    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler_step):
-    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=pytorch_profiler_step)
-
-
-def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
+def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -625,14 +445,17 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        viewer_options=gs.options.ViewerOptions(
-            camera_pos=(0.0, -3.5, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
-            camera_fov=30,
-            max_FPS=60,
-        ),
-        show_viewer=False,
-        show_FPS=False,
+        **{
+            "viewer_options": gs.options.ViewerOptions(
+                camera_pos=(0.0, -3.5, 2.5),
+                camera_lookat=(0.0, 0.0, 0.5),
+                camera_fov=30,
+                max_FPS=60,
+            ),
+            "show_viewer": False,
+            "show_FPS": False,
+            **scene_kwargs,
+        },
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -656,57 +479,13 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
         for box in scene.entities[1:]:
             box.set_dofs_velocity(0.04 * torch.rand((n_envs, 6), dtype=gs.tc_float, device=gs.device))
 
-    num_steps = 0
-    is_recording = False
-    time_start = time.time()
-    while True:
+    def step():
         scene.step()
-        profiler_step()
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > DURATION_RECORD:
-                break
-        elif time_elapsed > DURATION_WARMUP:
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * STEP_DT
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
-@pytest.fixture
-def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=pytorch_profiler_step)
-
-
-@pytest.fixture
-def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
-    """G1 humanoid robot falling from above a plane."""
-    import quadrants as qd
-
-    # This is sufficient, as long as we use sync
-    duration_warmup = 20.0
-    duration_record = 5.0
-
-    # Needed in order to reproduce the benefits for parallelizing Hessian that
-    # we see on Eden Beyond Mimic
+def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     step_dt = 0.005
 
     scene = gs.Scene(
@@ -718,13 +497,10 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
-    scene.add_entity(
-        gs.morphs.Plane(),
-    )
+    scene.add_entity(gs.morphs.Plane())
     asset_path = get_hf_dataset(pattern="unitree_g1/*")
     robot = scene.add_entity(
         gs.morphs.MJCF(
@@ -739,7 +515,6 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
     scene.build(n_envs=n_envs)
     compile_time = time.time() - time_start
 
-    # Set initial position with robot elevated above ground
     init_qpos = torch.zeros((robot.n_qs,), dtype=gs.tc_float, device=gs.device)
     init_qpos[2] = 1.0  # z position
     init_qpos[3] = 1.0  # quaternion w component
@@ -748,37 +523,25 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
     random_forces = torch.zeros((n_envs, robot.n_dofs), dtype=gs.tc_float, device=gs.device)
     max_force = 50.0
 
-    num_steps = 0
-    is_recording = False
-    qd.sync()
-    time_start = time.time()
-    while True:
+    def step():
         random_forces.uniform_(-max_force, max_force)
         robot.control_dofs_force(random_forces)
         scene.step()
-        pytorch_profiler_step()
-        time_elapsed = time.time() - time_start
-        if is_recording:
-            num_steps += 1
-            if time_elapsed > duration_record:
-                qd.sync()
-                time_elapsed = time.time() - time_start
-                break
-        elif time_elapsed > duration_warmup:
-            qd.sync()
-            time_start = time.time()
-            is_recording = True
-    runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * step_dt
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=step_dt,
+            duration_warmup=20.0,
+            duration_record=5.0,
+            needs_sync=True,
+        ),
+    )
 
 
-@pytest.fixture
-def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
-    """Two shadow hands manipulating a drill on a table."""
-    import quadrants as qd
-
+def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     shadow_hand_path = Path(get_hf_dataset(pattern="shadow_hand/*"))
     dex_path = Path(get_hf_dataset(pattern="dex/*"))
 
@@ -786,8 +549,6 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
     FINGER_FORCE = 0.6
     DRILL_STIFFNESS = 20
 
-    duration_warmup = 20.0
-    duration_record = 5.0
     step_dt = 1 / 16
 
     JOINT_NAMES = [
@@ -886,8 +647,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
-        show_FPS=False,
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
 
     hands = []
@@ -945,31 +705,233 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
         hand.control_dofs_position(base_xy_targets[hand], dofs_idx_local=[0, 1])
     drill.control_dofs_position(drill_xy_target, dofs_idx_local=[0, 1])
 
-    num_steps = 0
-    is_recording = False
-    qd.sync()
-    time_start = time.time()
-    while True:
+    def step():
         for hand in hands:
             random_forces[hand].uniform_(-FINGER_FORCE, FINGER_FORCE)
             hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
         scene.step()
-        pytorch_profiler_step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=step_dt,
+            duration_warmup=20.0,
+            duration_record=5.0,
+            needs_sync=True,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Benchmark runner
+# ---------------------------------------------------------------------------
+
+
+def run_benchmark(step_fn, *, n_envs, meta):
+    if meta.needs_sync:
+        import quadrants as qd
+
+        qd.sync()
+
+    num_steps = 0
+    is_recording = False
+    time_start = time.time()
+    while True:
+        step_fn()
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
-            if time_elapsed > duration_record:
-                qd.sync()
-                time_elapsed = time.time() - time_start
+            if time_elapsed > meta.duration_record:
+                if meta.needs_sync:
+                    qd.sync()
+                    time_elapsed = time.time() - time_start
                 break
-        elif time_elapsed > duration_warmup:
-            qd.sync()
+        elif time_elapsed > meta.duration_warmup:
+            if meta.needs_sync:
+                qd.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * step_dt
+    realtime_factor = runtime_fps * meta.step_dt
 
-    return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
+    return dict(compile_time=meta.compile_time, runtime_fps=runtime_fps, realtime_factor=realtime_factor)
+
+
+# ---------------------------------------------------------------------------
+# Pytest infrastructure
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def stream_writers(printer_session, request):
+    report_path = Path(request.config.getoption("--speed-test-filepath"))
+
+    # Delete old unrelated worker-specific reports
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id == "gw0":
+        worker_count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+
+        for path in report_path.parent.glob("-".join((report_path.stem, "*.txt"))):
+            _, worker_id_ = path.stem.rsplit("-", 1)
+            worker_num = int(worker_id_[2:])
+            if worker_num >= worker_count:
+                path.unlink()
+
+    # Create new empty worker-specific report
+    report_name = "-".join(filter(None, (report_path.stem, worker_id)))
+    report_path = report_path.with_name(f"{report_name}.txt")
+    if report_path.exists():
+        report_path.unlink()
+    fd = open(report_path, "w")
+
+    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
+
+    fd.close()
+
+
+@pytest.fixture(scope="function")
+def factory_logger(stream_writers):
+    class Logger:
+        def __init__(self, hparams: dict[str, Any]):
+            self.hparams = {
+                **hparams,
+                "dtype": "ndarray" if gs.use_ndarray else "field",
+                "backend": str(gs.backend.name),
+            }
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            pass
+
+        def write(self, items):
+            nonlocal stream_writers
+
+            if stream_writers:
+                msg = (
+                    pprint_oneline(self.hparams, delimiter=" \t| ")
+                    + " \t| "
+                    + pprint_oneline(items, delimiter=" \t| ", digits=1)
+                )
+                for writer in stream_writers:
+                    writer(msg)
+
+    return Logger
+
+
+# ---------------------------------------------------------------------------
+# Pytest fixture wrappers (thin: just wire factory -> runner)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def go2(solver, n_envs, gjk):
+    _, step_fn, meta = make_go2(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def anymal_zero(solver, n_envs, gjk):
+    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control=None)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def anymal_uniform(solver, n_envs, gjk):
+    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform")
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def anymal_random(solver, n_envs, gjk):
+    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="per_env")
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def anymal_uniform_kinematic(solver, n_envs, gjk):
+    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform", with_kinematic=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def franka(solver, n_envs, gjk):
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def franka_random(solver, n_envs, gjk):
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def franka_free(solver, n_envs, gjk):
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def franka_accessors(solver, n_envs, gjk):
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True, accessors=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def duck_in_box_easy(solver, n_envs, gjk):
+    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=False)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def duck_in_box_hard(solver, n_envs, gjk):
+    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def box_pyramid_3(solver, n_envs, gjk):
+    _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=3)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def box_pyramid_4(solver, n_envs, gjk):
+    _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=4)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def box_pyramid_5(solver, n_envs, gjk):
+    _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=5)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def box_pyramid_6(solver, n_envs, gjk):
+    _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=6)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def g1_fall(solver, n_envs, gjk):
+    _, step_fn, meta = make_g1_fall(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def dex_hand(solver, n_envs, gjk):
+    _, step_fn, meta = make_dex_hand(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+# ---------------------------------------------------------------------------
+# Parametrized benchmark test
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
