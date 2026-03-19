@@ -7,7 +7,7 @@ from typing_extensions import override
 
 import genesis as gs
 import genesis.utils.geom as gu
-from genesis.utils.mesh import create_plane
+from genesis.utils.mesh import create_cylinder, create_plane
 from genesis.utils.misc import tensor_to_array
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
 from genesis.vis.keybindings import MouseButton
@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.node import Node
+
+
+MIN_PICKABLE_MASS = 1e-3  # kg — links below this threshold are skipped to avoid numerical instability
 
 
 def with_lock(fun: Callable[..., Any]) -> Callable[..., Any]:
@@ -44,7 +47,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self.use_force = bool(use_force)
         self.spring_const = float(spring_const)
         self.color = tuple(color)
-        self.plane_color = (color[0], color[1], color[2], color[3] * 0.5)
 
         self._lock: Lock = Lock()
         self._held_link: "RigidLink | None" = None
@@ -55,9 +57,24 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self._surface_normal: np.ndarray | None = None
         self._plane_rotation_angle: float = 0.0
 
+        # Persistent debug nodes (lifecycle managed in on_draw)
+        self._sphere_node: "Node | None" = None
+        self._line_node: "Node | None" = None
+        self._plane_node: "Node | None" = None
+        self._arrow_node: "Node | None" = None
+
+        # Shared meshes (created in build)
+        self._unit_cylinder_mesh = None
+        self._plane_mesh = None
+
     def build(self, viewer, camera: "Node", scene: "Scene"):
         super().build(viewer, camera, scene)
         self._prev_mouse_screen_pos = (self.viewer._viewport_size[0] // 2, self.viewer._viewport_size[1] // 2)
+
+        self._unit_cylinder_mesh = create_cylinder(radius=0.005, height=1.0, color=self.color)
+        plane_color = (*self.color[:3], self.color[3] * 0.5)
+        plane_vmesh, _ = create_plane(plane_size=(0.3, 0.3), color_or_texture=plane_color, double_sided=True)
+        self._plane_mesh = plane_vmesh
 
     @override
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
@@ -90,7 +107,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 link = ray_hit.geom.link
 
                 # Validate mass is not too small to prevent numerical instability
-                if link.get_mass() < 1e-3:
+                if link.get_mass() < MIN_PICKABLE_MASS:
                     gs.logger.warning(
                         f"Link '{link.name}' has very small mass ({link.get_mass():.2e}). "
                         "Skipping interaction to avoid numerical instability."
@@ -150,61 +167,103 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     @with_lock
     @override
     def on_draw(self) -> None:
-        if self.scene._visualizer is not None and self.scene._visualizer.is_built:
-            self.scene.clear_debug_objects()
-            mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
-            closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
+        if self.scene._visualizer is None or not self.scene._visualizer.is_built:
+            return
 
-            if self._held_link:
-                assert self._mouse_drag_plane is not None
-                assert self._held_point_local is not None
+        context = self.scene._visualizer.context
+        mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
 
-                # Draw held point
-                link_pos = tensor_to_array(self._held_link.get_pos())
-                link_quat = tensor_to_array(self._held_link.get_quat())
-                held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
+        if self._held_link:
+            # Clean up hover arrow when transitioning to hold state
+            if self._arrow_node is not None:
+                context.clear_debug_object(self._arrow_node)
+                self._arrow_node = None
 
-                plane_hit: RayHit | None = plane_raycast(*self._mouse_drag_plane, mouse_ray)
-                if plane_hit is not None:
-                    self.scene.draw_debug_sphere(
-                        plane_hit.position,
-                        radius=0.01,
-                        color=self.color,
-                    )
-                    self.scene.draw_debug_line(
-                        held_point_world,
-                        plane_hit.position,
-                        radius=0.005,
-                        color=self.color,
-                    )
-                    # draw the mouse drag plane as a flat box around the mouse position
-                    plane_normal, _plane_dist = self._mouse_drag_plane
-                    self._draw_plane(
-                        plane_normal,
-                        plane_hit.position,
-                        size=1.0,
-                        color=self.plane_color,
-                    )
+            assert self._mouse_drag_plane is not None
+            assert self._held_point_local is not None
+
+            link_pos = tensor_to_array(self._held_link.get_pos())
+            link_quat = tensor_to_array(self._held_link.get_quat())
+            held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
+
+            plane_hit: RayHit | None = plane_raycast(*self._mouse_drag_plane, mouse_ray)
+            if plane_hit is not None:
+                control_point = plane_hit.position
+
+                # Sphere at clamped control point (translation only, no rotation)
+                sphere_T = gu.trans_to_T(control_point)
+                if self._sphere_node is None:
+                    self._sphere_node = context.draw_debug_sphere(control_point, radius=0.01, color=self.color)
+                else:
+                    context.update_debug_objects((self._sphere_node,), (sphere_T,))
+
+                # Cylinder from held point to clamped control point
+                line_T = self._compute_line_T(held_point_world, control_point)
+                if self._line_node is None:
+                    self._line_node = context.draw_debug_mesh(self._unit_cylinder_mesh, T=line_T)
+                else:
+                    context.update_debug_objects((self._line_node,), (line_T,))
+
+                # Drag plane visualization centered on clamped control point
+                plane_T = gu.trans_R_to_T(control_point, gu.z_up_to_R(self._mouse_drag_plane[0]))
+                if self._plane_node is None:
+                    self._plane_node = context.draw_debug_mesh(self._plane_mesh, T=plane_T)
+                else:
+                    context.update_debug_objects((self._plane_node,), (plane_T,))
 
             else:
-                if closest_hit is not None:
-                    self.scene.draw_debug_arrow(
-                        closest_hit.position,
-                        closest_hit.normal * 0.25,
-                        color=self.color,
-                    )
+                # No plane hit: hide held visualization nodes
+                if self._sphere_node is not None:
+                    context.clear_debug_object(self._sphere_node)
+                    self._sphere_node = None
+                if self._line_node is not None:
+                    context.clear_debug_object(self._line_node)
+                    self._line_node = None
+                if self._plane_node is not None:
+                    context.clear_debug_object(self._plane_node)
+                    self._plane_node = None
 
-    def _draw_plane(
-        self,
-        normal: np.ndarray,
-        center: np.ndarray | tuple[float, float, float],
-        size: float = 1.0,
-        color: tuple[float, float, float, float] = (0.5, 0.5, 1.0, 0.2),
-    ) -> None:
-        vmesh, _ = create_plane(plane_size=(size, size), color_or_texture=color, double_sided=True)
-        normal_arr = np.ascontiguousarray(normal, dtype=gs.np_float)
-        T = gu.trans_R_to_T(center, gu.z_up_to_R(normal_arr))
-        self.scene.draw_debug_mesh(vmesh, T=T)
+        else:
+            # Clean up held visualization nodes
+            if self._sphere_node is not None:
+                context.clear_debug_object(self._sphere_node)
+                self._sphere_node = None
+            if self._line_node is not None:
+                context.clear_debug_object(self._line_node)
+                self._line_node = None
+            if self._plane_node is not None:
+                context.clear_debug_object(self._plane_node)
+                self._plane_node = None
+
+            # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
+            closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
+            link = closest_hit.geom.link if closest_hit is not None and closest_hit.geom is not None else None
+            is_pickable = link is not None and not link.is_fixed and link.get_mass() >= MIN_PICKABLE_MASS
+            if is_pickable:
+                arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
+                if self._arrow_node is None:
+                    self._arrow_node = context.draw_debug_arrow(
+                        closest_hit.position, closest_hit.normal * 0.25, color=self.color
+                    )
+                else:
+                    context.update_debug_objects((self._arrow_node,), (arrow_T,))
+            elif self._arrow_node is not None:
+                context.clear_debug_object(self._arrow_node)
+                self._arrow_node = None
+
+    def _compute_line_T(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:
+        """Compute transform for unit cylinder (height=1, centered at z=0) from start to end."""
+        direction = end - start
+        length = float(np.linalg.norm(direction))
+        if length < gs.EPS:
+            return gu.trans_to_T(start)
+        R_basis = gu.z_up_to_R(direction / length)
+        T = np.eye(4, dtype=gs.np_float)
+        T[:3, 0] = R_basis[:, 0]
+        T[:3, 1] = R_basis[:, 1]
+        T[:3, 2] = direction  # scaled z: maps local ±0.5 to world start/end
+        T[:3, 3] = (start + end) * 0.5
+        return T
 
     def _update_drag_plane(self) -> None:
         """Update the drag plane based on surface normal and rotation angle."""
