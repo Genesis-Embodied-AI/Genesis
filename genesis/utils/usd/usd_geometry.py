@@ -186,9 +186,8 @@ def parse_prim_geoms(
                     faces=subset_triangles,
                     vertex_normals=normals,
                     visual=trimesh.visual.TextureVisuals(uv=subset_uv) if subset_uv is not None else None,
-                    process=True,
+                    process=False,
                 )
-                # TODO: use a more efficient custom function to remove unreferenced vertices
                 processed_mesh.remove_unreferenced_vertices()
                 processed_mesh.apply_transform(geom_ST)
                 subset_points = processed_mesh.vertices
@@ -196,6 +195,24 @@ def parse_prim_geoms(
                 subset_normals = processed_mesh.vertex_normals
                 if subset_uv is not None:
                     subset_uv = processed_mesh.visual.uv
+
+                # Deduplicate vertices by (position, normal, UV) deterministically using np.unique.
+                # This replaces trimesh's process=True which internally calls fix_normals(), causing
+                # non-deterministic normal modifications that break cross-format mesh comparison.
+                # Round to 8 decimal places to merge near-identical vertices from USD face-varying
+                # encoding while preserving truly distinct vertices.
+                attrs = [subset_points, subset_normals]
+                if subset_uv is not None:
+                    attrs.append(subset_uv)
+                all_attrs = np.concatenate(attrs, axis=1)
+                _, unique_idx, inverse_idx = np.unique(
+                    np.round(all_attrs, 8), axis=0, return_index=True, return_inverse=True
+                )
+                subset_points = subset_points[unique_idx]
+                subset_normals = subset_normals[unique_idx]
+                if subset_uv is not None:
+                    subset_uv = subset_uv[unique_idx]
+                subset_triangles = inverse_idx[subset_triangles]
 
                 mesh = gs.Mesh.from_attrs(
                     verts=subset_points,

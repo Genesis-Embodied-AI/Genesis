@@ -748,7 +748,6 @@ class Mesh(FileMorph, TetGenMixin):
     conaffinity: StrictInt = Field(default=0xFFFF, ge=0, le=0xFFFFFFFF)
     group_by_material: StrictBool = False
     merge_submeshes_for_collision: StrictBool = False
-    align: StrictBool = True
 
     @model_validator(mode="after")
     def _resolve_zup(self) -> Self:

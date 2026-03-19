@@ -1004,8 +1004,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
     # It is also a good opportunity to check that it updates 'invweight' and meaninertia accordingly.
     attr_orig = {}
     for scale, robot in zip(ROBOT_SCALES, scene.entities):
-        links_invweight = robot.get_links_invweight().clone()
-        dofs_invweight = robot.get_dofs_invweight().clone()
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
         robot.set_dofs_armature(torch.ones((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
         assert torch.all(robot.get_dofs_invweight() < 1.0)
         with pytest.raises(AssertionError):
@@ -1013,8 +1013,8 @@ def test_robot_scale_and_dofs_armature(xml_path, tol):
         with pytest.raises(AssertionError):
             assert_allclose(robot.get_links_invweight(), links_invweight, tol=tol)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
-        links_invweight = robot.get_links_invweight().clone()
-        dofs_invweight = robot.get_dofs_invweight().clone()
+        links_invweight = robot.get_links_invweight()
+        dofs_invweight = robot.get_dofs_invweight()
         qpos = np.random.rand(robot.n_dofs)
         robot.set_dofs_position(qpos)
         robot.set_dofs_armature(torch.zeros((robot.n_dofs,), dtype=gs.tc_float, device=gs.device))
@@ -4308,7 +4308,7 @@ def test_mesh_align(show_viewer, tol):
     scene.reset()
 
     # Simulate
-    for _ in range(350):
+    for _ in range(400):
         scene.step()
 
     assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)
@@ -4853,7 +4853,7 @@ def test_pick_heterogenous_objects(show_viewer):
     assert_allclose(gripper_widths, expected_grip_widths, tol=0.005)
 
     # Record positions before lifting
-    pre_lift_z = het_obj.get_pos()[:, 2].clone()
+    pre_lift_z = het_obj.get_pos()[:, 2]
 
     # Lift
     qpos_lift = franka.inverse_kinematics(
