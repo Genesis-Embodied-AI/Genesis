@@ -337,6 +337,57 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         gui_process.join()
 
 
+def play(filename=None, collision=False, scale=1.0):
+    import time
+
+    gs.init()
+
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+        ),
+        show_viewer=True,
+    )
+
+    if filename is None:
+        scene.add_entity(gs.morphs.Plane())
+        scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+    else:
+        filename_lower = filename.lower()
+        morphs = gs.options.morphs
+        surface = gs.surfaces.Default(vis_mode="visual" if not collision else "collision")
+
+        if filename_lower.endswith(morphs.USD_FORMATS):
+            scene.add_stage(
+                morph=gs.morphs.USD(file=filename, collision=collision, scale=scale),
+                vis_mode=surface.vis_mode,
+            )
+        elif filename_lower.endswith(morphs.URDF_FORMAT):
+            scene.add_entity(gs.morphs.URDF(file=filename, collision=collision, scale=scale), surface=surface)
+        elif filename_lower.endswith(morphs.MJCF_FORMAT):
+            scene.add_entity(gs.morphs.MJCF(file=filename, collision=collision, scale=scale), surface=surface)
+        elif filename_lower.endswith(morphs.MESH_FORMATS):
+            scene.add_entity(gs.morphs.Mesh(file=filename, collision=collision, scale=scale), surface=surface)
+        else:
+            gs.raise_exception(
+                f"Unsupported file format for 'gs play'. Expected {morphs.URDF_FORMAT}, "
+                f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
+            )
+
+    scene.build()
+
+    from genesis.ext.pyrender.imgui_overlay import ImGuiOverlayPlugin
+
+    plugin = ImGuiOverlayPlugin()
+    scene.viewer._pyrender_viewer.register_plugin(plugin)
+
+    while scene.viewer.is_alive():
+        if plugin.should_step():
+            scene.step()
+        time.sleep(0.01)
+
+
 def animate(filename_pattern, fps):
     import glob
 
@@ -364,6 +415,19 @@ def main():
     parser_view.add_argument("-s", "--scale", type=float, default=1.0, help="Scale of the entity")
     parser_view.add_argument("-l", "--link_frame", action="store_true", default=False, help="Show link frame")
 
+    parser_play = subparsers.add_parser("play", help="Interactive viewer with ImGui joint controls and simulation")
+    parser_play.add_argument(
+        "filename",
+        type=str,
+        nargs="?",
+        default=None,
+        help="Optional asset file (URDF/MJCF/Mesh/USD). Defaults to a demo scene.",
+    )
+    parser_play.add_argument(
+        "-c", "--collision", action="store_true", default=False, help="Visualize collision geometry"
+    )
+    parser_play.add_argument("-s", "--scale", type=float, default=1.0, help="Scale of the entity")
+
     parser_animate = subparsers.add_parser("animate", help="Compile a list of image files into a video")
     parser_animate.add_argument("filename_pattern", type=str, help="Image files, via glob pattern")
     parser_animate.add_argument("--fps", type=int, default=30, help="FPS of the output video")
@@ -372,6 +436,8 @@ def main():
 
     if args.command == "view":
         view(args.filename, args.collision, args.rotate, args.scale, args.link_frame)
+    elif args.command == "play":
+        play(args.filename, args.collision, args.scale)
     elif args.command == "animate":
         animate(args.filename_pattern, args.fps)
     elif args.command is None:

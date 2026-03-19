@@ -9,6 +9,7 @@ Demonstrates:
 - Scene rebuild (add entities, change scale)
 """
 
+import os
 import time
 
 import numpy as np
@@ -73,9 +74,16 @@ def custom_panel(imgui):
 
 plugin.register_panel(custom_panel)
 
+is_test = "PYTEST_VERSION" in os.environ
+horizon = 5 if is_test else None
+
+frame = 0
 while scene.viewer.is_alive():
     if plugin.rebuild_requested:
         rebuild_scene(plugin)
     if plugin.should_step():
         scene.step()
+    frame += 1
+    if horizon is not None and frame >= horizon:
+        break
     time.sleep(0.01)

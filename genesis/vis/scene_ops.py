@@ -1,30 +1,23 @@
 """Shared scene manipulation operations for ImGui overlay and Web GUI.
 
-These functions encapsulate rendering-context updates that both the
-ImGui overlay plugin and the web server need.  Each accepts the
-relevant Genesis objects explicitly so callers can use their own
-accessor pattern (e.g. ``viewer.gs_context`` vs
-``scene.visualizer._rasterizer._context``).
+These functions encapsulate rendering-context updates that both the ImGui overlay plugin and the web server need.
+Each accepts the relevant Genesis objects explicitly so callers can use their own accessor pattern
+(e.g. ``viewer.gs_context`` vs ``scene.visualizer._rasterizer._context``).
 """
 
 import numpy as np
 
 import genesis as gs
 
-# ── Shared constants ──────────────────────────────────────────────
 FREE_JOINT_POS_LIMIT = 10.0
 QUATERNION_COMPONENT_LIMIT = 1.0
-
-
-# ── Visual transform refresh ─────────────────────────────────────
 
 
 def refresh_visual_transforms(scene, ctx):
     """Refresh render transforms so visuals reflect the latest qpos.
 
-    Call after ``entity.set_qpos()`` or ``entity.set_dofs_position()``.
-    Forward kinematics updates joint poses, but the rasterizer caches
-    need an explicit poke.
+    Call after ``entity.set_qpos()`` or ``entity.set_dofs_position()``. Forward kinematics updates joint poses,
+    but the rasterizer caches need an explicit poke.
 
     Args:
         scene: The Genesis scene (needs ``rigid_solver``).
@@ -40,14 +33,10 @@ def refresh_visual_transforms(scene, ctx):
     ctx.update_rigid(ctx.buffer)
 
 
-# ── Vis-mode switching ────────────────────────────────────────────
-
-
 def switch_entity_vis_mode(scene, ctx, entity, new_mode):
     """Switch *entity* between ``'visual'`` and ``'collision'`` rendering.
 
-    Removes the old geom nodes from *ctx*, updates transforms, then
-    re-adds geom nodes for *new_mode*.
+    Removes the old geom nodes from *ctx*, updates transforms, then re-adds geom nodes for *new_mode*.
 
     Args:
         scene: The Genesis scene.
@@ -105,9 +94,6 @@ def switch_entity_vis_mode(scene, ctx, entity, new_mode):
         )
 
 
-# ── Wireframe toggle ─────────────────────────────────────────────
-
-
 def set_entity_wireframe(ctx, entity, enable):
     """Toggle wireframe rendering for all geom nodes of *entity*.
 
@@ -132,9 +118,6 @@ def set_entity_wireframe(ctx, entity, enable):
     ctx._scene._meshes_updated = True
 
 
-# ── Contact visualization ─────────────────────────────────────────
-
-
 def set_entity_contact_viz(entity, enable):
     """Toggle contact-force arrow rendering for *entity* and its links.
 
@@ -148,20 +131,15 @@ def set_entity_contact_viz(entity, enable):
             link._visualize_contact = enable
 
 
-# ── Joint data extraction ─────────────────────────────────────────
-
-
 def build_entity_joint_data(entity):
     """Build rich joint metadata for *entity*.
 
-    Handles free joints (7 qpos), spherical joints (4 qpos quaternion),
-    and regular joints correctly using ``n_qs`` (not ``n_dofs``) for
-    indexing.
+    Handles free joints (7 qpos), spherical joints (4 qpos quaternion), and regular joints correctly
+    using ``n_qs`` (not ``n_dofs``) for indexing.
 
     Returns:
-        dict with keys: ``q_names``, ``q_limits_lower``, ``q_limits_upper``,
-        ``q_is_quaternion``, ``quat_groups``, ``has_free_joint``,
-        ``free_joint_q_start``.
+        dict with keys: ``q_names``, ``q_limits_lower``, ``q_limits_upper``, ``q_is_quaternion``, ``quat_groups``,
+        ``has_free_joint``, ``free_joint_q_start``.
     """
     q_names = []
     q_limits_lower = []
