@@ -456,6 +456,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     if IS_INTERACTIVE_VIEWER_AVAILABLE:
         parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+        parser.addoption("--vis-n-envs", type=int, default=None, help="Max environments to render with --vis.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
     supported, _reason = is_mem_monitoring_supported()
     help_text = (
@@ -488,6 +489,11 @@ def pytorch_profiler_step(pytestconfig, request):
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
     return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
+
+
+@pytest.fixture(scope="session")
+def vis_n_envs(pytestconfig):
+    return pytestconfig.getoption("--vis-n-envs", None) if pytestconfig.getoption("--vis", False) else None
 
 
 @pytest.fixture(scope="session")
