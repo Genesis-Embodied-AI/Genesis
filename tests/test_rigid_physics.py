@@ -3978,22 +3978,23 @@ def test_contype_conaffinity(show_viewer, tol):
 
 
 @pytest.mark.required
-def test_mesh_primitive_COM(show_viewer, tol):
+def test_mesh_primitive_COM(show_viewer):
     scene = gs.Scene(
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
         show_viewer=show_viewer,
     )
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     bunny = scene.add_entity(
         gs.morphs.Mesh(
             file="meshes/bunny.obj",
-            pos=(-1.0, -1.0, 0.6),
+            pos=(-1.0, -1.0, 0.55),
         ),
         vis_mode="collision",
+        visualize_contact=True,
     )
     cube = scene.add_entity(
         gs.morphs.Box(
@@ -4001,11 +4002,12 @@ def test_mesh_primitive_COM(show_viewer, tol):
             pos=(1.0, 1.0, 0.55),
         ),
         vis_mode="collision",
+        visualize_contact=True,
     )
 
     scene.build()
     rigid = scene.sim.rigid_solver
-    for _ in range(40):
+    for _ in range(50):
         scene.step()
     scene.rigid_solver.update_vgeoms()
 
@@ -4249,7 +4251,7 @@ def test_ellipsoid(xml_path, show_viewer):
 
 
 @pytest.mark.required
-def test_mesh_align(show_viewer):
+def test_mesh_align(show_viewer, tol):
     INIT_POS = (0.0, 0.0, 0.8)
 
     asset_path = get_hf_dataset(pattern="glb/mango.glb")
@@ -4293,19 +4295,16 @@ def test_mesh_align(show_viewer):
     assert_allclose(vgeom.get_quat(), gu.identity_quat(), atol=1e-3)
 
     # With align=True, the link frame is placed at the geometry COM
-    assert_allclose(mango.get_links_pos(ref="link_com"), mango.get_pos(), tol=2e-3)
+    assert_allclose(mango.get_links_pos(ref="link_com"), mango.get_pos(), tol=tol)
     geom_inertia_i = qd_to_numpy(scene.rigid_solver.links_state.cinr_inertial, transpose=True)[0, 1]
     geom_quat = tensor_to_array(mango.get_quat())
-    assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=0.1)
+    assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=tol)
 
-    # Same qpos on rigid and kinematic entities must yield matching vAABB (alignment is consistent).
-    # Tolerance is loose because the geometry-based inertia path uses convexified geoms for rigid
-    # and raw geoms for kinematic, leading to a small but expected COM difference.
-    q = np.array([0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0])
-    q[3:] /= np.linalg.norm(q[3:])
-    mango.set_qpos(q)
-    ghost_mango.set_qpos(q)
-    assert_allclose(mango.get_vAABB(), ghost_mango.get_vAABB(), tol=5e-3)
+    # Same qpos on rigid and kinematic entities must yield matching vAABB
+    qpos = (0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0)
+    mango.set_qpos(qpos)
+    ghost_mango.set_qpos(qpos)
+    assert_allclose(mango.get_vAABB(), ghost_mango.get_vAABB(), tol=gs.EPS)
     scene.reset()
 
     # Simulate
@@ -4351,13 +4350,11 @@ def test_urdf_align(show_viewer, tol):
     # With align=None (auto-True for basic rigid objects), the link frame origin is at the collision geometry COM
     assert_allclose(fork.get_links_pos(ref="link_com"), fork.get_pos(), tol=tol)
 
-    # Same qpos on rigid and kinematic entities must yield matching vAABB.
-    # The fork URDF has file-specified inertia, so alignment is identical for both entity types.
-    q = np.array([0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0])
-    q[3:] /= np.linalg.norm(q[3:])
-    fork.set_qpos(q)
-    ghost_fork.set_qpos(q)
-    assert_allclose(fork.get_vAABB(), ghost_fork.get_vAABB(), tol=tol)
+    # Same qpos on rigid and kinematic entities must yield matching vAABB
+    qpos = (0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0)
+    fork.set_qpos(qpos)
+    ghost_fork.set_qpos(qpos)
+    assert_allclose(fork.get_vAABB(), ghost_fork.get_vAABB(), tol=gs.EPS)
     scene.reset()
 
     # Simulate with initial angular velocity to check numerical stability
