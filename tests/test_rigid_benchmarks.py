@@ -309,8 +309,9 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
     return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
 
 
-def make_franka(n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False,
-                **scene_kwargs):
+def make_franka(
+    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
+):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -520,9 +521,16 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
         robot.control_dofs_force(random_forces)
         scene.step()
 
-    return scene, step, dict(
-        compile_time=compile_time, step_dt=step_dt,
-        duration_warmup=20.0, duration_record=5.0, needs_sync=True,
+    return (
+        scene,
+        step,
+        dict(
+            compile_time=compile_time,
+            step_dt=step_dt,
+            duration_warmup=20.0,
+            duration_record=5.0,
+            needs_sync=True,
+        ),
     )
 
 
@@ -537,25 +545,76 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     step_dt = 1 / 16
 
     JOINT_NAMES = [
-        "FFJ4", "FFJ3", "FFJ2", "FFJ1",
-        "MFJ4", "MFJ3", "MFJ2", "MFJ1",
-        "RFJ4", "RFJ3", "RFJ2", "RFJ1",
-        "LFJ5", "LFJ4", "LFJ3", "LFJ2", "LFJ1",
-        "THJ5", "THJ4", "THJ3", "THJ2", "THJ1",
+        "FFJ4",
+        "FFJ3",
+        "FFJ2",
+        "FFJ1",
+        "MFJ4",
+        "MFJ3",
+        "MFJ2",
+        "MFJ1",
+        "RFJ4",
+        "RFJ3",
+        "RFJ2",
+        "RFJ1",
+        "LFJ5",
+        "LFJ4",
+        "LFJ3",
+        "LFJ2",
+        "LFJ1",
+        "THJ5",
+        "THJ4",
+        "THJ3",
+        "THJ2",
+        "THJ1",
     ]
     LEFT_DOFS = [
-        0.34907, 0.24929, 0.54424, 0.65614,
-        0.21329, 0.08060, 0.19969, 0.66944,
-        1.57080, 0.21846, 0.53605, 0.44963,
-        0.38350, 0.02379, 0.41705, 0.54773, 0.61160,
-        0.36664, 0.44036, 0.20944, 0.34497, 0.15896,
+        0.34907,
+        0.24929,
+        0.54424,
+        0.65614,
+        0.21329,
+        0.08060,
+        0.19969,
+        0.66944,
+        1.57080,
+        0.21846,
+        0.53605,
+        0.44963,
+        0.38350,
+        0.02379,
+        0.41705,
+        0.54773,
+        0.61160,
+        0.36664,
+        0.44036,
+        0.20944,
+        0.34497,
+        0.15896,
     ]
     RIGHT_DOFS = [
-        0.34907, 0.23328, 0.57399, 0.70467,
-        0.00000, 0.34907, 0.51778, 0.65078,
-        1.48947, 0.33727, 0.55919, 0.56268,
-        0.54360, -0.08460, 0.48588, 0.66095, 0.73317,
-        0.13239, 0.45613, 0.20944, 0.19625, 0.00750,
+        0.34907,
+        0.23328,
+        0.57399,
+        0.70467,
+        0.00000,
+        0.34907,
+        0.51778,
+        0.65078,
+        1.48947,
+        0.33727,
+        0.55919,
+        0.56268,
+        0.54360,
+        -0.08460,
+        0.48588,
+        0.66095,
+        0.73317,
+        0.13239,
+        0.45613,
+        0.20944,
+        0.19625,
+        0.00750,
     ]
 
     hand_configs = [
@@ -645,9 +704,16 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
             hand.control_dofs_force(random_forces[hand], dofs_idx_local=finger_dofs[hand])
         scene.step()
 
-    return scene, step, dict(
-        compile_time=compile_time, step_dt=step_dt,
-        duration_warmup=20.0, duration_record=5.0, needs_sync=True,
+    return (
+        scene,
+        step,
+        dict(
+            compile_time=compile_time,
+            step_dt=step_dt,
+            duration_warmup=20.0,
+            duration_record=5.0,
+            needs_sync=True,
+        ),
     )
 
 
@@ -656,11 +722,19 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def run_benchmark(step_fn, *, n_envs, compile_time, step_dt=STEP_DT,
-                  duration_warmup=DURATION_WARMUP, duration_record=DURATION_RECORD,
-                  needs_sync=False):
+def run_benchmark(
+    step_fn,
+    *,
+    n_envs,
+    compile_time,
+    step_dt=STEP_DT,
+    duration_warmup=DURATION_WARMUP,
+    duration_record=DURATION_RECORD,
+    needs_sync=False,
+):
     if needs_sync:
         import quadrants as qd
+
         qd.sync()
 
     num_steps = 0

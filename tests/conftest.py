@@ -468,6 +468,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="Base filepath for speed test reports (default: speed_test.txt).",
     )
 
+
 @pytest.fixture(scope="session")
 def show_viewer(pytestconfig):
     return pytestconfig.getoption("--vis", IS_INTERACTIVE_VIEWER_AVAILABLE)
