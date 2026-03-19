@@ -4265,18 +4265,23 @@ def test_mesh_align(show_viewer):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
+    mango_morph = gs.morphs.Mesh(
+        file=f"{asset_path}/glb/mango.glb",
+        scale=0.045,
+        pos=INIT_POS,
+        align=True,
+    )
     mango = scene.add_entity(
-        gs.morphs.Mesh(
-            file=f"{asset_path}/glb/mango.glb",
-            scale=0.045,
-            pos=INIT_POS,
-            align=True,
-        ),
+        mango_morph,
         material=gs.materials.Rigid(
             rho=1000.0,
         ),
         vis_mode="collision",
         visualize_contact=True,
+    )
+    ghost_mango = scene.add_entity(
+        mango_morph,
+        material=gs.materials.Kinematic(),
     )
     scene.build()
 
@@ -4292,6 +4297,16 @@ def test_mesh_align(show_viewer):
     geom_inertia_i = qd_to_numpy(scene.rigid_solver.links_state.cinr_inertial, transpose=True)[0, 1]
     geom_quat = tensor_to_array(mango.get_quat())
     assert_allclose(gu.R_to_xyz(gu.quat_to_R(geom_quat) @ uu.principal_axes_rot(geom_inertia_i).T), 0.0, tol=0.1)
+
+    # Same qpos on rigid and kinematic entities must yield matching vAABB (alignment is consistent).
+    # Tolerance is loose because the geometry-based inertia path uses convexified geoms for rigid
+    # and raw geoms for kinematic, leading to a small but expected COM difference.
+    q = np.array([0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0])
+    q[3:] /= np.linalg.norm(q[3:])
+    mango.set_qpos(q)
+    ghost_mango.set_qpos(q)
+    assert_allclose(mango.get_vAABB(), ghost_mango.get_vAABB(), tol=5e-3)
+    scene.reset()
 
     # Simulate
     for _ in range(350):
@@ -4318,19 +4333,32 @@ def test_urdf_align(show_viewer, tol):
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
+    fork_morph = gs.morphs.URDF(
+        file=f"{asset_path}/fork/fork.urdf",
+        pos=INIT_POS,
+    )
     fork = scene.add_entity(
-        gs.morphs.URDF(
-            file=f"{asset_path}/fork/fork.urdf",
-            pos=INIT_POS,
-            align=True,
-        ),
+        fork_morph,
         vis_mode="collision",
         visualize_contact=True,
     )
+    ghost_fork = scene.add_entity(
+        fork_morph,
+        material=gs.materials.Kinematic(),
+    )
     scene.build()
 
-    # With align=True, the link frame origin is at the collision geometry COM
+    # With align=None (auto-True for basic rigid objects), the link frame origin is at the collision geometry COM
     assert_allclose(fork.get_links_pos(ref="link_com"), fork.get_pos(), tol=tol)
+
+    # Same qpos on rigid and kinematic entities must yield matching vAABB.
+    # The fork URDF has file-specified inertia, so alignment is identical for both entity types.
+    q = np.array([0.3, -0.2, 1.0, 0.6, 0.5, 0.3, 0.0])
+    q[3:] /= np.linalg.norm(q[3:])
+    fork.set_qpos(q)
+    ghost_fork.set_qpos(q)
+    assert_allclose(fork.get_vAABB(), ghost_fork.get_vAABB(), tol=tol)
+    scene.reset()
 
     # Simulate with initial angular velocity to check numerical stability
     fork.set_dofs_velocity(10.0, dofs_idx_local=slice(3, 6))
