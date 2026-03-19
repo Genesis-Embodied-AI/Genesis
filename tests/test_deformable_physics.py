@@ -266,7 +266,7 @@ def test_mpm_particle_constraints(show_viewer):
     # Attach and test following
     link_idx = rigid_box.links[0].idx
     mpm_cube.set_particle_constraints(mask, link_idx, stiffness=1e5)
-    initial_rigid_pos = rigid_box.get_pos().clone()
+    initial_rigid_pos = rigid_box.get_pos()
     initial_mpm_x = mpm_cube.get_particles_pos()[:, mask[0], 0].mean()
 
     pos_diff = torch.tensor([0.2, 0, 0], device=gs.device)

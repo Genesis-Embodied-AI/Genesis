@@ -265,7 +265,7 @@ def test_mouse_interaction_plugin():
 
     assert_allclose(box.get_vel(), 0, tol=gs.EPS)
 
-    initial_pos = box.get_pos().clone()
+    initial_pos = box.get_pos()
 
     viewport_size = pyrender_viewer._viewport_size
     x, y = viewport_size[0] // 2, viewport_size[1] // 2

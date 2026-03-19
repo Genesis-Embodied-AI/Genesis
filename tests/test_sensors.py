@@ -622,7 +622,7 @@ def test_raycaster_hits(show_viewer, n_envs):
         entity.set_pos(pos)
     if show_viewer:
         scene.visualizer.update(force=True)
-    grid_sensor_pos = grid_sensor.get_pos().clone()
+    grid_sensor_pos = grid_sensor.get_pos()
     for _ in range(60):
         scene.step()
     grid_sensor.set_pos(grid_sensor_pos)

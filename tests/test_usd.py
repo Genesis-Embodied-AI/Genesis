@@ -229,6 +229,8 @@ def build_mjcf_scene(xml_path: str, scale: float):
             file=xml_path,
             scale=scale,
             convexify=False,
+            decimate=False,
+            align=False,
         ),
         material=gs.materials.Rigid(
             rho=1000.0,
@@ -259,6 +261,8 @@ def build_usd_scene(
             scale=scale,
             fixed=fixed,
             convexify=False,
+            decimate=False,
+            align=False,
         ),
         material=gs.materials.Rigid(
             rho=1000.0,
@@ -284,9 +288,11 @@ def build_mesh_scene(mesh_file: str, scale: float):
     mesh_morph = gs.morphs.Mesh(
         file=mesh_file,
         scale=scale,
-        euler=(-90, 0, 0),
+        file_meshes_are_zup=True,
+        merge_submeshes_for_collision=False,
         group_by_material=False,
         convexify=False,
+        decimate=False,
         align=False,
     )
     mesh_scene.add_entity(
