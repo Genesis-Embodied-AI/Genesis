@@ -464,7 +464,8 @@ def principal_axes_rot(I, tol=1e-6):
 
     # If inertia is nearly isotropic (degenerate eigenvalues, e.g. sphere), use identity
     order = np.argsort(eigvals)
-    if np.min(np.abs(np.diff(eigvals[order]))) < tol:
+    eigvals = eigvals[order]
+    if np.min(np.diff(eigvals)) < tol * eigvals[-1]:
         return np.eye(3)
 
     R = eigvecs[:, order]

@@ -966,10 +966,9 @@ class KinematicEntity(Entity):
 
         global_com = None
         inertia_valid = (
-            l_info.get("inertial_mass") is not None
-            and l_info["inertial_mass"] > 0.0
-            and l_info.get("inertial_i") is not None
-            and (np.diag(l_info["inertial_i"]) > 0.0).all()
+            (l_info.get("inertial_mass") or 0.0) > gs.EPS
+            and (l_info.get("inertial_i") is not None and (np.diag(l_info["inertial_i"]) > 0.0).all())
+            and l_info.get("inertial_pos") is not None
         )
         if inertia_valid and not morph.recompute_inertia:
             # Derive COM and principal axes from file-specified inertia

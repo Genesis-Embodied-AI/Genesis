@@ -3680,7 +3680,7 @@ def test_data_accessor(n_envs, batched, tol):
             if is_tuple:
                 datas = [torch.as_tensor(val) for val in datas]
             else:
-                datas = torch.as_tensor(datas)
+                datas = torch.as_tensor(datas, dtype=gs.tc_float)
             datas_tp = datas if is_tuple else (datas,)
             if getter is not None:
                 # Randomly sample new data that are strictly positive and normalized,
