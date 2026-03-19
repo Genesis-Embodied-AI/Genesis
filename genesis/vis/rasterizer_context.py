@@ -1031,8 +1031,11 @@ class RasterizerContext:
             assert len(pose) == n_envs, "Inconsistent batch size."
             obj._bounds = None
             obj.primitives[0].poses = pose
-            if not any(obj.name.startswith(prefix) for prefix in ("debug_sphere_", "debug_frame_")):
-                gs.raise_exception("This method is only supported by individual spheres, frames, and meshes.")
+            if not any(
+                obj.name.startswith(prefix)
+                for prefix in ("debug_sphere_", "debug_frame_", "debug_mesh_", "debug_arrow_")
+            ):
+                gs.raise_exception("This method is only supported by individual spheres, frames, meshes, and arrows.")
             node = self.external_nodes[obj.name]
             self._external_node_buffer[self._scene.get_buffer_id(node, "model")] = pose.transpose((0, 2, 1))
 
