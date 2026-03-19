@@ -1,5 +1,6 @@
 import os
 import time
+from collections import namedtuple
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,12 @@ from .utils import (
 STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
+
+SceneMeta = namedtuple(
+    "SceneMeta",
+    ["compile_time", "step_dt", "duration_warmup", "duration_record", "needs_sync"],
+    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD, False],
+)
 
 pytestmark = [
     pytest.mark.benchmarks,
@@ -250,7 +257,7 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     def step():
         scene.step()
 
-    return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
 def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, **scene_kwargs):
@@ -306,7 +313,7 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
             )
         scene.step()
 
-    return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
 def make_franka(
@@ -377,7 +384,7 @@ def make_franka(
             franka.set_dofs_velocity(vel0, envs_idx=reset_envs_mask, skip_forward=True)
             franka.set_qpos(qpos0, envs_idx=reset_envs_mask, zero_velocity=False, skip_forward=True)
 
-    return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
 def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
@@ -426,7 +433,7 @@ def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
     def step():
         scene.step()
 
-    return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
 def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
@@ -475,7 +482,7 @@ def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
     def step():
         scene.step()
 
-    return scene, step, dict(compile_time=compile_time, step_dt=STEP_DT)
+    return scene, step, SceneMeta(compile_time=compile_time)
 
 
 def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
@@ -524,7 +531,7 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     return (
         scene,
         step,
-        dict(
+        SceneMeta(
             compile_time=compile_time,
             step_dt=step_dt,
             duration_warmup=20.0,
@@ -707,7 +714,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     return (
         scene,
         step,
-        dict(
+        SceneMeta(
             compile_time=compile_time,
             step_dt=step_dt,
             duration_warmup=20.0,
@@ -722,17 +729,8 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
 # ---------------------------------------------------------------------------
 
 
-def run_benchmark(
-    step_fn,
-    *,
-    n_envs,
-    compile_time,
-    step_dt=STEP_DT,
-    duration_warmup=DURATION_WARMUP,
-    duration_record=DURATION_RECORD,
-    needs_sync=False,
-):
-    if needs_sync:
+def run_benchmark(step_fn, *, n_envs, meta):
+    if meta.needs_sync:
         import quadrants as qd
 
         qd.sync()
@@ -745,20 +743,20 @@ def run_benchmark(
         time_elapsed = time.time() - time_start
         if is_recording:
             num_steps += 1
-            if time_elapsed > duration_record:
-                if needs_sync:
+            if time_elapsed > meta.duration_record:
+                if meta.needs_sync:
                     qd.sync()
                     time_elapsed = time.time() - time_start
                 break
-        elif time_elapsed > duration_warmup:
-            if needs_sync:
+        elif time_elapsed > meta.duration_warmup:
+            if meta.needs_sync:
                 qd.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
-    realtime_factor = runtime_fps * step_dt
+    realtime_factor = runtime_fps * meta.step_dt
 
-    return dict(compile_time=compile_time, runtime_fps=runtime_fps, realtime_factor=realtime_factor)
+    return dict(compile_time=meta.compile_time, runtime_fps=runtime_fps, realtime_factor=realtime_factor)
 
 
 # ---------------------------------------------------------------------------
@@ -832,103 +830,103 @@ def factory_logger(stream_writers):
 @pytest.fixture
 def go2(solver, n_envs, gjk):
     _, step_fn, meta = make_go2(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def anymal_zero(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control=None)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def anymal_uniform(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform")
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def anymal_random(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="per_env")
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def anymal_uniform_kinematic(solver, n_envs, gjk):
     _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control="uniform", with_kinematic=True)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def franka(solver, n_envs, gjk):
     _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def franka_random(solver, n_envs, gjk):
     _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def franka_free(solver, n_envs, gjk):
     _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def franka_accessors(solver, n_envs, gjk):
     _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_collision_free=True, accessors=True)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def duck_in_box_easy(solver, n_envs, gjk):
     _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=False)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk):
     _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def box_pyramid_3(solver, n_envs, gjk):
     _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=3)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def box_pyramid_4(solver, n_envs, gjk):
     _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=4)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def box_pyramid_5(solver, n_envs, gjk):
     _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=5)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def box_pyramid_6(solver, n_envs, gjk):
     _, step_fn, meta = make_box_pyramid(n_envs, solver=solver, gjk=gjk, n_cubes=6)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def g1_fall(solver, n_envs, gjk):
     _, step_fn, meta = make_g1_fall(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def dex_hand(solver, n_envs, gjk):
     _, step_fn, meta = make_dex_hand(n_envs, solver=solver, gjk=gjk)
-    return run_benchmark(step_fn, n_envs=n_envs, **meta)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 # ---------------------------------------------------------------------------
