@@ -7,17 +7,17 @@ import trimesh
 
 import genesis as gs
 from genesis.repr_base import RBC
-from genesis.typing import Matrix3x3Type, UnitVec4FType, Vec3FType
+from genesis.typing import LaxPositiveFArrayType, Matrix3x3Type, UnitVec4FType, Vec3FType
 from genesis.utils import geom as gu
-
-from genesis.utils.misc import tensor_to_array, qd_to_torch, DeprecationError
+from genesis.utils.misc import DeprecationError, qd_to_torch, tensor_to_array
 
 from .rigid_geom import RigidGeom, RigidVisGeom
 
 if TYPE_CHECKING:
+    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
+
     from .rigid_entity import KinematicEntity, RigidEntity
     from .rigid_joint import RigidJoint
-    from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
 
 # If mass is too small, we do not care much about spatial inertia discrepancy
@@ -922,31 +922,33 @@ class RigidLink(KinematicLink):
         return torch.stack((verts.min(dim=-2).values, verts.max(dim=-2).values), dim=-2)
 
     @gs.assert_built
-    def set_mass(self, mass):
+    def set_mass(self, mass: LaxPositiveFArrayType):
         """
         Set the mass of the link.
-        """
-        from genesis.engine.solvers.rigid.rigid_solver import kernel_adjust_link_inertia
 
+        Parameters
+        ----------
+        mass : float | array_like, shape (n_envs,)
+            The mass to set.
+        """
         if self.is_fixed:
             gs.logger.warning("Updating the mass of a link that is fixed wrt world has no effect, skipping.")
             return
 
-        if mass < gs.EPS:
+        mass = tensor_to_array(mass)
+        if np.any(mass < gs.EPS):
             gs.raise_exception(f"Attempt to set mass of link '{self.name}' to {mass}. Mass must be strictly positive.")
+        if mass.ndim > 0 and not self._solver._options.batch_links_info:
+            gs.raise_exception(
+                f"Impossible to set per-env mass of link '{self.name}'. Please specify "
+                "'RigidOptions.batch_links_info=True'."
+            )
 
-        ratio = float(mass / self._inertial_mass)
-        self._inertial_mass *= ratio
-        if self._invweight is not None:
-            self._invweight /= ratio
-        self._inertial_i *= ratio
-
-        kernel_adjust_link_inertia(
-            link_idx=self.idx,
-            ratio=ratio,
-            links_info=self._solver.links_info,
-            static_rigid_sim_config=self._solver._static_rigid_sim_config,
-        )
+        ratio = mass / self._inertial_mass
+        self._solver.set_links_inertia(ratio, [self.idx])
+        self._inertial_mass = mass
+        self._inertial_i = self._inertial_i * ratio[..., None, None]
+        self._invweight = self._invweight / ratio[..., None]
 
     @gs.assert_built
     def get_mass(self):

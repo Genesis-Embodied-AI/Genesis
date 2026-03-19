@@ -447,6 +447,33 @@ def kernel_set_links_inertial_mass(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
+def kernel_adjust_link_inertia(
+    ratio: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    if qd.static(static_rigid_sim_config.batch_links_info):
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            r = ratio[i_b_, i_l_]
+            links_info.inertial_mass[links_idx[i_l_], envs_idx[i_b_]] *= r
+            for j1, j2 in qd.static(qd.ndrange(3, 3)):
+                links_info.inertial_i[links_idx[i_l_], envs_idx[i_b_]][j1, j2] *= r
+            for j in qd.static(range(2)):
+                links_info.invweight[links_idx[i_l_], envs_idx[i_b_]][j] /= r
+    else:
+        for i_l_ in range(links_idx.shape[0]):
+            r = ratio[i_l_]
+            links_info.inertial_mass[links_idx[i_l_]] *= r
+            for j1, j2 in qd.static(qd.ndrange(3, 3)):
+                links_info.inertial_i[links_idx[i_l_]][j1, j2] *= r
+            for j in qd.static(range(2)):
+                links_info.invweight[links_idx[i_l_]][j] /= r
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_geoms_friction_ratio(
     friction_ratio: qd.types.ndarray(),
     geoms_idx: qd.types.ndarray(),
