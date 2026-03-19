@@ -452,8 +452,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--logical", action="store_true", default=False, help="Consider logical cores in default number of workers."
     )
-    if IS_INTERACTIVE_VIEWER_AVAILABLE:
-        parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
+    parser.addoption("--vis", action="store_true", default=False, help="Enable interactive viewer.")
     parser.addoption("--dev", action="store_true", default=False, help="Enable genesis debug mode.")
     supported, _reason = is_mem_monitoring_supported()
     help_text = (
