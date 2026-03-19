@@ -383,25 +383,6 @@ class KinematicEntity(Entity):
         meshes = gs.Mesh.from_morph_surface(morph, surface)
 
         link_pos, link_quat = map(np.array, (morph.pos, morph.quat))
-        geom_pos, geom_quat = gu.zero_pos(), gu.identity_quat()
-
-        if morph.align and not morph.fixed and isinstance(meshes, Sequence):
-            # Translate the link frame to the mesh COM so that the inertia tensor origin coincides with the link frame.
-            # This makes the inertia tensor diagonal-dominant and improves numerical stability of the simulation.
-            geoms_inertial_info = []
-            for mesh in meshes:
-                tmesh = mesh.trimesh
-                if not tmesh.is_watertight:
-                    tmesh = tmesh.convex_hull
-                geoms_inertial_info.append(
-                    (tmesh.mass, tmesh.center_mass, tmesh.moment_inertia, gu.zero_pos(), gu.identity_quat())
-                )
-            _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
-            principal_quat = gu.R_to_quat(uu.principal_axes_rot(global_inertia))
-            link_pos = gu.transform_by_trans_quat(global_com, link_pos, link_quat)
-            link_quat = gu.transform_quat_by_quat(principal_quat, link_quat)
-            geom_pos = gu.inv_transform_by_quat(-global_com, principal_quat)
-            geom_quat = gu.inv_quat(principal_quat)
 
         if morph.fixed:
             joint_type = gs.JOINT_TYPE.FIXED
@@ -422,8 +403,8 @@ class KinematicEntity(Entity):
                         contype=0,
                         conaffinity=0,
                         vmesh=mesh,
-                        pos=geom_pos,
-                        quat=geom_quat,
+                        pos=gu.zero_pos(),
+                        quat=gu.identity_quat(),
                     )
                 )
         if morph.collision:
@@ -441,8 +422,8 @@ class KinematicEntity(Entity):
                         mesh=mesh,
                         type=gs.GEOM_TYPE.MESH,
                         sol_params=gu.default_solver_params(),
-                        pos=geom_pos,
-                        quat=geom_quat,
+                        pos=gu.zero_pos(),
+                        quat=gu.identity_quat(),
                     )
                 )
 
@@ -2101,6 +2082,91 @@ class RigidEntity(KinematicEntity):
             else:
                 free_verts_start += link.n_verts
 
+        # Separate collision from visual geometry, post-process collision meshes, and randomize colors.
+        # See _separate_geom_infos for post-processing details.
+        # Must be done before alignment so that convexified geoms are used to compute the inertia frame.
+        cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, l_info.get("is_robot", False))
+
+        # Align root links' frames to their collision geometry COM and principal inertia axes.
+        # Only applies to root (floating-base) links with a free joint.
+        if (
+            isinstance(morph, gs.options.morphs.FileMorph)
+            and morph.align
+            and l_info["parent_idx"] == -1
+            and any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos)
+        ):
+            global_com = None
+            inertia_valid = (
+                l_info.get("inertial_mass") is not None
+                and l_info["inertial_mass"] > 0.0
+                and l_info.get("inertial_i") is not None
+                and (np.diag(l_info["inertial_i"]) > 0.0).all()
+            )
+            if inertia_valid and not morph.recompute_inertia:
+                # Derive COM and principal axes from file-specified inertia
+                inertia_pos = (
+                    np.array(l_info["inertial_pos"]) if l_info.get("inertial_pos") is not None else gu.zero_pos()
+                )
+                inertia_quat = (
+                    np.array(l_info["inertial_quat"]) if l_info.get("inertial_quat") is not None else gu.identity_quat()
+                )
+                inertia_R = gu.quat_to_R(inertia_quat)
+                inertia_in_link = inertia_R @ l_info["inertial_i"] @ inertia_R.T
+                R_principal = uu.principal_axes_rot(inertia_in_link)
+                principal_quat = gu.R_to_quat(R_principal)
+                global_com = inertia_pos
+                # Update inertia to diagonalized form in the new (aligned) link frame
+                l_info["inertial_pos"] = gu.zero_pos()
+                l_info["inertial_quat"] = gu.identity_quat()
+                l_info["inertial_i"] = R_principal.T @ inertia_in_link @ R_principal
+            else:
+                # Compute COM and principal axes from convexified collision geometry
+                geoms_inertial_info = []
+                for cg_info in cg_infos:
+                    if not (cg_info.get("contype", 0) or cg_info.get("conaffinity", 0)):
+                        continue
+                    tmesh = cg_info["mesh"].trimesh
+                    if not tmesh.is_watertight:
+                        tmesh = tmesh.convex_hull
+                    if tmesh.volume > 0:
+                        geoms_inertial_info.append(
+                            (
+                                tmesh.mass,
+                                tmesh.center_mass,
+                                tmesh.moment_inertia,
+                                np.array(cg_info.get("pos", gu.zero_pos())),
+                                np.array(cg_info.get("quat", gu.identity_quat())),
+                            )
+                        )
+                _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
+                R_principal = uu.principal_axes_rot(global_inertia)
+                principal_quat = gu.R_to_quat(R_principal)
+
+            # Shift link frame to COM and rotate to principal axes
+            l_info["pos"] = gu.transform_by_trans_quat(global_com, l_info["pos"], l_info["quat"])
+            l_info["quat"] = gu.transform_quat_by_quat(principal_quat, l_info["quat"])
+
+            # Update free joint init_qpos to reflect the new link pose
+            for j_info in j_infos:
+                if j_info["type"] == gs.JOINT_TYPE.FREE:
+                    j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+
+            # Re-express all geoms in the new link frame
+            for cg_info in cg_infos:
+                cg_info["pos"], cg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
+                    np.array(cg_info.get("pos", gu.zero_pos())),
+                    np.array(cg_info.get("quat", gu.identity_quat())),
+                    global_com,
+                    principal_quat,
+                )
+            for vg_info in vg_infos:
+                vg_info["pos"], vg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
+                    np.array(vg_info.get("pos", gu.zero_pos())),
+                    np.array(vg_info.get("quat", gu.identity_quat())),
+                    global_com,
+                    principal_quat,
+                )
+
         joints = self._create_joints(j_infos, link_idx, joint_start)
 
         # Add child link
@@ -2138,10 +2204,6 @@ class RigidEntity(KinematicEntity):
             link._inertial_quat = None
             link._inertial_i = None
             link._inertial_mass = None
-
-        # Separate collision from visual geometry, post-process collision meshes, and randomize colors.
-        # See _separate_geom_infos for post-processing details.
-        cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, l_info.get("is_robot", False))
 
         # Add visual geometries
         for g_info in vg_infos:

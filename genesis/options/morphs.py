@@ -520,6 +520,12 @@ class FileMorph(Morph):
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
+    align : bool, optional
+        Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
+        aligned with the principal axes of inertia. This makes the inertia tensor diagonal, which improves numerical
+        stability. Only applies to root (floating-base) links. Uses file-specified inertia if valid (and
+        ``recompute_inertia=False``), otherwise computes from geometry. Defaults to False.
+        **This is only used for RigidEntity.**
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
@@ -549,6 +555,7 @@ class FileMorph(Morph):
     decompose_robot_error_threshold: float = Field(default=float("inf"), ge=0, allow_inf_nan=True)
     coacd_options: CoacdOptions | None = None
     recompute_inertia: StrictBool = False
+    align: StrictBool = False
     file_meshes_are_zup: StrictBool | None = True
     batch_fixed_verts: StrictBool = False
 
@@ -873,6 +880,10 @@ class MJCF(FileMorph):
     batch_fixed_verts : bool, optional
         Whether to batch fixed vertices. This will allow setting env-specific poses to fixed geometries, at the cost of
         significantly increasing memory usage. Default to true. **This is only used for RigidEntity.**
+    align : bool, optional
+        Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
+        aligned with the principal axes of inertia. Only applies to root (floating-base) links. Default to False.
+        **This is only used for RigidEntity.**
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
@@ -987,6 +998,10 @@ class URDF(FileMorph):
         Whether to merge links connected via a fixed joint. Defaults to True.
     links_to_keep : list of str, optional
         A list of link names that should not be skipped during link merging. Defaults to [].
+    align : bool, optional
+        Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
+        aligned with the principal axes of inertia. Only applies to root (floating-base) links. Default to False.
+        **This is only used for RigidEntity.**
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
@@ -1410,6 +1425,10 @@ class USD(FileMorph):
     recompute_inertia : bool, optional
         Force recomputing spatial inertia of links from their geometry. This option is useful to import partially
         broken assets from external providers that cannot be re-exported from source. Default to False.
+    align : bool, optional
+        Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
+        aligned with the principal axes of inertia. Only applies to root (floating-base) links. Default to False.
+        **This is only used for RigidEntity.**
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
         as Z-up and no transforms are applied to the input data. If set to false, all meshes undergo a conversion step
