@@ -20,6 +20,12 @@ STEP_DT = 0.01
 DURATION_WARMUP = 45.0
 DURATION_RECORD = 15.0
 
+
+def _vis_options(vis_n_envs):
+    if vis_n_envs is not None:
+        return dict(vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(vis_n_envs))))
+    return {}
+
 pytestmark = [
     pytest.mark.benchmarks,
     pytest.mark.disable_cache(False),
@@ -257,7 +263,7 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
-def go2(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def go2(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -268,6 +274,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     scene.add_entity(
@@ -319,7 +326,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step, show_viewer):
+def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step, show_viewer, vis_n_envs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -330,6 +337,7 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step, show_vi
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -390,26 +398,26 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step, show_vi
 
 
 @pytest.fixture
-def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def anymal_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def anymal_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
-def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step, show_viewer):
+def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step, show_viewer, vis_n_envs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -421,6 +429,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -495,7 +504,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
 
 
 @pytest.fixture
-def franka(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def franka(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     return _franka(
         solver,
         n_envs,
@@ -505,11 +514,12 @@ def franka(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         accessors=False,
         profiler_step=pytorch_profiler_step,
         show_viewer=show_viewer,
+        vis_n_envs=vis_n_envs,
     )
 
 
 @pytest.fixture
-def franka_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def franka_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     return _franka(
         solver,
         n_envs,
@@ -519,11 +529,12 @@ def franka_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         accessors=False,
         profiler_step=pytorch_profiler_step,
         show_viewer=show_viewer,
+        vis_n_envs=vis_n_envs,
     )
 
 
 @pytest.fixture
-def franka_free(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def franka_free(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     return _franka(
         solver,
         n_envs,
@@ -533,11 +544,12 @@ def franka_free(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         accessors=False,
         profiler_step=pytorch_profiler_step,
         show_viewer=show_viewer,
+        vis_n_envs=vis_n_envs,
     )
 
 
 @pytest.fixture
-def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     return _franka(
         solver,
         n_envs,
@@ -547,10 +559,11 @@ def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         accessors=True,
         profiler_step=pytorch_profiler_step,
         show_viewer=show_viewer,
+        vis_n_envs=vis_n_envs,
     )
 
 
-def _duck_in_box(solver, n_envs, gjk, hard, profiler_step, show_viewer):
+def _duck_in_box(solver, n_envs, gjk, hard, profiler_step, show_viewer, vis_n_envs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **(dict(constraint_solver=solver) if solver is not None else {}),
@@ -558,6 +571,7 @@ def _duck_in_box(solver, n_envs, gjk, hard, profiler_step, show_viewer):
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
     scene.add_entity(
         gs.morphs.Mesh(
@@ -615,16 +629,16 @@ def _duck_in_box(solver, n_envs, gjk, hard, profiler_step, show_viewer):
 
 
 @pytest.fixture
-def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
-def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step, show_viewer):
+def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step, show_viewer, vis_n_envs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -641,6 +655,7 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step, show_viewer):
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     scene.add_entity(gs.morphs.Plane())
@@ -685,27 +700,27 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step, show_viewer):
 
 
 @pytest.fixture
-def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
+def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=pytorch_profiler_step, show_viewer=show_viewer, vis_n_envs=vis_n_envs)
 
 
 @pytest.fixture
-def g1_fall(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def g1_fall(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     """G1 humanoid robot falling from above a plane."""
     import quadrants as qd
 
@@ -728,6 +743,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     scene.add_entity(
@@ -783,7 +799,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
 
 
 @pytest.fixture
-def dex_hand(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+def dex_hand(solver, n_envs, gjk, pytorch_profiler_step, show_viewer, vis_n_envs):
     """Two shadow hands manipulating a drill on a table."""
     import quadrants as qd
 
@@ -896,6 +912,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
         ),
         show_viewer=show_viewer,
         show_FPS=False,
+        **_vis_options(vis_n_envs),
     )
 
     hands = []
