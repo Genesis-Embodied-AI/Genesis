@@ -311,6 +311,7 @@ def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidEn
     entity_sphere = scene.add_entity(
         gs.morphs.MJCF(
             file=sphere_path,
+            align=False,
         ),
         vis_mode="collision",
         visualize_contact=True,
@@ -325,6 +326,7 @@ def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radiu
     entity_capsule = scene.add_entity(
         gs.morphs.MJCF(
             file=capsule_path,
+            align=False,
         ),
         vis_mode="collision",
         visualize_contact=True,
@@ -349,11 +351,17 @@ class AnalyticalVsGJKSceneCreator:
         self.scene_analytical = gs.Scene(
             show_viewer=self.show_viewer,
         )
-        self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
+        self.build_scene(
+            scene=self.scene_analytical,
+            entities=self.entities_analytical,
+            tmp_path=self.tmp_path,
+        )
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
-            rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
+            rigid_options=gs.options.RigidOptions(
+                use_gjk_collision=True,
+            ),
             show_viewer=self.show_viewer,
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)

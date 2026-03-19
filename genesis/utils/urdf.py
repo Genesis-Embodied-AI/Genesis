@@ -446,13 +446,27 @@ def rotate_inertia(I, R):
     return R @ I @ R.T
 
 
-def principal_axes_rot(I):
+def principal_axes_rot(I, tol=1e-6):
     """Return rotation matrix R whose columns are the principal axes of inertia I (sorted by ascending eigenvalue).
 
     The returned matrix is guaranteed to be right-handed (det = +1).
+    Returns identity if:
+    - the principal axes are already axis-aligned (e.g. box, capsule, cylinder), or
+    - the inertia is nearly isotropic with degenerate eigenvalues (e.g. sphere).
     """
+    I = 0.5 * (I + I.T)
     eigvals, eigvecs = np.linalg.eigh(I)
+
+    # If each eigenvector is already aligned with a coordinate axis, no rotation is needed
+    A = np.abs(eigvecs)
+    if 1 - np.mean(A.max(axis=1)) < tol:
+        return np.eye(3)
+
+    # If inertia is nearly isotropic (degenerate eigenvalues, e.g. sphere), use identity
     order = np.argsort(eigvals)
+    if np.min(np.abs(np.diff(eigvals[order]))) < tol:
+        return np.eye(3)
+
     R = eigvecs[:, order]
     if np.linalg.det(R) < 0:
         R[:, 0] = -R[:, 0]

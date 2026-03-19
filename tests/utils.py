@@ -593,6 +593,7 @@ def build_genesis_sim(
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
         default_armature=None,
+        align=False,
     )
     if xml_path.endswith(".xml"):
         morph = gs.morphs.MJCF(**morph_kwargs)

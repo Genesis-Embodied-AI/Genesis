@@ -524,7 +524,8 @@ class FileMorph(Morph):
         Whether to reframe root links so that the link origin coincides with the center of mass and its axes are
         aligned with the principal axes of inertia. This makes the inertia tensor diagonal, which improves numerical
         stability. Only applies to root (floating-base) links. Uses file-specified inertia if valid (and
-        ``recompute_inertia=False``), otherwise computes from geometry. Defaults to False.
+        ``recompute_inertia=False``), otherwise computes from geometry. Defaults to None, which resolves to True
+        for basic rigid objects (entities with only a root free joint and no articulated descendants), False otherwise.
         **This is only used for RigidEntity.**
     file_meshes_are_zup : bool, optional
         Defines if the mesh files are expressed in a Z-up or Y-up coordinate system. If set to true, meshes are loaded
@@ -555,7 +556,7 @@ class FileMorph(Morph):
     decompose_robot_error_threshold: float = Field(default=float("inf"), ge=0, allow_inf_nan=True)
     coacd_options: CoacdOptions | None = None
     recompute_inertia: StrictBool = False
-    align: StrictBool = False
+    align: StrictBool | None = None
     file_meshes_are_zup: StrictBool | None = True
     batch_fixed_verts: StrictBool = False
 
