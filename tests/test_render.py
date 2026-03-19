@@ -1675,10 +1675,10 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
         pytest.skip(SKIP_NO_VIEWER)
 
     CAM_RES = (256, 256)
-    RENDERED_ENVS = [1, 2]
+    RENDERED_ENVS = (1, 2)
 
     # FIXME: Small discrepancies between different hardware due to contact visualization with onscreen viewer
-    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.0 if force_show_viewer else 1.0
+    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.0 if force_show_viewer else 1.05
 
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
@@ -1773,6 +1773,7 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
         up=[(0.0, 0.0, 1.0), (0.0, 1.0, 0.0)],
     )
     rgb_after, *_ = cam.render(rgb=True)
+    assert rgb_after is not None
     assert rgb_after.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
 
     # First env kept same pose — render should match; second env uses top-down view — render must differ

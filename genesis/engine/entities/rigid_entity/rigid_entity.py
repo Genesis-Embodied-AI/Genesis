@@ -205,19 +205,19 @@ class KinematicEntity(Entity):
                 # Add geoms per link
                 for link, v_l_info, v_g_infos in zip(self._links, v_l_infos, v_links_g_infos):
                     is_robot = v_l_info.get("is_robot", np.array(False, dtype=np.bool_))
-                    cg_infos, vg_infos = self._separate_geom_infos(morph, v_g_infos, is_robot)
+                    cg_infos, vg_infos = self._postprocess_geoms_info(morph, v_g_infos, is_robot)
                     self._add_heterogeneous_variant(link, cg_infos, vg_infos)
                     self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
 
             elif isinstance(morph, gs.morphs.Mesh):
                 g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
+                cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
                 init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
                 self._variant_init_qpos.append(init_qpos)
             elif isinstance(morph, gs.morphs.Primitive):
                 g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, is_robot=False)
+                cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
                 init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
                 self._variant_init_qpos.append(init_qpos)
@@ -860,6 +860,9 @@ class KinematicEntity(Entity):
         link_idx = self.n_links + self._link_start
         joint_start = self.n_joints + self._joint_start
 
+        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
+        self._align_link(l_info, j_infos, cg_infos, vg_infos, morph)
+
         joints = self._create_joints(j_infos, link_idx, joint_start)
 
         # Add child link
@@ -880,24 +883,20 @@ class KinematicEntity(Entity):
         self._links.append(link)
 
         # Add visual geometries
-        for g_info in g_infos:
-            is_col = g_info["contype"] or g_info["conaffinity"]
-            if not is_col:
-                link._add_vgeom(
-                    vmesh=g_info["vmesh"],
-                    init_pos=g_info.get("pos", gu.zero_pos()),
-                    init_quat=g_info.get("quat", gu.identity_quat()),
-                )
+        for g_info in vg_infos:
+            link._add_vgeom(
+                vmesh=g_info["vmesh"],
+                init_pos=g_info.get("pos", gu.zero_pos()),
+                init_quat=g_info.get("quat", gu.identity_quat()),
+            )
 
         return link, joints
 
-    @staticmethod
-    def _separate_geom_infos(morph, g_infos, is_robot):
+    def _postprocess_geoms_info(self, morph, g_infos, is_robot):
         """
-        Separate collision from visual geometry.
-
+        Split g_infos into (cg_infos, vg_infos) collision and visual lists, then
+        post-process collision meshes (convexification / decomposition).
         Used for both normal loading and heterogeneous simulation.
-        RigidEntity overrides this to add collision mesh post-processing.
         """
         cg_infos, vg_infos = [], []
         for g_info in g_infos:
@@ -907,7 +906,133 @@ class KinematicEntity(Entity):
             if morph.visualization and not is_col:
                 vg_infos.append(g_info)
 
+        # Post-process all collision meshes at once.
+        # Destroying the original geometries should be avoided if possible as it will change the way objects
+        # interact with the world due to only computing one contact point per convex geometry. The idea is to
+        # check if each geometry can be convexified independently without resorting on convex decomposition.
+        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
+        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
+        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
+        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
+        # both cases, this improves runtime performance, numerical stability and compilation time.
+        if isinstance(morph, gs.options.morphs.FileMorph):
+            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
+            # is associated with a robot.
+            # The rational behind it is that performing convex decomposition for robots is mostly useless because
+            # the non-physical part that is added to the original geometries to convexify them are generally inside
+            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
+            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
+            if is_robot:
+                decompose_error_threshold = morph.decompose_robot_error_threshold
+            else:
+                decompose_error_threshold = morph.decompose_object_error_threshold
+
+            cg_infos = mu.postprocess_collision_geoms(
+                cg_infos,
+                morph.decimate,
+                morph.decimate_face_num,
+                morph.decimate_aggressiveness,
+                morph.convexify,
+                decompose_error_threshold,
+                morph.coacd_options,
+            )
+
+        # Randomize collision mesh colors. This is especially useful to check convex decomposition.
+        for g_info in cg_infos:
+            mesh = g_info["mesh"]
+            mesh.set_color((*np.random.rand(3), 0.7))
+
         return cg_infos, vg_infos
+
+    def _align_link(self, l_info, j_infos, cg_infos, vg_infos, morph):
+        """Align root link frame to collision geometry COM and principal inertia axes.
+
+        Only applies to root (floating-base) links with a free joint. Mutates l_info,
+        j_infos, cg_infos, and vg_infos in-place so that kinematic and rigid entities
+        share the same aligned qpos and link frame definition.
+        """
+        align = morph.align if isinstance(morph, gs.options.morphs.FileMorph) else False
+        if align is None:
+            # Auto: True for basic rigid objects (root with free joint only, no articulated descendants)
+            align = (
+                l_info["parent_idx"] == -1
+                and not bool(l_info.get("is_robot", False))
+                and all(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos)
+            )
+        if not (
+            align and l_info["parent_idx"] == -1 and any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos)
+        ):
+            return
+
+        global_com = None
+        inertia_valid = (
+            l_info.get("inertial_mass") is not None
+            and l_info["inertial_mass"] > 0.0
+            and l_info.get("inertial_i") is not None
+            and (np.diag(l_info["inertial_i"]) > 0.0).all()
+        )
+        if inertia_valid and not morph.recompute_inertia:
+            # Derive COM and principal axes from file-specified inertia
+            inertia_pos = np.array(l_info["inertial_pos"]) if l_info.get("inertial_pos") is not None else gu.zero_pos()
+            inertia_quat = (
+                np.array(l_info["inertial_quat"]) if l_info.get("inertial_quat") is not None else gu.identity_quat()
+            )
+            inertia_R = gu.quat_to_R(inertia_quat)
+            inertia_in_link = inertia_R @ l_info["inertial_i"] @ inertia_R.T
+            R_principal = uu.principal_axes_rot(inertia_in_link)
+            principal_quat = gu.R_to_quat(R_principal)
+            global_com = inertia_pos
+            # Update inertia to diagonalized form in the new (aligned) link frame
+            l_info["inertial_pos"] = gu.zero_pos()
+            l_info["inertial_quat"] = gu.identity_quat()
+            l_info["inertial_i"] = R_principal.T @ inertia_in_link @ R_principal
+        else:
+            # Compute COM and principal axes from (convexified) collision geometry
+            geoms_inertial_info = []
+            for cg_info in cg_infos:
+                if not (cg_info.get("contype", 0) or cg_info.get("conaffinity", 0)):
+                    continue
+                tmesh = cg_info["mesh"].trimesh
+                if not tmesh.is_watertight:
+                    tmesh = tmesh.convex_hull
+                if tmesh.volume > 0:
+                    geoms_inertial_info.append(
+                        (
+                            tmesh.mass,
+                            tmesh.center_mass,
+                            tmesh.moment_inertia,
+                            np.array(cg_info.get("pos", gu.zero_pos())),
+                            np.array(cg_info.get("quat", gu.identity_quat())),
+                        )
+                    )
+            _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
+            R_principal = uu.principal_axes_rot(global_inertia)
+            principal_quat = gu.R_to_quat(R_principal)
+
+        # Shift link frame to COM and rotate to principal axes
+        l_info["pos"] = gu.transform_by_trans_quat(global_com, l_info["pos"], l_info["quat"])
+        l_info["quat"] = gu.transform_quat_by_quat(principal_quat, l_info["quat"])
+
+        # Update free joint init_qpos to reflect the new link pose
+        for j_info in j_infos:
+            if j_info["type"] == gs.JOINT_TYPE.FREE:
+                j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
+
+        # Re-express all geoms in the new link frame
+        for cg_info in cg_infos:
+            cg_info["pos"], cg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
+                np.array(cg_info.get("pos", gu.zero_pos())),
+                np.array(cg_info.get("quat", gu.identity_quat())),
+                global_com,
+                principal_quat,
+            )
+        for vg_info in vg_infos:
+            vg_info["pos"], vg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
+                np.array(vg_info.get("pos", gu.zero_pos())),
+                np.array(vg_info.get("quat", gu.identity_quat())),
+                global_com,
+                principal_quat,
+            )
 
     @gs.assert_unbuilt
     def attach(self, parent_entity, parent_link_name: str | None = None):
@@ -1684,7 +1809,7 @@ class KinematicEntity(Entity):
     @property
     def morphs(self):
         """All morphs of the entity (main morph + heterogeneous variants if any)."""
-        return (self._morph, *self._morph_heterogeneous)
+        return gs.List((self._morph, *self._morph_heterogeneous))
 
     @property
     def n_joints(self):
@@ -2082,90 +2207,12 @@ class RigidEntity(KinematicEntity):
             else:
                 free_verts_start += link.n_verts
 
-        # Separate collision from visual geometry, post-process collision meshes, and randomize colors.
-        # See _separate_geom_infos for post-processing details.
-        # Must be done before alignment so that convexified geoms are used to compute the inertia frame.
-        cg_infos, vg_infos = self._separate_geom_infos(morph, g_infos, l_info.get("is_robot", False))
+        # Split and convexify collision geometry. Must be done before alignment so that
+        # convexified geoms are used to compute the inertia frame.
+        cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, l_info.get("is_robot", False))
 
         # Align root links' frames to their collision geometry COM and principal inertia axes.
-        # Only applies to root (floating-base) links with a free joint.
-        if (
-            isinstance(morph, gs.options.morphs.FileMorph)
-            and morph.align
-            and l_info["parent_idx"] == -1
-            and any(j_info["type"] == gs.JOINT_TYPE.FREE for j_info in j_infos)
-        ):
-            global_com = None
-            inertia_valid = (
-                l_info.get("inertial_mass") is not None
-                and l_info["inertial_mass"] > 0.0
-                and l_info.get("inertial_i") is not None
-                and (np.diag(l_info["inertial_i"]) > 0.0).all()
-            )
-            if inertia_valid and not morph.recompute_inertia:
-                # Derive COM and principal axes from file-specified inertia
-                inertia_pos = (
-                    np.array(l_info["inertial_pos"]) if l_info.get("inertial_pos") is not None else gu.zero_pos()
-                )
-                inertia_quat = (
-                    np.array(l_info["inertial_quat"]) if l_info.get("inertial_quat") is not None else gu.identity_quat()
-                )
-                inertia_R = gu.quat_to_R(inertia_quat)
-                inertia_in_link = inertia_R @ l_info["inertial_i"] @ inertia_R.T
-                R_principal = uu.principal_axes_rot(inertia_in_link)
-                principal_quat = gu.R_to_quat(R_principal)
-                global_com = inertia_pos
-                # Update inertia to diagonalized form in the new (aligned) link frame
-                l_info["inertial_pos"] = gu.zero_pos()
-                l_info["inertial_quat"] = gu.identity_quat()
-                l_info["inertial_i"] = R_principal.T @ inertia_in_link @ R_principal
-            else:
-                # Compute COM and principal axes from convexified collision geometry
-                geoms_inertial_info = []
-                for cg_info in cg_infos:
-                    if not (cg_info.get("contype", 0) or cg_info.get("conaffinity", 0)):
-                        continue
-                    tmesh = cg_info["mesh"].trimesh
-                    if not tmesh.is_watertight:
-                        tmesh = tmesh.convex_hull
-                    if tmesh.volume > 0:
-                        geoms_inertial_info.append(
-                            (
-                                tmesh.mass,
-                                tmesh.center_mass,
-                                tmesh.moment_inertia,
-                                np.array(cg_info.get("pos", gu.zero_pos())),
-                                np.array(cg_info.get("quat", gu.identity_quat())),
-                            )
-                        )
-                _global_mass, global_com, global_inertia = compose_inertial_properties(geoms_inertial_info)
-                R_principal = uu.principal_axes_rot(global_inertia)
-                principal_quat = gu.R_to_quat(R_principal)
-
-            # Shift link frame to COM and rotate to principal axes
-            l_info["pos"] = gu.transform_by_trans_quat(global_com, l_info["pos"], l_info["quat"])
-            l_info["quat"] = gu.transform_quat_by_quat(principal_quat, l_info["quat"])
-
-            # Update free joint init_qpos to reflect the new link pose
-            for j_info in j_infos:
-                if j_info["type"] == gs.JOINT_TYPE.FREE:
-                    j_info["init_qpos"] = np.concatenate([l_info["pos"], l_info["quat"]])
-
-            # Re-express all geoms in the new link frame
-            for cg_info in cg_infos:
-                cg_info["pos"], cg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
-                    np.array(cg_info.get("pos", gu.zero_pos())),
-                    np.array(cg_info.get("quat", gu.identity_quat())),
-                    global_com,
-                    principal_quat,
-                )
-            for vg_info in vg_infos:
-                vg_info["pos"], vg_info["quat"] = gu.inv_transform_pos_quat_by_trans_quat(
-                    np.array(vg_info.get("pos", gu.zero_pos())),
-                    np.array(vg_info.get("quat", gu.identity_quat())),
-                    global_com,
-                    principal_quat,
-                )
+        self._align_link(l_info, j_infos, cg_infos, vg_infos, morph)
 
         joints = self._create_joints(j_infos, link_idx, joint_start)
 
@@ -2234,52 +2281,6 @@ class RigidEntity(KinematicEntity):
             )
 
         return link, joints
-
-    @staticmethod
-    def _separate_geom_infos(morph, g_infos, is_robot):
-        """
-        Separate collision from visual geometry and post-process collision meshes.
-        Used for both normal loading and heterogeneous simulation.
-        """
-        cg_infos, vg_infos = KinematicEntity._separate_geom_infos(morph, g_infos, is_robot)
-
-        # Post-process all collision meshes at once.
-        # Destroying the original geometries should be avoided if possible as it will change the way objects
-        # interact with the world due to only computing one contact point per convex geometry. The idea is to
-        # check if each geometry can be convexified independently without resorting on convex decomposition.
-        # If so, the original geometries are preserve. If not, then they are all merged as one. Following the
-        # same approach as before, the resulting geometry is convexify without resorting on convex decomposition
-        # if possible. Mergeing before falling back directly to convex decompositio is important as it gives one
-        # last chance to avoid it. Moreover, it tends to reduce the final number of collision geometries. In
-        # both cases, this improves runtime performance, numerical stability and compilation time.
-        if isinstance(morph, gs.options.morphs.FileMorph):
-            # Choose the appropriate convex decomposition error threshold depending on whether the link at hand
-            # is associated with a robot.
-            # The rational behind it is that performing convex decomposition for robots is mostly useless because
-            # the non-physical part that is added to the original geometries to convexify them are generally inside
-            # the mechanical structure and not interacting directly with the outer world. On top of that, not only
-            # iy increases the memory footprint and compilation time, but also the simulation speed (marginally).
-            if is_robot:
-                decompose_error_threshold = morph.decompose_robot_error_threshold
-            else:
-                decompose_error_threshold = morph.decompose_object_error_threshold
-
-            cg_infos = mu.postprocess_collision_geoms(
-                cg_infos,
-                morph.decimate,
-                morph.decimate_face_num,
-                morph.decimate_aggressiveness,
-                morph.convexify,
-                decompose_error_threshold,
-                morph.coacd_options,
-            )
-
-        # Randomize collision mesh colors. This is especially useful to check convex decomposition.
-        for g_info in cg_infos:
-            mesh = g_info["mesh"]
-            mesh.set_color((*np.random.rand(3), 0.7))
-
-        return cg_infos, vg_infos
 
     def _add_equality(self, name, type, objs_name, data, sol_params):
         objs_id = []
