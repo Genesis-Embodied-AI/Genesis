@@ -196,6 +196,10 @@ def get_file_morph_options(**kwargs):
 
 @pytest.fixture(scope="session")
 def stream_writers(printer_session, request):
+    if request.config.getoption("--vis", False):
+        yield ()
+        return
+
     report_path = Path(request.config.getoption("--speed-test-filepath"))
 
     # Delete old unrelated worker-specific reports
@@ -253,7 +257,7 @@ def factory_logger(stream_writers):
 
 
 @pytest.fixture
-def go2(solver, n_envs, gjk, pytorch_profiler_step):
+def go2(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -262,7 +266,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -315,7 +319,7 @@ def go2(solver, n_envs, gjk, pytorch_profiler_step):
     return {"compile_time": compile_time, "runtime_fps": runtime_fps, "realtime_factor": realtime_factor}
 
 
-def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
+def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -324,7 +328,7 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -386,26 +390,26 @@ def _anymal(solver, n_envs, gjk, control, with_kinematic, profiler_step):
 
 
 @pytest.fixture
-def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step)
+def anymal_zero(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _anymal(solver, n_envs, gjk, control=None, with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step)
+def anymal_uniform(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def anymal_random(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step)
+def anymal_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _anymal(solver, n_envs, gjk, control="per_env", with_kinematic=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step):
-    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step)
+def anymal_uniform_kinematic(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _anymal(solver, n_envs, gjk, control="uniform", with_kinematic=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
-def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step):
+def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, profiler_step, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -415,7 +419,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -491,7 +495,7 @@ def _franka(solver, n_envs, gjk, is_collision_free, is_randomized, accessors, pr
 
 
 @pytest.fixture
-def franka(solver, n_envs, gjk, pytorch_profiler_step):
+def franka(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     return _franka(
         solver,
         n_envs,
@@ -500,11 +504,12 @@ def franka(solver, n_envs, gjk, pytorch_profiler_step):
         is_randomized=False,
         accessors=False,
         profiler_step=pytorch_profiler_step,
+        show_viewer=show_viewer,
     )
 
 
 @pytest.fixture
-def franka_random(solver, n_envs, gjk, pytorch_profiler_step):
+def franka_random(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     return _franka(
         solver,
         n_envs,
@@ -513,11 +518,12 @@ def franka_random(solver, n_envs, gjk, pytorch_profiler_step):
         is_randomized=True,
         accessors=False,
         profiler_step=pytorch_profiler_step,
+        show_viewer=show_viewer,
     )
 
 
 @pytest.fixture
-def franka_free(solver, n_envs, gjk, pytorch_profiler_step):
+def franka_free(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     return _franka(
         solver,
         n_envs,
@@ -526,11 +532,12 @@ def franka_free(solver, n_envs, gjk, pytorch_profiler_step):
         is_randomized=False,
         accessors=False,
         profiler_step=pytorch_profiler_step,
+        show_viewer=show_viewer,
     )
 
 
 @pytest.fixture
-def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step):
+def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     return _franka(
         solver,
         n_envs,
@@ -539,16 +546,17 @@ def franka_accessors(solver, n_envs, gjk, pytorch_profiler_step):
         is_randomized=False,
         accessors=True,
         profiler_step=pytorch_profiler_step,
+        show_viewer=show_viewer,
     )
 
 
-def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
+def _duck_in_box(solver, n_envs, gjk, hard, profiler_step, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
     scene.add_entity(
@@ -607,16 +615,16 @@ def _duck_in_box(solver, n_envs, gjk, hard, profiler_step):
 
 
 @pytest.fixture
-def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler_step):
-    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=pytorch_profiler_step)
+def duck_in_box_easy(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _duck_in_box(solver, n_envs, gjk, hard=False, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler_step):
-    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=pytorch_profiler_step)
+def duck_in_box_hard(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _duck_in_box(solver, n_envs, gjk, hard=True, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
-def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
+def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step, show_viewer):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -631,7 +639,7 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
             camera_fov=30,
             max_FPS=60,
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -677,27 +685,27 @@ def _box_pyramid(solver, n_envs, gjk, n_cubes, profiler_step):
 
 
 @pytest.fixture
-def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=pytorch_profiler_step)
+def box_pyramid_3(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=3, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=pytorch_profiler_step)
+def box_pyramid_4(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=4, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=pytorch_profiler_step)
+def box_pyramid_5(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=5, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler_step):
-    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=pytorch_profiler_step)
+def box_pyramid_6(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
+    return _box_pyramid(solver, n_envs, gjk, n_cubes=6, profiler_step=pytorch_profiler_step, show_viewer=show_viewer)
 
 
 @pytest.fixture
-def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
+def g1_fall(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     """G1 humanoid robot falling from above a plane."""
     import quadrants as qd
 
@@ -718,7 +726,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
@@ -775,7 +783,7 @@ def g1_fall(solver, n_envs, gjk, pytorch_profiler_step):
 
 
 @pytest.fixture
-def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
+def dex_hand(solver, n_envs, gjk, pytorch_profiler_step, show_viewer):
     """Two shadow hands manipulating a drill on a table."""
     import quadrants as qd
 
@@ -886,7 +894,7 @@ def dex_hand(solver, n_envs, gjk, pytorch_profiler_step):
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
-        show_viewer=False,
+        show_viewer=show_viewer,
         show_FPS=False,
     )
 
