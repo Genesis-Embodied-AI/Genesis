@@ -189,6 +189,50 @@ def test_default_viewer_plugin():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_viewer_thread_crash_reports_traceback():
+    """Crash in the viewer must expose the original traceback, whether threaded or not."""
+
+    class CrashOnDrawPlugin(gs.vis.viewer_plugins.ViewerPlugin):
+        def __init__(self):
+            super().__init__()
+            self.should_crash = False
+
+        def on_draw(self):
+            if self.should_crash:
+                raise RuntimeError("Deliberate viewer thread crash.")
+
+    run_in_thread = sys.platform == "linux"
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(run_in_thread=run_in_thread),
+        show_viewer=True,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    crash_plugin = CrashOnDrawPlugin()
+    scene.viewer.add_plugin(crash_plugin)
+    scene.build()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Enable crashing only after init is complete to avoid corrupting the init path
+    crash_plugin.should_crash = True
+
+    if run_in_thread:
+        # Wait until the viewer thread has died, then check the traceback is preserved
+        wait_for_viewer_events(pyrender_viewer, lambda: not pyrender_viewer.is_active)
+        with pytest.raises(gs.GenesisException) as exc_info:
+            scene.step()
+        assert exc_info.type is gs.GenesisException
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert "Deliberate viewer thread crash." in str(exc_info.value.__cause__)
+    else:
+        # Non-threaded: exception propagates directly through scene.step()
+        with pytest.raises(RuntimeError, match="Deliberate viewer thread crash."):
+            scene.step()
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_mouse_interaction_plugin():
     DT = 0.01
     MASS = 100.0

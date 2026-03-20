@@ -1239,12 +1239,16 @@ class Viewer(pyglet.window.Window):
             )
 
         if auto_refresh:
-            while self._is_active:
-                try:
-                    self.refresh()
-                except AttributeError:
-                    # The graphical window has been closed manually
-                    pass
+            try:
+                while self._is_active:
+                    try:
+                        self.refresh()
+                    except AttributeError:
+                        # The graphical window has been closed manually
+                        pass
+            except Exception as e:
+                if self._exception is None:
+                    self._exception = e
             self.on_close()
         else:
             self.refresh()

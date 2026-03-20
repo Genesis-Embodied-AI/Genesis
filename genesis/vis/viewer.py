@@ -146,7 +146,7 @@ class Viewer(RBC):
         self._pyrender_viewer.run()
 
     def stop(self):
-        if self.is_alive():
+        if self._pyrender_viewer is not None and self._pyrender_viewer.is_active:
             self._pyrender_viewer.close()
 
     def is_alive(self):
@@ -158,8 +158,7 @@ class Viewer(RBC):
                     self._pyrender_viewer.close()
                 except Exception:
                     pass
-                gs.raise_exception_from("Unexpected OpenGL context error.", self._pyrender_viewer._exception)
-            return False
+            gs.raise_exception_from("Unexpected viewer error.", self._pyrender_viewer._exception)
         return self._pyrender_viewer.is_active
 
     def setup_camera(self):
