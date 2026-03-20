@@ -357,6 +357,9 @@ def make_franka(
         vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
     franka.set_dofs_velocity(vel0)
 
+    scene.rigid_solver._queried_states.clear()
+    state0 = scene.get_state()
+
     if n_envs > 0:
         n_reset_envs = max(int(0.02 * n_envs), 1)
         reset_envs_idx = torch.randperm(n_envs, dtype=gs.tc_int, device=gs.device)[:n_reset_envs]
@@ -370,6 +373,7 @@ def make_franka(
     def step():
         scene.step()
         if accessors:
+            scene.reset(state0, envs_idx=reset_envs_mask)
             franka.get_ang()
             franka.get_vel()
             franka.get_dofs_position()
