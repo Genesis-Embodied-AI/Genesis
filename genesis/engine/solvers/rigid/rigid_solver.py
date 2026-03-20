@@ -1802,6 +1802,11 @@ class RigidSolver(KinematicSolver):
         )
 
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
+        if self.collider is not None:
+            self.collider.reset(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+
         if gs.use_zerocopy:
             data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             errno = qd_to_torch(self._errno, copy=False)
@@ -1833,11 +1838,6 @@ class RigidSolver(KinematicSolver):
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
             kernel_set_zero(envs_idx, self._errno)
-
-        if self.collider is not None:
-            self.collider.reset(envs_idx)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -2014,6 +2014,9 @@ class RigidSolver(KinematicSolver):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
+        self.collider.reset(envs_idx)
+        self.constraint_solver.reset(envs_idx)
+
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -2036,9 +2039,6 @@ class RigidSolver(KinematicSolver):
             errno[envs_idx] = 0
         else:
             kernel_set_zero(envs_idx, self._errno)
-
-        self.collider.reset(envs_idx)
-        self.constraint_solver.reset(envs_idx)
 
         kernel_forward_kinematics_links_geoms(
             envs_idx,

@@ -5,8 +5,9 @@ import logging
 import os
 import re
 import subprocess
-from argparse import SUPPRESS
 import sys
+import warnings
+from argparse import SUPPRESS
 from enum import Enum
 from io import BytesIO
 from pathlib import Path
@@ -19,7 +20,6 @@ import pytest
 from _pytest.mark import Expression, MarkMatcher
 from PIL import Image
 from syrupy.extensions.image import PNGImageSnapshotExtension
-
 
 # Mock tkinter module for backward compatibility because it is a hard dependency for old Genesis versions
 has_tkinter = False
@@ -73,6 +73,7 @@ if not has_display and has_egl:
     os.environ["PYGLET_HEADLESS"] = "1"
 
 IS_INTERACTIVE_VIEWER_AVAILABLE = has_display or has_egl
+
 
 TOL_SINGLE = 5e-5
 TOL_DOUBLE = 1e-9
@@ -397,11 +398,18 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
+    # Convert all quadrants and torch UserWarning as errors
+    warnings.filterwarnings("error", category=UserWarning, module="torch")
+    warnings.filterwarnings(
+        "default", message=r".*The .grad attribute of a Tensor that is not a leaf Tensor is being accessed..*"
+    )
+    warnings.filterwarnings("error", category=UserWarning, module="quadrants")
+    warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
+
     # Include test name in process title
     test_name = item.nodeid.replace(" ", "")
     dtype = "field" if os.environ.get("GS_ENABLE_NDARRAY", "1") == "0" else "ndarray"
     test_name = test_name[:-1] + f"-{dtype}]"
-
     setproctitle.setproctitle(f"pytest: {test_name}")
 
     # Match CUDA device with EGL device.

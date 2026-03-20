@@ -448,7 +448,7 @@ def test_hard_constraint(use_implicit_solver, show_viewer):
         e_z /= torch.linalg.norm(e_z, dim=-1, keepdim=True)
         e_y = corners[..., 6, :] - corners[..., 4, :]
         e_y /= torch.linalg.norm(e_y, dim=-1, keepdim=True)
-        e_x = torch.cross(e_y, e_z)
+        e_x = torch.cross(e_y, e_z, dim=-1)
         e_x /= torch.linalg.norm(e_x, dim=-1, keepdim=True)
         R = torch.stack((e_x, e_y, e_z), dim=-1)
         corners_local = (corners - corners[..., [0], :]) @ R + box.init_positions[0]
@@ -563,7 +563,7 @@ def test_implicit_sap_coupler_hard_constraint_and_collision(show_viewer):
         e_z /= torch.linalg.norm(e_z, dim=-1, keepdim=True)
         e_y = corners[..., 6, :] - corners[..., 4, :]
         e_y /= torch.linalg.norm(e_y, dim=-1, keepdim=True)
-        e_x = torch.cross(e_y, e_z)
+        e_x = torch.cross(e_y, e_z, dim=-1)
         e_x /= torch.linalg.norm(e_x, dim=-1, keepdim=True)
         R = torch.stack((e_x, e_y, e_z), dim=-1)
         corners_local = (corners - corners[..., [0], :]) @ R + box.init_positions[0]
