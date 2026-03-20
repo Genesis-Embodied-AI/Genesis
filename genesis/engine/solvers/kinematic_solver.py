@@ -766,8 +766,8 @@ class KinematicSolver(Solver):
                 and envs_idx.dtype == torch.bool
             ):
                 qs_data = data[(slice(None), *qs_mask)]
-                if qpos.ndim == 2:
-                    # Note that it is necessary to create a new temporary view because it will be modified in-place
+                if qpos.ndim == 2 and len(qpos) != len(qs_data):
+                    # Note that it is necessary to create a new temporary view because it will be reshaped in-place
                     qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
@@ -829,8 +829,8 @@ class KinematicSolver(Solver):
                     else:
                         dofs_vel.scatter_(0, envs_idx[:, None].expand((-1, dofs_vel.shape[1])), 0.0)
                 else:
-                    if velocity.ndim == 2:
-                        # Note that it is necessary to create a new temporary view because it will be modified in-place
+                    if velocity.ndim == 2 and len(dofs_vel) != len(velocity):
+                        # Note that it is necessary to create a new temporary view because it will be reshaped in-place
                         dofs_vel.masked_scatter_(envs_idx[:, None], velocity.view_as(velocity))
                     else:
                         velocity = broadcast_tensor(velocity, gs.tc_float, dofs_vel.shape)

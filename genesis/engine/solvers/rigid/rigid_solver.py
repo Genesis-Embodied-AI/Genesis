@@ -1741,8 +1741,8 @@ class RigidSolver(KinematicSolver):
                 and envs_idx.dtype == torch.bool
             ):
                 qs_data = data[(slice(None), *qs_mask)]
-                if qpos.ndim == 2:
-                    # Note that it is necessary to create a new temporary view because it will be modified in-place
+                if qpos.ndim == 2 and len(qpos) != len(qs_data):
+                    # Note that it is necessary to create a new temporary view because it will be reshaped in-place
                     qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
