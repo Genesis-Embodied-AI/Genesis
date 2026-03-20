@@ -375,7 +375,8 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSens
 
 class Proximity(RigidSensorOptionsMixin["ProximitySensor"], NoisySensorOptionsMixin["ProximitySensor"]):
     """
-    Proximity sensor that reports distance and nearest point from probe positions to tracked mesh surfaces.
+    Proximity sensor that reports the nearest distances from probe positions to tracked mesh surfaces.
+    The read() output will provide the distances, and the nearest points can be accessed with `sensor.nearest_points`.
 
     Attached to a rigid entity link. Takes a list of local probe positions and a list of global link indices
     to track; for each probe, outputs the distance and nearest point (world frame) to the closest mesh

@@ -1431,12 +1431,12 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
     sphere_prox_data = sphere_prox_sensor.read_ground_truth()
 
     for i in range(len(BOX_PROBE_POS)):
-        assert_allclose(box_prox_data.distance[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
-    assert_allclose(box_prox_data.points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
-    assert_allclose(sphere_prox_data.distance, DISTANCE, tol=tol)
+        assert_allclose(box_prox_data[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
+    assert_allclose(box_prox_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    assert_allclose(sphere_prox_data, DISTANCE, tol=tol)
 
     with np.testing.assert_raises(AssertionError):
-        assert_allclose(sphere_prox_noisy_data.distance, sphere_prox_data.distance, tol=tol)
+        assert_allclose(sphere_prox_noisy_data, sphere_prox_data, tol=tol)
 
     sphere1_pos = np.array((0.0, 0.0, DISTANCE * 3.0))
     sphere1.set_pos(sphere1_pos)
@@ -1446,9 +1446,9 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
     box_prox_data = box_prox_sensor.read()
     sphere_prox_data = sphere_prox_sensor.read_ground_truth()
 
-    assert_allclose(box_prox_data.distance[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
-    assert_allclose(box_prox_data.distance[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
-    assert_allclose(sphere_prox_data.distance, DISTANCE * 3.0, tol=tol)
+    assert_allclose(box_prox_data[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
+    assert_allclose(box_prox_data[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
+    assert_allclose(sphere_prox_data, DISTANCE * 3.0, tol=tol)
 
     box_pos = np.array((0.0, 0.0, -MAX_RANGE))
     box.set_pos(box_pos)
@@ -1457,17 +1457,17 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
     box_prox_data = box_prox_sensor.read()
     sphere_prox_data = sphere_prox_sensor.read_ground_truth()
 
-    assert_allclose(box_prox_data.distance, MAX_RANGE, tol=tol)
-    assert_allclose(sphere_prox_data.distance, MAX_RANGE, tol=tol)
+    assert_allclose(box_prox_data, MAX_RANGE, tol=tol)
+    assert_allclose(sphere_prox_data, MAX_RANGE, tol=tol)
     for i in range(len(BOX_PROBE_POS)):
         assert_allclose(
-            box_prox_data.points[..., i, :],
+            box_prox_sensor.nearest_points[..., i, :],
             np.array(BOX_PROBE_POS[i]) + box_pos,
             tol=tol,
             err_msg="When out of range, points should be the probe position in world frame",
         )
     assert_allclose(
-        sphere_prox_data.points,
+        sphere_prox_sensor.nearest_points,
         np.array(SPHERE_PROBE_POS) + sphere1_pos,
         tol=tol,
         err_msg="When out of range, points should be the probe position in world frame",
