@@ -32,10 +32,9 @@ if TYPE_CHECKING:
 
     from .sensor_manager import SensorManager
 
+
 STEFAN_BOLTZMANN = 5.670374419e-8  # W / (m²·K⁴)
 KELVIN_OFFSET = 273.15
-PI = math.pi
-TWO_PI = 2.0 * PI
 MAX_TEMP = 1000.0  # °C
 
 
@@ -68,18 +67,20 @@ class _ScratchIdx(IntEnum):
     GROUP_POS2_Y = 18
 
 
+@torch.jit.script
 def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float) -> torch.Tensor:
     """Squared wave numbers for 3D real FFT: K2[i,j,k] = (2*pi*kx)^2 + (2*pi*ky)^2 + (2*pi*kz)^2 with rfft layout."""
     kx = torch.fft.fftfreq(nx, d=dx, device=gs.device).to(gs.tc_float)
     ky = torch.fft.fftfreq(ny, d=dy, device=gs.device).to(gs.tc_float)
     kz = torch.fft.rfftfreq(nz, d=dz, device=gs.device).to(gs.tc_float)
-    K2 = (TWO_PI * kx).reshape(-1, 1, 1) ** 2
-    K2 = K2 + (TWO_PI * ky).reshape(1, -1, 1) ** 2
-    K2 = K2 + (TWO_PI * kz).reshape(1, 1, -1) ** 2
-    K2[0, 0, 0] = max(K2[0, 0, 0].item(), gs.EPS)
+    K2 = (2 * torch.pi * kx).reshape(-1, 1, 1) ** 2
+    K2 = K2 + (2 * torch.pi * ky).reshape(1, -1, 1) ** 2
+    K2 = K2 + (2 * torch.pi * kz).reshape(1, 1, -1) ** 2
+    K2[0, 0, 0] = max(K2[0, 0, 0], gs.EPS)
     return K2
 
 
+@torch.jit.script
 def _compute_surface_mask(nx: int, ny: int, nz: int) -> torch.Tensor:
     """Boolean mask of boundary voxels (at least one face on grid boundary). Shape (nx, ny, nz)."""
     ix, iy, iz = torch.meshgrid(
@@ -91,6 +92,7 @@ def _compute_surface_mask(nx: int, ny: int, nz: int) -> torch.Tensor:
     return ((ix == 0) | (ix == nx - 1) | (iy == 0) | (iy == ny - 1) | (iz == 0) | (iz == nz - 1)).to(gs.tc_float)
 
 
+@torch.jit.script
 def _apply_diffusion_and_heat_generation(
     sensor_cache_start: torch.Tensor,
     cache_sizes: list[int],
@@ -109,12 +111,12 @@ def _apply_diffusion_and_heat_generation(
     n_sensors = sensor_cache_start.shape[0]
     n_batches = output.shape[0]
     for i_s in range(n_sensors):
-        start = sensor_cache_start[i_s].item()
+        start = sensor_cache_start[i_s]
         size = cache_sizes[i_s]
-        nx, ny, nz = grid_size[i_s].tolist()
-        mat_idx = link_to_material_idx[links_idx[i_s].item()].item()
-        rcp = link_rho_cp[mat_idx].item()
-        k = link_conductivity[mat_idx].item()
+        nx, ny, nz = int(grid_size[i_s][0]), int(grid_size[i_s][1]), int(grid_size[i_s][2])
+        mat_idx = link_to_material_idx[links_idx[i_s]]
+        rcp = link_rho_cp[mat_idx]
+        k = link_conductivity[mat_idx]
         alpha = k / rcp
         T = output[:, start : start + size].reshape(-1, nx, ny, nz)
         # Mirror-pad to (2*nx, 2*ny, 2*nz) for zero-flux (Neumann) boundaries; avoids FFT wrap-around.
@@ -130,7 +132,7 @@ def _apply_diffusion_and_heat_generation(
         # Add internal heat generation (W/m² -> Q_vol = Q_surface / dz).
         q = heat_generation[i_s]
         if q is not None:
-            dz = max(voxel_size[i_s, 2].item(), gs.EPS)
+            dz = max(voxel_size[i_s, 2], gs.EPS)
             Q_vol = q.reshape(-1) / dz
             delta_T = dt * Q_vol / rcp
             output[:, start : start + size] += delta_T.unsqueeze(0).expand(n_batches, -1)
@@ -277,7 +279,7 @@ def _kernel_compute_contact_areas(
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
-                    group_area = group_area + d * PI
+                    group_area = group_area + d * qd.math.pi
 
             area_per_contact = group_area / (gs.qd_float(count) + eps)
             for k in range(count):
@@ -366,7 +368,7 @@ def _kernel_contact_heat(
                 cell_idx = ix * (ny * nz) + iy * nz + iz
                 T_cell = output[i_b, start + cell_idx]
                 area_base = contact_area[i_c, i_b] + eps
-                area = qd.max(area_base, PI * dw * collider_state.contact_data.penetration[i_c, i_b])
+                area = qd.max(area_base, qd.math.pi * dw * collider_state.contact_data.penetration[i_c, i_b])
                 flux = k_eff * (T_other - T_cell) / (vol / area + eps)
                 Q_vol = flux * area / vol
                 delta_T = dt * Q_vol / rcp

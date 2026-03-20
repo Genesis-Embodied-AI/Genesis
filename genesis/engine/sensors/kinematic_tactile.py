@@ -518,6 +518,7 @@ def _next_pow2(n: int) -> int:
     return p
 
 
+@torch.jit.script
 def _precompute_dilate_kernel_fft(
     dilate_coeff: float, grid_spacing: tuple[float, float], fft_n: tuple[int, int]
 ) -> torch.Tensor:

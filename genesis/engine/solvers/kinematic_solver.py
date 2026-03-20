@@ -550,12 +550,9 @@ class KinematicSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None, *, partial: bool | None = None) -> None:
+    def set_state(self, f, state, envs_idx=None, *, partial: bool = False) -> None:
         if not self.is_active:
             return
-
-        if partial is None:
-            partial = envs_idx is not None
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 

@@ -1416,12 +1416,9 @@ class RigidSolver(KinematicSolver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None, *, partial: bool | None = None) -> None:
+    def set_state(self, f, state, envs_idx=None, *, partial: bool = False) -> None:
         if not self.is_active:
             return
-
-        if partial is None:
-            partial = envs_idx is not None
 
         if partial:
             self.collider.reset(envs_idx)
