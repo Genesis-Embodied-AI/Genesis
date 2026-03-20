@@ -17,7 +17,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 from genesis.engine.materials.rigid import Rigid
-from genesis.utils.misc import tensor_to_array, qd_to_torch, qd_to_numpy
+from genesis.utils.misc import assign_indexed_tensor, tensor_to_array, qd_to_torch, qd_to_numpy, indices_to_mask
 from genesis.utils.sdf import SDF
 
 from . import mpr
@@ -35,6 +35,7 @@ from .broadphase import (
 from .contact import (
     collider_kernel_reset,
     kernel_collider_clear,
+    kernel_masked_collider_clear,
     collider_kernel_get_contacts,
     func_add_contact,
     func_set_contact,
@@ -558,9 +559,45 @@ class Collider:
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
 
+        if (
+            gs.use_zerocopy
+            and not self._solver._use_hibernation
+            and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
+        ):
+            n_contacts = qd_to_torch(self._collider_state.n_contacts, copy=False)
+            link_a = qd_to_torch(self._collider_state.contact_data.link_a, copy=False)
+            link_b = qd_to_torch(self._collider_state.contact_data.link_b, copy=False)
+            geom_a = qd_to_torch(self._collider_state.contact_data.geom_a, copy=False)
+            geom_b = qd_to_torch(self._collider_state.contact_data.geom_b, copy=False)
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                n_contacts.masked_fill_(envs_idx, 0)
+                link_a.masked_fill_(envs_idx[None, :], -1)
+                link_b.masked_fill_(envs_idx[None, :], -1)
+                geom_a.masked_fill_(envs_idx[None, :], -1)
+                geom_b.masked_fill_(envs_idx[None, :], -1)
+            elif isinstance(envs_idx, torch.Tensor):
+                n_contacts.scatter_(0, envs_idx, 0)
+                link_a.scatter_(1, envs_idx[None, :].expand(link_a.shape[0], -1), -1)
+                link_b.scatter_(1, envs_idx[None, :].expand(link_b.shape[0], -1), -1)
+                geom_a.scatter_(1, envs_idx[None, :].expand(geom_a.shape[0], -1), -1)
+                geom_b.scatter_(1, envs_idx[None, :].expand(geom_b.shape[0], -1), -1)
+            else:
+                env_mask = indices_to_mask(envs_idx)
+                n_contacts[env_mask] = 0
+                mask = (slice(None), *env_mask)
+                assign_indexed_tensor(link_a, mask, -1)
+                assign_indexed_tensor(link_b, mask, -1)
+                assign_indexed_tensor(geom_a, mask, -1)
+                assign_indexed_tensor(geom_b, mask, -1)
+            return
+
         if envs_idx is None:
             envs_idx = self._solver._scene._envs_idx
-        kernel_collider_clear(
+        if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+            fn = kernel_masked_collider_clear
+        else:
+            fn = kernel_collider_clear
+        fn(
             envs_idx,
             self._solver.links_state,
             self._solver.links_info,

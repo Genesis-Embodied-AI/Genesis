@@ -1417,32 +1417,113 @@ class RigidSolver(KinematicSolver):
         return state
 
     def set_state(self, f, state, envs_idx=None):
-        if self.is_active:
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-
-            if gs.use_zerocopy:
-                errno = qd_to_torch(self._errno, copy=False)
-                errno[envs_idx] = 0
-            else:
-                kernel_set_zero(envs_idx, self._errno)
-
-            kernel_set_state(
-                envs_idx=envs_idx,
-                qpos=state.qpos,
-                dofs_vel=state.dofs_vel,
-                dofs_acc=state.dofs_acc,
-                links_pos=state.links_pos,
-                links_quat=state.links_quat,
-                i_pos_shift=state.i_pos_shift,
-                mass_shift=state.mass_shift,
-                friction_ratio=state.friction_ratio,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                geoms_state=self.geoms_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
+        if self._requires_grad:
+            qpos, dofs_vel, dofs_acc, links_pos, links_quat, i_pos_shift, mass_shift, friction_ratio = (
+                state.qpos,
+                state.dofs_vel,
+                state.dofs_acc,
+                state.links_pos,
+                state.links_quat,
+                state.i_pos_shift,
+                state.mass_shift,
+                state.friction_ratio,
             )
-            kernel_forward_kinematics_links_geoms(
+        else:
+            qpos, dofs_vel, dofs_acc, links_pos, links_quat, i_pos_shift, mass_shift, friction_ratio = (
+                state.qpos.as_subclass(torch.Tensor),
+                state.dofs_vel.as_subclass(torch.Tensor),
+                state.dofs_acc.as_subclass(torch.Tensor),
+                state.links_pos.as_subclass(torch.Tensor),
+                state.links_quat.as_subclass(torch.Tensor),
+                state.i_pos_shift.as_subclass(torch.Tensor),
+                state.mass_shift.as_subclass(torch.Tensor),
+                state.friction_ratio.as_subclass(torch.Tensor),
+            )
+
+        if self.is_active:
+            if gs.use_zerocopy and (
+                not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
+            ):
+                errno = qd_to_torch(self._errno, copy=False)
+                qpos_dst = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+                vel_dst = qd_to_torch(self.dofs_state.vel, transpose=True, copy=False)
+                acc_dst = qd_to_torch(self.dofs_state.acc, transpose=True, copy=False)
+                ctrl_force_dst = qd_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
+                ctrl_mode_dst = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+                pos_dst = qd_to_torch(self.links_state.pos, transpose=True, copy=False)
+                quat_dst = qd_to_torch(self.links_state.quat, transpose=True, copy=False)
+                shift_dst = qd_to_torch(self.links_state.i_pos_shift, transpose=True, copy=False)
+                cfrc_vel_dst = qd_to_torch(self.links_state.cfrc_applied_vel, transpose=True, copy=False)
+                cfrc_ang_dst = qd_to_torch(self.links_state.cfrc_applied_ang, transpose=True, copy=False)
+                mass_dst = qd_to_torch(self.links_state.mass_shift, transpose=True, copy=False)
+                fric_dst = qd_to_torch(self.geoms_state.friction_ratio, transpose=True, copy=False)
+
+                if envs_idx is not None and not isinstance(envs_idx, torch.Tensor):
+                    (envs_idx,) = indices_to_mask(envs_idx)
+                if isinstance(envs_idx, torch.Tensor):
+                    if envs_idx.dtype == torch.bool:
+                        envs_mask = envs_idx
+                    else:
+                        envs_mask = torch.zeros(self._B, dtype=torch.bool, device=gs.device)
+                        envs_mask[envs_idx] = True
+
+                    errno.masked_fill_(envs_mask, 0)
+                    if self.n_qs:
+                        torch.where(envs_mask[:, None], qpos, qpos_dst, out=qpos_dst)
+                        torch.where(envs_mask[:, None], dofs_vel, vel_dst, out=vel_dst)
+                        torch.where(envs_mask[:, None], dofs_acc, acc_dst, out=acc_dst)
+                        ctrl_force_dst.masked_fill_(envs_mask[:, None], 0.0)
+                        ctrl_mode_dst.masked_fill_(envs_mask[:, None], gs.CTRL_MODE.FORCE)
+                    torch.where(envs_mask[:, None, None], links_pos, pos_dst, out=pos_dst)
+                    torch.where(envs_mask[:, None, None], links_quat, quat_dst, out=quat_dst)
+                    torch.where(envs_mask[:, None, None], i_pos_shift, shift_dst, out=shift_dst)
+                    cfrc_vel_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                    cfrc_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                    torch.where(envs_mask[:, None], mass_shift, mass_dst, out=mass_dst)
+                    if self.n_geoms:
+                        torch.where(envs_mask[:, None], friction_ratio, fric_dst, out=fric_dst)
+                else:
+                    if self.n_qs:
+                        errno[envs_idx] = 0
+                        qpos_dst[envs_idx] = qpos[envs_idx]
+                        vel_dst[envs_idx] = dofs_vel[envs_idx]
+                        acc_dst[envs_idx] = dofs_acc[envs_idx]
+                        ctrl_force_dst[envs_idx] = 0.0
+                        ctrl_mode_dst[envs_idx] = gs.CTRL_MODE.FORCE
+                    pos_dst[envs_idx] = links_pos[envs_idx]
+                    quat_dst[envs_idx] = links_quat[envs_idx]
+                    shift_dst[envs_idx] = i_pos_shift[envs_idx]
+                    cfrc_vel_dst[envs_idx] = 0.0
+                    cfrc_ang_dst[envs_idx] = 0.0
+                    mass_dst[envs_idx] = mass_shift[envs_idx]
+                    if self.n_geoms:
+                        fric_dst[envs_idx] = friction_ratio[envs_idx]
+            else:
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+                kernel_set_zero(envs_idx, self._errno)
+                kernel_set_state(
+                    envs_idx=envs_idx,
+                    qpos=qpos,
+                    dofs_vel=dofs_vel,
+                    dofs_acc=dofs_acc,
+                    links_pos=links_pos,
+                    links_quat=links_quat,
+                    i_pos_shift=i_pos_shift,
+                    mass_shift=mass_shift,
+                    friction_ratio=friction_ratio,
+                    links_state=self.links_state,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+            if not isinstance(envs_idx, torch.Tensor):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
                 envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
