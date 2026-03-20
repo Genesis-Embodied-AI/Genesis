@@ -507,6 +507,9 @@ class KinematicEntity(Entity):
         )
 
     def _parse_scene(self, morph, surface):
+        # Keep track of whether parsed inertia can be considered valid
+        is_inertia_invalid = True
+
         # Mujoco's unified MJCF+URDF parser is not good enough for now to be used for loading both MJCF and URDF files.
         # First, it would happen when loading visual meshes having supported format (i.e. Collada files '.dae').
         # Second, it does not take into account URDF 'mimic' joint constraints. However, it does a better job at
@@ -534,6 +537,7 @@ class KinematicEntity(Entity):
                                 for key, value in l_info_gs.items():
                                     if value is None:
                                         l_info_mj[key] = None
+                                        is_inertia_invalid = False
                                 break
                 l_infos = l_infos_mj
 
@@ -545,6 +549,14 @@ class KinematicEntity(Entity):
                                 j_info_mj[name] = j_info_gs[name]
                             break
                 links_j_infos = links_j_infos_mj
+
+                # Must invalidate invweight if default rotor armature inertia has been specified
+                if morph.default_armature is not None:
+                    for link_j_infos in links_j_infos:
+                        for j_info in link_j_infos:
+                            if j_info["type"] not in (gs.JOINT_TYPE.FREE, gs.JOINT_TYPE.FIXED):
+                                is_inertia_invalid = False
+                                break
 
                 # Take into account 'world' body if it was added automatically for our legacy URDF parser
                 if len(links_g_infos_mj) == len(links_g_infos) + 1:

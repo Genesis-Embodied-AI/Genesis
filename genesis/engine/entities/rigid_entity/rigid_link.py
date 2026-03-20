@@ -767,6 +767,7 @@ class RigidLink(KinematicLink):
                 self._inertial_pos = hint_com
                 self._inertial_i = hint_inertia
             self._inertial_quat = gu.identity_quat()
+            self._invweight = None
 
         # FIXME: Setting zero mass even for fixed links breaks physics for some reason...
         # For non-fixed links, it must be non-zero in case for coupling with deformable body solvers.
