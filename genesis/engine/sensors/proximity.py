@@ -225,6 +225,7 @@ class ProximitySensor(
     ):
         solver = shared_metadata.solver
         shared_ground_truth_cache.zero_()
+        output = shared_ground_truth_cache.contiguous()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -245,8 +246,10 @@ class ProximitySensor(
             solver.verts_info,
             solver.fixed_verts_state,
             solver.free_verts_state,
-            shared_ground_truth_cache,
+            output,
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache.copy_(output)
 
     @classmethod
     def _update_shared_cache(
