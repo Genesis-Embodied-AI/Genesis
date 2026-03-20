@@ -550,22 +550,25 @@ class KinematicSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None):
-        if self.is_active:
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+    def set_state(self, f, state, envs_idx=None, *, skip_forward: bool = False) -> None:
+        if not self.is_active:
+            return
 
-            kernel_set_kinematic_state(
-                envs_idx=envs_idx,
-                qpos=state.qpos,
-                dofs_vel=state.dofs_vel,
-                links_pos=state.links_pos,
-                links_quat=state.links_quat,
-                i_pos_shift=state.i_pos_shift,
-                links_state=self.links_state,
-                dofs_state=self.dofs_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+
+        kernel_set_kinematic_state(
+            envs_idx=envs_idx,
+            qpos=state.qpos,
+            dofs_vel=state.dofs_vel,
+            links_pos=state.links_pos,
+            links_quat=state.links_quat,
+            i_pos_shift=state.i_pos_shift,
+            links_state=self.links_state,
+            dofs_state=self.dofs_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        if not skip_forward:
             kernel_forward_kinematics(
                 envs_idx,
                 links_state=self.links_state,
@@ -580,6 +583,9 @@ class KinematicSolver(Solver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     # ------------------------------------------------------------------------------------
     # -------------------------------- process_input -------------------------------------
