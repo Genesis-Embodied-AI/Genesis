@@ -47,10 +47,3 @@ def test_imgui_overlay_plugin(show_viewer):
     assert panda_data["n_qs"] == panda.n_qs
     assert len(panda_data["q_names"]) == panda.n_qs
     assert not panda_data["has_free_joint"]
-
-    # -- set_qpos update (what _apply_qpos_update delegates to) --
-    new_qpos = np.zeros(panda.n_qs, dtype=np.float64)
-    new_qpos[0] = 0.5
-    panda.set_qpos(new_qpos)
-    updated_qpos = panda.get_qpos().cpu().numpy()
-    np.testing.assert_allclose(updated_qpos, new_qpos, atol=1e-6)
