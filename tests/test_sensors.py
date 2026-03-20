@@ -125,6 +125,64 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_add_and_read_all_registered_sensors(show_viewer, n_envs):
+    """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
+    from genesis.engine.sensors.sensor_manager import SensorManager
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.1,
+            pos=(0.2, 0.0, 0.1),
+        )
+    )
+
+    sensors = []
+
+    for option_cls in SensorManager.SENSOR_TYPES_MAP.keys():
+        sensor_kwargs = {}
+        if issubclass(option_cls, gs.sensors.BaseCameraOptions):
+            continue  # skip camera options
+        if issubclass(option_cls, gs.sensors.RigidSensorOptionsMixin):
+            sensor_kwargs.update(
+                entity_idx=box.idx,
+            )
+        if issubclass(option_cls, gs.sensors.Raycaster):
+            sensor_kwargs.update(
+                pattern=gs.sensors.raycaster.DepthCameraPattern(),
+            )
+        if issubclass(option_cls, gs.sensors.Proximity):
+            sensor_kwargs.update(
+                track_link_idx=(sphere.idx,),
+            )
+        if issubclass(option_cls, gs.sensors.TemperatureGrid):
+            sensor_kwargs.update(
+                properties_dict={
+                    -1: gs.sensors.TemperatureProperties(),
+                },
+            )
+
+        sensor = scene.add_sensor(option_cls(**sensor_kwargs))
+        sensors.append(sensor)
+
+    scene.build(n_envs=n_envs)
+    scene.step()
+    for sensor in sensors:
+        sensor.read()
+
+
 # ------------------------------------------------------------------------------------------
 # -------------------------------------- IMU Sensors ---------------------------------------
 # ------------------------------------------------------------------------------------------

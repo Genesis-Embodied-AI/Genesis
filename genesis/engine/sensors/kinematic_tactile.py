@@ -972,7 +972,7 @@ class KinematicContactProbe(
             solver.verts_info,
             solver.faces_info,
             gs.EPS,
-            shared_ground_truth_cache,
+            output,
         )
         if not shared_ground_truth_cache.is_contiguous():
             shared_ground_truth_cache.copy_(output)
