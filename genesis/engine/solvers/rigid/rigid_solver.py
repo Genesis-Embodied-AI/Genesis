@@ -1421,7 +1421,7 @@ class RigidSolver(KinematicSolver):
             return
 
         if partial is None:
-            partial = False
+            partial = envs_idx is not None
 
         if partial:
             self.collider.reset(envs_idx)
@@ -1430,8 +1430,10 @@ class RigidSolver(KinematicSolver):
             self.collider.clear(envs_idx)
             self.constraint_solver.clear(envs_idx)
 
-        if gs.use_zerocopy and (
-            not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
+        if (
+            not self._requires_grad
+            and gs.use_zerocopy
+            and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
         ):
             errno = qd_to_torch(self._errno, copy=False)
             qpos_dst = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)

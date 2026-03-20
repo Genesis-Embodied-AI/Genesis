@@ -97,6 +97,10 @@ def func_collider_clear_env(
             collider_state.contact_data.link_b[i_c, i_b] = -1
             collider_state.contact_data.geom_a[i_c, i_b] = -1
             collider_state.contact_data.geom_b[i_c, i_b] = -1
+            collider_state.contact_data.penetration[i_c, i_b] = 0.0
+            collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
     if qd.static(static_rigid_sim_config.use_hibernation):
         collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]

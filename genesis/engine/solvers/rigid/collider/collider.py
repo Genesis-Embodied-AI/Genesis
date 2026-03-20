@@ -552,8 +552,7 @@ class Collider:
                 normal[:, envs_idx] = 0.0
             return
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
 
     def clear(self, envs_idx=None):
@@ -569,30 +568,45 @@ class Collider:
             link_b = qd_to_torch(self._collider_state.contact_data.link_b, copy=False)
             geom_a = qd_to_torch(self._collider_state.contact_data.geom_a, copy=False)
             geom_b = qd_to_torch(self._collider_state.contact_data.geom_b, copy=False)
+            penetration = qd_to_torch(self._collider_state.contact_data.penetration, copy=False)
+            pos = qd_to_torch(self._collider_state.contact_data.pos, copy=False)
+            normal = qd_to_torch(self._collider_state.contact_data.normal, copy=False)
+            force = qd_to_torch(self._collider_state.contact_data.force, copy=False)
             if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
                 n_contacts.masked_fill_(envs_idx, 0)
                 link_a.masked_fill_(envs_idx[None, :], -1)
                 link_b.masked_fill_(envs_idx[None, :], -1)
                 geom_a.masked_fill_(envs_idx[None, :], -1)
                 geom_b.masked_fill_(envs_idx[None, :], -1)
+                penetration.masked_fill_(envs_idx[None, :], 0.0)
+                pos.masked_fill_(envs_idx[None, :, None], 0.0)
+                normal.masked_fill_(envs_idx[None, :, None], 0.0)
+                force.masked_fill_(envs_idx[None, :, None], 0.0)
             elif isinstance(envs_idx, torch.Tensor):
                 n_contacts.scatter_(0, envs_idx, 0)
                 link_a.scatter_(1, envs_idx[None, :].expand(link_a.shape[0], -1), -1)
                 link_b.scatter_(1, envs_idx[None, :].expand(link_b.shape[0], -1), -1)
                 geom_a.scatter_(1, envs_idx[None, :].expand(geom_a.shape[0], -1), -1)
                 geom_b.scatter_(1, envs_idx[None, :].expand(geom_b.shape[0], -1), -1)
+                penetration.scatter_(1, envs_idx[None, :].expand(link_a.shape[0], -1), 0.0)
+                pos.scatter_(1, envs_idx[None, :, None].expand(link_a.shape[0], -1, 3), 0.0)
+                normal.scatter_(1, envs_idx[None, :, None].expand(link_a.shape[0], -1, 3), 0.0)
+                force.scatter_(1, envs_idx[None, :, None].expand(link_a.shape[0], -1, 3), 0.0)
             else:
                 env_mask = indices_to_mask(envs_idx)
                 n_contacts[env_mask] = 0
-                mask = (slice(None), *env_mask)
-                assign_indexed_tensor(link_a, mask, -1)
-                assign_indexed_tensor(link_b, mask, -1)
-                assign_indexed_tensor(geom_a, mask, -1)
-                assign_indexed_tensor(geom_b, mask, -1)
+                link_a[:, envs_idx] = -1
+                link_b[:, envs_idx] = -1
+                geom_a[:, envs_idx] = -1
+                geom_b[:, envs_idx] = -1
+                penetration[:, envs_idx] = 0.0
+                pos[:, envs_idx] = 0.0
+                normal[:, envs_idx] = 0.0
+                force[:, envs_idx] = 0.0
             return
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
+        if not isinstance(envs_idx, torch.Tensor):
+            envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
             fn = kernel_masked_collider_clear
         else:

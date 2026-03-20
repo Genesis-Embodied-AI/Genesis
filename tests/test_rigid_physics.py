@@ -3565,8 +3565,8 @@ def test_data_accessor(n_envs, batched, tol):
                             if value.dtype in (gs.tc_int, gs.np_int):
                                 assert (value[i_b, :n_contacts] != -1).all()
                                 assert (value[i_b, n_contacts:] == -1).all()
-                            # else:
-                            #     assert_allclose(value[i_b, n_contacts:], 0.0, tol=0)
+                            else:
+                                assert_allclose(value[i_b, n_contacts:], 0.0, tol=0)
                         else:
                             assert isinstance(value, (list, tuple))
                             assert value[i_b].shape[0] == n_contacts

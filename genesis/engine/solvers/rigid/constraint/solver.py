@@ -129,13 +129,8 @@ class ConstraintSolver:
                 qacc_ws[:, envs_idx] = 0.0
             return
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_reset(
-            envs_idx,
-            self.constraint_state,
-            self._solver._static_rigid_sim_config,
-        )
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
+        constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver._static_rigid_sim_config)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx)
@@ -166,8 +161,8 @@ class ConstraintSolver:
                 assign_indexed_tensor(qd_n_equalities, env_mask, n_eq)
             return
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
+        if not isinstance(envs_idx, torch.Tensor):
+            envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
         if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
             fn = constraint_solver_kernel_masked_clear
         else:
