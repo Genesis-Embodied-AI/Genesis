@@ -588,11 +588,11 @@ def test_dynamic_weld_scene_reset():
 
 
 @pytest.mark.required
-def test_reset():
+def test_reset(show_viewer):
     BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
 
     scene = gs.Scene(
-        show_viewer=False,
+        show_viewer=show_viewer,
     )
     scene.add_entity(
         gs.morphs.URDF(

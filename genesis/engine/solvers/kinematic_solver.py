@@ -550,9 +550,12 @@ class KinematicSolver(Solver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None, *, skip_forward: bool = False) -> None:
+    def set_state(self, f, state, envs_idx=None, *, partial: bool | None = None) -> None:
         if not self.is_active:
             return
+
+        if partial is None:
+            partial = envs_idx is not None
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
 
@@ -568,7 +571,7 @@ class KinematicSolver(Solver):
             rigid_global_info=self._rigid_global_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
-        if not skip_forward:
+        if not partial:
             kernel_forward_kinematics(
                 envs_idx,
                 links_state=self.links_state,

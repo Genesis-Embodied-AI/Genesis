@@ -1416,12 +1416,19 @@ class RigidSolver(KinematicSolver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None, *, skip_forward: bool = False) -> None:
+    def set_state(self, f, state, envs_idx=None, *, partial: bool | None = None) -> None:
         if not self.is_active:
             return
 
-        self.collider.clear(envs_idx)
-        self.constraint_solver.clear(envs_idx)
+        if partial is None:
+            partial = False
+
+        if partial:
+            self.collider.reset(envs_idx)
+            self.constraint_solver.reset(envs_idx)
+        else:
+            self.collider.clear(envs_idx)
+            self.constraint_solver.clear(envs_idx)
 
         if gs.use_zerocopy and (
             not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
@@ -1500,7 +1507,7 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-        if not skip_forward:
+        if not partial:
             if not isinstance(envs_idx, torch.Tensor):
                 envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             if envs_idx.dtype == torch.bool:
