@@ -139,6 +139,9 @@ class SensorManager:
         self._sensors_by_type.clear()
 
     def reset(self, envs_idx=None):
+        if not self._sensors_by_type:
+            return
+
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
 
         for dtype in self._buffered_data.keys():
