@@ -1446,6 +1446,9 @@ class USD(FileMorph):
     requires_jac_and_IK : bool, optional
         Whether this morph, if created as `RigidEntity`, requires jacobian and inverse kinematics. Defaults to False.
         **This is only used for RigidEntity.**
+    default_armature : float, optional
+        Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
+        actuated. None to disable. Default to 0.1.
 
     Joint Dynamics Options
     ----------------------
@@ -1510,6 +1513,7 @@ class USD(FileMorph):
     # Mesh Options
     file_meshes_are_zup: StrictBool | None = None
     fixed: StrictBool = False
+    default_armature: float | None = Field(default=0.1, ge=0)
 
     # Joint Dynamics Options
     joint_friction_attr_candidates: StrArrayType = (

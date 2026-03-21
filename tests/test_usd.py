@@ -323,8 +323,6 @@ def xml_path(request, tmp_path, model_name):
 def all_primitives_mjcf():
     """Generate an MJCF model with various geometric primitives on a plane."""
     mjcf = ET.Element("mujoco", model="primitives")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
     floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
@@ -520,8 +518,6 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
 def all_joints_mjcf():
     """Generate an MJCF model with all joint types: prismatic, revolute, spherical, fixed, and free."""
     mjcf = ET.Element("mujoco", model="all_joints")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
     floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
@@ -897,8 +893,6 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
     Both should produce equivalent results.
     """
     mjcf = ET.Element("mujoco", model="massapi_test")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
 
