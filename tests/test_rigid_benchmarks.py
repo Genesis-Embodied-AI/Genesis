@@ -725,7 +725,7 @@ def run_benchmark(step_fn, *, n_envs, meta):
 
 
 @pytest.fixture(scope="session")
-def stream_writers(request):
+def stream_writers(printer_session, request):
     report_path = Path(request.config.getoption("--speed-test-filepath"))
 
     # Delete old unrelated worker-specific reports
@@ -746,7 +746,7 @@ def stream_writers(request):
         report_path.unlink()
     fd = open(report_path, "w")
 
-    yield (lambda msg: print(msg, file=fd, flush=True), print)
+    yield (lambda msg: print(msg, file=fd, flush=True), printer_session)
 
     fd.close()
 
