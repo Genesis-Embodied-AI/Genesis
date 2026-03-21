@@ -292,7 +292,6 @@ class Mesh(RBC):
                 color_factor = tuple(np.array(visual.main_color, dtype=np.float32) / 255.0)
         elif isinstance(surface.texture, gs.textures.ColorTexture):
             color_factor = surface.texture.color
-            metadata["is_visual_overwritten"] = True
         elif (isinstance(visual, trimesh.visual.color.ColorVisuals) and visual.defined) or (
             isinstance(visual, trimesh.visual.color.VertexColor) and visual.vertex_colors.size > 0
         ):
@@ -303,6 +302,8 @@ class Mesh(RBC):
             color_factor = (1.0, 1.0, 1.0, 1.0)
 
         if must_update_surface:
+            metadata["is_visual_overwritten"] = isinstance(surface.texture, gs.textures.ColorTexture)
+
             color_texture = mu.create_texture(color_image, color_factor, "srgb")
             opacity_texture = None
             if color_texture is not None:

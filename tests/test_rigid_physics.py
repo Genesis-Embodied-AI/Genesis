@@ -3098,7 +3098,7 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
 @pytest.mark.required
 @pytest.mark.required
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_urdf_color_overwrite(overwrite, show_viewer):
+def test_color_overwrite(overwrite, show_viewer):
     scene = gs.Scene(show_viewer=show_viewer)
     box = scene.add_entity(
         gs.morphs.URDF(
@@ -3110,7 +3110,7 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
         ),
     )
     asset_path = get_hf_dataset(pattern="chain.urdf")
-    robot = scene.add_entity(
+    chain = scene.add_entity(
         gs.morphs.URDF(
             file=f"{asset_path}/chain.urdf",
         ),
@@ -3137,6 +3137,15 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
             color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
         ),
     )
+    asset_path = get_hf_dataset(pattern="humanoid.xml")
+    humanoid = scene.add_entity(
+        gs.morphs.MJCF(
+            file=f"{asset_path}/humanoid.xml",
+        ),
+        surface=gs.surfaces.Default(
+            color=(1.0, 0.0, 0.0, 1.0) if overwrite else None,
+        ),
+    )
     if show_viewer:
         scene.build()
     for vgeom in box.vgeoms:
@@ -3145,12 +3154,28 @@ def test_urdf_color_overwrite(overwrite, show_viewer):
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (0, 0, 255, 255))
-    for vgeom in robot.vgeoms:
+    for vgeom in chain.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
         assert visual.defined
         color = np.unique(visual.vertex_colors, axis=0)
         assert_equal(color, (255, 0, 0, 255) if overwrite else (51, 51, 51, 255))
+    for vgeom in humanoid.vgeoms:
+        # FIXME: The original material is lost because the visuals are collision geometries that has been duplicated as
+        # visual to circumvent the lack of dedicated visuals.
+        is_true_visual = vgeom.vmesh.metadata["name"] == "nose"
+        assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite or not is_true_visual
+        visual = vgeom.vmesh.trimesh.visual
+        assert visual.defined
+        color = np.unique(visual.vertex_colors, axis=0)
+        if is_true_visual:
+            if overwrite:
+                assert_equal(color, (255, 0, 0, 255))
+            else:
+                with pytest.raises(AssertionError):
+                    assert_equal(color, (128, 128, 128, 255))
+        else:
+            assert_equal(color, (255, 0, 0, 255) if overwrite else (128, 128, 128, 255))
     for vgeom in axis.vgeoms:
         assert vgeom.vmesh.metadata["is_visual_overwritten"] == overwrite
         visual = vgeom.vmesh.trimesh.visual
@@ -3524,6 +3549,7 @@ def test_get_constraints_api(show_viewer, tol):
         assert_allclose((link_a_[1], link_b_[1]), ((link_a,), (link_b,)), tol=0)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 @pytest.mark.parametrize("precision", ["32", "64"])
 @pytest.mark.parametrize("backend", [gs.gpu])
@@ -4680,6 +4706,7 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
     assert_allclose(tool.get_pos(), hand.get_link("right_finger").get_pos(), tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~200s
 @pytest.mark.required
 def test_heterogeneous_simulation(show_viewer, tol):
     """Test heterogeneous simulation by comparing against independent homogeneous simulations.

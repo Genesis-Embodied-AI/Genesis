@@ -738,10 +738,9 @@ def parse_geoms(mj, scale, surface, xml_path):
             if g_info["group"] in (0, 1, 2):
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
-                vmesh = gs.Mesh(
+                vmesh = gs.Mesh.from_trimesh(
                     mesh=mesh.trimesh,
                     surface=surface,
-                    uvs=mesh.uvs,
                     metadata=mesh.metadata,
                 )
                 g_info = {**g_info, "vmesh": vmesh, "contype": 0, "conaffinity": 0}
