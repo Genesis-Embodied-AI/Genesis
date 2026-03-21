@@ -1239,13 +1239,21 @@ class Viewer(pyglet.window.Window):
             )
 
         if auto_refresh:
+            is_invalid = False
             try:
                 while self._is_active:
                     try:
                         self.refresh()
+                        is_invalid = False
                     except AttributeError:
                         # The graphical window has been closed manually
                         pass
+                    except pyglet.gl.GLException as e:
+                        # Refresh may fail in rare occurrences due to what looks like a race condition.
+                        # Trying once in such a case is usually sufficent to succeed without risking deadlock.
+                        if is_invalid or (f"(0x{pyglet.gl.GL_INVALID_OPERATION})" not in str(e)):
+                            raise
+                        is_invalid = True
             except Exception as e:
                 if self._exception is None:
                     self._exception = e
