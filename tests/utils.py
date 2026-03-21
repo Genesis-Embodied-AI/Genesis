@@ -563,7 +563,7 @@ def build_genesis_sim(
         sim_options=gs.options.SimOptions(
             dt=mj_sim.model.opt.timestep,
             substeps=1,
-            gravity=mj_sim.model.opt.gravity.tolist(),
+            gravity=mj_sim.model.opt.gravity,
         ),
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,

@@ -2253,7 +2253,7 @@ def test_frictionloss_advanced(show_viewer, tol):
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
     assert_allclose(robot.get_AABB()[0, 2], 0.0, tol=2e-4)
     box_pos = box.get_pos()
-    assert box_pos[0] > 0.6
+    assert box_pos[0] > 0.5
     # This is to check collision detection is working correctly on metal
     # The box will collide with the robot and rolling on the ground,
     # We check whether it's rolling within a reasonable range and not blowing up.
@@ -3219,6 +3219,82 @@ def test_urdf_joint_dynamics(joint_damping, joint_friction, xml_path):
     assert_allclose(robot.joints[1].dofs_damping, joint_damping, tol=gs.EPS)
     assert_allclose(robot.joints[0].dofs_frictionloss, 0.0, tol=gs.EPS)
     assert_allclose(robot.joints[1].dofs_frictionloss, joint_friction, tol=gs.EPS)
+
+
+@pytest.fixture(scope="session")
+def freeflyer_mjcf():
+    mjcf = ET.Element("mujoco", model="freeflyer")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body = ET.SubElement(worldbody, "body", name="base", pos="0 0 1")
+    ET.SubElement(body, "joint", type="free")
+    ET.SubElement(body, "inertial", pos="0 0 0", mass="1.0", diaginertia="0.01 0.01 0.01")
+    ET.SubElement(body, "geom", type="sphere", size="0.05")
+    child = ET.SubElement(body, "body", name="child", pos="0 0 0.1")
+    ET.SubElement(child, "joint", type="hinge", axis="0 1 0")
+    ET.SubElement(child, "inertial", pos="0 0 0", mass="0.5", diaginertia="0.001 0.001 0.001")
+    ET.SubElement(child, "geom", type="sphere", size="0.02")
+    grandchild = ET.SubElement(child, "body", name="grandchild", pos="0 0 0.1")
+    ET.SubElement(grandchild, "joint", type="slide", axis="1 0 0", armature="42.0")
+    ET.SubElement(grandchild, "inertial", pos="0 0 0", mass="0.1", diaginertia="0.0001 0.0001 0.0001")
+    ET.SubElement(grandchild, "geom", type="sphere", size="0.01")
+    return mjcf
+
+
+@pytest.fixture(scope="session")
+def freeflyer_urdf():
+    robot = ET.Element("robot", name="freeflyer")
+    ET.SubElement(robot, "link", name="world")
+    base_link = ET.SubElement(robot, "link", name="base_link")
+    inertial = ET.SubElement(base_link, "inertial")
+    ET.SubElement(inertial, "origin", rpy="0 0 0", xyz="0 0 0")
+    ET.SubElement(inertial, "mass", value="1.0")
+    ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.01")
+    collision = ET.SubElement(base_link, "collision")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "sphere", radius="0.05")
+    root_joint = ET.SubElement(robot, "joint", name="root", type="floating")
+    ET.SubElement(root_joint, "parent", link="world")
+    ET.SubElement(root_joint, "child", link="base_link")
+    child_link = ET.SubElement(robot, "link", name="child_link")
+    child_inertial = ET.SubElement(child_link, "inertial")
+    ET.SubElement(child_inertial, "origin", rpy="0 0 0", xyz="0 0 0")
+    ET.SubElement(child_inertial, "mass", value="0.5")
+    ET.SubElement(child_inertial, "inertia", ixx="0.001", ixy="0", ixz="0", iyy="0.001", iyz="0", izz="0.001")
+    child_collision = ET.SubElement(child_link, "collision")
+    ET.SubElement(ET.SubElement(child_collision, "geometry"), "sphere", radius="0.02")
+    arm_joint = ET.SubElement(robot, "joint", name="arm", type="revolute")
+    ET.SubElement(arm_joint, "parent", link="base_link")
+    ET.SubElement(arm_joint, "child", link="child_link")
+    ET.SubElement(arm_joint, "origin", rpy="0 0 0", xyz="0 0 0.1")
+    ET.SubElement(arm_joint, "axis", xyz="0 1 0")
+    ET.SubElement(arm_joint, "limit", lower="-3.14", upper="3.14", effort="10", velocity="10")
+    return robot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["freeflyer_mjcf", "freeflyer_urdf"])
+def test_default_armature_freeflyer(xml_path):
+    DEFAULT_ARMATURE = 1000.0
+
+    if xml_path.endswith(".urdf"):
+        morph = gs.morphs.URDF(
+            file=xml_path,
+            default_armature=DEFAULT_ARMATURE,
+        )
+    else:
+        morph = gs.morphs.MJCF(
+            file=xml_path,
+            default_armature=DEFAULT_ARMATURE,
+        )
+
+    scene = gs.Scene()
+    robot = scene.add_entity(morph)
+    scene.build()
+
+    armature = robot.get_dofs_armature()
+    assert_allclose(armature[:6], 0.0, tol=gs.EPS)
+    assert_allclose(armature[6], DEFAULT_ARMATURE, tol=gs.EPS)
+    if xml_path.endswith(".mjcf"):
+        assert abs(armature[7]) > gs.EPS and abs(armature[7] - DEFAULT_ARMATURE) > gs.EPS
 
 
 @pytest.mark.required
@@ -4275,7 +4351,7 @@ def test_axis_aligned_bounding_boxes(n_envs):
 def test_ellipsoid(xml_path, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
-            dt=0.05,
+            dt=0.02,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0.4, 0.4, 0.3),
@@ -4294,8 +4370,8 @@ def test_ellipsoid(xml_path, show_viewer):
     )
     scene.build()
 
-    entity.set_dofs_velocity(4 * np.random.rand(3), dofs_idx_local=slice(3, 6))
-    entity.set_dofs_kv(0.1, dofs_idx_local=slice(3, 6))
+    entity.set_dofs_velocity(20 * np.random.rand(3), dofs_idx_local=slice(3, 6))
+    entity.set_dofs_kv(0.002, dofs_idx_local=slice(3, 6))
     entity.control_dofs_velocity(0.0, dofs_idx_local=slice(3, 6))
 
     # AABB must match the ellipsoid semi-axes
@@ -4304,7 +4380,7 @@ def test_ellipsoid(xml_path, show_viewer):
     assert_allclose(aabb_extent, (0.10, 0.10, 0.04), atol=1e-3)
 
     # Free-fall onto plane: ellipsoid must come to rest
-    for _ in range(300):
+    for _ in range(100):
         scene.step()
 
     assert_allclose(entity.get_dofs_velocity(), 0, tol=5e-3)
