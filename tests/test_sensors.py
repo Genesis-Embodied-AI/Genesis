@@ -176,7 +176,7 @@ def test_add_and_read_all_registered_sensors():
         sensors.append(sensor)
 
     scene.build(n_envs=2)
-    
+
     scene.step()
     for sensor in sensors:
         sensor.read()
