@@ -8,7 +8,7 @@ from genesis.engine.solvers.rigid.constraint import solver
 # Number of candidate step sizes evaluated simultaneously per env.
 # Each CUDA block processes one env with K threads, using shared memory for the argmin reduction.
 # Similar to BLOCK_DIM in func_hessian_direct_tiled: determines parallelism and shared memory layout.
-LS_PARALLEL_K = 16
+LS_PARALLEL_K = 32
 
 # Floor for the Newton step estimate used to center the log-spaced search range.
 # When |grad/hess| is near-zero the search range [alpha*1e-2, alpha*1e2] would collapse;
@@ -20,7 +20,7 @@ LS_PARALLEL_MIN_STEP = 1e-6
 # Number of successive refinement passes: after picking the best of K candidates the search
 # range is narrowed around the winner and re-evaluated. 1 pass (K=16 candidates) already
 # gives sufficient resolution; increase for tighter convergence at the cost of more kernels.
-LS_PARALLEL_N_REFINE = 1
+LS_PARALLEL_N_REFINE = 3
 
 # Block sizes for shared-memory reductions in _kernel_parallel_linesearch_p0 and _jv.
 _P0_BLOCK = 32
@@ -46,7 +46,7 @@ def _kernel_parallel_linesearch_mv(
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d1, i_b in qd.ndrange(n_dofs, _B):
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
             i_e = dofs_info.entity_idx[I_d1]
             mv = gs.qd_float(0.0)
@@ -67,7 +67,7 @@ def _kernel_parallel_linesearch_jv(
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_c, i_b in qd.ndrange(len_constraints, _B):
-        if i_c < constraint_state.n_constraints[i_b]:
+        if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
             jv = gs.qd_float(0.0)
             if qd.static(static_rigid_sim_config.sparse_solve):
                 for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
@@ -107,7 +107,7 @@ def _kernel_parallel_linesearch_p0(
         sh_constraint_grad = qd.simt.block.SharedArray((_T,), gs.qd_float)
         sh_constraint_hess = qd.simt.block.SharedArray((_T,), gs.qd_float)
 
-        if constraint_state.n_constraints[i_b] > 0:
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_dofs = constraint_state.search.shape[0]
 
             # === Phase 1: Fused snorm + quad_gauss, parallel over n_dofs ===
@@ -151,7 +151,6 @@ def _kernel_parallel_linesearch_p0(
             else:
                 # Thread 0 writes quad_gauss to global memory
                 if tid == 0:
-                    constraint_state.improved[i_b] = True
                     constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
                     constraint_state.quad_gauss[1, i_b] = sh_qg_grad[0]
                     constraint_state.quad_gauss[2, i_b] = sh_qg_hess[0]
@@ -237,20 +236,25 @@ def _kernel_parallel_linesearch_p0(
                     constraint_state.eq_sum[2, i_b] = sh_qg_hess[0]
                     constraint_state.ls_it[i_b] = 1
                     constraint_state.candidates[1, i_b] = constraint_state.gauss[i_b] + sh_p0_cost[0]
-                    # Initialize best alpha, search range, and best-cost tracker for parallel linesearch
-                    constraint_state.candidates[0, i_b] = 0.0  # default: no step
-
-                    # Use full Newton step (DOF + all constraints) as the range center.
+                    # Use full Newton step as initial best guess + search range center.
                     total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
+                    total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
+                    p0_cost_val = constraint_state.gauss[i_b] + sh_p0_cost[0]
+
                     if total_hess > 0.0:
-                        total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
                         alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(LS_PARALLEL_MIN_STEP))
+                        # Initialize with Newton step as the best alpha so far.
+                        # Its quadratic-approximated cost is p0 - grad²/(2*hess), always < p0.
+                        newton_cost = p0_cost_val - 0.5 * total_grad * total_grad / total_hess
+                        constraint_state.candidates[0, i_b] = alpha_newton
+                        constraint_state.candidates[4, i_b] = newton_cost
                         constraint_state.candidates[2, i_b] = alpha_newton * 1e-2
-                        constraint_state.candidates[3, i_b] = alpha_newton * 1e2
+                        constraint_state.candidates[3, i_b] = alpha_newton * 10.0
                     else:
+                        constraint_state.candidates[0, i_b] = 0.0
+                        constraint_state.candidates[4, i_b] = gs.qd_float(1e30)
                         constraint_state.candidates[2, i_b] = 1e-6
                         constraint_state.candidates[3, i_b] = 1e2
-                    constraint_state.candidates[4, i_b] = gs.qd_float(1e30)  # best cost across passes
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -377,41 +381,32 @@ def _kernel_parallel_linesearch_eval(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_parallel_linesearch_apply_alpha_dofs(
+def _kernel_parallel_linesearch_apply_alpha(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Apply best alpha to qacc and Ma, parallelized over (dof, env)."""
+    """Apply best alpha to qacc, Ma, and Jaref. Fuses dof and constraint updates."""
     n_dofs = constraint_state.qacc.shape[0]
+    len_constraints = constraint_state.Jaref.shape[0]
     _B = constraint_state.grad.shape[1]
+    n_items = qd.max(n_dofs, len_constraints)
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
+    for i, i_b in qd.ndrange(n_items, _B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             alpha = constraint_state.candidates[0, i_b]
             if qd.abs(alpha) < rigid_global_info.EPS[None]:
-                if i_d == 0:
+                if i == 0:
                     constraint_state.improved[i_b] = False
             else:
-                constraint_state.qacc[i_d, i_b] += constraint_state.search[i_d, i_b] * alpha
-                constraint_state.Ma[i_d, i_b] += constraint_state.mv[i_d, i_b] * alpha
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_parallel_linesearch_apply_alpha_constraints(
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Apply best alpha to Jaref, parallelized over (constraint, env)."""
-    len_constraints = constraint_state.Jaref.shape[0]
-    _B = constraint_state.grad.shape[1]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_c, i_b in qd.ndrange(len_constraints, _B):
-        if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-            alpha = constraint_state.candidates[0, i_b]
-            constraint_state.Jaref[i_c, i_b] += constraint_state.jv[i_c, i_b] * alpha
+                # Apply to dofs
+                if i < n_dofs:
+                    constraint_state.qacc[i, i_b] += constraint_state.search[i, i_b] * alpha
+                    constraint_state.Ma[i, i_b] += constraint_state.mv[i, i_b] * alpha
+                # Apply to constraints
+                if i < constraint_state.n_constraints[i_b]:
+                    constraint_state.Jaref[i, i_b] += constraint_state.jv[i, i_b] * alpha
 
 
 # ============================================== Shared iteration kernels ==============================================
@@ -654,13 +649,9 @@ def func_solve_decomposed(
                 rigid_global_info,
                 static_rigid_sim_config,
             )
-        _kernel_parallel_linesearch_apply_alpha_dofs(
+        _kernel_parallel_linesearch_apply_alpha(
             constraint_state,
             rigid_global_info,
-            static_rigid_sim_config,
-        )
-        _kernel_parallel_linesearch_apply_alpha_constraints(
-            constraint_state,
             static_rigid_sim_config,
         )
         if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
