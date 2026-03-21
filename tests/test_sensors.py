@@ -126,13 +126,12 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
 
 
 @pytest.mark.required
-def test_add_and_read_all_registered_sensors(show_viewer, n_envs):
+def test_add_and_read_all_registered_sensors():
     """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
     from genesis.engine.sensors.sensor_manager import SensorManager
 
     scene = gs.Scene(
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
-        show_viewer=show_viewer,
+        show_viewer=False,
     )
     scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
@@ -177,6 +176,7 @@ def test_add_and_read_all_registered_sensors(show_viewer, n_envs):
         sensors.append(sensor)
 
     scene.build(n_envs=2)
+    
     scene.step()
     for sensor in sensors:
         sensor.read()
