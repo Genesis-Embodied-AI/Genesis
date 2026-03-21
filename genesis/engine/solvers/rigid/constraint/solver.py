@@ -3115,7 +3115,7 @@ def func_solve_body(
 ) -> None: ...
 
 
-@func_solve_body.register(is_compatible=lambda *args, **kwargs: False)
+@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
