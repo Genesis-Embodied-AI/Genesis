@@ -1,5 +1,6 @@
 import io
 import itertools
+import logging
 import sys
 import threading
 import time
@@ -42,6 +43,10 @@ try:
     IS_MATPLOTLIB_AVAILABLE = tuple(map(int, mpl.__version__.replace("+", ".").split(".")[:3])) >= (3, 7, 0)
 except ImportError:
     pass
+
+
+LOGGER = logging.getLogger(__name__)
+
 
 MPL_PLOTTER_RESCALE_MIN_X = 0.5
 MPL_PLOTTER_RESCALE_RATIO_X = 0.15
@@ -269,9 +274,9 @@ class BasePyQtPlotter(BasePlotter):
         if self.widget:
             try:
                 self.widget.close()
-                gs.logger.debug(f"[{type(self).__name__}] closed PyQtGraph window")
+                (gs.logger or LOGGER).debug(f"[{type(self).__name__}] closed PyQtGraph window")
             except Exception as e:
-                gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
+                (gs.logger or LOGGER).warning(f"[{type(self).__name__}] Error closing window: {e}")
             finally:
                 self.plot_widgets.clear()
                 self.widget = None
@@ -395,10 +400,10 @@ class BaseMPLPlotter(BasePlotter):
 
                 plt.close(self.fig)
                 if logger_exists:
-                    gs.logger.debug(f"[{type(self).__name__}] Closed matplotlib window")
+                    (gs.logger or LOGGER).debug(f"[{type(self).__name__}] Closed matplotlib window")
             except Exception as e:
                 if logger_exists:
-                    gs.logger.warning(f"[{type(self).__name__}] Error closing window: {e}")
+                    (gs.logger or LOGGER).warning(f"[{type(self).__name__}] Error closing window: {e}")
             finally:
                 self.fig = None
 
