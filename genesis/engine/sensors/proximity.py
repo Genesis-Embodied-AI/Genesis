@@ -51,6 +51,7 @@ def _kernel_proximity(
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
+    positions_output: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
@@ -105,11 +106,11 @@ def _kernel_proximity(
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         cache_start = sensor_cache_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
+        probe_global_idx = sensor_probe_start[i_s] + probe_idx_in_sensor
 
         output[i_b, cache_start + probe_idx_in_sensor] = best_dist
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = best_point[0]
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = best_point[1]
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = best_point[2]
+        for j in qd.static(range(3)):
+            positions_output[i_b, probe_global_idx, j] = best_point[j]
 
 
 @dataclass
@@ -125,6 +126,7 @@ class ProximitySensorMetadataMixin:
     track_link_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     track_link_end: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
     track_link_flat: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    nearest_positions: torch.Tensor = make_tensor_field((0, 0, 3))
     max_range: torch.Tensor = make_tensor_field((0,))
 
 
@@ -135,26 +137,10 @@ class ProximityMetadata(
     """Shared metadata for the Proximity sensor class."""
 
 
-class ProximityData(NamedTuple):
-    """
-    Data returned by the proximity sensor.
-
-    Parameters
-    ----------
-    distance : torch.Tensor, shape ([n_envs,] n_probes)
-        Distance in meters to the nearest point on any tracked mesh (or max_range if none in range).
-    points: torch.Tensor, shape ([n_envs,] n_probes, 3)
-        Nearest points in world frame for each probe to tracked meshes.
-    """
-
-    distance: torch.Tensor
-    points: torch.Tensor
-
-
 class ProximitySensor(
     RigidSensorMixin[ProximityMetadata],
     NoisySensorMixin[ProximityMetadata],
-    Sensor[ProximityOptions, ProximityMetadata, ProximityData],
+    Sensor[ProximityOptions, ProximityMetadata, tuple],
 ):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
 
@@ -163,9 +149,10 @@ class ProximitySensor(
         self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
         super().__init__(sensor_options, sensor_idx, sensor_manager)
         self._debug_objects: list = []
+        self._nearest_points_slice: slice = slice(None)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return (self._n_probes,), (self._n_probes, 3)
+        return (self._n_probes,)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
@@ -218,6 +205,16 @@ class ProximitySensor(
         )
 
         self._shared_metadata.total_n_probes += self._n_probes
+        self._shared_metadata.nearest_positions = torch.zeros(
+            (self._manager._sim._B, self._shared_metadata.total_n_probes, 3), dtype=gs.tc_float, device=gs.device
+        )
+        slice_start = self._shared_metadata.sensor_probe_start[self._idx]
+        self._nearest_points_slice = slice(slice_start, slice_start + self._n_probes)
+
+    @classmethod
+    def reset(cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+        shared_metadata.nearest_positions[envs_idx] = shared_metadata.probe_positions
 
     @classmethod
     def _update_shared_ground_truth_cache(
@@ -225,6 +222,7 @@ class ProximitySensor(
     ):
         solver = shared_metadata.solver
         shared_ground_truth_cache.zero_()
+        output = shared_ground_truth_cache.contiguous()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -245,8 +243,11 @@ class ProximitySensor(
             solver.verts_info,
             solver.fixed_verts_state,
             solver.free_verts_state,
-            shared_ground_truth_cache,
+            shared_metadata.nearest_positions,
+            output,
         )
+        if not shared_ground_truth_cache.is_contiguous():
+            shared_ground_truth_cache.copy_(output)
 
     @classmethod
     def _update_shared_cache(
@@ -277,8 +278,7 @@ class ProximitySensor(
         link_pos = self._link.get_pos(env_idx).squeeze()
         link_quat = self._link.get_quat(env_idx).squeeze()
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
-        data = self.read_ground_truth(env_idx)
-        points = tensor_to_array(data.points)
+        points = self.nearest_points[env_idx]
 
         self._debug_objects.append(
             context.draw_debug_spheres(
@@ -295,3 +295,7 @@ class ProximitySensor(
                 color=self._options.debug_color,
             )
             self._debug_objects.append(line_obj)
+
+    @property
+    def nearest_points(self) -> torch.Tensor:
+        return self._shared_metadata.nearest_positions[:, self._nearest_points_slice, :]

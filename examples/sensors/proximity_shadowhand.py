@@ -162,8 +162,7 @@ def main():
             else:
                 distances = []
                 for sensor in sensors:
-                    data = sensor.read()
-                    distances.append(data.distance)
+                    distances.append(sensor.read())
                 print(f"Proximity distances: {distances}")
 
             scene.step()
