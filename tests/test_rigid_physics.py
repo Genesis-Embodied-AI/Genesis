@@ -17,6 +17,7 @@ import genesis.utils.geom as gu
 import genesis.utils.terrain as tu
 from genesis.ext import urdfpy
 from genesis.utils import urdf as uu
+from genesis.engine.states.solvers import RigidSolverState
 from genesis.utils.misc import get_assets_dir, qd_to_numpy, qd_to_torch, tensor_to_array
 
 from .utils import (
@@ -584,6 +585,68 @@ def test_dynamic_weld_scene_reset():
     scene.reset(state=scene.get_state(), envs_idx=[0])
     assert solver.constraint_solver.constraint_state.qd_n_equalities[0] == n_eq_base
     assert solver.constraint_solver.constraint_state.qd_n_equalities[1] == n_eq_base + 1
+
+
+@pytest.mark.required
+def test_reset(show_viewer):
+    BOOL_MASK = torch.tensor([True, False, True, False], dtype=torch.bool, device=gs.device)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        gs.morphs.URDF(
+            file="urdf/plane/plane.urdf",
+            fixed=True,
+        )
+    )
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0, 0, 0.5),
+        )
+    )
+    scene.build(n_envs=4)
+
+    init_state = scene.get_state()
+    init_rigid_state = next(s for s in init_state.solvers_state if isinstance(s, RigidSolverState))
+    for _ in range(50):
+        scene.step()
+    fallen_state = scene.get_state()
+    fallen_rigid_state = next(s for s in fallen_state.solvers_state if isinstance(s, RigidSolverState))
+
+    for envs_idx in (BOOL_MASK, torch.where(BOOL_MASK)[0]):
+        scene.reset(state=fallen_state)
+        scene.reset(state=init_state, envs_idx=envs_idx)
+        for actual, init_ref, fallen_ref in (
+            (
+                qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True),
+                init_rigid_state.qpos,
+                fallen_rigid_state.qpos,
+            ),
+            (
+                qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True),
+                init_rigid_state.dofs_vel,
+                fallen_rigid_state.dofs_vel,
+            ),
+            (
+                qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True),
+                init_rigid_state.links_pos,
+                fallen_rigid_state.links_pos,
+            ),
+        ):
+            assert_allclose(actual[BOOL_MASK], init_ref[BOOL_MASK], tol=gs.EPS)
+            assert_allclose(actual[~BOOL_MASK], fallen_ref[~BOOL_MASK], tol=gs.EPS)
+
+    # After reset, simulation from init_state should reproduce the original fallen_state trajectory
+    for _ in range(50):
+        scene.step()
+    for actual, fallen_ref in (
+        (qd_to_torch(scene.rigid_solver._rigid_global_info.qpos, transpose=True, copy=True), fallen_rigid_state.qpos),
+        (qd_to_torch(scene.rigid_solver.dofs_state.vel, transpose=True, copy=True), fallen_rigid_state.dofs_vel),
+        (qd_to_torch(scene.rigid_solver.links_state.pos, transpose=True, copy=True), fallen_rigid_state.links_pos),
+    ):
+        assert_allclose(actual[BOOL_MASK], fallen_ref[BOOL_MASK], tol=gs.EPS)
 
 
 @pytest.mark.required

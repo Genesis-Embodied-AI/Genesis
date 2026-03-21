@@ -1416,16 +1416,79 @@ class RigidSolver(KinematicSolver):
             state = None
         return state
 
-    def set_state(self, f, state, envs_idx=None):
-        if self.is_active:
-            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+    def set_state(self, f, state, envs_idx=None, *, partial: bool = False) -> None:
+        if not self.is_active:
+            return
 
-            if gs.use_zerocopy:
-                errno = qd_to_torch(self._errno, copy=False)
-                errno[envs_idx] = 0
+        if partial:
+            self.collider.reset(envs_idx)
+            self.constraint_solver.reset(envs_idx)
+        else:
+            self.collider.clear(envs_idx)
+            self.constraint_solver.clear(envs_idx)
+
+        if (
+            not self._requires_grad
+            and gs.use_zerocopy
+            and (not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool))
+        ):
+            errno = qd_to_torch(self._errno, copy=False)
+            qpos_dst = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+            vel_dst = qd_to_torch(self.dofs_state.vel, transpose=True, copy=False)
+            acc_dst = qd_to_torch(self.dofs_state.acc, transpose=True, copy=False)
+            ctrl_force_dst = qd_to_torch(self.dofs_state.ctrl_force, transpose=True, copy=False)
+            ctrl_mode_dst = qd_to_torch(self.dofs_state.ctrl_mode, transpose=True, copy=False)
+            pos_dst = qd_to_torch(self.links_state.pos, transpose=True, copy=False)
+            quat_dst = qd_to_torch(self.links_state.quat, transpose=True, copy=False)
+            shift_dst = qd_to_torch(self.links_state.i_pos_shift, transpose=True, copy=False)
+            cfrc_vel_dst = qd_to_torch(self.links_state.cfrc_applied_vel, transpose=True, copy=False)
+            cfrc_ang_dst = qd_to_torch(self.links_state.cfrc_applied_ang, transpose=True, copy=False)
+            mass_dst = qd_to_torch(self.links_state.mass_shift, transpose=True, copy=False)
+            fric_dst = qd_to_torch(self.geoms_state.friction_ratio, transpose=True, copy=False)
+
+            if envs_idx is not None and not isinstance(envs_idx, torch.Tensor):
+                (envs_idx,) = indices_to_mask(envs_idx)
+            if isinstance(envs_idx, torch.Tensor):
+                if envs_idx.dtype == torch.bool:
+                    envs_mask = envs_idx
+                else:
+                    envs_mask = torch.zeros(self._B, dtype=torch.bool, device=gs.device)
+                    envs_mask[envs_idx] = True
+
+                errno.masked_fill_(envs_mask, 0)
+                if self.n_qs:
+                    torch.where(envs_mask[:, None], state.qpos, qpos_dst, out=qpos_dst)
+                    torch.where(envs_mask[:, None], state.dofs_vel, vel_dst, out=vel_dst)
+                    torch.where(envs_mask[:, None], state.dofs_acc, acc_dst, out=acc_dst)
+                    ctrl_force_dst.masked_fill_(envs_mask[:, None], 0.0)
+                    ctrl_mode_dst.masked_fill_(envs_mask[:, None], gs.CTRL_MODE.FORCE)
+                torch.where(envs_mask[:, None, None], state.links_pos, pos_dst, out=pos_dst)
+                torch.where(envs_mask[:, None, None], state.links_quat, quat_dst, out=quat_dst)
+                torch.where(envs_mask[:, None, None], state.i_pos_shift, shift_dst, out=shift_dst)
+                cfrc_vel_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                cfrc_ang_dst.masked_fill_(envs_mask[:, None, None], 0.0)
+                torch.where(envs_mask[:, None], state.mass_shift, mass_dst, out=mass_dst)
+                if self.n_geoms:
+                    torch.where(envs_mask[:, None], state.friction_ratio, fric_dst, out=fric_dst)
             else:
-                kernel_set_zero(envs_idx, self._errno)
-
+                if self.n_qs:
+                    errno[envs_idx] = 0
+                    qpos_dst[envs_idx] = state.qpos[envs_idx]
+                    vel_dst[envs_idx] = state.dofs_vel[envs_idx]
+                    acc_dst[envs_idx] = state.dofs_acc[envs_idx]
+                    ctrl_force_dst[envs_idx] = 0.0
+                    ctrl_mode_dst[envs_idx] = gs.CTRL_MODE.FORCE
+                pos_dst[envs_idx] = state.links_pos[envs_idx]
+                quat_dst[envs_idx] = state.links_quat[envs_idx]
+                shift_dst[envs_idx] = state.i_pos_shift[envs_idx]
+                cfrc_vel_dst[envs_idx] = 0.0
+                cfrc_ang_dst[envs_idx] = 0.0
+                mass_dst[envs_idx] = state.mass_shift[envs_idx]
+                if self.n_geoms:
+                    fric_dst[envs_idx] = state.friction_ratio[envs_idx]
+        else:
+            envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            kernel_set_zero(envs_idx, self._errno)
             kernel_set_state(
                 envs_idx=envs_idx,
                 qpos=state.qpos,
@@ -1442,7 +1505,15 @@ class RigidSolver(KinematicSolver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
-            kernel_forward_kinematics_links_geoms(
+
+        if not partial:
+            if not isinstance(envs_idx, torch.Tensor):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
                 envs_idx,
                 links_state=self.links_state,
                 links_info=self.links_info,
@@ -1458,13 +1529,13 @@ class RigidSolver(KinematicSolver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
-            self.collider.clear(envs_idx)
-            self.constraint_solver.clear(envs_idx)
-
-            for entity in self.entities:
-                if isinstance(entity, DroneEntity):
-                    entity._prev_prop_t = -1
+        for entity in self.entities:
+            if isinstance(entity, DroneEntity):
+                entity._prev_prop_t = -1
 
     def process_input(self, in_backward=False):
         for entity in self._entities:
@@ -1731,6 +1802,11 @@ class RigidSolver(KinematicSolver):
         )
 
     def set_qpos(self, qpos, qs_idx=None, envs_idx=None, *, skip_forward=False):
+        if self.collider is not None:
+            self.collider.reset(envs_idx)
+        if self.constraint_solver is not None:
+            self.constraint_solver.reset(envs_idx)
+
         if gs.use_zerocopy:
             data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
             errno = qd_to_torch(self._errno, copy=False)
@@ -1741,8 +1817,8 @@ class RigidSolver(KinematicSolver):
                 and envs_idx.dtype == torch.bool
             ):
                 qs_data = data[(slice(None), *qs_mask)]
-                if qpos.ndim == 2:
-                    # Note that it is necessary to create a new temporary view because it will be modified in-place
+                if qpos.ndim == 2 and len(qpos) != len(qs_data):
+                    # Note that it is necessary to create a new temporary view because it will be reshaped in-place
                     qs_data.masked_scatter_(envs_idx[:, None], qpos.view_as(qpos))
                 else:
                     qpos = broadcast_tensor(qpos, gs.tc_float, qs_data.shape)
@@ -1762,11 +1838,6 @@ class RigidSolver(KinematicSolver):
                 qpos = qpos[None]
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
             kernel_set_zero(envs_idx, self._errno)
-
-        if self.collider is not None:
-            self.collider.reset(envs_idx)
-        if self.constraint_solver is not None:
-            self.constraint_solver.reset(envs_idx)
 
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
@@ -1943,6 +2014,9 @@ class RigidSolver(KinematicSolver):
         self._set_dofs_info([lower, upper], dofs_idx, "limit", envs_idx)
 
     def set_dofs_position(self, position, dofs_idx=None, envs_idx=None):
+        self.collider.reset(envs_idx)
+        self.constraint_solver.reset(envs_idx)
+
         position, dofs_idx, envs_idx = self._sanitize_io_variables(
             position, dofs_idx, self.n_dofs, "dofs_idx", envs_idx, skip_allocation=True
         )
@@ -1965,9 +2039,6 @@ class RigidSolver(KinematicSolver):
             errno[envs_idx] = 0
         else:
             kernel_set_zero(envs_idx, self._errno)
-
-        self.collider.reset(envs_idx)
-        self.constraint_solver.reset(envs_idx)
 
         kernel_forward_kinematics_links_geoms(
             envs_idx,

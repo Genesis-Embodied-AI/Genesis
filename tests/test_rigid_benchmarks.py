@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from collections import namedtuple
@@ -357,6 +358,10 @@ def make_franka(
         vel0 = torch.zeros((*((n_envs,) if n_envs > 0 else ()), franka.n_dofs), dtype=gs.tc_float, device=gs.device)
     franka.set_dofs_velocity(vel0)
 
+    # scene.rigid_solver._queried_states.clear()
+    # state_0 = scene.get_state()
+    state_rigid_0 = scene.rigid_solver.get_state()
+
     if n_envs > 0:
         n_reset_envs = max(int(0.02 * n_envs), 1)
         reset_envs_idx = torch.randperm(n_envs, dtype=gs.tc_int, device=gs.device)[:n_reset_envs]
@@ -378,6 +383,10 @@ def make_franka(
             franka.get_links_quat()
             franka.get_links_vel()
             franka.get_contacts()
+
+            # TODO: Entire scene reset is still slow currently because 'partial=False' by default.
+            scene.rigid_solver.set_state(0, state_rigid_0, envs_idx=reset_envs_mask, partial=True)
+
             franka.control_dofs_position(qpos0)
             franka.set_dofs_stiffness(dofs_stiffness)
             franka.set_dofs_damping(dofs_damping)
@@ -549,79 +558,28 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     FINGER_FORCE = 0.6
     DRILL_STIFFNESS = 20
 
-    step_dt = 1 / 16
+    _STEP_DT = 1 / 16
 
     JOINT_NAMES = [
-        "FFJ4",
-        "FFJ3",
-        "FFJ2",
-        "FFJ1",
-        "MFJ4",
-        "MFJ3",
-        "MFJ2",
-        "MFJ1",
-        "RFJ4",
-        "RFJ3",
-        "RFJ2",
-        "RFJ1",
-        "LFJ5",
-        "LFJ4",
-        "LFJ3",
-        "LFJ2",
-        "LFJ1",
-        "THJ5",
-        "THJ4",
-        "THJ3",
-        "THJ2",
-        "THJ1",
+        *("FFJ4", "FFJ3", "FFJ2", "FFJ1"),
+        *("MFJ4", "MFJ3", "MFJ2", "MFJ1"),
+        *("RFJ4", "RFJ3", "RFJ2", "RFJ1"),
+        *("LFJ5", "LFJ4", "LFJ3", "LFJ2", "LFJ1"),
+        *("THJ5", "THJ4", "THJ3", "THJ2", "THJ1"),
     ]
     LEFT_DOFS = [
-        0.34907,
-        0.24929,
-        0.54424,
-        0.65614,
-        0.21329,
-        0.08060,
-        0.19969,
-        0.66944,
-        1.57080,
-        0.21846,
-        0.53605,
-        0.44963,
-        0.38350,
-        0.02379,
-        0.41705,
-        0.54773,
-        0.61160,
-        0.36664,
-        0.44036,
-        0.20944,
-        0.34497,
-        0.15896,
+        *(0.34907, 0.24929, 0.54424, 0.65614),
+        *(0.21329, 0.08060, 0.19969, 0.66944),
+        *(1.57080, 0.21846, 0.53605, 0.44963),
+        *(0.38350, 0.02379, 0.41705, 0.54773, 0.61160),
+        *(0.36664, 0.44036, 0.20944, 0.34497, 0.15896),
     ]
     RIGHT_DOFS = [
-        0.34907,
-        0.23328,
-        0.57399,
-        0.70467,
-        0.00000,
-        0.34907,
-        0.51778,
-        0.65078,
-        1.48947,
-        0.33727,
-        0.55919,
-        0.56268,
-        0.54360,
-        -0.08460,
-        0.48588,
-        0.66095,
-        0.73317,
-        0.13239,
-        0.45613,
-        0.20944,
-        0.19625,
-        0.00750,
+        *(0.34907, 0.23328, 0.57399, 0.70467),
+        *(0.00000, 0.34907, 0.51778, 0.65078),
+        *(1.48947, 0.33727, 0.55919, 0.56268),
+        *(0.54360, -0.08460, 0.48588, 0.66095, 0.73317),
+        *(0.13239, 0.45613, 0.20944, 0.19625, 0.00750),
     ]
 
     hand_configs = [
@@ -642,7 +600,10 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     # Note: screenshots on effect of coacd_options on how the drill and table look
     # at https://github.com/Genesis-Embodied-AI/Genesis/pull/2500#discussion_r2900243286
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(substeps=25, dt=step_dt),
+        sim_options=gs.options.SimOptions(
+            dt=_STEP_DT,
+            substeps=25,
+        ),
         rigid_options=gs.options.RigidOptions(
             max_collision_pairs=200,
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
@@ -696,9 +657,8 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     }
     base_xy_targets = {hand: hand.get_dofs_position()[:, :2] for hand in hands}
 
-    drill_xy_kp = [DRILL_STIFFNESS, DRILL_STIFFNESS]
-    drill.set_dofs_kp(drill_xy_kp, dofs_idx_local=[0, 1])
-    drill.set_dofs_kv(2.0 * np.sqrt(drill_xy_kp), dofs_idx_local=[0, 1])
+    drill.set_dofs_kp(DRILL_STIFFNESS, dofs_idx_local=[0, 1])
+    drill.set_dofs_kv(2.0 * math.sqrt(DRILL_STIFFNESS), dofs_idx_local=[0, 1])
     drill_xy_target = drill.get_dofs_position()[:, :2]
 
     for hand in hands:
@@ -716,7 +676,7 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
         step,
         SceneMeta(
             compile_time=compile_time,
-            step_dt=step_dt,
+            step_dt=_STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
             needs_sync=True,

@@ -2,9 +2,11 @@ import dataclasses
 import math
 from enum import IntEnum
 from functools import partial
+from typing import TYPE_CHECKING
 
 import quadrants as qd
 import numpy as np
+import torch
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import genesis as gs
@@ -13,12 +15,22 @@ if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
 
 
-V_ANNOTATION = qd.types.ndarray() if gs.use_ndarray else qd.template
-V = qd.ndarray if gs.use_ndarray else qd.field
-V_VEC = qd.Vector.ndarray if gs.use_ndarray else qd.Vector.field
-V_MAT = qd.Matrix.ndarray if gs.use_ndarray else qd.Matrix.field
+if TYPE_CHECKING:
+    V_ANNOTATION = qd.Field | qd.Ndarray
+    V = V_ANNOTATION
+    V_VEC = V_ANNOTATION
+    V_MAT = V_ANNOTATION
 
-DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
+    DATA_ORIENTED = dataclasses.dataclass
+else:
+    V_ANNOTATION = qd.types.ndarray() if gs.use_ndarray else qd.template
+    V = qd.ndarray if gs.use_ndarray else qd.field
+    V_VEC = qd.Vector.ndarray if gs.use_ndarray else qd.Vector.field
+    V_MAT = qd.Matrix.ndarray if gs.use_ndarray else qd.Matrix.field
+
+    DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
+
+
 PLACEHOLDER = V(dtype=gs.qd_float, shape=())
 
 

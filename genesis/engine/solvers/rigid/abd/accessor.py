@@ -215,7 +215,7 @@ def kernel_get_state_grad(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_pos(
-    relative: qd.i32,
+    relative: qd.template(),
     pos: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -233,14 +233,14 @@ def kernel_set_links_pos(
         if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
             for j in qd.static(range(3)):
                 links_state.pos[i_l, i_b][j] = pos[i_b_, i_l_, j]
-            if relative:
+            if qd.static(relative):
                 for j in qd.static(range(3)):
                     links_state.pos[i_l, i_b][j] = links_state.pos[i_l, i_b][j] + links_info.pos[I_l][j]
         else:
             q_start = links_info.q_start[I_l]
             for j in qd.static(range(3)):
                 rigid_global_info.qpos[q_start + j, i_b] = pos[i_b_, i_l_, j]
-            if relative:
+            if qd.static(relative):
                 for j in qd.static(range(3)):
                     rigid_global_info.qpos[q_start + j, i_b] = (
                         rigid_global_info.qpos[q_start + j, i_b] + rigid_global_info.qpos0[q_start + j, i_b]
@@ -323,7 +323,7 @@ def kernel_set_links_pos_grad(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat(
-    relative: qd.i32,
+    relative: qd.template(),
     quat: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -338,7 +338,7 @@ def kernel_set_links_quat(
         i_l = links_idx[i_l_]
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-        if relative:
+        if qd.static(relative):
             quat_ = qd.Vector(
                 [
                     quat[i_b_, i_l_, 0],
@@ -376,7 +376,7 @@ def kernel_set_links_quat(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat_grad(
-    relative: qd.i32,
+    relative: qd.template(),
     quat_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
