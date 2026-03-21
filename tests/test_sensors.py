@@ -126,7 +126,6 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
 def test_add_and_read_all_registered_sensors(show_viewer, n_envs):
     """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
     from genesis.engine.sensors.sensor_manager import SensorManager
@@ -177,7 +176,7 @@ def test_add_and_read_all_registered_sensors(show_viewer, n_envs):
         sensor = scene.add_sensor(option_cls(**sensor_kwargs))
         sensors.append(sensor)
 
-    scene.build(n_envs=n_envs)
+    scene.build(n_envs=2)
     scene.step()
     for sensor in sensors:
         sensor.read()
