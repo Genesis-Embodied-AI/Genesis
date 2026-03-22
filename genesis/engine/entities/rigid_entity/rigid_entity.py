@@ -1544,7 +1544,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=False):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True):
         """
         Set quaternion of the entity's base link.
 
@@ -1557,7 +1557,7 @@ class KinematicEntity(Entity):
         zero_velocity : bool, optional
             Whether to zero the velocity of all the entity's dofs. Defaults to False.
         relative : bool, optional
-            Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
+            True the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
         """
         if self._is_attached:
