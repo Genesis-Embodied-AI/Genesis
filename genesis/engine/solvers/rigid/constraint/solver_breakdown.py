@@ -93,6 +93,7 @@ def _kernel_parallel_linesearch_p0(
     """
     _B = constraint_state.grad.shape[1]
     _T = qd.static(_P0_BLOCK)
+    _LS_PARALLEL_MIN_STEP = qd.static(LS_PARALLEL_MIN_STEP)
 
     qd.loop_config(block_dim=_T)
     for i_flat in range(_B * _T):
@@ -236,25 +237,22 @@ def _kernel_parallel_linesearch_p0(
                     constraint_state.eq_sum[2, i_b] = sh_qg_hess[0]
                     constraint_state.ls_it[i_b] = 1
                     constraint_state.candidates[1, i_b] = constraint_state.gauss[i_b] + sh_p0_cost[0]
-                    # Use full Newton step as initial best guess + search range center.
-                    total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
-                    total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
-                    p0_cost_val = constraint_state.gauss[i_b] + sh_p0_cost[0]
+                    # Initialize best alpha, search range, and best-cost tracker for parallel linesearch
+                    constraint_state.candidates[0, i_b] = 0.0  # default: no step
 
+                    # Use full Newton step (DOF + all constraints) as the range center.
+                    total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
                     if total_hess > 0.0:
-                        alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(LS_PARALLEL_MIN_STEP))
-                        # Initialize with Newton step as the best alpha so far.
-                        # Its quadratic-approximated cost is p0 - grad²/(2*hess), always < p0.
-                        newton_cost = p0_cost_val - 0.5 * total_grad * total_grad / total_hess
-                        constraint_state.candidates[0, i_b] = alpha_newton
-                        constraint_state.candidates[4, i_b] = newton_cost
+                        total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
+                        alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(_LS_PARALLEL_MIN_STEP))
                         constraint_state.candidates[2, i_b] = alpha_newton * 1e-2
                         constraint_state.candidates[3, i_b] = alpha_newton * 10.0
+                        constraint_state.candidates[5, i_b] = alpha_newton  # exact Newton step for eval
                     else:
-                        constraint_state.candidates[0, i_b] = 0.0
-                        constraint_state.candidates[4, i_b] = gs.qd_float(1e30)
                         constraint_state.candidates[2, i_b] = 1e-6
                         constraint_state.candidates[3, i_b] = 1e2
+                        constraint_state.candidates[5, i_b] = 0.0
+                    constraint_state.candidates[4, i_b] = gs.qd_float(1e30)  # best cost across passes
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -288,9 +286,15 @@ def _kernel_parallel_linesearch_eval(
             lo = constraint_state.candidates[2, i_b]
             hi = constraint_state.candidates[3, i_b]
 
-            # Generate log-spaced alpha within [lo, hi]
+            # Generate log-spaced alpha within [lo, hi].
+            # Thread 0 evaluates the exact Newton step instead of the grid point at lo.
+            # This gives the Newton alpha a fair cost-based comparison with grid candidates.
             _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, qd.cast(_K - 1, gs.qd_float))
             alpha = qd.exp(qd.log(lo) + qd.cast(tid, gs.qd_float) * _step)
+            if tid == 0:
+                alpha_newton_val = constraint_state.candidates[5, i_b]
+                if alpha_newton_val > 0.0:
+                    alpha = alpha_newton_val
 
             # Evaluate cost at this alpha
             cost = (
@@ -359,9 +363,12 @@ def _kernel_parallel_linesearch_eval(
                 best_cost = sh_cost[0]
                 lo = constraint_state.candidates[2, i_b]
                 hi = constraint_state.candidates[3, i_b]
-                # Recover best alpha from log-spaced grid
+                # Recover best alpha: thread 0 used Newton alpha, others used grid
                 _step = (qd.log(hi) - qd.log(lo)) / qd.max(1.0, qd.cast(_K - 1, gs.qd_float))
                 best_alpha = qd.exp(qd.log(lo) + qd.cast(best_tid, gs.qd_float) * _step)
+                # If thread 0 (Newton candidate) won, use the exact Newton alpha
+                if best_tid == 0 and constraint_state.candidates[5, i_b] > 0.0:
+                    best_alpha = constraint_state.candidates[5, i_b]
 
                 # Only update best alpha if this pass improved over ALL previous passes
                 best_cost_prev = constraint_state.candidates[4, i_b]
