@@ -4524,7 +4524,7 @@ def test_urdf_align(show_viewer, tol):
 
     # Simulate with initial angular velocity to check numerical stability
     fork.set_dofs_velocity(10.0, dofs_idx_local=slice(3, 6))
-    for _ in range(100):
+    for _ in range(200):
         scene.step()
 
     assert_allclose(fork.get_dofs_velocity(), 0, tol=0.05)
