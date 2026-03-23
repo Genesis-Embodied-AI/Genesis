@@ -59,19 +59,18 @@ def kernel_cast_rays(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
-    output_hits: qd.types.ndarray(ndim=2),  # [n_env, total_cache_size]
+    output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
     eps: gs.qd_float,
 ):
     """
     Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
 
-    The result `output_hits` will be a 2D array of shape (n_env, total_cache_size) where in the second dimension,
+    The result `output_hits` will be a 2D array of shape (total_cache_size, n_env) where in the first dimension,
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
     """
 
     n_points = ray_starts.shape[0]
-    # batch, point
-    for i_b, i_p in qd.ndrange(output_hits.shape[0], n_points):
+    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
         i_s = points_to_sensor_idx[i_p]
 
         # --- 1. Setup Ray ---
@@ -113,29 +112,29 @@ def kernel_cast_rays(
         if hit_face >= 0:
             dist = hit_distance
             # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
-            output_hits[i_b, i_p_dist] = dist
+            output_hits[i_p_dist, i_b] = dist
 
             if is_world_frame[i_s]:
                 hit_point = ray_start_world + dist * ray_direction_world
 
                 # Store points at: cache_offset + point_idx_in_sensor * 3
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * qd_normalize(
                     qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), eps
                 )
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
         else:
             # No hit
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = 0.0
-            output_hits[i_b, i_p_dist] = no_hit_values[i_s]
+            output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
 
 
 @dataclass
@@ -272,7 +271,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
             links_pos = links_pos[None]
             links_quat = links_quat[None]
 
-        output_hits = shared_ground_truth_cache.contiguous()
         kernel_cast_rays(
             shared_metadata.solver.fixed_verts_state,
             shared_metadata.solver.free_verts_state,
@@ -291,11 +289,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
             shared_metadata.sensor_cache_offsets,
             shared_metadata.sensor_point_offsets,
             shared_metadata.sensor_point_counts,
-            output_hits,
+            shared_ground_truth_cache,
             gs.EPS,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output_hits)
 
     @classmethod
     def _update_shared_cache(
