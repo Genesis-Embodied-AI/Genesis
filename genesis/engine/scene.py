@@ -1251,30 +1251,28 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_points(poss, colors)
 
     @gs.assert_built
-    def draw_debug_pyramid(self, T, base_width=0.05, base_height=0.05, height=0.05, color=(1.0, 1.0, 1.0, 0.5)):
+    def draw_debug_frustum(self, camera, color=(1.0, 1.0, 1.0, 0.3)):
         """
-        Draws a pyramid in the scene for visualization.
+        Draws a camera frustum in the scene for visualization.
 
         Parameters
         ----------
-        T : array_like, shape (4, 4)
-            The transformation matrix of the pyramid.
-        base_width : float, optional
-            The width of the pyramid base.
-        base_height : float, optional
-            The height of the pyramid base.
-        height : float, optional
-            The height of the pyramid.
+        camera : Camera
+            The camera object whose frustum will be visualized. Works for any
+            camera including sensor cameras.
         color : array_like, shape (4,), optional
-            The color of the pyramid in RGBA format.
+            The color of the frustum in RGBA format.
 
         Returns
         -------
-        nodes : list
-        List of created debug line objects.
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
         """
         with self._visualizer.viewer_lock:
-            return self._visualizer.context.draw_debug_pyramid(T, base_width, base_height, height, color)
+            import genesis.utils.mesh as mu
+
+            mesh = mu.create_camera_frustum(camera, color)
+            return self._visualizer.context.draw_debug_mesh(mesh)
 
     @gs.assert_built
     def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
