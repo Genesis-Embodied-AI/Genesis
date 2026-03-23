@@ -17,14 +17,63 @@ LS_PARALLEL_K = 32
 # masks a genuinely small optimal step.
 LS_PARALLEL_MIN_STEP = 1e-6
 
-# Number of successive refinement passes: after picking the best of K candidates the search
-# range is narrowed around the winner and re-evaluated. 1 pass (K=16 candidates) already
-# gives sufficient resolution; increase for tighter convergence at the cost of more kernels.
-LS_PARALLEL_N_REFINE = 1
-
 # Block sizes for shared-memory reductions in _kernel_parallel_linesearch_p0 and _jv.
 _P0_BLOCK = 32
 _JV_BLOCK = 32
+
+# Maximum allowed alpha (prevents divergence from degenerate Newton steps)
+LS_ALPHA_MAX = 1e4
+# Maximum bisection iterations (2^8 = 256x precision improvement)
+LS_BISECT_STEPS = 8
+# Range expansion: max steps and growth factor
+LS_EXPANSION_STEPS = 6
+LS_EXPANSION_FACTOR = 4.0
+
+
+@qd.func
+def _ls_compute_grad_hess(
+    alpha,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+):
+    """Compute analytical gradient and hessian of the linesearch cost at alpha.
+
+    Accumulates quadratic coefficients with alpha-dependent constraint activation.
+    Returns (grad, hess).
+    """
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    g1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
+    g2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+
+    for i_c in range(ne, nef):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        D = constraint_state.efc_D[i_c, i_b]
+        f_val = constraint_state.efc_frictionloss[i_c, i_b]
+        r_val = constraint_state.diag[i_c, i_b]
+        x = Jaref_c + alpha * jv_c
+        rf = r_val * f_val
+        if x <= -rf or x >= rf:
+            g1 += (x <= -rf) * (-f_val * jv_c) + (x >= rf) * (f_val * jv_c)
+        else:
+            g1 += D * jv_c * Jaref_c
+            g2 += D * 0.5 * jv_c * jv_c
+
+    for i_c in range(nef, n_con):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        jv_c = constraint_state.jv[i_c, i_b]
+        D = constraint_state.efc_D[i_c, i_b]
+        x = Jaref_c + alpha * jv_c
+        if x < 0:
+            g1 += D * jv_c * Jaref_c
+            g2 += D * 0.5 * jv_c * jv_c
+
+    grad = 2.0 * alpha * g2 + g1
+    hess = 2.0 * g2
+    return grad, hess
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -265,13 +314,12 @@ def _kernel_parallel_linesearch_eval(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    _is_last_pass: qd.template(),
 ):
-    """Evaluate K candidate alphas in parallel per env, pick the best via reduction.
+    """Evaluate K candidate alphas, pick the best, then apply gradient-guided refinement.
 
-    Reads the search range from candidates[2] (lo) and candidates[3] (hi).
-    Writes narrowed range back to candidates[2,3] for successive refinement.
-    On the last pass, computes analytical gradient at best_alpha and does one
+    Phase 1: K threads evaluate log-spaced candidates (thread 0 = Newton alpha).
+    Phase 2: Argmin reduction to find lowest-cost candidate.
+    Phase 3: Thread 0 computes analytical gradient at best_alpha and does one
     Newton correction step if |grad| > gtol.
     """
     _B = constraint_state.grad.shape[1]
@@ -392,50 +440,28 @@ def _kernel_parallel_linesearch_eval(
                     constraint_state.candidates[2, i_b] = qd.exp(qd.log(lo) + qd.cast(lo_idx, gs.qd_float) * _step)
                     constraint_state.candidates[3, i_b] = qd.exp(qd.log(lo) + qd.cast(hi_idx, gs.qd_float) * _step)
 
-                # On last pass: analytical gradient check + Newton correction
-                if qd.static(_is_last_pass):
-                    final_alpha = constraint_state.candidates[0, i_b]
-                    if qd.abs(final_alpha) > rigid_global_info.EPS[None]:
-                        gtol = constraint_state.candidates[7, i_b]
-                        ne_g = constraint_state.n_constraints_equality[i_b]
-                        nef_g = ne_g + constraint_state.n_constraints_frictionloss[i_b]
-                        n_con_g = constraint_state.n_constraints[i_b]
+                # --- Gradient-guided refinement (thread 0) ---
+                final_alpha = constraint_state.candidates[0, i_b]
+                gtol = constraint_state.candidates[7, i_b]
 
-                        # Accumulate gradient and hessian coefficients at final_alpha
-                        g1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
-                        g2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+                if qd.abs(final_alpha) < rigid_global_info.EPS[None]:
+                    # Branch A: grid found no improvement. Check grad(0).
+                    grad_0, hess_0 = _ls_compute_grad_hess(gs.qd_float(0.0), i_b, constraint_state)
+                    if grad_0 < -gtol and hess_0 > rigid_global_info.EPS[None]:
+                        # Cost descending at alpha=0 → Newton step from 0
+                        alpha_n = -grad_0 / hess_0
+                        alpha_n = qd.min(alpha_n, gs.qd_float(LS_ALPHA_MAX))
+                        if alpha_n > 0.0:
+                            constraint_state.candidates[0, i_b] = alpha_n
+                else:
+                    # Branch B: improvement found. Gradient check + Newton correction.
+                    grad_val, hess_val = _ls_compute_grad_hess(final_alpha, i_b, constraint_state)
 
-                        for i_cg in range(ne_g, nef_g):
-                            Jaref_c = constraint_state.Jaref[i_cg, i_b]
-                            jv_c = constraint_state.jv[i_cg, i_b]
-                            D = constraint_state.efc_D[i_cg, i_b]
-                            f_val = constraint_state.efc_frictionloss[i_cg, i_b]
-                            r_val = constraint_state.diag[i_cg, i_b]
-                            x = Jaref_c + final_alpha * jv_c
-                            rf = r_val * f_val
-                            if x <= -rf or x >= rf:
-                                g1 += (x <= -rf) * (-f_val * jv_c) + (x >= rf) * (f_val * jv_c)
-                            else:
-                                g1 += D * jv_c * Jaref_c
-                                g2 += D * 0.5 * jv_c * jv_c
-
-                        for i_cg in range(nef_g, n_con_g):
-                            Jaref_c = constraint_state.Jaref[i_cg, i_b]
-                            jv_c = constraint_state.jv[i_cg, i_b]
-                            D = constraint_state.efc_D[i_cg, i_b]
-                            x = Jaref_c + final_alpha * jv_c
-                            if x < 0:
-                                g1 += D * jv_c * Jaref_c
-                                g2 += D * 0.5 * jv_c * jv_c
-
-                        grad_val = 2.0 * final_alpha * g2 + g1
-                        hess_val = 2.0 * g2
-
-                        # Newton correction if gradient is not near zero
-                        if qd.abs(grad_val) > gtol and hess_val > rigid_global_info.EPS[None]:
-                            alpha_corrected = final_alpha - grad_val / hess_val
-                            if alpha_corrected > 0.0:
-                                constraint_state.candidates[0, i_b] = alpha_corrected
+                    if qd.abs(grad_val) > gtol and hess_val > rigid_global_info.EPS[None]:
+                        alpha_corrected = final_alpha - grad_val / hess_val
+                        alpha_corrected = qd.min(qd.max(alpha_corrected, gs.qd_float(0.0)), gs.qd_float(LS_ALPHA_MAX))
+                        if alpha_corrected > 0.0:
+                            constraint_state.candidates[0, i_b] = alpha_corrected
             else:
                 constraint_state.candidates[0, i_b] = 0.0
 
@@ -702,14 +728,12 @@ def func_solve_decomposed(
             rigid_global_info,
             static_rigid_sim_config,
         )
-        # Successive refinement: last pass includes gradient check + Newton correction.
-        for _refine in range(LS_PARALLEL_N_REFINE):
-            _kernel_parallel_linesearch_eval(
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-                _refine == LS_PARALLEL_N_REFINE - 1,
-            )
+        # Grid search + gradient-guided Newton correction (single pass)
+        _kernel_parallel_linesearch_eval(
+            constraint_state,
+            rigid_global_info,
+            static_rigid_sim_config,
+        )
         _kernel_parallel_linesearch_apply_alpha(
             constraint_state,
             rigid_global_info,
