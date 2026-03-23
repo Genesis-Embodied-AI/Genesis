@@ -1249,6 +1249,61 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_points(poss, colors)
+        
+    @gs.assert_built
+    def draw_debug_pyramid(self, T, base_width=0.05, base_height=0.05, height=0.05, color=(1.0, 1.0, 1.0, 0.5)):
+        """
+        Draws a pyramid in the scene for visualization.
+
+        Parameters
+        ----------
+        T : array_like, shape (4, 4)
+            The transformation matrix of the pyramid.
+        base_width : float, optional
+            The width of the pyramid base.
+        base_height : float, optional
+            The height of the pyramid base.
+        height : float, optional
+            The height of the pyramid.
+        color : array_like, shape (4,), optional
+            The color of the pyramid in RGBA format.
+
+        Returns
+        -------
+        nodes : list
+        List of created debug line objects.
+        """
+        with self._visualizer.viewer_lock:
+            return self._visualizer.context.draw_debug_pyramid(T, base_width, base_height, height, color)
+        
+    @gs.assert_built
+    def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
+        """
+        Draws a trajectory as a series of connected lines in the scene for visualization.
+
+        Parameters
+        ----------
+        poss : array_like, shape (N, 3)
+            The positions of the trajectory points.
+        radius : float, optional
+            The radius of the trajectory lines.
+        color : array_like, shape (4,), optional
+            The color of the trajectory in RGBA format.
+
+        Returns
+        -------
+        nodes : list
+            List of created debug line objects.
+        """
+        nodes = []
+        with self._visualizer.viewer_lock:
+            for i in range(len(poss) - 1):
+                node = self._visualizer.context.draw_debug_line(
+                    poss[i], poss[i + 1], radius, color
+                )
+                nodes.append(node)
+        return nodes
+
 
     @gs.assert_built
     def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
