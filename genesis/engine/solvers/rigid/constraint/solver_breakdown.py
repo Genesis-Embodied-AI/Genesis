@@ -142,6 +142,7 @@ def _kernel_parallel_linesearch_p0(
     """
     _B = constraint_state.grad.shape[1]
     _T = qd.static(_P0_BLOCK)
+    _LS_PARALLEL_MIN_STEP = qd.static(LS_PARALLEL_MIN_STEP)
 
     qd.loop_config(block_dim=_T)
     for i_flat in range(_B * _T):
@@ -292,7 +293,7 @@ def _kernel_parallel_linesearch_p0(
                     total_hess = 2.0 * (constraint_state.quad_gauss[2, i_b] + sh_constraint_hess[0])
                     if total_hess > 0.0:
                         total_grad = constraint_state.quad_gauss[1, i_b] + sh_constraint_grad[0]
-                        alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(LS_PARALLEL_MIN_STEP))
+                        alpha_newton = qd.max(qd.abs(total_grad / total_hess), gs.qd_float(_LS_PARALLEL_MIN_STEP))
                         constraint_state.candidates[2, i_b] = alpha_newton * 1e-2
                         constraint_state.candidates[3, i_b] = alpha_newton * 10.0
                         constraint_state.candidates[5, i_b] = alpha_newton  # exact Newton step for eval
@@ -324,6 +325,7 @@ def _kernel_parallel_linesearch_eval(
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
+    _LS_ALPHA_MAX = qd.static(LS_ALPHA_MAX)
 
     qd.loop_config(block_dim=_K)
     for i_flat in range(_B * _K):
@@ -450,7 +452,7 @@ def _kernel_parallel_linesearch_eval(
                     if grad_0 < -gtol and hess_0 > rigid_global_info.EPS[None]:
                         # Cost descending at alpha=0 → Newton step from 0
                         alpha_n = -grad_0 / hess_0
-                        alpha_n = qd.min(alpha_n, gs.qd_float(LS_ALPHA_MAX))
+                        alpha_n = qd.min(alpha_n, gs.qd_float(_LS_ALPHA_MAX))
                         if alpha_n > 0.0:
                             constraint_state.candidates[0, i_b] = alpha_n
                 else:
@@ -459,7 +461,7 @@ def _kernel_parallel_linesearch_eval(
 
                     if qd.abs(grad_val) > gtol and hess_val > rigid_global_info.EPS[None]:
                         alpha_corrected = final_alpha - grad_val / hess_val
-                        alpha_corrected = qd.min(qd.max(alpha_corrected, gs.qd_float(0.0)), gs.qd_float(LS_ALPHA_MAX))
+                        alpha_corrected = qd.min(qd.max(alpha_corrected, gs.qd_float(0.0)), gs.qd_float(_LS_ALPHA_MAX))
                         if alpha_corrected > 0.0:
                             constraint_state.candidates[0, i_b] = alpha_corrected
             else:
