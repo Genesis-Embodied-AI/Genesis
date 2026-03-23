@@ -109,7 +109,7 @@ def _apply_diffusion_and_heat_generation(
 ) -> None:
     """Batched FFT semi-implicit diffusion with mirror padding (Neumann BC, no wrap-around)."""
     n_sensors = sensor_cache_start.shape[0]
-    n_batches = output.shape[0]
+    n_batches = output.shape[-1]
     for i_s in range(n_sensors):
         start = sensor_cache_start[i_s]
         size = cache_sizes[i_s]
@@ -118,16 +118,16 @@ def _apply_diffusion_and_heat_generation(
         rcp = link_rho_cp[mat_idx]
         k = link_conductivity[mat_idx]
         alpha = k / rcp
-        T = output[:, start : start + size].reshape(-1, nx, ny, nz)
+        T = output[start : start + size].view(nx, ny, nz, n_batches)
         # Mirror-pad to (2*nx, 2*ny, 2*nz) for zero-flux (Neumann) boundaries; avoids FFT wrap-around.
-        T_x = torch.cat([T, torch.flip(T, dims=(1,))], dim=1)
-        T_xy = torch.cat([T_x, torch.flip(T_x, dims=(2,))], dim=2)
-        T_pad = torch.cat([T_xy, torch.flip(T_xy, dims=(3,))], dim=3)
-        T_hat = torch.fft.rfftn(T_pad, dim=(-3, -2, -1))
-        T_hat = T_hat / (1.0 + dt * alpha * K2_spectral[i_s])
-        T_pad = torch.fft.irfftn(T_hat, s=(2 * nx, 2 * ny, 2 * nz), dim=(-3, -2, -1)).real
-        T = T_pad[:, :nx, :ny, :nz]
-        output[:, start : start + size] = T.reshape(n_batches, -1)
+        T_x = torch.cat([T, torch.flip(T, dims=(0,))], dim=0)
+        T_xy = torch.cat([T_x, torch.flip(T_x, dims=(1,))], dim=1)
+        T_pad = torch.cat([T_xy, torch.flip(T_xy, dims=(2,))], dim=2)
+        T_hat = torch.fft.rfftn(T_pad, dim=(0, 1, 2))
+        T_hat = T_hat / (1.0 + dt * alpha * K2_spectral[i_s].unsqueeze(-1))
+        T_pad = torch.fft.irfftn(T_hat, s=(2 * nx, 2 * ny, 2 * nz), dim=(0, 1, 2)).real
+        T = T_pad[:nx, :ny, :nz]
+        output[start : start + size] = T.reshape(-1, n_batches)
 
         # Add internal heat generation (W/m² -> Q_vol = Q_surface / dz).
         q = heat_generation[i_s]
@@ -135,7 +135,7 @@ def _apply_diffusion_and_heat_generation(
             dz = max(voxel_size[i_s, 2], gs.EPS)
             Q_vol = q.reshape(-1) / dz
             delta_T = dt * Q_vol / rcp
-            output[:, start : start + size] += delta_T.unsqueeze(0).expand(n_batches, -1)
+            output[start : start + size] += delta_T.unsqueeze(-1).expand(-1, n_batches)
 
 
 @qd.func
@@ -316,12 +316,12 @@ def _kernel_contact_heat(
     output: qd.types.ndarray(),
 ):
     # contact_area shape (n_c_max, n_batches)
-    n_batches = output.shape[0]
+    n_batches = output.shape[-1]
     n_sensors = links_idx.shape[0]
     use_link_temps = link_temps.shape[0] > 0
 
     # Grid update: only for contacts that involve a sensorized link; use contact_area[i_c, i_b]
-    for i_b, i_s in qd.ndrange(n_batches, n_sensors):
+    for i_s, i_b in qd.ndrange(n_sensors, n_batches):
         sensor_link_idx = links_idx[i_s]
         dw = depth_weight[i_s]
         start = sensor_cache_start[i_s]
@@ -366,13 +366,13 @@ def _kernel_contact_heat(
                 iy = min(max(0, int(u_y)), ny - 1)
                 iz = min(max(0, int(u_z)), nz - 1)
                 cell_idx = ix * (ny * nz) + iy * nz + iz
-                T_cell = output[i_b, start + cell_idx]
+                T_cell = output[start + cell_idx, i_b]
                 area_base = contact_area[i_c, i_b] + eps
                 area = qd.max(area_base, qd.math.pi * dw * collider_state.contact_data.penetration[i_c, i_b])
                 flux = k_eff * (T_other - T_cell) / (vol / area + eps)
                 Q_vol = flux * area / vol
                 delta_T = dt * Q_vol / rcp
-                output[i_b, start + cell_idx] = T_cell + delta_T
+                output[start + cell_idx, i_b] = T_cell + delta_T
 
     # Link temps update for all contacts (both links) when use_link_temps
     if use_link_temps:
@@ -450,9 +450,9 @@ def _apply_radiation_convection(
         emiss = link_emissivity[mat_idx].item()
         rcp = link_rho_cp[mat_idx].item()
         denom = rcp * vol
-        T_flat = output[:, start : start + size]
+        T_flat = output[start : start + size]
         delta = _radiation_convection_delta_T(T_flat, emiss, convection_coeff, ambient_temp, denom, dt)
-        output[:, start : start + size] -= delta * mask
+        output[start : start + size] -= delta * mask.unsqueeze(-1)
 
     if link_temps.numel() > 0:
         valid = link_to_material_idx >= 0  # (n_links,)
@@ -685,7 +685,7 @@ class TemperatureGridSensor(
             mat_idx = shared_metadata.link_to_material_idx[link_idx].item()
             base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP][mat_idx].item()
             start = shared_metadata.sensor_cache_start[i_s].item()
-            shared_ground_truth_cache[envs_idx, start : start + shared_metadata.cache_sizes[i_s]] = base_T
+            shared_ground_truth_cache[start : start + shared_metadata.cache_sizes[i_s], envs_idx] = base_T
         if shared_metadata.link_temps.numel() > 0:
             ambient_T = shared_metadata.ambient_temperature
             link_base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP]
@@ -735,7 +735,6 @@ class TemperatureGridSensor(
             shared_metadata.contact_area_scratch,
             gs.EPS,
         )
-        output = shared_ground_truth_cache.contiguous()
         _kernel_contact_heat(
             solver.links_state,
             collider_state,
@@ -755,11 +754,9 @@ class TemperatureGridSensor(
             shared_metadata.contact_area_buffer,
             dt,
             gs.EPS,
-            output,
+            shared_ground_truth_cache,
         )
-        output.clamp_(-MAX_TEMP, MAX_TEMP)
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output)
+        shared_ground_truth_cache.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection
         _apply_radiation_convection(
             shared_metadata.sensor_cache_start,

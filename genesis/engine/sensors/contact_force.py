@@ -41,7 +41,7 @@ def _kernel_get_contacts_forces(
     sensors_link_idx: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
-    for i_b, i_c, i_s in qd.ndrange(output.shape[0], link_a.shape[-1], sensors_link_idx.shape[-1]):
+    for i_c, i_s, i_b in qd.ndrange(link_a.shape[-1], sensors_link_idx.shape[-1], output.shape[-1]):
         contact_data_link_a = link_a[i_b, i_c]
         contact_data_link_b = link_b[i_b, i_c]
         if contact_data_link_a == sensors_link_idx[i_s] or contact_data_link_b == sensors_link_idx[i_s]:
@@ -62,10 +62,10 @@ def _kernel_get_contacts_forces(
 
             if contact_data_link_a == sensors_link_idx[i_s]:
                 for j in qd.static(range(3)):
-                    output[i_b, j_s + j] += force_a[j]
+                    output[j_s + j, i_b] += force_a[j]
             if contact_data_link_b == sensors_link_idx[i_s]:
                 for j in qd.static(range(3)):
-                    output[i_b, j_s + j] += force_b[j]
+                    output[j_s + j, i_b] += force_b[j]
 
 
 @dataclass
@@ -117,9 +117,11 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
         assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         link_a, link_b = all_contacts["link_a"], all_contacts["link_b"]
+        if shared_metadata.solver.n_envs == 0:
+            link_a, link_b = link_a[None], link_b[None]
         is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
         is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        shared_ground_truth_cache[:] = is_contact_a | is_contact_b
+        shared_ground_truth_cache[:] = (is_contact_a | is_contact_b).T
 
     @classmethod
     def _update_shared_cache(
@@ -228,22 +230,20 @@ class ContactForceSensor(
             force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
             sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
-            output_forces = shared_ground_truth_cache.reshape((max(shared_metadata.solver.n_envs, 1), -1, 3))
-            output_forces[:] = inv_transform_by_quat(sensors_force, sensors_quat)
+            n_envs = max(shared_metadata.solver.n_envs, 1)
+            result = inv_transform_by_quat(sensors_force, sensors_quat)  # (B, n_sensors, 3)
+            shared_ground_truth_cache[:] = result.permute(1, 2, 0).reshape(-1, n_envs)
             return
 
-        output_forces = shared_ground_truth_cache.contiguous()
-        output_forces.zero_()
+        shared_ground_truth_cache.zero_()
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
             link_b.contiguous(),
             links_quat.contiguous(),
             shared_metadata.links_idx,
-            output_forces,
+            shared_ground_truth_cache,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output_forces)
 
     @classmethod
     def _update_shared_cache(

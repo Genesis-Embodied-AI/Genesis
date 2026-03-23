@@ -307,13 +307,13 @@ def _func_kinematic_contact_probe(
     output: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = output.shape[0]
+    n_batches = output.shape[-1]
 
     func_update_all_verts(
         geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
-    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
+    for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
 
         probe_pos_local = qd.Vector(
@@ -354,10 +354,10 @@ def _func_kinematic_contact_probe(
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         cache_start = sensor_cache_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
-        output[i_b, cache_start + probe_idx_in_sensor] = max_penetration
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 0] = force_local[0]
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 1] = force_local[1]
-        output[i_b, cache_start + n_probes + probe_idx_in_sensor * 3 + 2] = force_local[2]
+        output[cache_start + probe_idx_in_sensor, i_b] = max_penetration
+        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 0, i_b] = force_local[0]
+        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 1, i_b] = force_local[1]
+        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 2, i_b] = force_local[2]
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -459,10 +459,10 @@ def _kernel_elastomer_displacement(
     )
 
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = output.shape[0]
+    n_batches = output.shape[-1]
 
     # Phase 2: for each marker M (probe), dilate = Σ over all contacts in same sensor; shear/twist from own contact.
-    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
+    for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
 
         if not skip_sensor[i_s]:
@@ -501,9 +501,9 @@ def _kernel_elastomer_displacement(
             probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
             cache_start = sensor_cache_start[i_s]
 
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 0] = displacement_local[0]
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 1] = displacement_local[1]
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 2] = qd.min(
+            output[cache_start + probe_idx_in_sensor * 3 + 0, i_b] = displacement_local[0]
+            output[cache_start + probe_idx_in_sensor * 3 + 1, i_b] = displacement_local[1]
+            output[cache_start + probe_idx_in_sensor * 3 + 2, i_b] = qd.min(
                 dilate_max_delta_s, contact_buf[i_b, i_p, 3]
             )
 
@@ -684,7 +684,7 @@ def _elastomer_displacement_grid_fft_dilate(
         out_block[:, 0:grid_size:3] = disp_x.transpose(1, 2).reshape(n_batches, -1)
         out_block[:, 1:grid_size:3] = disp_y.transpose(1, 2).reshape(n_batches, -1)
         out_block[:, 2:grid_size:3] = torch.clamp(contact_slice, max=max_h)
-        output[:, cache_start : cache_start + grid_size].copy_(out_block)
+        output[cache_start : cache_start + grid_size].copy_(out_block.T)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -710,7 +710,7 @@ def _kernel_elastomer_displacement_grid_shear_twist(
     total_n_probes = probe_positions_local.shape[0]
     n_batches = contact_buf.shape[0]
 
-    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
+    for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
         sensor_link_idx = links_idx[i_s]
         link_pos = links_state.pos[sensor_link_idx, i_b]
@@ -751,9 +751,9 @@ def _kernel_elastomer_displacement_grid_shear_twist(
             shear_twist_local = gu.qd_inv_transform_by_quat(shear_twist, link_quat)
             probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
             cache_start = sensor_cache_start[i_s]
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 0] += shear_twist_local[0]
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 1] += shear_twist_local[1]
-            output[i_b, cache_start + probe_idx_in_sensor * 3 + 2] += shear_twist_local[2]
+            output[cache_start + probe_idx_in_sensor * 3 + 0, i_b] += shear_twist_local[0]
+            output[cache_start + probe_idx_in_sensor * 3 + 1, i_b] += shear_twist_local[1]
+            output[cache_start + probe_idx_in_sensor * 3 + 2, i_b] += shear_twist_local[2]
 
 
 @dataclass
@@ -949,8 +949,6 @@ class KinematicContactProbe(
         collider_state = solver.collider._collider_state
 
         shared_ground_truth_cache.zero_()
-
-        output = shared_ground_truth_cache.contiguous()
         _kernel_kinematic_contact_probe(
             shared_metadata.probe_positions,
             shared_metadata.probe_normals,
@@ -972,10 +970,8 @@ class KinematicContactProbe(
             solver.verts_info,
             solver.faces_info,
             gs.EPS,
-            output,
+            shared_ground_truth_cache,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         self._draw_debug_probes(context, lambda data: data.penetration)
@@ -1102,7 +1098,6 @@ class ElastomerDisplacementSensor(
     ):
         solver = shared_metadata.solver
 
-        output = shared_ground_truth_cache.contiguous()
         _kernel_elastomer_displacement(
             shared_metadata.is_grid,
             shared_metadata.probe_positions,
@@ -1128,7 +1123,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.contact_buf,
             shared_metadata.contact_link_buf,
             gs.EPS,
-            output,
+            shared_ground_truth_cache,
         )
 
         _elastomer_displacement_grid_fft_dilate(
@@ -1142,7 +1137,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.dilate_coefficient,
             shared_metadata.dilate_max_delta,
             shared_metadata.grid_dilate_out_buffer,
-            output,
+            shared_ground_truth_cache,
         )
         _kernel_elastomer_displacement_grid_shear_twist(
             shared_metadata.probe_positions,
@@ -1160,10 +1155,8 @@ class ElastomerDisplacementSensor(
             solver.links_state,
             solver._sim.dt,
             gs.EPS,
-            output,
+            shared_ground_truth_cache,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output)
 
     def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
         self._draw_debug_probes(context, lambda data: torch.linalg.norm(data, dim=-1))

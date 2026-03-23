@@ -55,13 +55,13 @@ def _kernel_proximity(
     output: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = output.shape[0]
+    n_batches = output.shape[-1]
 
     func_update_all_verts(
         geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
-    for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
+    for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
         sensor_link_idx = links_idx[i_s]
         link_pos = links_state.pos[sensor_link_idx, i_b]
@@ -108,9 +108,9 @@ def _kernel_proximity(
         n_probes = n_probes_per_sensor[i_s]
         probe_global_idx = sensor_probe_start[i_s] + probe_idx_in_sensor
 
-        output[i_b, cache_start + probe_idx_in_sensor] = best_dist
+        output[cache_start + probe_idx_in_sensor, i_b] = best_dist
         for j in qd.static(range(3)):
-            positions_output[i_b, probe_global_idx, j] = best_point[j]
+            positions_output[i_b, probe_global_idx, j] = best_point[j]  # not part of cache, stays (B, ...)
 
 
 @dataclass
@@ -222,7 +222,6 @@ class ProximitySensor(
     ):
         solver = shared_metadata.solver
         shared_ground_truth_cache.zero_()
-        output = shared_ground_truth_cache.contiguous()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -244,10 +243,8 @@ class ProximitySensor(
             solver.fixed_verts_state,
             solver.free_verts_state,
             shared_metadata.nearest_positions,
-            output,
+            shared_ground_truth_cache,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output)
 
     @classmethod
     def _update_shared_cache(

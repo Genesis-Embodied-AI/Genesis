@@ -198,12 +198,12 @@ class IMUSensor(
         # is now already (n_envs, n_imus, 3), no need for a reshape
         local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
 
-        # cache shape: (B, n_imus * 6)
+        # cache layout: (n_imus * 9, B)
         *batch_size, n_imus, _ = local_acc.shape
-        strided_ground_truth_cache = shared_ground_truth_cache.reshape((*batch_size, n_imus, 3, 3))
-        strided_ground_truth_cache[..., 0, :].copy_(local_acc)
-        strided_ground_truth_cache[..., 1, :].copy_(local_ang)
-        strided_ground_truth_cache[..., 2, :].copy_(local_mag)
+        strided_ground_truth_cache = shared_ground_truth_cache.view(n_imus, 3, 3, *batch_size)
+        strided_ground_truth_cache[:, 0].copy_(local_acc.permute(1, 2, 0))
+        strided_ground_truth_cache[:, 1].copy_(local_ang.permute(1, 2, 0))
+        strided_ground_truth_cache[:, 2].copy_(local_mag.permute(1, 2, 0))
 
     @classmethod
     def _update_shared_cache(
