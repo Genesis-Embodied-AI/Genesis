@@ -23,6 +23,7 @@ from .conftest import SKIP_NO_OMNIVERSE_KIT
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, get_hf_dataset
 from .test_mesh import check_gs_meshes, check_gs_surfaces
@@ -246,11 +247,14 @@ def build_usd_scene(
     scale: float,
     vis_mode: str = "collision",
     is_stage: bool = True,
-    fixed: bool = False,
+    fixed: bool | None = None,
+    show_viewer: bool = False,
 ):
     """Build a USD scene from its file path."""
     # Create USD scene
-    scene = gs.Scene()
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
 
     kwargs = dict(
         morph=gs.morphs.USD(
@@ -1018,6 +1022,31 @@ def test_pure_rigid_body_fixed(pure_rigid_usd, fixed):
 
 
 @pytest.fixture(scope="session")
+def collision_only_rigid_usd(asset_tmp_path):
+    usd_file = str(asset_tmp_path / "collision_only_rigid.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    cube = UsdGeom.Cube.Define(stage, "/root")
+    cube.GetSizeAttr().Set(1.0)
+    stage.SetDefaultPrim(cube.GetPrim())
+    UsdPhysics.CollisionAPI.Apply(cube.GetPrim())  # No RigidBodyAPI
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("fixed,expected_dofs", [(None, 0), (False, 6), (True, 0)])
+def test_collision_only_fixed_override(collision_only_rigid_usd, fixed, expected_dofs):
+    usd_scene = build_usd_scene(collision_only_rigid_usd, scale=1.0, fixed=fixed)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    assert entity.n_dofs == expected_dofs
+
+
+@pytest.fixture(scope="session")
 def visual_collision_usd(asset_tmp_path):
     """Create a USD file mimicking Pan011 structure: separate Visual/Collision groups + invisible Sites.
 
@@ -1084,8 +1113,127 @@ def test_visual_collision_parsing(visual_collision_usd):
     usd_scene = build_usd_scene(visual_collision_usd, scale=1.0, fixed=True)
     assert len(usd_scene.entities) == 1
     entity = usd_scene.entities[0]
-    link = entity.links[0]
+    link = entity.base_link
     # 2 collision geoms (Collider1 + Collider2), invisible site_marker excluded
     assert link.n_geoms == 2
     # 1 visual geom (Visual1), invisible site_marker excluded
     assert link.n_vgeoms == 1
+
+
+@pytest.mark.required
+def test_ur10_visual_fallback():
+    asset_path = get_hf_dataset(pattern="usd/UniversalRobots/UR10/*")
+    usd_file = os.path.join(asset_path, "usd/UniversalRobots/UR10/ur10_instanceable.usd")
+    usd_scene = build_usd_scene(usd_file, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    for link in entity.links:
+        if link.n_geoms > 0:
+            assert link.n_vgeoms > 0, f"Link {link.name} has collision but no visual geometry (missing fallback)."
+
+
+@pytest.mark.required
+def test_humanoid_generic_joint_detection():
+    asset_path = get_hf_dataset(pattern="usd/Humanoid/*")
+    usd_file = os.path.join(asset_path, "usd/Humanoid/humanoid.usd")
+    usd_scene = build_usd_scene(usd_file, scale=1.0, fixed=True)
+    assert len(usd_scene.entities) == 1
+    entity = usd_scene.entities[0]
+    for joint in entity.joints:
+        if joint.type == gs.JOINT_TYPE.FREE:
+            assert False, f"Joint {joint.name} is FREE but should be SPHERICAL or REVOLUTE."
+    spherical_joints = [j for j in entity.joints if j.type == gs.JOINT_TYPE.SPHERICAL]
+    assert len(spherical_joints) > 0, "No SPHERICAL joints found — generic PhysicsJoint detection failed."
+
+
+@pytest.fixture(scope="session")
+def oriented_capsule_usd(asset_tmp_path):
+    usd_file = str(asset_tmp_path / "oriented_capsule.usda")
+    stage = Usd.Stage.CreateNew(usd_file)
+    UsdGeom.SetStageUpAxis(stage, "Z")
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+
+    root_prim = stage.DefinePrim("/root", "Xform")
+    stage.SetDefaultPrim(root_prim)
+
+    body = stage.DefinePrim("/root/body", "Xform")
+    UsdPhysics.RigidBodyAPI.Apply(body)
+    UsdPhysics.MassAPI.Apply(body)
+    UsdPhysics.MassAPI(body).GetMassAttr().Set(1.0)
+
+    capsule = UsdGeom.Capsule.Define(stage, "/root/body/capsule")
+    capsule.GetRadiusAttr().Set(0.08)
+    capsule.GetHeightAttr().Set(0.4)
+    capsule.GetAxisAttr().Set("X")
+    UsdPhysics.CollisionAPI.Apply(capsule.GetPrim())
+
+    stage.Save()
+    return usd_file
+
+
+@pytest.mark.required
+def test_oriented_capsule(oriented_capsule_usd, show_viewer, tol):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    capsule = scene.add_entity(
+        morph=gs.morphs.USD(
+            file=oriented_capsule_usd,
+            pos=(0, 0, 0.5),
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    scene.build()
+
+    # Capsule with axis=X must have non-identity quat encoding the axis orientation, and visual/collision quats must
+    # match (mesh is Z-aligned, quat orients it — MuJoCo convention).
+    assert capsule.n_geoms >= 1
+    assert capsule.n_vgeoms >= 1
+    for vgeom, geom in zip(capsule.vgeoms, capsule.geoms):
+        assert_allclose(vgeom._init_quat, geom._init_quat, tol=gs.EPS)
+        # Capsule with axis=X has identity quat — axis rotation not composed into geom_Q.
+        with pytest.raises(AssertionError):
+            assert_allclose(geom.get_quat(), (1.0, 0.0, 0.0, 0.0), atol=tol)
+
+    # Drop on ground plane — must settle above ground (no penetration) and actually fall
+    for _ in range(50):
+        scene.step()
+
+    capsule_aabb_min, _capsule_aabb_max = tensor_to_array(capsule.get_AABB())
+    capsule_aabb_min_z = float(capsule_aabb_min[-1])
+    assert -0.001 < capsule_aabb_min_z < 0.0
+
+
+@pytest.mark.required
+def test_ant_capsule_axis_collision(show_viewer):
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    asset_path = get_hf_dataset(pattern="usd/Ant/*")
+    ant = scene.add_entity(
+        morph=gs.morphs.USD(
+            file=os.path.join(asset_path, "usd/Ant/ant.usd"),
+            pos=(0, 0, 0.75),
+        ),
+        material=gs.materials.Rigid(
+            rho=1000.0,
+        ),
+    )
+    scene.build()
+
+    # Assert visual/collision quats match for all capsule geoms
+    for link in ant.links:
+        for vgeom, geom in zip(link.vgeoms, link.geoms):
+            assert_allclose(vgeom.get_pos(), geom.get_pos(), tol=1e-5)
+
+    # Step and verify no ground penetration
+    for _ in range(50):
+        scene.step()
+
+    ant_aabb_min, _capsule_aabb_max = tensor_to_array(ant.get_AABB())
+    ant_aabb_min_z = float(ant_aabb_min[-1])
+    assert -0.001 < ant_aabb_min_z < 0.001
