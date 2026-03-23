@@ -1,5 +1,3 @@
-import quadrants as qd
-
 from ..base import EntityT, Material
 
 
@@ -11,5 +9,3 @@ class Base(Material[EntityT]):
     ----
     This class should *not* be instantiated directly.
     """
-
-    pass

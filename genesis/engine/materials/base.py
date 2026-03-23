@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-import genesis as gs
-from genesis.repr_base import RBC
+from genesis.options.options import Options
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
@@ -9,7 +8,7 @@ if TYPE_CHECKING:
 EntityT = TypeVar("EntityT", bound="Entity")
 
 
-class Material(RBC, Generic[EntityT]):
+class Material(Options, Generic[EntityT]):
     """
     The base class of materials.
 
@@ -17,10 +16,3 @@ class Material(RBC, Generic[EntityT]):
     ----
     This class should *not* be instantiated directly.
     """
-
-    def __init__(self):
-        self._uid = gs.UID()
-
-    @property
-    def uid(self):
-        return self._uid

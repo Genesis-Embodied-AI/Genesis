@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING
 
-import quadrants as qd
+from pydantic import StrictBool
+
+from genesis.typing import NonNegativeFloat, PositiveInt
 
 from .base import Material
 
@@ -8,18 +10,23 @@ if TYPE_CHECKING:
     from genesis.engine.entities.tool_entity import ToolEntity
 
 
-@qd.data_oriented
 class Tool(Material["ToolEntity"]):
-    def __init__(
-        self,
-        friction=0.0,
-        coup_softness=0.01,
-        collision=True,
-        sdf_res=128,
-    ):
-        super().__init__()
+    """
+    Material for tool entities.
 
-        self.friction = friction
-        self.coup_softness = coup_softness
-        self.collision = collision
-        self.sdf_res = sdf_res
+    Parameters
+    ----------
+    friction : float, optional
+        Friction coefficient. Default is 0.0.
+    coup_softness : float, optional
+        Softness of coupling interaction. Default is 0.01.
+    collision : bool, optional
+        Whether the tool participates in collision. Default is True.
+    sdf_res : int, optional
+        Resolution of the SDF grid. Default is 128.
+    """
+
+    friction: NonNegativeFloat = 0.0
+    coup_softness: NonNegativeFloat = 0.01
+    collision: StrictBool = True
+    sdf_res: PositiveInt = 128
