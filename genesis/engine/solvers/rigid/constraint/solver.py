@@ -127,6 +127,8 @@ class ConstraintSolver:
             else:
                 is_warmstart[envs_idx] = False
                 qacc_ws[:, envs_idx] = 0.0
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
@@ -159,6 +161,8 @@ class ConstraintSolver:
                 assign_indexed_tensor(n_constraints_equality, env_mask, 0)
                 assign_indexed_tensor(n_constraints_frictionloss, env_mask, 0)
                 assign_indexed_tensor(qd_n_equalities, env_mask, n_eq)
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
             return
 
         if not isinstance(envs_idx, torch.Tensor):
