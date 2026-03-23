@@ -155,12 +155,12 @@ def _qd_polygon_area_from_points_3d(
         ny = gs.qd_float(0.0)
         nz = gs.qd_float(0.0)
         for i in range(n):
-            cx = cx + scratch[i_b, i, _ScratchIdx.GROUP_POS_X]
-            cy = cy + scratch[i_b, i, _ScratchIdx.GROUP_POS_Y]
-            cz = cz + scratch[i_b, i, _ScratchIdx.GROUP_POS_Z]
-            nx = nx + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_X]
-            ny = ny + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Y]
-            nz = nz + scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Z]
+            cx = cx + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_POS_X], gs.qd_float)
+            cy = cy + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_POS_Y], gs.qd_float)
+            cz = cz + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_POS_Z], gs.qd_float)
+            nx = nx + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_X], gs.qd_float)
+            ny = ny + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Y], gs.qd_float)
+            nz = nz + qd.cast(scratch[i_b, i, _ScratchIdx.GROUP_NORMAL_Z], gs.qd_float)
         n_inv = gs.qd_float(1.0) / gs.qd_float(n)
         cx, cy, cz = cx * n_inv, cy * n_inv, cz * n_inv
         nx, ny, nz = nx * n_inv, ny * n_inv, nz * n_inv
@@ -279,7 +279,7 @@ def _kernel_compute_contact_areas(
             else:
                 for k in range(count):
                     d = scratch[i_b, k, _ScratchIdx.GROUP_DEPTH]
-                    group_area = group_area + d * qd.math.pi
+                    group_area = group_area + d * qd.cast(qd.math.pi, gs.qd_float)
 
             area_per_contact = group_area / (gs.qd_float(count) + eps)
             for k in range(count):
@@ -290,7 +290,7 @@ def _kernel_compute_contact_areas(
 @qd.func
 def _qd_k_eff(k_a: gs.qd_float, k_b: gs.qd_float, eps: gs.qd_float) -> gs.qd_float:
     """Effective conductivity for series thermal resistance: 2*k_a*k_b/(k_a+k_b+eps)."""
-    return 2.0 * k_a * k_b / (k_a + k_b + eps)
+    return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
 
 @qd.kernel(fastcache=True)
@@ -368,7 +368,9 @@ def _kernel_contact_heat(
                 cell_idx = ix * (ny * nz) + iy * nz + iz
                 T_cell = output[start + cell_idx, i_b]
                 area_base = contact_area[i_c, i_b] + eps
-                area = qd.max(area_base, qd.math.pi * dw * collider_state.contact_data.penetration[i_c, i_b])
+                area = qd.max(
+                    area_base, qd.cast(qd.math.pi, gs.qd_float) * dw * collider_state.contact_data.penetration[i_c, i_b]
+                )
                 flux = k_eff * (T_other - T_cell) / (vol / area + eps)
                 Q_vol = flux * area / vol
                 delta_T = dt * Q_vol / rcp
