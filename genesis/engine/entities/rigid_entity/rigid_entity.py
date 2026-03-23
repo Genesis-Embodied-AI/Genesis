@@ -2254,6 +2254,7 @@ class RigidEntity(KinematicEntity):
             root_idx=root_idx,
             invweight=l_info.get("invweight"),
             visualize_contact=self.visualize_contact,
+            is_robot=l_info.get("is_robot", root_idx != -1),
         )
         self._links.append(link)
 

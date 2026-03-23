@@ -271,6 +271,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
     scene.add_entity(
         gs.morphs.Plane(),
         material=gs.materials.Rigid(
+            rho=200.0,
             coup_type="ipc_only",
         ),
     )
@@ -283,6 +284,7 @@ def test_ipc_rigid_ground_clearance(n_envs, show_viewer):
                 size=(0.08, 0.08, 0.08),
             ),
             material=gs.materials.Rigid(
+                rho=200.0,
                 coup_type="ipc_only",
                 coup_friction=0.0,
                 contact_resistance=resistance,
@@ -1474,6 +1476,7 @@ def test_cloth_uniform_biaxial_stretching(E, nu, strech_scale, n_envs, show_view
                     ),
                 ),
                 material=gs.materials.Rigid(
+                    rho=200.0,
                     coup_type="two_way_soft_constraint",
                     coup_friction=0.8,
                 ),

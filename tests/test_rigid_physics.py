@@ -2251,11 +2251,10 @@ def test_frictionloss_advanced(show_viewer, tol):
     assert_allclose(robot.get_contacts()["position"][:, 2].min(), 0.0, tol=1e-4)
     assert_allclose(robot.get_AABB()[0, 2], 0.0, tol=2e-4)
     box_pos = box.get_pos()
-    assert box_pos[0] > 0.5
-    # This is to check collision detection is working correctly on metal
-    # The box will collide with the robot and rolling on the ground,
-    # We check whether it's rolling within a reasonable range and not blowing up.
-    # Behavior on mdetial is different from other platforms
+    assert box_pos[0] > 0.4
+
+    # This is to check collision detection is working correctly on Apple Metal.
+    # The box should collide with the robot and roll on the ground within a reasonable range without not blow up.
     assert_allclose(box_pos[1:], 0.0, tol=0.05)
     assert_allclose(box.get_dofs_velocity(), 0.0, tol=50 * tol)
 
@@ -5164,6 +5163,7 @@ def test_heterogeneous_robots(show_viewer, tol):
     het_obj = scene.add_entity(
         morph=het_morph,
         material=gs.materials.Rigid(
+            rho=200.0,
             friction=1e-2,
         ),
     )

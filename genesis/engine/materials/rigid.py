@@ -24,8 +24,11 @@ class Rigid(Kinematic["RigidEntity"]):
 
     Parameters
     ----------
-    rho : float, optional
-        The density of the material used to compute mass. Default is 200.0.
+    rho : float or None, optional
+        The density of the material used to estimate mass if necessary. When None, the default depends on context:
+        1000 kg/m^3 if MuJoCo compatibility is enabled (``RigidOptions.enable_mujoco_compatibility``),
+        otherwise 600 kg/m^3 for basic rigid objects (mug, table...) vs 1500 kg/m^3 for poly-articulated
+        robots. Default is None.
     friction : float, optional
         Friction coefficient within the rigid solver. If None, a default of 1.0 may be used or parsed from file.
     needs_coup : bool, optional
@@ -73,7 +76,7 @@ class Rigid(Kinematic["RigidEntity"]):
         ``IPCCouplerOptions.contact_resistance``. Default is None.
     """
 
-    rho: ValidFloat = 200.0
+    rho: ValidFloat | None = None
     friction: Annotated[ValidFloat, Field(ge=0.01, le=5.0)] | None = None
     needs_coup: StrictBool = True
     coup_friction: NonNegativeFloat = 0.1
