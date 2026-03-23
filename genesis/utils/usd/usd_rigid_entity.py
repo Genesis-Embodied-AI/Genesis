@@ -46,8 +46,53 @@ DRIVE_NAMES = {
 }
 
 
+_DOF_NAMES = ("transX", "transY", "transZ", "rotX", "rotY", "rotZ")
+_ROT_DOFS = {"rotX", "rotY", "rotZ"}
+_DOF_AXIS = {"transX": "X", "transY": "Y", "transZ": "Z", "rotX": "X", "rotY": "Y", "rotZ": "Z"}
+
+
+def _detect_generic_joint_type(joint_prim: Usd.Prim) -> Tuple[int, int, int, str | None]:
+    """Detect Genesis joint type for a generic PhysicsJoint by inspecting DOF limits and drives.
+
+    If no DriveAPI or LimitAPI is applied to any DOF, the joint is treated as FREE (6 DOF).
+    Otherwise, a DOF is enabled if DriveAPI is applied, or LimitAPI is applied with low < high.
+    A DOF with LimitAPI where low >= high (e.g., [1.0, -1.0]) is locked.
+
+    Returns (joint_type, n_dofs, n_qs, detected_axis_str).
+    """
+    has_any_config = False
+    enabled_dofs = set()
+    for dof_name in _DOF_NAMES:
+        if joint_prim.HasAPI(UsdPhysics.DriveAPI, dof_name):
+            has_any_config = True
+            enabled_dofs.add(dof_name)
+        elif joint_prim.HasAPI(UsdPhysics.LimitAPI, dof_name):
+            has_any_config = True
+            limit = UsdPhysics.LimitAPI.Get(joint_prim, dof_name)
+            low, high = limit.GetLowAttr().Get(), limit.GetHighAttr().Get()
+            if low is None or high is None or low < high:
+                enabled_dofs.add(dof_name)
+
+    # No DOF configuration at all → treat as FREE (all DOFs enabled)
+    if not has_any_config:
+        return gs.JOINT_TYPE.FREE, 6, 7, None
+
+    rot_dofs = enabled_dofs & _ROT_DOFS
+    trans_dofs = enabled_dofs - _ROT_DOFS
+
+    if not enabled_dofs:
+        return gs.JOINT_TYPE.FIXED, 0, 0, None
+    if not trans_dofs:
+        if len(rot_dofs) == 1:
+            return gs.JOINT_TYPE.REVOLUTE, 1, 1, _DOF_AXIS[next(iter(rot_dofs))]
+        return gs.JOINT_TYPE.SPHERICAL, 3, 4, None
+    if not rot_dofs and len(trans_dofs) == 1:
+        return gs.JOINT_TYPE.PRISMATIC, 1, 1, _DOF_AXIS[next(iter(trans_dofs))]
+    return gs.JOINT_TYPE.FREE, 6, 7, None
+
+
 def _parse_joint_axis_pos(
-    context: UsdContext, joint: UsdPhysics.Joint, child_link: Usd.Prim, is_body1: bool
+    context: UsdContext, joint: UsdPhysics.Joint, child_link: Usd.Prim, is_body1: bool, axis_override: str | None = None
 ) -> Tuple[str, np.ndarray, np.ndarray]:
     joint_pos_attr = joint.GetLocalPos1Attr() if is_body1 else joint.GetLocalPos0Attr()
     joint_pos = usd_pos_to_numpy(joint_pos_attr.Get()) if joint_pos_attr.HasValue() else gu.zero_pos()
@@ -66,6 +111,15 @@ def _parse_joint_axis_pos(
         if np.linalg.norm(joint_axis) < gs.EPS:
             gs.raise_exception(f"Joint axis is zero for joint {joint.GetPath()}.")
         joint_axis /= np.linalg.norm(joint_axis)
+    elif axis_override is not None:
+        joint_quat = usd_quat_to_numpy((joint.GetLocalRot1Attr() if is_body1 else joint.GetLocalRot0Attr()).Get())
+        joint_axis = gu.transform_by_quat(AXES_VECTOR[axis_override], joint_quat)
+        joint_axis = gu.transform_by_R(joint_axis, T[:3, :3])
+        joint_axis = Q_inv[:3, :3] @ joint_axis
+        if np.linalg.norm(joint_axis) < gs.EPS:
+            gs.raise_exception(f"Joint axis is zero for joint {joint.GetPath()}.")
+        joint_axis /= np.linalg.norm(joint_axis)
+        joint_axis_str = axis_override
     else:
         joint_axis_str, joint_axis = None, None
 
@@ -94,8 +148,10 @@ def _parse_link(
     elif link.HasAPI(UsdPhysics.CollisionAPI):
         link_fixed = True
 
-    if morph.fixed:
-        link_fixed = any(parent_idx == -1 for _, parent_idx, _ in joints)
+    # Apply morph.fixed override for root links
+    is_root = any(parent_idx == -1 for _, parent_idx, _ in joints)
+    if morph.fixed is not None and is_root:
+        link_fixed = morph.fixed
 
     # parse link mass properties
     if link.HasAPI(UsdPhysics.MassAPI):
@@ -132,6 +188,7 @@ def _parse_link(
         if joint_prim is not None:
             joint_type = gs.JOINT_TYPE.FIXED
             n_dofs, n_qs = 0, 0
+            detected_axis_str = None
             if not link_fixed:
                 if joint_prim.IsA(UsdPhysics.RevoluteJoint):
                     joint_type = gs.JOINT_TYPE.REVOLUTE
@@ -146,9 +203,8 @@ def _parse_link(
                     joint = UsdPhysics.SphericalJoint(joint_prim)
                     n_dofs, n_qs = 3, 4
                 elif joint_prim.GetTypeName() == "PhysicsJoint":
-                    joint_type = gs.JOINT_TYPE.FREE
+                    joint_type, n_dofs, n_qs, detected_axis_str = _detect_generic_joint_type(joint_prim)
                     joint = UsdPhysics.Joint(joint_prim)
-                    n_dofs, n_qs = 6, 7
                 elif not joint_prim.IsA(UsdPhysics.FixedJoint):
                     gs.logger.warning(
                         f"Unsupported USD joint type: {joint_prim.GetTypeName()} for {joint_prim.GetPath()}. "
@@ -156,7 +212,9 @@ def _parse_link(
                     )
             if joint_type == gs.JOINT_TYPE.FIXED:
                 joint = UsdPhysics.Joint(joint_prim)
-            joint_axis_str, joint_axis, joint_pos = _parse_joint_axis_pos(context, joint, link, is_body1)
+            joint_axis_str, joint_axis, joint_pos = _parse_joint_axis_pos(
+                context, joint, link, is_body1, detected_axis_str
+            )
             joint_name = str(joint_prim.GetPath())
         else:
             if link_fixed:
@@ -209,10 +267,22 @@ def _parse_link(
                     dtype=gs.np_float,
                 )
                 # NOTE: No idea how to scale the angle limits under non-uniform scaling now.
-                lower_limit_attr = joint.GetLowerLimitAttr()
-                upper_limit_attr = joint.GetUpperLimitAttr()
-                lower_limit = np.deg2rad(lower_limit_attr.Get()) if lower_limit_attr.HasValue() else -np.inf
-                upper_limit = np.deg2rad(upper_limit_attr.Get()) if upper_limit_attr.HasValue() else np.inf
+                # For generic PhysicsJoint detected as REVOLUTE, use LimitAPI instead of joint attrs
+                if detected_axis_str is not None:
+                    dof_name = f"rot{detected_axis_str}"
+                    lower_limit, upper_limit = -np.inf, np.inf
+                    if joint_prim.HasAPI(UsdPhysics.LimitAPI, dof_name):
+                        limit = UsdPhysics.LimitAPI.Get(joint_prim, dof_name)
+                        low, high = limit.GetLowAttr().Get(), limit.GetHighAttr().Get()
+                        if low is not None:
+                            lower_limit = np.deg2rad(low)
+                        if high is not None:
+                            upper_limit = np.deg2rad(high)
+                else:
+                    lower_limit_attr = joint.GetLowerLimitAttr()
+                    upper_limit_attr = joint.GetUpperLimitAttr()
+                    lower_limit = np.deg2rad(lower_limit_attr.Get()) if lower_limit_attr.HasValue() else -np.inf
+                    upper_limit = np.deg2rad(upper_limit_attr.Get()) if upper_limit_attr.HasValue() else np.inf
                 j_info["dofs_limit"] = np.asarray([[lower_limit, upper_limit]], dtype=gs.np_float)
             else:  # joint_type == gs.JOINT_TYPE.PRISMATIC
                 j_info["dofs_motion_ang"] = np.zeros((1, 3), dtype=gs.np_float)
@@ -239,10 +309,22 @@ def _parse_link(
                     ],
                     dtype=gs.np_float,
                 )
-                lower_limit_attr = joint.GetLowerLimitAttr()
-                upper_limit_attr = joint.GetUpperLimitAttr()
-                lower_limit = lower_limit_attr.Get() if lower_limit_attr.HasValue() else -np.inf
-                upper_limit = upper_limit_attr.Get() if upper_limit_attr.HasValue() else np.inf
+                # For generic PhysicsJoint detected as PRISMATIC, use LimitAPI
+                if detected_axis_str is not None:
+                    dof_name = f"trans{detected_axis_str}"
+                    lower_limit, upper_limit = -np.inf, np.inf
+                    if joint_prim.HasAPI(UsdPhysics.LimitAPI, dof_name):
+                        limit = UsdPhysics.LimitAPI.Get(joint_prim, dof_name)
+                        low, high = limit.GetLowAttr().Get(), limit.GetHighAttr().Get()
+                        if low is not None:
+                            lower_limit = float(low)
+                        if high is not None:
+                            upper_limit = float(high)
+                else:
+                    lower_limit_attr = joint.GetLowerLimitAttr()
+                    upper_limit_attr = joint.GetUpperLimitAttr()
+                    lower_limit = lower_limit_attr.Get() if lower_limit_attr.HasValue() else -np.inf
+                    upper_limit = upper_limit_attr.Get() if upper_limit_attr.HasValue() else np.inf
                 j_info["dofs_limit"] = np.asarray([[lower_limit, upper_limit]], dtype=gs.np_float) * morph.scale
                 j_info["init_qpos"] *= morph.scale
 
@@ -253,8 +335,22 @@ def _parse_link(
             if joint_type == gs.JOINT_TYPE.SPHERICAL:
                 j_info["dofs_motion_ang"] = np.eye(3)
                 j_info["dofs_motion_vel"] = np.zeros((3, 3))
-                j_info["dofs_limit"] = np.tile([-np.inf, np.inf], (3, 1))
                 j_info["init_qpos"] = gu.identity_quat()
+                # Native SphericalJoint uses cone limits (ConeAngle0/1), while generic PhysicsJoint
+                # (D6) uses per-axis pyramid limits via LimitAPI:rotX/rotY/rotZ. Neither is currently
+                # enforced by the Genesis solver for spherical joints.
+                # Ref: https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/dev_guide/rigid_bodies_articulations/joints.html#spherical-joint
+                dofs_limit = []
+                for dof_name in ("rotX", "rotY", "rotZ"):
+                    if joint_prim is not None and joint_prim.HasAPI(UsdPhysics.LimitAPI, dof_name):
+                        limit = UsdPhysics.LimitAPI.Get(joint_prim, dof_name)
+                        low, high = limit.GetLowAttr().Get(), limit.GetHighAttr().Get()
+                        lo = np.deg2rad(low) if low is not None and low < high else -np.inf
+                        hi = np.deg2rad(high) if high is not None and low < high else np.inf
+                        dofs_limit.append([lo, hi])
+                    else:
+                        dofs_limit.append([-np.inf, np.inf])
+                j_info["dofs_limit"] = np.asarray(dofs_limit, dtype=gs.np_float)
             elif joint_type == gs.JOINT_TYPE.FIXED:
                 j_info["dofs_motion_ang"] = np.zeros((0, 3))
                 j_info["dofs_motion_vel"] = np.zeros((0, 3))
@@ -555,6 +651,28 @@ def parse_usd_rigid_entity(morph: gs.morphs.USD, surface: gs.surfaces.Surface):
     joint_prims = _compute_joint_prim_paths(stage, entity_prim)
     links, link_joints, link_path_to_idx = _parse_articulation_structure(stage, entity_prim, joint_prims)
     links_g_infos = _parse_geoms(context, entity_prim, link_path_to_idx, morph, surface)
+
+    # Visual fallback: duplicate collision geometry as visual when no visual geometry exists,
+    # following the same pattern as MJCF (genesis/utils/mjcf.py).
+    if surface.texture is None:
+        surface = surface.model_copy()
+        surface.update_texture()
+    for link_g_infos in links_g_infos:
+        has_visual = any("vmesh" in g for g in link_g_infos)
+        if has_visual:
+            continue
+        collision_entries = [g for g in link_g_infos if g.get("contype") or g.get("conaffinity")]
+        if collision_entries:
+            gs.logger.warning(
+                "No visual geometry found for link. Falling back to using collision geometries as visual."
+            )
+        for g_info in collision_entries:
+            g_info = g_info.copy()
+            mesh = g_info.pop("mesh")
+            mesh = gs.Mesh.from_trimesh(mesh=mesh.trimesh, surface=surface, metadata=mesh.metadata)
+            g_info = {**g_info, "vmesh": mesh, "contype": 0, "conaffinity": 0}
+            link_g_infos.append(g_info)
+
     l_infos, links_j_infos = _parse_links(context, links, link_joints, morph)
     l_infos, links_j_infos, links_g_infos, _ = urdf_utils._order_links(l_infos, links_j_infos, links_g_infos)
     eqs_info = []  # USD doesn't support equality constraints

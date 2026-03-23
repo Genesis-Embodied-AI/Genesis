@@ -199,6 +199,8 @@ class UsdContext:
             applied_surface.update_texture(**surface_dict)
             if surface_id in self._bake_material_paths:
                 bake_success = True if surface_dict else False
+                if not bake_success:
+                    gs.logger.warning(f"Material for '{geom_path}' could not be loaded. Using default material.")
             else:
                 bake_success = None
         else:
