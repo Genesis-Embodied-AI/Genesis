@@ -1249,7 +1249,7 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_points(poss, colors)
-        
+
     @gs.assert_built
     def draw_debug_pyramid(self, T, base_width=0.05, base_height=0.05, height=0.05, color=(1.0, 1.0, 1.0, 0.5)):
         """
@@ -1275,7 +1275,7 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_pyramid(T, base_width, base_height, height, color)
-        
+
     @gs.assert_built
     def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
         """
@@ -1298,12 +1298,9 @@ class Scene(RBC):
         nodes = []
         with self._visualizer.viewer_lock:
             for i in range(len(poss) - 1):
-                node = self._visualizer.context.draw_debug_line(
-                    poss[i], poss[i + 1], radius, color
-                )
+                node = self._visualizer.context.draw_debug_line(poss[i], poss[i + 1], radius, color)
                 nodes.append(node)
         return nodes
-
 
     @gs.assert_built
     def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
