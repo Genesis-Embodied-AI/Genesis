@@ -550,6 +550,8 @@ class Collider:
                 normal.zero_()
             else:
                 normal[:, envs_idx] = 0.0
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
@@ -603,6 +605,8 @@ class Collider:
                 pos[:, envs_idx] = 0.0
                 normal[:, envs_idx] = 0.0
                 force[:, envs_idx] = 0.0
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
             return
 
         if not isinstance(envs_idx, torch.Tensor):
