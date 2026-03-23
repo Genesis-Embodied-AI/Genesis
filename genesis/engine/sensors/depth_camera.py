@@ -2,14 +2,14 @@ import torch
 
 from genesis.options.sensors import DepthCamera as DepthCameraOptions
 
+from .base_sensor import Sensor
 from .raycaster import RaycasterData, RaycasterSensor, RaycasterSharedMetadata
-from .sensor_manager import register_sensor
 
 
-@register_sensor(DepthCameraOptions, RaycasterSharedMetadata, RaycasterData)
-class DepthCameraSensor(RaycasterSensor):
+class DepthCameraSensor(RaycasterSensor, Sensor[DepthCameraOptions, RaycasterSharedMetadata, RaycasterData]):
     def build(self):
         super().build()
+
         batch_shape = (self._manager._sim._B,) if self._manager._sim.n_envs > 0 else ()
         self._shape = (*batch_shape, self._options.pattern.height, self._options.pattern.width)
 

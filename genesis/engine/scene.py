@@ -4,7 +4,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable, Iterable, Literal
+from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from quadrants.lang import impl
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import Material
+from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
     KinematicOptions,
@@ -45,8 +45,10 @@ from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.rigid_entity import RigidEntity
+    from genesis.engine.sensors.base_sensor import Sensor
     from genesis.recorders import Recorder
-    from genesis.options.sensors import SensorOptions
+    from genesis.options.sensors.options import SensorOptions, SensorT
 
 
 @gs.assert_initialized
@@ -149,29 +151,19 @@ class Scene(RBC):
 
         self.sim_options = sim_options
         self.coupler_options = coupler_options
-        self.tool_options = tool_options
-        self.rigid_options = rigid_options
-        self.kinematic_options = kinematic_options
-        self.mpm_options = mpm_options
-        self.sph_options = sph_options
-        self.fem_options = fem_options
-        self.sf_options = sf_options
-        self.pbd_options = pbd_options
+        self.tool_options = tool_options.model_copy_from(sim_options)
+        self.rigid_options = rigid_options.model_copy_from(sim_options)
+        self.kinematic_options = kinematic_options.model_copy_from(sim_options)
+        self.mpm_options = mpm_options.model_copy_from(sim_options)
+        self.sph_options = sph_options.model_copy_from(sim_options)
+        self.fem_options = fem_options.model_copy_from(sim_options)
+        self.sf_options = sf_options.model_copy_from(sim_options)
+        self.pbd_options = pbd_options.model_copy_from(sim_options)
         self.profiling_options = profiling_options
 
         self.vis_options = vis_options
         self.viewer_options = viewer_options
         self.renderer_options = renderer
-
-        # merge options
-        self.tool_options.copy_attributes_from(self.sim_options)
-        self.rigid_options.copy_attributes_from(self.sim_options)
-        self.kinematic_options.copy_attributes_from(self.sim_options)
-        self.mpm_options.copy_attributes_from(self.sim_options)
-        self.sph_options.copy_attributes_from(self.sim_options)
-        self.fem_options.copy_attributes_from(self.sim_options)
-        self.sf_options.copy_attributes_from(self.sim_options)
-        self.pbd_options.copy_attributes_from(self.sim_options)
 
         # simulator
         self._sim = Simulator(
@@ -325,6 +317,28 @@ class Scene(RBC):
             # This scene may have been destroyed previously
             pass
 
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: None = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> "RigidEntity": ...
+
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: Material[EntityT] = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> EntityT: ...
+
     @gs.assert_unbuilt
     def add_entity(
         self,
@@ -334,7 +348,7 @@ class Scene(RBC):
         visualize_contact: bool = False,
         vis_mode: str | None = None,
         name: str | None = None,
-    ):
+    ) -> "Entity":
         """
         Add an entity to the scene.
 
@@ -375,13 +389,19 @@ class Scene(RBC):
         if is_heterogeneous:
             morph = tuple(morph)
             morph_for_checks = morph[0]
-            if not isinstance(material, gs.materials.Rigid):
-                gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
-            for m in morph:
-                if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
-                    gs.raise_exception(
-                        f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
-                    )
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
+                gs.raise_exception(
+                    "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
+                )
+            if not all(
+                isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)) for m in morph
+            ):
+                gs.raise_exception("Heterogeneous morphs only support Primitive, Mesh, URDF and MJCF types.")
+            if len(set(isinstance(m, (gs.morphs.URDF, gs.morphs.MJCF)) for m in morph)) > 1:
+                gs.raise_exception(
+                    "Heterogeneous morphs must be consistent: either all articulated robots (ie URDF, MJCF) or all "
+                    "basic objects (ie Primitive, Mesh)."
+                )
         else:
             morph_for_checks = morph
 
@@ -473,10 +493,12 @@ class Scene(RBC):
             gs.raise_exception()
 
         # Set material-dependent default options
-        if isinstance(morph, gs.morphs.FileMorph):
-            # Rigid entities will convexify geom by default
-            if morph.convexify is None:
-                morph.convexify = isinstance(material, gs.materials.Rigid)
+        morphs_to_configure = morph if is_heterogeneous else (morph,)
+        for morph_variant in morphs_to_configure:
+            if isinstance(morph_variant, gs.morphs.FileMorph):
+                # Rigid entities will convexify geom by default
+                if morph_variant.convexify is None:
+                    morph_variant.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
@@ -610,7 +632,7 @@ class Scene(RBC):
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: "SensorOptions"):
+    def add_sensor(self, sensor_options: "SensorOptions[SensorT]") -> "SensorT":
         """
         Add a sensor to the scene.
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.4.1"
+version = "0.4.3"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -15,7 +15,8 @@ dependencies = [
     "numpy>=1.26.4",
     "frozendict",
     "trimesh",
-    "libigl",
+    # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
+    "libigl!=2.6.2",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
     "mujoco>=3.2.5",
@@ -164,6 +165,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
+    "--verbose",
+    "-r", "a",
     "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",

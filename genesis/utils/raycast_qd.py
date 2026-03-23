@@ -273,7 +273,8 @@ def kernel_update_verts_and_aabbs(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+# FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
+@qd.kernel(fastcache=False)
 def kernel_cast_ray(
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,

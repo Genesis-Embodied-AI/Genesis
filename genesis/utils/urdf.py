@@ -201,7 +201,7 @@ def parse_urdf(morph, surface):
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
-                    surface.color is None
+                    surface.texture is None
                     and getattr(geom_prop, "material") is not None
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or not tmesh.visual.defined)
@@ -444,6 +444,63 @@ def translate_inertia(I, m, dist):
 def rotate_inertia(I, R):
     """Rotate inertia tensor I by rotation matrix R."""
     return R @ I @ R.T
+
+
+def principal_axes_rot(I, tol=1e-3):
+    """Return rotation matrix R whose columns are the (unsorted) principal axes of inertia I."""
+    I = 0.5 * (I + I.T)
+    eigvals, eigvecs = np.linalg.eigh(I)
+
+    if 1.0 - np.mean(np.abs(eigvecs).max(axis=1)) < tol:
+        return np.eye(3)
+
+    # Find degenerate groups
+    groups, i = [], 0
+    while i < 3:
+        j = i + 1
+        while j < 3 and eigvals[j] - eigvals[i] < tol * eigvals[-1]:
+            j += 1
+        groups.append(list(range(i, j)))
+        i = j
+
+    # Assign unique eigenvectors to their closest coordinate axis first
+    out_cols = [None, None, None]
+    used_axes = set()
+    for g in groups:
+        if len(g) == 1:
+            col = g[0]
+            for ax in np.argsort(np.abs(eigvecs[:, col]))[::-1]:
+                if ax not in used_axes:
+                    out_cols[ax] = col
+                    used_axes.add(ax)
+                    break
+
+    # Fill remaining axes with degenerate group columns
+    remaining_axes = [ax for ax in range(3) if ax not in used_axes]
+    remaining_cols = [c for g in groups if len(g) > 1 for c in g]
+    for ax, col in zip(remaining_axes, remaining_cols):
+        out_cols[ax] = col
+
+    R = eigvecs[:, out_cols]
+
+    # Procrustes on the degenerate axes (which may be non-contiguous after reordering)
+    if remaining_axes:
+        U = R[:, remaining_axes]
+        T = np.eye(3)[:, remaining_axes]
+        Usvd, _, Vt = np.linalg.svd(U.T @ T)
+        Q = Usvd @ Vt
+        if np.linalg.det(Q) < 0:
+            Usvd[:, -1] *= -1
+            Q = Usvd @ Vt
+        R[:, remaining_axes] = U @ Q
+
+    # Canonicalize sign: largest-magnitude element of each column should be positive
+    R *= np.sign(R[np.argmax(np.abs(R), axis=0), np.arange(3)])
+
+    # Make sure the matrix is a pure rotation
+    if np.linalg.det(R) < 0:
+        R[:, 0] = -R[:, 0]
+    return R
 
 
 def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):

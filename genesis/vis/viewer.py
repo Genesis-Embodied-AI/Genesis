@@ -146,7 +146,7 @@ class Viewer(RBC):
         self._pyrender_viewer.run()
 
     def stop(self):
-        if self.is_alive():
+        if self._pyrender_viewer is not None and self._pyrender_viewer.is_active:
             self._pyrender_viewer.close()
 
     def is_alive(self):
@@ -158,8 +158,7 @@ class Viewer(RBC):
                     self._pyrender_viewer.close()
                 except Exception:
                     pass
-                gs.raise_exception_from("Unexpected OpenGL context error.", self._pyrender_viewer._exception)
-            return False
+            gs.raise_exception_from("Unexpected viewer error.", self._pyrender_viewer._exception)
         return self._pyrender_viewer.is_active
 
     def setup_camera(self):
@@ -196,8 +195,18 @@ class Viewer(RBC):
     def close_offscreen(self, render_target):
         return self._pyrender_viewer.close_offscreen(render_target)
 
-    def render_offscreen(self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False):
-        return self._pyrender_viewer.render_offscreen(camera_node, render_target, rgb, depth, seg, normal)
+    def render_offscreen(
+        self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False, skip_markers=False
+    ):
+        return self._pyrender_viewer.render_offscreen(
+            camera_node,
+            render_target,
+            rgb,
+            depth,
+            seg,
+            normal,
+            skip_markers=skip_markers,
+        )
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):
         """

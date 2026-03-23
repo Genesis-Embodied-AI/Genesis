@@ -1,7 +1,12 @@
+from typing import TYPE_CHECKING
+
 from .base import Base
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.pbd_entity import PBD3DEntity
 
-class Elastic(Base):
+
+class Elastic(Base["PBD3DEntity"]):
     """
     The 3D elastic volumentric material class for PBD.
 

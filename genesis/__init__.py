@@ -5,6 +5,7 @@ import atexit
 import logging as _logging
 import traceback
 import weakref
+from typing import Callable
 from warnings import warn
 from contextlib import redirect_stdout
 
@@ -41,6 +42,7 @@ if _IS_OLD_TORCH:
 # Global state
 _initialized: bool = False
 _scene_registry: list[weakref.ReferenceType["Scene"]] = []
+_module_registry: set[tuple[Callable[[], None], Callable[[], None]]] = set()
 _theme: str | None = None
 logger: Logger | None = None
 device: torch.device | None = None
@@ -355,6 +357,10 @@ def init(
     atexit.register(destroy)
     _initialized = True
 
+    # Initialize all externally registered modules
+    for init_fun, _destroy_fun in _module_registry:
+        init_fun()
+
 
 ########################## destroy ##########################
 
@@ -386,9 +392,13 @@ def destroy():
     # Destroy all scenes
     global _scene_registry
     for scene_ref in _scene_registry.copy():
-        if scene_ref:
-            scene = scene_ref()
-            scene.destroy()
+        scene = scene_ref()
+        assert scene is not None
+        scene.destroy()
+
+    # Destroy all externally registered modules
+    for _init_fun, destroy_fun in _module_registry:
+        destroy_fun()
 
     # Reset Quadrants
     qd.reset()
@@ -414,6 +424,23 @@ def destroy():
     device = None
     backend = None
     EPS = None
+
+
+####################### External module registration hook #######################
+
+
+def register_external_module(init_fun: Callable[[], None], destroy_fun: Callable[[], None]) -> None:
+    assert isinstance(init_fun, Callable) and isinstance(destroy_fun, Callable)
+    _module_registry.add((init_fun, destroy_fun))
+
+    # Call init right away if Genesis is already initialized
+    if gs._initialized:
+        init_fun()
+
+
+def unregister_external_module(init_fun: Callable[[], None], destroy_fun: Callable[[], None]) -> None:
+    assert isinstance(init_fun, Callable) and isinstance(destroy_fun, Callable)
+    _module_registry.remove((init_fun, destroy_fun))
 
 
 ########################## Exception and exit handling ##########################

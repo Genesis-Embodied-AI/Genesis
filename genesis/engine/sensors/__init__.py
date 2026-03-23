@@ -1,8 +1,12 @@
-from . import base_sensor
-from . import contact_force
-from . import imu
-from . import raycaster
-from . import depth_camera
-from . import camera
-from . import kinematic_contact_probe
+from . import (
+    base_sensor,
+    camera,
+    contact_force,
+    depth_camera,
+    imu,
+    kinematic_tactile,
+    proximity,
+    raycaster,
+    temperature,
+)
 from .sensor_manager import SensorManager

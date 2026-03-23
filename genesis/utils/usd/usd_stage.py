@@ -193,7 +193,7 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
             assert common_ancestor_prim.IsValid(), f"Invalid common ancestor path: {common_ancestor_path}"
 
             # Create morph for this connected component
-            entity_morph = morph.copy()
+            entity_morph = morph.model_copy()
             entity_morph.prim_path = common_ancestor_path
             morphs.append(entity_morph)
 
@@ -202,7 +202,7 @@ def parse_usd_stage(morph: gs.morphs.USD) -> List[gs.morphs.USD]:
     pure_rigid_bodies = all_rigid_bodies - links_referenced_by_joints
 
     for rigid_body_path in pure_rigid_bodies:
-        entity_morph = morph.copy()
+        entity_morph = morph.model_copy()
         entity_morph.prim_path = rigid_body_path
         morphs.append(entity_morph)
 

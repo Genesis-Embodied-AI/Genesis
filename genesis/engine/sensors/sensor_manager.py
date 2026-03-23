@@ -1,41 +1,98 @@
-from typing import TYPE_CHECKING, Type
+import importlib
+import pkgutil
+import sys
+from typing import TYPE_CHECKING, ForwardRef, get_args, get_origin
 
 import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
-    from .base_sensor import Sensor, SensorOptions, SharedSensorMetadata
+    from .base_sensor import Sensor, SharedSensorMetadata
 
 
 class SensorManager:
-    SENSOR_TYPES_MAP: dict[Type["SensorOptions"], tuple[Type["Sensor"], Type["SharedSensorMetadata"], Type[tuple]]] = {}
+    # Maps sensor options class -> sensor class for runtime dispatch.
+    SENSOR_TYPES_MAP: dict[type[SensorOptions], type["Sensor"]] = {}
 
     def __init__(self, sim):
         self._sim = sim
-        self._sensors_by_type: dict[Type["Sensor"], list["Sensor"]] = {}
-        self._sensors_metadata: dict[Type["Sensor"], SharedSensorMetadata | None] = {}
-        self._ground_truth_cache: dict[Type[torch.dtype], torch.Tensor] = {}
-        self._cache: dict[Type[torch.dtype], torch.Tensor] = {}
-        self._buffered_data: dict[Type[torch.dtype], TensorRingBuffer] = {}
-        self._cache_slices_by_type: dict[Type["Sensor"], slice] = {}
-        self._should_update_cache_by_type: dict[Type["Sensor"], bool] = {}
-        self._is_last_cache_cloned: dict[tuple[bool, Type[torch.dtype]], bool] = {}
-        self._cloned_cache: dict[tuple[bool, Type[torch.dtype]], torch.Tensor] = {}
+        self._sensors_by_type: dict[type["Sensor"], list["Sensor"]] = {}
+        self._sensors_metadata: dict[type["Sensor"], SharedSensorMetadata | None] = {}
+        self._ground_truth_cache: dict[type[torch.dtype], torch.Tensor] = {}
+        self._cache: dict[type[torch.dtype], torch.Tensor] = {}
+        self._buffered_data: dict[type[torch.dtype], TensorRingBuffer] = {}
+        self._cache_slices_by_type: dict[type["Sensor"], slice] = {}
+        self._should_update_cache_by_type: dict[type["Sensor"], bool] = {}
+        self._is_last_cache_cloned: dict[tuple[bool, type[torch.dtype]], bool] = {}
+        self._cloned_cache: dict[tuple[bool, type[torch.dtype]], torch.Tensor] = {}
 
     def create_sensor(self, sensor_options: "SensorOptions") -> "Sensor":
-        sensor_options.validate(self._sim.scene)
-        sensor_cls, metadata_cls, data_cls = SensorManager.SENSOR_TYPES_MAP[type(sensor_options)]
+        sensor_options.validate_scene(self._sim.scene)
+        sensor_cls = SensorManager._resolve_sensor_cls(type(sensor_options))
         self._sensors_by_type.setdefault(sensor_cls, [])
         if sensor_cls not in self._sensors_metadata:
-            self._sensors_metadata[sensor_cls] = metadata_cls()
-        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), data_cls, self)
+            self._sensors_metadata[sensor_cls] = sensor_cls._metadata_cls()
+        sensor = sensor_cls(sensor_options, len(self._sensors_by_type[sensor_cls]), self)
         self._sensors_by_type[sensor_cls].append(sensor)
         return sensor
+
+    @staticmethod
+    def _resolve_sensor_cls(options_cls: type) -> type["Sensor"]:
+        """Resolve the sensor class for the given options class, triggering lazy discovery if needed."""
+        sensor_cls = SensorManager.SENSOR_TYPES_MAP.get(options_cls)
+        if sensor_cls is not None:
+            return sensor_cls
+
+        # Not registered yet — check that the options class specifies its sensor type, then try to discover it.
+        # The sensor class name is extracted from the generic metadata on the options class bases.
+        is_parameterized = False
+        for base in options_cls.__bases__:
+            meta = base.__pydantic_generic_metadata__
+            if meta["origin"] is not None and issubclass(meta["origin"], SensorOptions):
+                is_parameterized = bool(meta["args"]) and isinstance(meta["args"][0], str)
+                break
+        # Fallback: typing introspection on __orig_bases__ (for pydantic versions that flatten bases)
+        if not is_parameterized:
+            for base in options_cls.__orig_bases__:
+                origin = get_origin(base)
+                if origin is not None and issubclass(origin, SensorOptions):
+                    args = get_args(base)
+                    is_parameterized = bool(args) and isinstance(args[0], (str, ForwardRef))
+                    break
+
+        if not is_parameterized:
+            gs.raise_exception(
+                f"{options_cls.__name__} must parameterize its SensorOptions base with a sensor class, "
+                f"e.g. `class {options_cls.__name__}(SensorOptions['MySensor']): ...`"
+            )
+
+        # Try to discover the sensor module from sibling modules of the options package.
+        options_module = options_cls.__module__
+        if "." in options_module:
+            pkg_name = options_module.rsplit(".", 1)[0]
+            pkg = sys.modules.get(pkg_name)
+            if pkg is not None:
+                pkg_path = pkg.__dict__.get("__path__")
+                if pkg_path is not None:
+                    for _, modname, _ in pkgutil.iter_modules(pkg_path, pkg.__name__ + "."):
+                        if modname not in sys.modules:
+                            try:
+                                importlib.import_module(modname)
+                            except Exception:
+                                continue
+                        if options_cls in SensorManager.SENSOR_TYPES_MAP:
+                            return SensorManager.SENSOR_TYPES_MAP[options_cls]
+
+        gs.raise_exception(
+            f"No sensor class registered for {options_cls.__name__}. Ensure the sensor module is in the same "
+            "package as the options module, or import the sensor class manually before calling add_sensor()."
+        )
 
     def build(self):
         max_buffer_len = 0
@@ -82,6 +139,9 @@ class SensorManager:
         self._sensors_by_type.clear()
 
     def reset(self, envs_idx=None):
+        if not self._sensors_by_type:
+            return
+
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
 
         for dtype in self._buffered_data.keys():
@@ -94,7 +154,11 @@ class SensorManager:
                 self._cloned_cache[key] = torch.tensor([], dtype=dtype, device=gs.device)
 
         for sensor_cls in self._sensors_by_type.keys():
-            sensor_cls.reset(self._sensors_metadata[sensor_cls], envs_idx)
+            dtype = sensor_cls._get_cache_dtype()
+            cache_slice = self._cache_slices_by_type[sensor_cls]
+            sensor_cls.reset(
+                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice], envs_idx
+            )
 
     def step(self):
         for buffered_data in self._buffered_data.values():
@@ -137,13 +201,3 @@ class SensorManager:
     @property
     def sensors(self):
         return gs.List([sensor for sensor_list in self._sensors_by_type.values() for sensor in sensor_list])
-
-
-def register_sensor(
-    options_cls: Type["SensorOptions"], metadata_cls: Type["SharedSensorMetadata"], data_cls: Type[tuple]
-):
-    def _impl(sensor_cls: Type["Sensor"]):
-        SensorManager.SENSOR_TYPES_MAP[options_cls] = sensor_cls, metadata_cls, data_cls
-        return sensor_cls
-
-    return _impl

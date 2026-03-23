@@ -154,12 +154,7 @@ class Camera(RBC):
                 self._is_batched = False
                 self._raytracer.add_camera(self)
             else:
-                self._is_batched = False
-                if self._visualizer.scene.n_envs > 1 and self._visualizer._context.env_separate_rigid:
-                    gs.logger.warning(
-                        "Batched rendering via 'VisOptions.env_separate_rigid=True' is only partially supported by "
-                        "Rasterizer for now. The same camera transform will be used for all the environments."
-                    )
+                self._is_batched = self._visualizer.scene.n_envs > 0 and self._visualizer._context.env_separate_rigid
             if self._visualizer.scene.n_envs > 0:
                 if self._env_idx is None:
                     if not self._is_batched:
@@ -215,9 +210,6 @@ class Camera(RBC):
         offset_T : np.ndarray, shape (4, 4)
             The transformation matrix specifying the camera's pose relative to the rigid link.
         """
-        if self._visualizer._context.env_separate_rigid:
-            gs.raise_exception("This method is not supported by Rasterizer when 'VisOptions.env_separate_rigid=True'.")
-
         if self._followed_entity is not None:
             gs.raise_exception("Impossible to attach a camera that is already following an entity.")
 
@@ -277,9 +269,6 @@ class Camera(RBC):
             If True, the camera will maintain its orientation relative to the world. If False, the camera will look at
             the base link of the entity.
         """
-        if self._visualizer._context.env_separate_rigid:
-            gs.raise_exception("This method is not supported by Rasterizer when 'VisOptions.env_separate_rigid=True'.")
-
         if self._attached_link is not None:
             gs.raise_exception("Impossible to following an entity with a camera that is already attached.")
 
@@ -481,18 +470,19 @@ class Camera(RBC):
             if self._debug:
                 title += " (debug)"
             if self._is_batched:
-                title += f" - Environment {self._visualizer._context.rendered_envs_idx[0]}"
+                rendered_envs_idx = self._visualizer._context.rendered_envs_idx
+                title += f" - Environments {rendered_envs_idx}"
             for img_type, (flag, buffer) in enumerate(
                 ((rgb, rgb_arr), (depth, depth_arr), (segmentation, seg_color_arr), (normal, normal_arr))
             ):
                 if flag:
-                    if self._is_batched:
-                        buffer = buffer[0]
                     buffer = tensor_to_array(buffer)
                     if img_type == IMAGE_TYPE.DEPTH:
                         buffer = as_grayscale_image(buffer, black_to_white=False)
                     else:
                         buffer = np.flip(buffer, axis=-1)
+                    if self._is_batched:
+                        buffer = np.concatenate(list(buffer), axis=1)
                     cv2.imshow(f"{title} [{IMAGE_TYPE(img_type)}]", buffer)
             cv2.waitKey(1)
 
@@ -503,7 +493,8 @@ class Camera(RBC):
                     "Missing frames in recording. Please call 'camera.render()' after 'every scene.step()'."
                 )
             self._recorded_t_prev == self._visualizer.scene._t
-            self._recorded_imgs.append(tensor_to_array(rgb_arr))
+            rgb_frame = tensor_to_array(rgb_arr)
+            self._recorded_imgs.append(rgb_frame)
 
         return rgb_arr if rgb else None, depth_arr, seg_arr, normal_arr
 
@@ -751,7 +742,7 @@ class Camera(RBC):
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         pos = self._pos[envs_idx]
-        if self._batch_renderer is None:
+        if self._batch_renderer is None and not self._visualizer._context.env_separate_rigid:
             pos = pos + self._envs_offset[envs_idx]
         return pos
 
@@ -760,7 +751,7 @@ class Camera(RBC):
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         lookat = self._lookat[envs_idx]
-        if self._batch_renderer is None:
+        if self._batch_renderer is None and not self._visualizer._context.env_separate_rigid:
             lookat = lookat + self._envs_offset[envs_idx]
         return lookat
 
@@ -783,13 +774,13 @@ class Camera(RBC):
         assert self._env_idx is None or envs_idx is None
         envs_idx = () if envs_idx is None else envs_idx
         transform = self._transform[envs_idx]
-        if self._batch_renderer is None:
+        if self._batch_renderer is None and not self._visualizer._context.env_separate_rigid:
             transform = transform.clone()
             transform[..., :3, 3] += self._envs_offset[envs_idx]
         return transform
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: idx: {self._idx}, pos: {self.pos}, lookat: {self.lookat}"
+        return f"{self.__repr_name__()}: idx: {self._idx}, pos: {self.pos}, lookat: {self.lookat}"
 
     @property
     def is_built(self):

@@ -21,7 +21,6 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.engine.solvers import RigidSolver
@@ -79,26 +78,20 @@ class ContactSensorMetadata(SharedSensorMetadata):
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
 
 
-@register_sensor(ContactSensorOptions, ContactSensorMetadata, tuple)
-class ContactSensor(Sensor):
+class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
     """
 
-    def __init__(
-        self,
-        sensor_options: ContactSensorOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, sensor_options: ContactSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._link: "RigidLink | None" = None
         self.debug_object: "Mesh | None" = None
 
     def build(self):
         super().build()
+
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
@@ -173,31 +166,21 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
     max_force: torch.Tensor = make_tensor_field((0, 3))
 
 
-@register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
 class ContactForceSensor(
     RigidSensorMixin[ContactForceSensorMetadata],
     NoisySensorMixin[ContactForceSensorMetadata],
-    Sensor[ContactForceSensorMetadata],
+    Sensor[ContactForceSensorOptions, ContactForceSensorMetadata],
 ):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
 
-    def __init__(
-        self,
-        sensor_options: ContactForceSensorOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, options: ContactForceSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(options, sensor_idx, sensor_manager)
 
         self.debug_object: "Mesh" | None = None
 
     def build(self):
-        if not (isinstance(self._options.resolution, tuple) and len(self._options.resolution) == 3):
-            self._options.resolution = tuple([self._options.resolution] * 3)
-
         super().build()
 
         if self._shared_metadata.solver is None:

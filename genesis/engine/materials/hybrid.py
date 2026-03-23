@@ -1,10 +1,15 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 
 from .base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.hybrid_entity import HybridEntity
+
 
 @qd.data_oriented
-class Hybrid(Material):
+class Hybrid(Material["HybridEntity"]):
     """
     The class for hybrid body material (soft skin actuated by inner rigid skeleton).
 

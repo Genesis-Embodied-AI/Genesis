@@ -2,8 +2,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -32,11 +32,12 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+
+    from .sensor_manager import SensorManager
 
 
 @qd.kernel
@@ -83,7 +84,7 @@ def kernel_cast_rays(
         ray_start_world = qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
 
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
+        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
@@ -124,7 +125,7 @@ def kernel_cast_rays(
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * qd_normalize(
-                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
+                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), eps
                 )
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
                 output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
@@ -167,16 +168,9 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-@register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
-class RaycasterSensor(RigidSensorMixin, Sensor):
-    def __init__(
-        self,
-        options: RaycasterOptions,
-        shared_metadata: RaycasterSharedMetadata,
-        data_cls: Type[RaycasterData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, shared_metadata, data_cls, manager)
+class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+    def __init__(self, options: RaycasterOptions, shared_metadata: RaycasterSharedMetadata, manager: "SensorManager"):
+        super().__init__(options, shared_metadata, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
@@ -197,7 +191,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         shared_metadata.bvh.build()
 
     def build(self):
-        super().build()  # set shared metadata from RigidSensorMixin
+        super().build()
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
@@ -254,8 +248,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, envs_idx):
-        super().reset(shared_metadata, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:

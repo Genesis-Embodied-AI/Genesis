@@ -1,5 +1,6 @@
 import platform
 import sys
+from typing import TYPE_CHECKING
 
 import quadrants as qd
 
@@ -7,9 +8,12 @@ import genesis as gs
 
 from ..base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.mpm_entity import MPMEntity
+
 
 @qd.data_oriented
-class Base(Material):
+class Base(Material["MPMEntity"]):
     """
     The base class of MPM materials.
 
@@ -74,10 +78,6 @@ class Base(Material):
 
         # will be set when added to solver
         self._idx = None
-
-    @classmethod
-    def _repr_type(cls):
-        return f"<gs.materials.MPM.{cls.__name__}>"
 
     @qd.func
     def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):

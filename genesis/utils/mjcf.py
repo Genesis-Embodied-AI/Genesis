@@ -128,7 +128,12 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 # default value...
                 group.attrib.setdefault(param_name, str(MIN_TIMECONST))
         if default_armature is not None:
-            default.find("joint").attrib.setdefault("armature", str(default_armature))
+            worldbody = mjcf.find("worldbody")
+            if worldbody is not None:
+                for joint_elem in worldbody.findall(".//joint"):
+                    if joint_elem.attrib.get("type") == "free":
+                        continue
+                    joint_elem.attrib.setdefault("armature", str(default_armature))
 
         # Must pre-process URDF to overwrite default Mujoco compile flags
         if is_urdf_file:
@@ -185,12 +190,6 @@ def build_model(xml, discard_visual, default_armature=None, merge_fixed_links=Fa
                 mj.jnt_solref[:, 0] = MIN_TIMECONST
                 mj.geom_solref[:, 0] = MIN_TIMECONST
                 mj.eq_solref[:, 0] = MIN_TIMECONST
-
-                # Set default rotor armature inertia
-                if default_armature is not None:
-                    mj.dof_armature[:] = default_armature
-                    mj.body_invweight0[:] = 0.0
-                    mj.dof_invweight0[:] = 0.0
     elif isinstance(xml, mujoco.MjModel):
         mj = xml
     else:
@@ -520,8 +519,8 @@ def parse_geom(mj, i_g, scale, surface, xml_path):
             tmesh = trimesh.creation.icosphere(radius=1.0, subdivisions=2)
         else:
             tmesh = trimesh.creation.icosphere(radius=1.0)
-        mesh_params = dict(vertices=tmesh.vertices, faces=tmesh.faces)
         tmesh.apply_transform(np.diag([*geom_size, 1]))
+        mesh_params = dict(vertices=tmesh.vertices, faces=tmesh.faces)
         uv = None
         gs_type = gs.GEOM_TYPE.ELLIPSOID
         geom_data = geom_size * scale
@@ -739,10 +738,9 @@ def parse_geoms(mj, scale, surface, xml_path):
             if g_info["group"] in (0, 1, 2):
                 g_info = g_info.copy()
                 mesh = g_info.pop("mesh")
-                vmesh = gs.Mesh(
+                vmesh = gs.Mesh.from_trimesh(
                     mesh=mesh.trimesh,
                     surface=surface,
-                    uvs=mesh.uvs,
                     metadata=mesh.metadata,
                 )
                 g_info = {**g_info, "vmesh": vmesh, "contype": 0, "conaffinity": 0}

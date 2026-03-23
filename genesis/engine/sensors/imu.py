@@ -6,8 +6,7 @@ import numpy as np
 import torch
 
 import genesis as gs
-from genesis.options.sensors import IMU as IMUOptions
-from genesis.options.sensors import MaybeMatrix3x3Type
+from genesis.options.sensors import CrossCouplingAxisType, IMU as IMUOptions
 from genesis.utils.geom import (
     inv_transform_by_quat,
     transform_by_quat,
@@ -22,18 +21,18 @@ from .base_sensor import (
     RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
-    _to_tuple,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
+    from .sensor_manager import SensorManager
+
 
 def _get_cross_axis_coupling_to_alignment_matrix(
-    input: MaybeMatrix3x3Type, out: torch.Tensor | None = None
+    input: CrossCouplingAxisType, out: torch.Tensor | None = None
 ) -> torch.Tensor:
     """
     Convert the alignment input to a matrix. Modifies in place if provided, else allocate a new matrix.
@@ -81,39 +80,38 @@ class IMUData(NamedTuple):
     mag: torch.Tensor  # added magnetometer to complete 9-axis IMU
 
 
-@register_sensor(IMUOptions, IMUSharedMetadata, IMUData)
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
     NoisySensorMixin[IMUSharedMetadata],
-    Sensor[IMUSharedMetadata],
+    Sensor[IMUOptions, IMUSharedMetadata, IMUData],
 ):
-    def __init__(
-        self,
-        options: IMUOptions,
-        shared_metadata: IMUSharedMetadata,
-        data_cls: Type[IMUData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, shared_metadata, data_cls, manager)
+    def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
+        # FIXME: Resolution should be made private in mixin, so that it cannot be set by the user directly.
+        options.resolution = options.acc_resolution + options.gyro_resolution + options.mag_resolution
+        options.bias = options.acc_bias + options.gyro_bias + options.mag_bias
+        options.random_walk = options.acc_random_walk + options.gyro_random_walk + options.mag_random_walk
+        options.noise = options.acc_noise + options.gyro_noise + options.mag_noise
+
+        super().__init__(options, shared_metadata, manager)
 
         self.debug_objects: list["Mesh"] = []
         self.quat_offset: torch.Tensor
         self.pos_offset: torch.Tensor
 
     @gs.assert_built
-    def set_acc_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
+    def set_acc_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
+    def set_gyro_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 1, :, :] = rot_matrix
 
     @gs.assert_built
-    def set_mag_cross_axis_coupling(self, cross_axis_coupling: MaybeMatrix3x3Type, envs_idx=None):
+    def set_mag_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 2, :, :] = rot_matrix
@@ -124,25 +122,7 @@ class IMUSensor(
         """
         Initialize all shared metadata needed to update all IMU sensors.
         """
-        self._options.resolution = _to_tuple(
-            self._options.acc_resolution,
-            self._options.gyro_resolution,
-            self._options.mag_resolution,
-            length_per_value=3,
-        )
-        self._options.bias = _to_tuple(
-            self._options.acc_bias, self._options.gyro_bias, self._options.mag_bias, length_per_value=3
-        )
-        self._options.random_walk = _to_tuple(
-            self._options.acc_random_walk,
-            self._options.gyro_random_walk,
-            self._options.mag_random_walk,
-            length_per_value=3,
-        )
-        self._options.noise = _to_tuple(
-            self._options.acc_noise, self._options.gyro_noise, self._options.mag_noise, length_per_value=3
-        )
-        super().build()  # set all shared metadata from RigidSensorBase and NoisySensorBase
+        super().build()
 
         self._shared_metadata.alignment_rot_matrix = concat_with_tensor(
             self._shared_metadata.alignment_rot_matrix,

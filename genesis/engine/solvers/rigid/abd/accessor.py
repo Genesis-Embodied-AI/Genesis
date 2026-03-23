@@ -215,7 +215,7 @@ def kernel_get_state_grad(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_pos(
-    relative: qd.i32,
+    relative: qd.template(),
     pos: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -233,14 +233,14 @@ def kernel_set_links_pos(
         if links_info.parent_idx[I_l] == -1 and links_info.is_fixed[I_l]:
             for j in qd.static(range(3)):
                 links_state.pos[i_l, i_b][j] = pos[i_b_, i_l_, j]
-            if relative:
+            if qd.static(relative):
                 for j in qd.static(range(3)):
                     links_state.pos[i_l, i_b][j] = links_state.pos[i_l, i_b][j] + links_info.pos[I_l][j]
         else:
             q_start = links_info.q_start[I_l]
             for j in qd.static(range(3)):
                 rigid_global_info.qpos[q_start + j, i_b] = pos[i_b_, i_l_, j]
-            if relative:
+            if qd.static(relative):
                 for j in qd.static(range(3)):
                     rigid_global_info.qpos[q_start + j, i_b] = (
                         rigid_global_info.qpos[q_start + j, i_b] + rigid_global_info.qpos0[q_start + j, i_b]
@@ -323,7 +323,7 @@ def kernel_set_links_pos_grad(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat(
-    relative: qd.i32,
+    relative: qd.template(),
     quat: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -338,7 +338,7 @@ def kernel_set_links_quat(
         i_l = links_idx[i_l_]
         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
-        if relative:
+        if qd.static(relative):
             quat_ = qd.Vector(
                 [
                     quat[i_b_, i_l_, 0],
@@ -376,7 +376,7 @@ def kernel_set_links_quat(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_set_links_quat_grad(
-    relative: qd.i32,
+    relative: qd.template(),
     quat_grad: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -444,6 +444,33 @@ def kernel_set_links_inertial_mass(
     else:
         for i_l_ in range(links_idx.shape[0]):
             links_info.inertial_mass[links_idx[i_l_]] = inertial_mass[i_l_]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_adjust_link_inertia(
+    ratio: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    links_info: array_class.LinksInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    if qd.static(static_rigid_sim_config.batch_links_info):
+        for i_l_, i_b_ in qd.ndrange(links_idx.shape[0], envs_idx.shape[0]):
+            r = ratio[i_b_, i_l_]
+            links_info.inertial_mass[links_idx[i_l_], envs_idx[i_b_]] *= r
+            for j1, j2 in qd.static(qd.ndrange(3, 3)):
+                links_info.inertial_i[links_idx[i_l_], envs_idx[i_b_]][j1, j2] *= r
+            for j in qd.static(range(2)):
+                links_info.invweight[links_idx[i_l_], envs_idx[i_b_]][j] /= r
+    else:
+        for i_l_ in range(links_idx.shape[0]):
+            r = ratio[i_l_]
+            links_info.inertial_mass[links_idx[i_l_]] *= r
+            for j1, j2 in qd.static(qd.ndrange(3, 3)):
+                links_info.inertial_i[links_idx[i_l_]][j1, j2] *= r
+            for j in qd.static(range(2)):
+                links_info.invweight[links_idx[i_l_]][j] /= r
 
 
 @qd.kernel(fastcache=gs.use_fastcache)

@@ -1,4 +1,3 @@
-import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -7,10 +6,11 @@ import torch
 from frozendict import frozendict
 
 import genesis as gs
+
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
-from genesis.utils.misc import qd_to_torch
+from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
@@ -129,20 +129,45 @@ class ConstraintSolver:
                 qacc_ws[:, envs_idx] = 0.0
             return
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_reset(
-            envs_idx,
-            self.constraint_state,
-            self._solver._static_rigid_sim_config,
-        )
+        envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
+        constraint_solver_kernel_reset(envs_idx, self.constraint_state, self._solver._static_rigid_sim_config)
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx)
 
-        if envs_idx is None:
-            envs_idx = self._solver._scene._envs_idx
-        constraint_solver_kernel_clear(
+        if gs.use_zerocopy and (
+            not isinstance(envs_idx, torch.Tensor) or (not IS_OLD_TORCH or envs_idx.dtype == torch.bool)
+        ):
+            n_constraints = qd_to_torch(self.constraint_state.n_constraints, copy=False)
+            n_constraints_equality = qd_to_torch(self.constraint_state.n_constraints_equality, copy=False)
+            n_constraints_frictionloss = qd_to_torch(self.constraint_state.n_constraints_frictionloss, copy=False)
+            qd_n_equalities = qd_to_torch(self.constraint_state.qd_n_equalities, copy=False)
+            n_eq = self._solver._n_equalities
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                n_constraints.masked_fill_(envs_idx, 0)
+                n_constraints_equality.masked_fill_(envs_idx, 0)
+                n_constraints_frictionloss.masked_fill_(envs_idx, 0)
+                qd_n_equalities.masked_fill_(envs_idx, n_eq)
+            elif isinstance(envs_idx, torch.Tensor):
+                n_constraints.scatter_(0, envs_idx, 0)
+                n_constraints_equality.scatter_(0, envs_idx, 0)
+                n_constraints_frictionloss.scatter_(0, envs_idx, 0)
+                qd_n_equalities.scatter_(0, envs_idx, n_eq)
+            else:
+                env_mask = indices_to_mask(envs_idx)
+                assign_indexed_tensor(n_constraints, env_mask, 0)
+                assign_indexed_tensor(n_constraints_equality, env_mask, 0)
+                assign_indexed_tensor(n_constraints_frictionloss, env_mask, 0)
+                assign_indexed_tensor(qd_n_equalities, env_mask, n_eq)
+            return
+
+        if not isinstance(envs_idx, torch.Tensor):
+            envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
+        if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+            fn = constraint_solver_kernel_masked_clear
+        else:
+            fn = constraint_solver_kernel_clear
+        fn(
             envs_idx,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -215,13 +240,28 @@ class ConstraintSolver:
         )
 
     def noslip(self):
-        constraint_noslip.kernel_build_efc_AR_b(
-            self._solver.dofs_state,
-            self._solver.entities_info,
-            self._solver._rigid_global_info,
-            self.constraint_state,
-            self._solver._static_rigid_sim_config,
-        )
+        if self._solver._para_level >= gs.PARA_LEVEL.PARTIAL:
+            # GPU (any n_envs): split into Phase 1 (parallel M^{-1} solve) + Phase 2 (parallel AR build)
+            constraint_noslip.kernel_compute_MinvJT(
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
+            constraint_noslip.kernel_compute_AR_and_b(
+                self._solver.dofs_state,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
+        else:
+            # CPU: use original fused kernel (no overhead)
+            constraint_noslip.kernel_build_efc_AR_b(
+                self._solver.dofs_state,
+                self._solver.entities_info,
+                self._solver._rigid_global_info,
+                self.constraint_state,
+                self._solver._static_rigid_sim_config,
+            )
 
         constraint_noslip.kernel_noslip(
             self._collider._collider_state,
@@ -473,6 +513,26 @@ def constraint_solver_kernel_reset(
             constraint_state.qacc_ws[i_d, i_b] = 0.0
 
 
+@qd.func
+def func_clear_constraint_at_env(
+    i_b: gs.qd_int,
+    n_dofs: gs.qd_int,
+    len_constraints: gs.qd_int,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    constraint_state.n_constraints[i_b] = 0
+    constraint_state.n_constraints_equality[i_b] = 0
+    constraint_state.n_constraints_frictionloss[i_b] = 0
+    constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
+    for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
+        constraint_state.jac[i_c, i_d, i_b] = 0.0
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        for i_c in range(len_constraints):
+            constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+
+
 @qd.kernel(fastcache=gs.use_fastcache)
 def constraint_solver_kernel_clear(
     envs_idx: qd.types.ndarray(),
@@ -486,16 +546,26 @@ def constraint_solver_kernel_clear(
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        constraint_state.n_constraints[i_b] = 0
-        constraint_state.n_constraints_equality[i_b] = 0
-        constraint_state.n_constraints_frictionloss[i_b] = 0
-        # Reset dynamic equality count to static count to avoid stale constraints after partial reset
-        constraint_state.qd_n_equalities[i_b] = rigid_global_info.n_equalities[None]
-        for i_d, i_c in qd.ndrange(n_dofs, len_constraints):
-            constraint_state.jac[i_c, i_d, i_b] = 0.0
-        if qd.static(static_rigid_sim_config.sparse_solve):
-            for i_c in range(len_constraints):
-                constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
+        func_clear_constraint_at_env(
+            i_b, n_dofs, len_constraints, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def constraint_solver_kernel_masked_clear(
+    envs_mask: qd.types.ndarray(),
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_dofs = constraint_state.qacc_ws.shape[0]
+    len_constraints = constraint_state.jac.shape[0]
+
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_clear_constraint_at_env(
+                i_b, n_dofs, len_constraints, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
 
 
 # ========================================= Register Pre-Defined Constraints ==========================================

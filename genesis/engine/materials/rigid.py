@@ -1,9 +1,14 @@
+from typing import TYPE_CHECKING
+
 import genesis as gs
 
 from .kinematic import Kinematic
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity import RigidEntity
 
-class Rigid(Kinematic):
+
+class Rigid(Kinematic["RigidEntity"]):
     """
     The Rigid class represents a material used in rigid body simulation.
 

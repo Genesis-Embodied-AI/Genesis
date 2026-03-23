@@ -19,6 +19,7 @@ except ImportError as e:
 
 from pxr import Gf, Sdf, UsdGeom, UsdPhysics
 from genesis.utils.usd import UsdContext, HAS_OMNIVERSE_KIT_SUPPORT
+from .conftest import SKIP_NO_OMNIVERSE_KIT
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -228,6 +229,8 @@ def build_mjcf_scene(xml_path: str, scale: float):
             file=xml_path,
             scale=scale,
             convexify=False,
+            decimate=False,
+            align=False,
         ),
         material=gs.materials.Rigid(
             rho=1000.0,
@@ -258,6 +261,8 @@ def build_usd_scene(
             scale=scale,
             fixed=fixed,
             convexify=False,
+            decimate=False,
+            align=False,
         ),
         material=gs.materials.Rigid(
             rho=1000.0,
@@ -283,9 +288,12 @@ def build_mesh_scene(mesh_file: str, scale: float):
     mesh_morph = gs.morphs.Mesh(
         file=mesh_file,
         scale=scale,
-        euler=(-90, 0, 0),
+        file_meshes_are_zup=True,
+        merge_submeshes_for_collision=False,
         group_by_material=False,
         convexify=False,
+        decimate=False,
+        align=False,
     )
     mesh_scene.add_entity(
         mesh_morph,
@@ -315,8 +323,6 @@ def xml_path(request, tmp_path, model_name):
 def all_primitives_mjcf():
     """Generate an MJCF model with various geometric primitives on a plane."""
     mjcf = ET.Element("mujoco", model="primitives")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
     floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
@@ -512,8 +518,6 @@ def test_primitives_mjcf_vs_usd(xml_path, all_primitives_usd, scale, tol):
 def all_joints_mjcf():
     """Generate an MJCF model with all joint types: prismatic, revolute, spherical, fixed, and free."""
     mjcf = ET.Element("mujoco", model="all_joints")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
     floor = ET.SubElement(worldbody, "body", name="/worldbody/floor")
@@ -828,12 +832,13 @@ def test_usd_parse_nodegraph(usd_file):
     assert_allclose(texture1.color, (0.2, 0.6, 0.9), rtol=USD_COLOR_TOL)
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize(
     "usd_file", ["usd/WoodenCrate/WoodenCrate_D1_1002.usda", "usd/franka_mocap_teleop/table_scene.usd"]
 )
 @pytest.mark.parametrize("backend", [gs.cuda])
-@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason="omniverse-kit support not available")
+@pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason=SKIP_NO_OMNIVERSE_KIT)
 def test_usd_bake(usd_file, tmp_path):
     RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
     RETRY_DELAY = 30.0
@@ -889,8 +894,6 @@ def test_massapi_invalid_defaults_mjcf_vs_usd(asset_tmp_path, scale, tol):
     Both should produce equivalent results.
     """
     mjcf = ET.Element("mujoco", model="massapi_test")
-    default = ET.SubElement(mjcf, "default")
-    ET.SubElement(default, "joint", armature="0.0")
 
     worldbody = ET.SubElement(mjcf, "worldbody")
 

@@ -50,6 +50,64 @@ def collider_kernel_reset(
             collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
+@qd.func
+def func_collider_clear_env(
+    i_b: gs.qd_int,
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_state: array_class.ColliderState,
+):
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        collider_state.n_contacts_hibernated[i_b] = 0
+
+        for i_c in range(collider_state.n_contacts[i_b]):
+            i_la = collider_state.contact_data.link_a[i_c, i_b]
+            i_lb = collider_state.contact_data.link_b[i_c, i_b]
+
+            I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
+            I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
+
+            if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
+                links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
+            ):
+                i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
+                if i_c != i_c_hibernated:
+                    # fmt: off
+                    collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
+                    collider_state.contact_data.geom_b[i_c_hibernated, i_b] = collider_state.contact_data.geom_b[i_c, i_b]
+                    collider_state.contact_data.penetration[i_c_hibernated, i_b] = collider_state.contact_data.penetration[i_c, i_b]
+                    collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
+                    collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
+                    collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
+                    collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
+                    collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
+                    collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
+                    collider_state.contact_data.link_b[i_c_hibernated, i_b] = collider_state.contact_data.link_b[i_c, i_b]
+                    # fmt: on
+
+                collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+
+    for i_c in range(collider_state.n_contacts[i_b]):
+        should_clear = True
+        if qd.static(static_rigid_sim_config.use_hibernation):
+            should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
+        if should_clear:
+            collider_state.contact_data.link_a[i_c, i_b] = -1
+            collider_state.contact_data.link_b[i_c, i_b] = -1
+            collider_state.contact_data.geom_a[i_c, i_b] = -1
+            collider_state.contact_data.geom_b[i_c, i_b] = -1
+            collider_state.contact_data.penetration[i_c, i_b] = 0.0
+            collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+
+    if qd.static(static_rigid_sim_config.use_hibernation):
+        collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
+    else:
+        collider_state.n_contacts[i_b] = 0
+
+
 # only used with hibernation ??
 @qd.kernel(fastcache=gs.use_fastcache)
 def kernel_collider_clear(
@@ -62,63 +120,20 @@ def kernel_collider_clear(
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
+        func_collider_clear_env(i_b, links_state, links_info, static_rigid_sim_config, collider_state)
 
-        if qd.static(static_rigid_sim_config.use_hibernation):
-            collider_state.n_contacts_hibernated[i_b] = 0
 
-            # advect hibernated contacts
-            for i_c in range(collider_state.n_contacts[i_b]):
-                i_la = collider_state.contact_data.link_a[i_c, i_b]
-                i_lb = collider_state.contact_data.link_b[i_c, i_b]
-
-                I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
-                I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
-
-                # pair of hibernated-fixed links -> hibernated contact
-                # TODO: we should also include hibernated-hibernated links and wake up the whole contact island
-                # once a new collision is detected
-                if (links_state.hibernated[i_la, i_b] and links_info.is_fixed[I_lb]) or (
-                    links_state.hibernated[i_lb, i_b] and links_info.is_fixed[I_la]
-                ):
-                    i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
-                    if i_c != i_c_hibernated:
-                        # Copying all fields of class StructContactData:
-                        # fmt: off
-                        collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
-                        collider_state.contact_data.geom_b[i_c_hibernated, i_b] = collider_state.contact_data.geom_b[i_c, i_b]
-                        collider_state.contact_data.penetration[i_c_hibernated, i_b] = collider_state.contact_data.penetration[i_c, i_b]
-                        collider_state.contact_data.normal[i_c_hibernated, i_b] = collider_state.contact_data.normal[i_c, i_b]
-                        collider_state.contact_data.pos[i_c_hibernated, i_b] = collider_state.contact_data.pos[i_c, i_b]
-                        collider_state.contact_data.friction[i_c_hibernated, i_b] = collider_state.contact_data.friction[i_c, i_b]
-                        collider_state.contact_data.sol_params[i_c_hibernated, i_b] = collider_state.contact_data.sol_params[i_c, i_b]
-                        collider_state.contact_data.force[i_c_hibernated, i_b] = collider_state.contact_data.force[i_c, i_b]
-                        collider_state.contact_data.link_a[i_c_hibernated, i_b] = collider_state.contact_data.link_a[i_c, i_b]
-                        collider_state.contact_data.link_b[i_c_hibernated, i_b] = collider_state.contact_data.link_b[i_c, i_b]
-                        # fmt: on
-
-                    collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
-
-        # Clear contacts: when hibernation is enabled, only clear non-hibernated contacts.
-        # The hibernated contacts (positions 0 to n_contacts_hibernated-1) were just advected and should be preserved.
-        for i_c in range(collider_state.n_contacts[i_b]):
-            should_clear = True
-            if qd.static(static_rigid_sim_config.use_hibernation):
-                # Only clear if this is not a hibernated contact
-                should_clear = i_c >= collider_state.n_contacts_hibernated[i_b]
-            if should_clear:
-                collider_state.contact_data.link_a[i_c, i_b] = -1
-                collider_state.contact_data.link_b[i_c, i_b] = -1
-                collider_state.contact_data.geom_a[i_c, i_b] = -1
-                collider_state.contact_data.geom_b[i_c, i_b] = -1
-                collider_state.contact_data.penetration[i_c, i_b] = 0.0
-                collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
-
-        if qd.static(static_rigid_sim_config.use_hibernation):
-            collider_state.n_contacts[i_b] = collider_state.n_contacts_hibernated[i_b]
-        else:
-            collider_state.n_contacts[i_b] = 0
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_masked_collider_clear(
+    envs_mask: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_state: array_class.ColliderState,
+):
+    for i_b in range(envs_mask.shape[0]):
+        if envs_mask[i_b]:
+            func_collider_clear_env(i_b, links_state, links_info, static_rigid_sim_config, collider_state)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -170,13 +185,19 @@ def func_add_contact(
     contact_pos: qd.types.vector(3),
     penetration,
     i_b,
+    i_pair,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     errno: array_class.V_ANNOTATION,
+    use_atomic: qd.template() = False,
 ):
-    i_c = collider_state.n_contacts[i_b]
+    i_c = 0
+    if qd.static(use_atomic):
+        i_c = qd.atomic_add(collider_state.n_contacts[i_b], 1)
+    else:
+        i_c = collider_state.n_contacts[i_b]
     if i_c < collider_info.max_contact_pairs[None]:
         friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
         friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]
@@ -193,8 +214,10 @@ def func_add_contact(
         )
         collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
         collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
+        collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
-        collider_state.n_contacts[i_b] = i_c + 1
+        if not qd.static(use_atomic):
+            collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
@@ -208,6 +231,7 @@ def func_set_contact(
     penetration,
     i_b,
     i_c,
+    i_pair,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
@@ -230,6 +254,7 @@ def func_set_contact(
     collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (geoms_info.sol_params[i_ga] + geoms_info.sol_params[i_gb])
     collider_state.contact_data.link_a[i_c, i_b] = geoms_info.link_idx[i_ga]
     collider_state.contact_data.link_b[i_c, i_b] = geoms_info.link_idx[i_gb]
+    collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
 
 @qd.func
@@ -409,6 +434,108 @@ def func_rotate_frame(
     new_pos = pos - vec
 
     return new_pos, new_quat
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_sort_contacts(
+    collider_state: array_class.ColliderState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Sort contacts within each env spatially by x-coordinate, moving
+    entire geom-pair groups as units.
+
+    Contacts from the same geom pair are contiguous after narrowphase.
+    We assign every contact in a group the x-position of the group's first
+    contact.  The stable insertion sort then reorders groups spatially while
+    preserving the narrowphase ordering within each group.
+
+    Two-phase approach to minimise memory traffic:
+    1. Insertion sort on a compact (key, index) pair — 8 bytes per swap
+       instead of moving all 11 contact fields (~92 bytes).
+    2. In-place cycle-following permutation that moves each contact record
+       exactly once.
+    """
+    _B = collider_state.n_contacts.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        n = collider_state.n_contacts[i_b]
+
+        # Phase 1: initialise and insertion-sort the (key, idx) arrays.
+        group_key = gs.qd_float(0.0)
+        for i in range(n):
+            ga = collider_state.contact_data.geom_a[i, i_b]
+            gb = collider_state.contact_data.geom_b[i, i_b]
+            if (
+                i == 0
+                or ga != collider_state.contact_data.geom_a[i - 1, i_b]
+                or gb != collider_state.contact_data.geom_b[i - 1, i_b]
+            ):
+                group_key = collider_state.contact_data.pos[i, i_b][0]
+            collider_state.contact_sort_key[i, i_b] = group_key
+            collider_state.contact_sort_idx[i, i_b] = i
+
+        for i in range(1, n):
+            curr_key = collider_state.contact_sort_key[i, i_b]
+            if collider_state.contact_sort_key[i - 1, i_b] <= curr_key:
+                continue
+
+            curr_idx = collider_state.contact_sort_idx[i, i_b]
+            j = i - 1
+            while j >= 0:
+                if collider_state.contact_sort_key[j, i_b] <= curr_key:
+                    break
+                collider_state.contact_sort_key[j + 1, i_b] = collider_state.contact_sort_key[j, i_b]
+                collider_state.contact_sort_idx[j + 1, i_b] = collider_state.contact_sort_idx[j, i_b]
+                j = j - 1
+            collider_state.contact_sort_key[j + 1, i_b] = curr_key
+            collider_state.contact_sort_idx[j + 1, i_b] = curr_idx
+
+        # Phase 2: apply permutation in-place via cycle decomposition.
+        # Each contact is read and written exactly once.
+        for i in range(n):
+            if collider_state.contact_sort_idx[i, i_b] != i:
+                tmp_geom_a = collider_state.contact_data.geom_a[i, i_b]
+                tmp_geom_b = collider_state.contact_data.geom_b[i, i_b]
+                tmp_penetration = collider_state.contact_data.penetration[i, i_b]
+                tmp_normal = collider_state.contact_data.normal[i, i_b]
+                tmp_pos = collider_state.contact_data.pos[i, i_b]
+                tmp_friction = collider_state.contact_data.friction[i, i_b]
+                tmp_sol_params = collider_state.contact_data.sol_params[i, i_b]
+                tmp_force = collider_state.contact_data.force[i, i_b]
+                tmp_link_a = collider_state.contact_data.link_a[i, i_b]
+                tmp_link_b = collider_state.contact_data.link_b[i, i_b]
+                tmp_pair_idx = collider_state.contact_data.pair_idx[i, i_b]
+
+                j = i
+                while collider_state.contact_sort_idx[j, i_b] != i:
+                    src = collider_state.contact_sort_idx[j, i_b]
+                    collider_state.contact_data.geom_a[j, i_b] = collider_state.contact_data.geom_a[src, i_b]
+                    collider_state.contact_data.geom_b[j, i_b] = collider_state.contact_data.geom_b[src, i_b]
+                    collider_state.contact_data.penetration[j, i_b] = collider_state.contact_data.penetration[src, i_b]
+                    collider_state.contact_data.normal[j, i_b] = collider_state.contact_data.normal[src, i_b]
+                    collider_state.contact_data.pos[j, i_b] = collider_state.contact_data.pos[src, i_b]
+                    collider_state.contact_data.friction[j, i_b] = collider_state.contact_data.friction[src, i_b]
+                    collider_state.contact_data.sol_params[j, i_b] = collider_state.contact_data.sol_params[src, i_b]
+                    collider_state.contact_data.force[j, i_b] = collider_state.contact_data.force[src, i_b]
+                    collider_state.contact_data.link_a[j, i_b] = collider_state.contact_data.link_a[src, i_b]
+                    collider_state.contact_data.link_b[j, i_b] = collider_state.contact_data.link_b[src, i_b]
+                    collider_state.contact_data.pair_idx[j, i_b] = collider_state.contact_data.pair_idx[src, i_b]
+                    collider_state.contact_sort_idx[j, i_b] = j
+                    j = src
+
+                collider_state.contact_data.geom_a[j, i_b] = tmp_geom_a
+                collider_state.contact_data.geom_b[j, i_b] = tmp_geom_b
+                collider_state.contact_data.penetration[j, i_b] = tmp_penetration
+                collider_state.contact_data.normal[j, i_b] = tmp_normal
+                collider_state.contact_data.pos[j, i_b] = tmp_pos
+                collider_state.contact_data.friction[j, i_b] = tmp_friction
+                collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
+                collider_state.contact_data.force[j, i_b] = tmp_force
+                collider_state.contact_data.link_a[j, i_b] = tmp_link_a
+                collider_state.contact_data.link_b[j, i_b] = tmp_link_b
+                collider_state.contact_data.pair_idx[j, i_b] = tmp_pair_idx
+                collider_state.contact_sort_idx[j, i_b] = j
 
 
 @qd.kernel

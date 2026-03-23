@@ -1,20 +1,23 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Generic, Sequence, Type, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, Type, TypeVar, get_args, get_origin
 
-import quadrants as qd
+from typing_extensions import TypeVar as TypeVarWithDefault
+
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
+from genesis.typing import NumArrayType, NumericType
 from genesis.repr_base import RBC
 from genesis.utils.geom import euler_to_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, broadcast_tensor
+from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor_field
 
 if TYPE_CHECKING:
-    from genesis.options.sensors.options import SensorOptions
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
+    from genesis.options.sensors.options import SensorOptions
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -22,17 +25,13 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-NumericType = int | float | bool
-NumericSequenceType = NumericType | Sequence[NumericType]
-
-
-def _to_tuple(*values: NumericType | torch.Tensor, length_per_value: int = 3) -> tuple[NumericType, ...]:
+def _to_tuple(*values: NumArrayType, length_per_value: int = 3) -> tuple[NumericType, ...]:
     """
     Convert all input values to one flattened tuple, where each value is ensured to be a tuple of length_per_value.
     """
     full_tuple = ()
     for value in values:
-        if isinstance(value, (int, float)):
+        if isinstance(value, NumericType):
             value = (value,) * length_per_value
         elif isinstance(value, torch.Tensor):
             value = value.reshape((-1,))
@@ -66,13 +65,20 @@ class SharedSensorMetadata:
 
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
+OptionsT = TypeVar("OptionsT", bound="SensorOptions")
+DataT = TypeVarWithDefault("DataT", default=tuple, covariant=True)
 
 
-class Sensor(RBC, Generic[SharedSensorMetadataT]):
+class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     """
     Base class for all types of sensors.
 
     To create a sensor, prefer using `scene.add_sensor(sensor_options)` instead of instantiating this class directly.
+
+    Each concrete sensor class declares its associated options, metadata, and data types via Generic type parameters::
+
+        class MySensor(Sensor[MyOptions, MyMetadata, MyData]):
+            ...  # DataT defaults to tuple; specify explicitly for NamedTuple returns
 
     Note
     -----
@@ -82,9 +88,33 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     the shared cache to return the correct data.
     """
 
-    def __init__(
-        self, sensor_options: "SensorOptions", sensor_idx: int, data_cls: Type[tuple], sensor_manager: "SensorManager"
-    ):
+    _options_cls: ClassVar[type]
+    _metadata_cls: ClassVar[type]
+    _return_data_class: ClassVar[type] = tuple
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        for base in cls.__orig_bases__:
+            origin = get_origin(base)
+            if origin is not None and issubclass(origin, Sensor):
+                args = get_args(base)
+                if len(args) >= 1 and not isinstance(args[0], TypeVar):
+                    cls._options_cls = args[0]
+                if len(args) >= 2 and not isinstance(args[1], TypeVar):
+                    cls._metadata_cls = args[1]
+                if len(args) >= 3 and not isinstance(args[2], TypeVar):
+                    cls._return_data_class = args[2]
+                break
+        # Auto-register if this class defines its own options (not inherited).
+        # Enforce that concrete sensor classes also specify the metadata type parameter.
+        if "_options_cls" in cls.__dict__:
+            if "_metadata_cls" not in cls.__dict__:
+                raise TypeError(f"{cls.__name__} must specify Sensor[OptionsT, MetadataT, DataT=tuple].")
+            from .sensor_manager import SensorManager
+
+            SensorManager.SENSOR_TYPES_MAP[cls._options_cls] = cls
+
+    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
         self._options: "SensorOptions" = sensor_options
         self._idx: int = sensor_idx
         self._manager: "SensorManager" = sensor_manager
@@ -95,7 +125,6 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         self._delay_ts = round(self._options.delay / self._dt)
 
         self._cache_slices: list[slice] = []
-        self._return_data_class = data_cls
         return_format = self._get_return_format()
         assert len(return_format) > 0
         if isinstance(return_format[0], int):
@@ -128,7 +157,7 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         self._shared_metadata.cache_sizes.append(self._cache_size)
 
     @classmethod
-    def reset(cls, shared_metadata: SharedSensorMetadataT, envs_idx):
+    def reset(cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx):
         """
         Reset the sensor.
 
@@ -138,6 +167,8 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
         ----------
         shared_metadata : SharedSensorMetadata
             The shared metadata for the sensor class.
+        shared_ground_truth_cache : torch.Tensor
+            The shared ground truth cache for the sensor class.
         envs_idx: array_like
             The indices of the environments to reset. The envs_idx should already be sanitized by SensorManager.
         """
@@ -196,14 +227,14 @@ class Sensor(RBC, Generic[SharedSensorMetadataT]):
     # =============================== public shared methods ===============================
 
     @gs.assert_built
-    def read(self, envs_idx=None):
+    def read(self, envs_idx=None) -> DataT:
         """
         Read the sensor data (with noise applied if applicable).
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
 
     @gs.assert_built
-    def read_ground_truth(self, envs_idx=None):
+    def read_ground_truth(self, envs_idx=None) -> DataT:
         """
         Read the ground truth sensor data (without noise).
         """
@@ -466,7 +497,8 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
         self._shared_metadata.interpolate.append(self._options.interpolate)
 
     @classmethod
-    def reset(cls, shared_metadata: NoisySensorMetadataMixin, envs_idx):
+    def reset(cls, shared_metadata: NoisySensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         shared_metadata.cur_random_walk[envs_idx, ...].fill_(0.0)
 
     @classmethod

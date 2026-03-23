@@ -802,7 +802,7 @@ class RigidGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
+        return f"{self.__repr_name__()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
 
 
 class RigidVisGeom(RBC):
@@ -837,8 +837,8 @@ class RigidVisGeom(RBC):
         self._vvert_start = vvert_start
         self._vface_start = vface_start
 
-        self._init_pos = init_pos
-        self._init_quat = init_quat
+        self._init_pos: np.ndarray = init_pos
+        self._init_quat: np.ndarray = init_quat
 
         # For heterogeneous simulation: which environments this vgeom is active in (None = all envs)
         self.active_envs_mask: torch.Tensor | None = None
@@ -1066,4 +1066,4 @@ class RigidVisGeom(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{self._repr_type()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"
+        return f"{self.__repr_name__()}: {self._uid}, idx: {self._idx} (from entity {self._entity.uid}, link {self._link.uid})"

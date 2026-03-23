@@ -274,7 +274,7 @@ if __name__ == "__main__":
         is_running = False
 
     scene.viewer.register_keybinds(
-        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.PRESS, callback=stop),
+        kb.Keybind("quit", kb.Key.ESCAPE, kb.KeyAction.RELEASE, callback=stop),
     )
 
     try:

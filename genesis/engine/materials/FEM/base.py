@@ -1,12 +1,17 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 
 import genesis as gs
 
 from ..base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.fem_entity import FEMEntity
+
 
 @qd.data_oriented
-class Base(Material):
+class Base(Material["FEMEntity"]):
     """
     The base class of MPM materials.
 

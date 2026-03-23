@@ -300,6 +300,7 @@ def kernel_update_heterogeneous_link_info(
     links_vgeom_end: qd.types.ndarray(),
     links_inertial_mass: qd.types.ndarray(),
     links_inertial_pos: qd.types.ndarray(),
+    links_inertial_quat: qd.types.ndarray(),
     links_inertial_i: qd.types.ndarray(),
     # Quadrants variables
     links_info: array_class.LinksInfo,
@@ -316,6 +317,9 @@ def kernel_update_heterogeneous_link_info(
 
         for j in qd.static(range(3)):
             links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+
+        for j in qd.static(range(4)):
+            links_info.inertial_quat[i_l, i_b][j] = links_inertial_quat[i_b, j]
 
         for j1, j2 in qd.static(qd.ndrange(3, 3)):
             links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
@@ -530,28 +534,6 @@ def kernel_init_geom_fields(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def kernel_adjust_link_inertia(
-    link_idx: qd.i32,
-    ratio: qd.f32,
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    if qd.static(static_rigid_sim_config.batch_links_info):
-        for i_b in range(links_info.root_idx.shape[0]):
-            for j in qd.static(range(2)):
-                links_info.invweight[link_idx, i_b][j] /= ratio
-            links_info.inertial_mass[link_idx, i_b] *= ratio
-            for j1, j2 in qd.static(qd.ndrange(3, 3)):
-                links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
-    else:
-        for j in qd.static(range(2)):
-            links_info.invweight[link_idx][j] /= ratio
-        links_info.inertial_mass[link_idx] *= ratio
-        for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            links_info.inertial_i[link_idx][j1, j2] *= ratio
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vgeom_fields(
     vgeoms_pos: qd.types.ndarray(),
     vgeoms_quat: qd.types.ndarray(),
@@ -718,11 +700,11 @@ def func_apply_link_external_force(
 ):
     torque = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = links_state.i_pos[link_idx, env_idx].cross(force)
     if qd.static(ref == 2):  # link's origin
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = (links_state.pos[link_idx, env_idx] - links_state.root_COM[link_idx, env_idx]).cross(force)
 

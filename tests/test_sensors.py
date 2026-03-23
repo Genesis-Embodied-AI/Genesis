@@ -1,3 +1,9 @@
+import importlib
+import sys
+import tempfile
+import textwrap
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
@@ -6,6 +12,175 @@ import genesis as gs
 import genesis.utils.geom as gu
 
 from .utils import assert_allclose, assert_equal
+
+# ------------------------------------------------------------------------------------------
+# -------------------------------- Lazy Sensor Discovery -----------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+def test_lazy_sensor_discovery(show_viewer, tmp_path):
+    """Test that add_sensor auto-discovers sensor classes from the options class's sibling modules."""
+    from genesis.engine.sensors.camera import RasterizerCameraSensor
+    from genesis.engine.sensors.contact_force import ContactSensor
+    from genesis.engine.sensors.depth_camera import DepthCameraSensor
+    from genesis.engine.sensors.imu import IMUSensor
+    from genesis.engine.sensors.sensor_manager import SensorManager
+
+    # Verify built-in registrations resolve to the exact sensor classes
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.Contact] is ContactSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.IMU] is IMUSensor
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.RasterizerCameraOptions] is RasterizerCameraSensor
+    # DepthCamera inherits from Raycaster without re-parameterizing, registered only by sensor side
+    assert SensorManager.SENSOR_TYPES_MAP[gs.sensors.DepthCamera] is DepthCameraSensor
+
+    # Create a fake plugin package in a temp directory
+    pkg_dir = tmp_path / "fake_sensor_plugin"
+    pkg_dir.mkdir()
+
+    (pkg_dir / "__init__.py").write_text("")
+
+    (pkg_dir / "options.py").write_text(
+        textwrap.dedent(
+            """\
+        from genesis.options.sensors.options import SensorOptions
+
+        class FakeSensorOptions(SensorOptions["FakeSensor"]):
+            pass
+        """
+        )
+    )
+
+    (pkg_dir / "sensor.py").write_text(
+        textwrap.dedent(
+            """\
+        from dataclasses import dataclass
+
+        import genesis as gs
+        from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
+
+        from .options import FakeSensorOptions
+
+
+        @dataclass
+        class FakeSensorMetadata(SharedSensorMetadata):
+            pass
+
+
+        class FakeSensor(Sensor[FakeSensorOptions, FakeSensorMetadata]):
+            def _get_return_format(self):
+                return (1,)
+
+            @classmethod
+            def _get_cache_dtype(cls):
+                return gs.tc_float
+
+            @classmethod
+            def _update_shared_ground_truth_cache(cls, metadata, cache):
+                pass
+
+            @classmethod
+            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+                pass
+
+            @classmethod
+            def reset(cls, metadata, shared_ground_truth_cache, envs_idx):
+                pass
+
+            def build(self):
+                pass
+        """
+        )
+    )
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        # Import ONLY the options module (not the sensor module)
+        options_mod = importlib.import_module("fake_sensor_plugin.options")
+        FakeSensorOptions = options_mod.FakeSensorOptions
+
+        # Verify it's not yet registered
+        assert FakeSensorOptions not in SensorManager.SENSOR_TYPES_MAP
+
+        # Trigger lazy discovery via resolve
+        sensor_cls = SensorManager._resolve_sensor_cls(FakeSensorOptions)
+        assert sensor_cls.__name__ == "FakeSensor"
+
+        # Now it should be registered
+        assert SensorManager.SENSOR_TYPES_MAP[FakeSensorOptions] is sensor_cls
+
+        # Verify it works end-to-end with a scene
+        scene = gs.Scene(show_viewer=show_viewer)
+        scene.add_entity(gs.morphs.Plane())
+        sensor = scene.add_sensor(FakeSensorOptions())
+        scene.build()
+        scene.step()
+        data = sensor.read()
+        assert data.shape[-1] == 1
+    finally:
+        sys.path.remove(str(tmp_path))
+        for mod_name in list(sys.modules):
+            if mod_name.startswith("fake_sensor_plugin"):
+                del sys.modules[mod_name]
+        SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+
+
+@pytest.mark.required
+def test_add_and_read_all_registered_sensors():
+    """Add all sensors into scene and read them, verifying SensorManager cache and tensor contiguity"""
+    from genesis.engine.sensors.sensor_manager import SensorManager
+
+    scene = gs.Scene(
+        show_viewer=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        )
+    )
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=0.1,
+            pos=(0.2, 0.0, 0.1),
+        )
+    )
+
+    sensors = []
+
+    for option_cls in SensorManager.SENSOR_TYPES_MAP.keys():
+        sensor_kwargs = {}
+        if issubclass(option_cls, gs.sensors.BaseCameraOptions):
+            continue  # skip camera options
+        if issubclass(option_cls, gs.sensors.RigidSensorOptionsMixin):
+            sensor_kwargs.update(
+                entity_idx=box.idx,
+            )
+        if issubclass(option_cls, gs.sensors.Raycaster):
+            sensor_kwargs.update(
+                pattern=gs.sensors.raycaster.DepthCameraPattern(),
+            )
+        if issubclass(option_cls, gs.sensors.Proximity):
+            sensor_kwargs.update(
+                track_link_idx=(sphere.idx,),
+            )
+        if issubclass(option_cls, gs.sensors.TemperatureGrid):
+            sensor_kwargs.update(
+                properties_dict={
+                    -1: gs.sensors.TemperatureProperties(),
+                },
+            )
+
+        sensor = scene.add_sensor(option_cls(**sensor_kwargs))
+        sensors.append(sensor)
+
+    scene.build(n_envs=2)
+
+    scene.step()
+    for sensor in sensors:
+        sensor.read()
+
 
 # ------------------------------------------------------------------------------------------
 # -------------------------------------- IMU Sensors ---------------------------------------
@@ -28,7 +203,9 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -182,7 +359,7 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_rigid_tactile_sensors_gravity_force(n_envs, show_viewer, tol):
+def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     """Test if the sensor will detect the correct forces being applied on a falling box."""
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
@@ -192,7 +369,9 @@ def test_rigid_tactile_sensors_gravity_force(n_envs, show_viewer, tol):
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -500,7 +679,7 @@ def test_raycaster_hits(show_viewer, n_envs):
         entity.set_pos(pos)
     if show_viewer:
         scene.visualizer.update(force=True)
-    grid_sensor_pos = grid_sensor.get_pos().clone()
+    grid_sensor_pos = grid_sensor.get_pos()
     for _ in range(60):
         scene.step()
     grid_sensor.set_pos(grid_sensor_pos)
@@ -643,6 +822,192 @@ def test_lidar_cache_offset_parallel_env(show_viewer, tol):
         assert (sensor_data.points.abs() > gs.EPS).any()
 
 
+# ------------------------------------------------------------------------------------------
+# -------------------------------------- Kinematic Tactile Sensors ---------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_temperature_grid_sensor_contact_and_reset(show_viewer, tol, n_envs):
+    """After build, grid is at base temp. Hot box on center heats center above corner; cold box cools it. Move away -> near base; reset -> exactly base."""
+    BOX_SIZE = 0.06
+    PLATFORM_SIZE = 0.2
+    FAR_POS = (PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5, PLATFORM_SIZE * 1.5)
+    GRID_SIZE = (3, 3, 1)
+    GRID_CENTER = (GRID_SIZE[0] // 2, GRID_SIZE[1] // 2, GRID_SIZE[2] // 2)
+    BASE_TEMP = 22.0
+    DIFF_TEMP = 0.5
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    platform = scene.add_entity(
+        gs.morphs.Box(
+            size=(PLATFORM_SIZE, PLATFORM_SIZE, PLATFORM_SIZE),
+            pos=(0.0, 0.0, PLATFORM_SIZE / 2),
+            fixed=True,
+        )
+    )
+    hot_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2),
+        )
+    )
+    cold_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=FAR_POS,
+        ),
+    )
+    TemperatureProperties = gs.sensors.TemperatureProperties
+    sensor = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            ambient_temperature=BASE_TEMP,
+            convection_coefficient=0.0,
+            simulate_all_link_temperatures=False,
+            entity_idx=platform.idx,
+            grid_size=GRID_SIZE,
+            properties_dict={
+                platform.base_link_idx: TemperatureProperties(
+                    base_temperature=BASE_TEMP,
+                    conductivity=400.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.95,
+                ),
+                hot_box.base_link_idx: TemperatureProperties(
+                    base_temperature=BASE_TEMP + 100.0,
+                    conductivity=200.0,
+                    density=3000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+                # default properties; should apply to the cold box
+                -1: TemperatureProperties(
+                    base_temperature=BASE_TEMP - 100.0,
+                    conductivity=150.0,
+                    density=8000.0,
+                    specific_heat=1.0,
+                    emissivity=0.2,
+                ),
+            },
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    # After build, all cells at base temperature
+    assert_allclose(sensor.read_ground_truth(), BASE_TEMP, tol=tol)
+
+    # Hot box on center
+    hot_box.set_pos((0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2))
+    for _ in range(50):
+        scene.step()
+    data = sensor.read()
+    assert (data > BASE_TEMP + DIFF_TEMP).all(), f"Hot box should have heated the grid by at least {DIFF_TEMP}°C"
+    assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] > data[0, 0, 0]).all(), (
+        "Center cell should be hotter than corner"
+    )
+
+    # Reset: exactly base temperature everywhere
+    scene.reset()
+    assert_allclose(sensor.read_ground_truth(), BASE_TEMP, tol=tol)
+
+    # Cold box on center
+    hot_box.set_pos(FAR_POS)
+    cold_box.set_pos((0.0, 0.0, PLATFORM_SIZE + BOX_SIZE / 2))
+    for _ in range(50):
+        scene.step()
+    data = sensor.read()
+    assert (data < BASE_TEMP - DIFF_TEMP).all(), f"Cold box should have cooled the grid by at least {DIFF_TEMP}°C"
+    assert (data[..., GRID_CENTER[0], GRID_CENTER[1], GRID_CENTER[2]] < data[0, 0, 0]).all(), (
+        "Center cell should be colder than corner"
+    )
+
+    # Move both away; step until grid returns near base
+    hot_box.set_pos(FAR_POS)
+    cold_box.set_pos((-FAR_POS[0], -FAR_POS[1], FAR_POS[2]))
+    for _ in range(150):
+        scene.step()
+    data = sensor.read()
+    assert_allclose(data, BASE_TEMP, tol=5e-2)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
+    """With simulate_all_link_temperatures=True, two boxes in contact exchange heat."""
+    BOX_SIZE = 0.06
+    BASE_TEMP = 22.0
+    HOT_BASE = BASE_TEMP + 80.0
+    COLD_BASE = BASE_TEMP - 80.0
+
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+    hot_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE),
+        )
+    )
+    cold_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, BOX_SIZE * 2 + 0.001),
+        )
+    )
+    hot_link_idx = hot_box.base_link_idx
+    cold_link_idx = cold_box.base_link_idx
+    sensor1 = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            entity_idx=hot_box.idx,
+            grid_size=(1, 1, 1),
+            ambient_temperature=BASE_TEMP,
+            properties_dict={
+                hot_link_idx: gs.sensors.TemperatureProperties(
+                    base_temperature=HOT_BASE,
+                    conductivity=200.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+                cold_link_idx: gs.sensors.TemperatureProperties(
+                    base_temperature=COLD_BASE,
+                    conductivity=200.0,
+                    density=2000.0,
+                    specific_heat=1.0,
+                    emissivity=0.1,
+                ),
+            },
+            simulate_all_link_temperatures=True,
+        )
+    )
+    sensor2 = scene.add_sensor(
+        gs.sensors.TemperatureGrid(
+            entity_idx=cold_box.idx,
+            grid_size=(1, 1, 1),
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    link_temps = sensor1.link_temperatures  # (n_envs, n_links)
+
+    assert_equal(link_temps[..., hot_link_idx], HOT_BASE)
+    assert_equal(link_temps[..., cold_link_idx], COLD_BASE)
+
+    cold_box.set_pos((0.0, 0.0, BOX_SIZE / 2))
+    for _ in range(100):
+        scene.step()
+
+    assert_equal(sensor1.link_temperatures, sensor2.link_temperatures)
+
+    assert (link_temps[..., hot_link_idx] < HOT_BASE - 1.0).all(), "Hot box link should have cooled"
+    assert (link_temps[..., cold_link_idx] > COLD_BASE + 1.0).all(), "Cold box link should have heated up"
+
+    assert_allclose(torch.mean(sensor1.read()), link_temps[..., hot_link_idx], tol=2e-2)
+    assert_allclose(torch.mean(sensor2.read()), link_temps[..., cold_link_idx], tol=2e-2)
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
@@ -699,7 +1064,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
                 (0.0, 0.0, -BOX_SIZE / 2),  # bottom of box, center
             ),
             probe_local_normal=probe_normals,
-            radius=(
+            probe_radius=(
                 PROBE_RADIUS,
                 PROBE_RADIUS / 10,  # small radius which cannot detect sphere unless it's perfectly on top
                 BOX_SIZE / 3,  # large radius that can detect sphere when not aligned
@@ -717,7 +1082,7 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
             entity_idx=sphere.idx,
             probe_local_pos=[(0.0, 0.0, -SPHERE_RADIUS)],
             probe_local_normal=[(0.0, 0.0, -1.0)],
-            radius=PROBE_RADIUS,
+            probe_radius=PROBE_RADIUS,
             stiffness=STIFFNESS,
             debug_sphere_color=(0.0, 0.0, 1.0, 0.5),
             draw_debug=show_viewer,
@@ -784,3 +1149,383 @@ def test_kinematic_contact_probe_box_support(show_viewer, tol, n_envs):
     assert_allclose(sphere_data.force, sphere_ground_truth.force, tol=gs.EPS)
     assert_allclose(sphere_data.penetration, 0.0, tol=gs.EPS)
     assert_allclose(sphere_data.force, 0.0, tol=gs.EPS)
+
+
+def _build_hemisphere_probes(radius: float, n_theta: int, n_phi: int):
+    """Probe positions and outward normals on the bottom hemisphere (z <= 0 in link frame)."""
+    theta = (np.pi / 2) * (1 + torch.arange(n_theta, dtype=gs.tc_float, device=gs.device) / n_theta)
+    phi = torch.arange(n_phi, dtype=gs.tc_float, device=gs.device) * (2 * np.pi) / n_phi
+    theta, phi = torch.meshgrid(theta, phi, indexing="ij")
+    theta = theta.ravel()
+    phi = phi.ravel()
+    x = radius * theta.sin() * phi.cos()
+    y = radius * theta.sin() * phi.sin()
+    z = radius * theta.cos()
+    positions = torch.stack([x, y, z], dim=-1)
+    normals = positions / radius
+    return positions, normals
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_displacement_sensor_sphere_ground(show_viewer, tol, n_envs):
+    """Test ElastomerDisplacementSensor with bottom-hemisphere probes on a sphere penetrating the ground."""
+
+    SPHERE_RADIUS = 0.2
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.01
+    RING_ANGLE_DEG = 6.0
+    N_RING = 6
+    MAX_DELTAS = (1.0, 1.0, 60.0)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Sphere penetrating the ground (center below z=0 by PENETRATION)
+    sphere_init_pos = (0.0, 0.0, SPHERE_RADIUS - PENETRATION)
+    sphere_init_quat = (1.0, 0.0, 0.0, 0.0)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=sphere_init_pos,
+        ),
+    )
+
+    # One probe at bottom of sphere plus a ring at RING_ANGLE_DEG from bottom (angle from center)
+    angle_rad = torch.tensor(RING_ANGLE_DEG * torch.pi / 180, dtype=gs.tc_float, device=gs.device)
+    theta_ring = torch.pi - angle_rad
+    z_ring = SPHERE_RADIUS * theta_ring.cos()
+    r_xy = SPHERE_RADIUS * theta_ring.sin()
+    phi = torch.arange(N_RING, dtype=gs.tc_float, device=gs.device) * (2 * torch.pi) / N_RING
+    ring_positions = torch.stack([r_xy * phi.cos(), r_xy * phi.sin(), torch.full_like(phi, z_ring)], dim=-1)
+    ring_normals = ring_positions / SPHERE_RADIUS
+    bottom_pos = torch.tensor([[0.0, 0.0, -SPHERE_RADIUS]], dtype=gs.tc_float, device=gs.device)
+    bottom_normal = torch.tensor([[0.0, 0.0, -1.0]], dtype=gs.tc_float, device=gs.device)
+    probe_positions = torch.cat([bottom_pos, ring_positions], dim=0)
+    probe_normals = torch.cat([bottom_normal, ring_normals], dim=0)
+
+    sensor_kwargs = dict(
+        entity_idx=sphere.idx,
+        probe_local_pos=probe_positions,
+        probe_local_normal=probe_normals,
+        probe_radius=PROBE_RADIUS,
+        draw_debug=show_viewer,
+        dilate_coefficient=1e-2,
+        shear_coefficient=1e-2,
+        twist_coefficient=1e-2,
+    )
+    dilate_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=MAX_DELTAS[0],
+            shear_max_delta=0.0,
+            twist_max_delta=0.0,
+            **sensor_kwargs,
+        )
+    )
+    shear_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=0.0,
+            shear_max_delta=MAX_DELTAS[1],
+            twist_max_delta=0.0,
+            **sensor_kwargs,
+        )
+    )
+    twist_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=0.0,
+            shear_max_delta=0.0,
+            twist_max_delta=MAX_DELTAS[2],
+            **sensor_kwargs,
+        )
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            dilate_max_delta=MAX_DELTAS[0],
+            shear_max_delta=MAX_DELTAS[1],
+            twist_max_delta=MAX_DELTAS[2],
+            **sensor_kwargs,
+        )
+    )
+
+    if show_viewer:
+        rec_kwargs = dict(
+            normal=(0.0, 0.0, -1.0),
+            scale_factor=10.0,
+            max_magnitude=1.0e-2,
+            positions=probe_positions,
+        )
+        dilate_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Dilate Sensor",
+                **rec_kwargs,
+            ),
+        )
+        shear_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Shear Sensor",
+                **rec_kwargs,
+            ),
+        )
+        twist_sensor.start_recording(
+            rec_options=gs.recorders.MPLVectorFieldPlot(
+                title="Twist Sensor",
+                **rec_kwargs,
+            ),
+        )
+
+    scene.build(n_envs=n_envs)
+
+    dt = scene.dt
+
+    scene.step()
+
+    # test dilate displacement
+    dilate_data = dilate_sensor.read()
+    # Contact point in sphere link frame (south pole); direction away from contact for each probe
+    contact_pos = torch.tensor([0.0, 0.0, -PENETRATION], dtype=gs.tc_float, device=gs.device)
+    direction_away = probe_positions - contact_pos
+    direction_away = direction_away / (direction_away.norm(dim=-1, keepdim=True).clamp(min=1e-12))
+    dots = (dilate_data * direction_away).sum(dim=-1)
+    assert (dots < tol).all(), "All dilate displacements should point away from the contact"
+
+    # test shear displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((-0.2, 0.0, 0.0, 0.0, 0.0, 0.0))
+    scene.step()
+    # shear sensor should detect 0.5 m/s of shear displacement
+    assert_allclose(shear_sensor.read()[..., 0], 0.2 * dt, rtol=1.5)
+    assert_allclose(twist_sensor.read(), 0.0, tol=tol)
+
+    # test twist displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((0.0, 0.0, 0.0, 0.0, 0.0, 30.0))
+    scene.step()
+    # twist sensor should detect 0.05 m of twist displacement
+    assert_allclose(twist_sensor.read()[..., 1:, :2].norm(dim=-1), 0.2 * dt, rtol=1.5)
+    assert_allclose(twist_sensor.read()[..., 2], 0.0, tol=dt)
+    assert_allclose(shear_sensor.read(), 0.0, tol=tol)
+
+    # test combined displacement
+    sphere.set_pos(sphere_init_pos)
+    sphere.set_quat(sphere_init_quat)
+    sphere.set_dofs_velocity((0.2, 0.0, 0.0, 0.0, 0.0, 0.2))
+    scene.step()
+    dilate_data = dilate_sensor.read()
+    shear_data = shear_sensor.read()
+    twist_data = twist_sensor.read()
+    combined_data = sensor.read()
+    assert_allclose(combined_data, dilate_data + shear_data + twist_data, tol=tol)
+
+    # test no contact
+    sphere.set_pos((0.0, 0.0, SPHERE_RADIUS + 0.05))
+    scene.step()
+    data = sensor.read()
+    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_elastomer_displacement_sensor_box_sphere(show_viewer, tol, n_envs):
+    """Test ElastomerDisplacementSensor with probes on a box resting on a sphere."""
+    SPHERE_RADIUS = 0.1
+    PROBE_RADIUS = 0.02
+    PENETRATION = 0.01
+    BOX_SIZE = 0.1
+    GRID_SIZE = (8, 8)
+
+    scene = gs.Scene(
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+
+    # Sphere penetrating the ground (center below z=0 by PENETRATION)
+    sphere = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, SPHERE_RADIUS),
+            fixed=True,
+        ),
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
+            pos=(0.0, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION),
+        ),
+    )
+    sensor_kwargs = dict(
+        entity_idx=box.idx,
+        link_idx_local=0,
+        probe_local_normal=(0.0, 0.0, -1.0),
+        probe_radius=PROBE_RADIUS,
+        dilate_coefficient=1e-2,
+        shear_coefficient=1e-2,
+        twist_coefficient=1e-2,
+        draw_debug=show_viewer,
+    )
+    probe_local_pos = gu.generate_grid_points_on_plane(
+        lo=(-BOX_SIZE / 2, -BOX_SIZE / 2, -BOX_SIZE / 2),
+        hi=(BOX_SIZE / 2, BOX_SIZE / 2, -BOX_SIZE / 2),
+        normal=(0.0, 0.0, -1.0),
+        nx=GRID_SIZE[0],
+        ny=GRID_SIZE[1],
+    )
+    elastomer_grid_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos,
+            **sensor_kwargs,
+        )
+    )
+    elastomer_sensor = scene.add_sensor(
+        gs.sensors.ElastomerDisplacement(
+            probe_local_pos=probe_local_pos.reshape(-1, 3),
+            **sensor_kwargs,
+        )
+    )
+    assert elastomer_grid_sensor._is_grid and not elastomer_sensor._is_grid
+    assert_allclose(elastomer_sensor.probe_local_pos, elastomer_grid_sensor.probe_local_pos, tol=gs.EPS)
+
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    # grid sensor should match
+    grid_data = elastomer_grid_sensor.read()
+    data = elastomer_sensor.read()
+
+    assert_allclose(data, grid_data, tol=tol)
+
+    # test no contact
+    box.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS * 2 + PENETRATION))
+    scene.step()
+
+    data = elastomer_grid_sensor.read()
+    assert_equal(data, 0.0, err_msg="Displacement should be zero with no contact")
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Proximity Sensor -------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
+    """Test proximity sensor returns distance and nearest points with correct shapes and plausible values."""
+    SPHERE_RADIUS = 0.05
+    DISTANCE = 0.15
+    MAX_RANGE = 10.0
+    BOX_PROBE_POS = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.05)]
+    SPHERE_PROBE_POS = [(0.0, 0.0, SPHERE_RADIUS)]
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.0),
+        ),
+    )
+    # Tracked objects
+    sphere1 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE),
+        ),
+    )
+    sphere2 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, 0.0, DISTANCE * 2.0),
+        ),
+    )
+    # Not tracked objects
+    sphere3 = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=SPHERE_RADIUS,
+            pos=(0.0, DISTANCE / 2.0, 0.0),
+        ),
+    )
+
+    box_prox_sensor = scene.add_sensor(
+        gs.sensors.Proximity(
+            entity_idx=box.idx,
+            probe_local_pos=BOX_PROBE_POS,
+            track_link_idx=(sphere1.base_link_idx, sphere2.base_link_idx),
+            max_range=MAX_RANGE,
+        )
+    )
+    sphere_prox_sensor = scene.add_sensor(
+        gs.sensors.Proximity(
+            entity_idx=sphere1.idx,
+            probe_local_pos=SPHERE_PROBE_POS,
+            track_link_idx=(box.base_link_idx,),
+            max_range=MAX_RANGE,
+            resolution=0.001,
+            bias=0.1,
+            noise=0.01,
+            random_walk=0.01,
+        )
+    )
+    scene.build(n_envs=n_envs)
+
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_noisy_data = sphere_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    for i in range(len(BOX_PROBE_POS)):
+        assert_allclose(box_prox_data[..., i], DISTANCE - SPHERE_RADIUS - BOX_PROBE_POS[i][2], tol=tol)
+    assert_allclose(box_prox_sensor.nearest_points, (0.0, 0.0, DISTANCE - SPHERE_RADIUS), tol=tol)
+    assert_allclose(sphere_prox_data, DISTANCE, tol=tol)
+
+    with np.testing.assert_raises(AssertionError):
+        assert_allclose(sphere_prox_noisy_data, sphere_prox_data, tol=tol)
+
+    sphere1_pos = np.array((0.0, 0.0, DISTANCE * 3.0))
+    sphere1.set_pos(sphere1_pos)
+
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    assert_allclose(box_prox_data[..., 0], DISTANCE * 2.0 - SPHERE_RADIUS, tol=tol)
+    assert_allclose(box_prox_data[..., 1], DISTANCE * 2.0 - SPHERE_RADIUS - 0.05, tol=tol)
+    assert_allclose(sphere_prox_data, DISTANCE * 3.0, tol=tol)
+
+    box_pos = np.array((0.0, 0.0, -MAX_RANGE))
+    box.set_pos(box_pos)
+    scene.step()
+
+    box_prox_data = box_prox_sensor.read()
+    sphere_prox_data = sphere_prox_sensor.read_ground_truth()
+
+    assert_allclose(box_prox_data, MAX_RANGE, tol=tol)
+    assert_allclose(sphere_prox_data, MAX_RANGE, tol=tol)
+    for i in range(len(BOX_PROBE_POS)):
+        assert_allclose(
+            box_prox_sensor.nearest_points[..., i, :],
+            np.array(BOX_PROBE_POS[i]) + box_pos,
+            tol=tol,
+            err_msg="When out of range, points should be the probe position in world frame",
+        )
+    assert_allclose(
+        sphere_prox_sensor.nearest_points,
+        np.array(SPHERE_PROBE_POS) + sphere1_pos,
+        tol=tol,
+        err_msg="When out of range, points should be the probe position in world frame",
+    )

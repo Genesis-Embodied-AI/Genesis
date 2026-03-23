@@ -40,7 +40,7 @@ def kernel_forward_kinematics_links_geoms(
     static_rigid_sim_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_update_cartesian_space_batch(
             i_b=i_b,
             links_state=links_state,
@@ -130,7 +130,7 @@ def kernel_forward_kinematics(
     static_rigid_sim_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_forward_kinematics_batch(
             i_b=i_b,
             links_state=links_state,
@@ -237,7 +237,7 @@ def kernel_forward_velocity(
     is_backward: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
         func_forward_velocity_batch(
             i_b=i_b,
             entities_info=entities_info,
@@ -293,6 +293,7 @@ def func_COM_links(
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
         (
@@ -349,6 +350,7 @@ def func_COM_links_entity(
 ):
     EPS = rigid_global_info.EPS[None]
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     # Becomes static loop in backward pass, because we assume this loop is an inner loop
     for i_l_ in (
@@ -593,6 +595,7 @@ def func_forward_kinematics_entity(
     W = qd.static(func_write_field_if)
     R = qd.static(func_read_field_if)
     WR = qd.static(func_write_and_read_field_if)
+    i_b = qd.cast(i_b, qd.i32)
 
     # Becomes static loop in backward pass, because we assume this loop is an inner loop
     for i_l_ in (
@@ -748,6 +751,7 @@ def func_forward_kinematics_batch(
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
         (
@@ -802,7 +806,7 @@ def kernel_forward_kinematics_entity(
     static_rigid_sim_config: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
         func_forward_kinematics_entity(
             i_e,
@@ -837,6 +841,7 @@ def func_update_geoms_entity(
     NOTE: this only update geom pose, not its verts and else.
     """
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_g_ in (
         # Dynamic inner loop for forward pass
@@ -875,6 +880,7 @@ def func_update_geoms_batch(
     NOTE: this only update geom pose, not its verts and else.
     """
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
         (
@@ -968,7 +974,7 @@ def kernel_update_geoms(
     force_update_fixed_geoms: qd.template(),
 ):
     for i_b_ in range(envs_idx.shape[0]):
-        i_b = envs_idx[i_b_]
+        i_b = qd.cast(envs_idx[i_b_], qd.i32)
 
         func_update_geoms_batch(
             i_b,
@@ -1000,6 +1006,7 @@ def func_forward_velocity_entity(
     W = qd.static(func_write_field_if)
     R = qd.static(func_read_field_if)
     A = qd.static(func_atomic_add_if)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_l_ in (
         range(entities_info.link_start[i_e], entities_info.link_end[i_e])
@@ -1122,6 +1129,7 @@ def func_forward_velocity_batch(
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     for i_e_ in (
         (
@@ -1563,6 +1571,7 @@ def func_update_cartesian_space_batch(
     is_backward: qd.template(),
 ):
     BW = qd.static(is_backward)
+    i_b = qd.cast(i_b, qd.i32)
 
     # This loop is considered an inner loop
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))

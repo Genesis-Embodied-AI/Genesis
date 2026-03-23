@@ -1,33 +1,31 @@
 """
 Unit test comparing analytical capsule-capsule contact detection with GJK.
 
-This test creates a modified version of narrowphase.py in a temporary file that
-forces capsule-capsule and sphere-capsule collisions to use GJK instead of
-analytical methods, allowing direct comparison between the two approaches.
+This test creates a modified version of narrowphase.py in a temporary file that forces capsule-capsule and
+sphere-capsule collisions to use GJK instead of analytical methods, allowing direct comparison between the two
+approaches.
 
 # errno
 
-We abuse errno in this test, because it is considerably easier, and needs much less code, than
-attempting to add a new tensor into one of the existing structures, and have that work for both
-ndarray and field, via monkey-patching.
+We abuse errno in this test, because it is considerably easier, and needs much less code, than attempting to add a
+new tensor into one of the existing structures, and have that work for both ndarray and field, via monkey-patching.
 
-errno is NOT designed for how we use it. Nevertheless with a couple of reasonable-ish assumptions
-we can work with it.
+errno is NOT designed for how we use it. Nevertheless with a couple of reasonable-ish assumptions we can work with it.
 
-Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including
-test code) will ever set bit 16 of errno to any value except 0.
-Assumption 2: when taking a step, nothing in Genesis production code will set bit 16 of errno to any value
-at all - including 0 - when running normally.
+Assumption 1: when code runs normally and correctly, nothing in Genesis production code (not including test code) will
+ever set bit 16 of errno to any value except 0.
+Assumption 2: when taking a step, nothing in Genesis production code will set bit 16 of errno to any value at all -
+including 0 - when running normally.
 
-Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them,
-our tests will almost certainly fail.
+Both of these assumptions are implicitly tested by our code, in that should Genesis code violate them, our tests will
+almost certainly fail.
 
-Note that as part of our use of errno, we take full responsibilty ourselves for resetting it to 0 before each
-test scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example
-by setting errno to 0 in set_qpos.
+Note that as part of our use of errno, we take full responsibility ourselves for resetting it to 0 before each test
+scenario. We do not assume - nor require - any existing Genesis code to handle this for us, for example by setting errno
+to 0 in set_qpos.
 
-Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity,
-we make resetting errno explicit in this test.
+Note that, for completeness, Genesis code does handle resetting errno to 0, inside set_qpos, but for simplicity, we make
+resetting errno explicit in this test.
 """
 
 import copy
@@ -44,10 +42,11 @@ from .utils import assert_allclose
 from .conftest import TOL_SINGLE
 
 if TYPE_CHECKING:
-    from genesis.engine.entities.rigid_entity import RigidGeom
+    from genesis.engine.entities import RigidEntity
 
 
-ERRNO_CALLED_GJK = 1 << 16
+ERRNO_CALLED_GJK_K1 = 1 << 16
+ERRNO_CALLED_GJK_K2 = 1 << 17
 POS_TOL = 1e-2  # otherwise tests fail
 
 # Tolerances for checking results against hand-computed expected values.
@@ -114,13 +113,26 @@ def create_capsule_mjcf(name, pos, euler, radius, half_length):
 
 
 def find_and_disable_condition(lines, function_name):
-    """Find function call, look back for if/elif, and disable the entire multi-line condition."""
-    # Find the line with the function call
+    """Find function call, look back for if/elif, and disable the entire multi-line condition.
+
+    Skips occurrences whose guarding condition has already been disabled (contains 'False and').
+    """
+    # Find the line with the function call, skipping already-disabled occurrences
     call_line_idx = None
     for i, line in enumerate(lines):
         if function_name in line and "(" in line:
-            call_line_idx = i
-            break
+            # Look backwards for the guarding if/elif
+            for j in range(i - 1, -1, -1):
+                stripped = lines[j].strip()
+                if stripped.startswith("if ") or stripped.startswith("elif "):
+                    if "False and" in stripped:
+                        break  # Already disabled, skip this occurrence
+                    call_line_idx = i
+                    break
+                if stripped.startswith("else:"):
+                    break
+            if call_line_idx is not None:
+                break
 
     if call_line_idx is None:
         raise ValueError(f"Could not find function call: {function_name}")
@@ -180,29 +192,55 @@ def find_and_disable_condition(lines, function_name):
     return lines
 
 
-def insert_errno_before_call(lines, function_call_pattern, errno_value, comment):
+def find_and_disable_all_conditions(lines, function_name):
+    """Disable ALL if/elif conditions guarding calls to function_name."""
+    while True:
+        try:
+            lines = find_and_disable_condition(lines, function_name)
+        except ValueError:
+            break
+    return lines
+
+
+def insert_errno_before_call(lines, function_call_pattern, errno_value, comment, index_var="i_b"):
     """Insert errno marker on the line before a function call."""
     call_line_idx = None
     for i, line in enumerate(lines):
         if function_call_pattern in line:
-            # Find the position of the pattern in the line
             idx = line.find(function_call_pattern)
             if idx != -1:
-                # Make sure it's not part of a longer identifier
-                # Check that the character before the pattern (if any) is not alphanumeric or underscore
                 if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
+                    stripped = line.strip()
+                    if stripped.startswith("def ") or stripped.startswith("@"):
+                        continue
                     call_line_idx = i
                     break
     else:
         raise ValueError(f"Could not find function call: {function_call_pattern}")
 
-    # Get indentation from the call line
     indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
-
-    # Insert errno marker on the line before the call
-    errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
+    errno_line = f"{' ' * indent_size}errno[{index_var}] |= {errno_value}  # {comment}"
     lines.insert(call_line_idx, errno_line)
 
+    return lines
+
+
+def insert_errno_before_all_calls(lines, function_call_pattern, errno_value, comment):
+    """Insert errno marker before ALL occurrences of a function call.
+
+    Finds all call sites first, then inserts markers from bottom to top to preserve indices.
+    """
+    call_indices = []
+    for i, line in enumerate(lines):
+        if function_call_pattern in line:
+            idx = line.find(function_call_pattern)
+            if idx != -1:
+                if idx == 0 or not (line[idx - 1].isalnum() or line[idx - 1] == "_"):
+                    call_indices.append(i)
+    for call_line_idx in reversed(call_indices):
+        indent_size = len(lines[call_line_idx]) - len(lines[call_line_idx].lstrip())
+        errno_line = f"{' ' * indent_size}errno[i_b] |= {errno_value}  # {comment}"
+        lines.insert(call_line_idx, errno_line)
     return lines
 
 
@@ -227,25 +265,37 @@ def create_modified_narrowphase_file(tmp_path: Path):
 
     lines = content.split("\n")
 
-    # Disable capsule-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_capsule_capsule_contact")
+    # Disable capsule-capsule analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_capsule_capsule_contact")
 
-    # Disable sphere-capsule analytical path
-    lines = find_and_disable_condition(lines, "capsule_contact.func_sphere_capsule_contact")
+    # Disable sphere-capsule analytical path in all kernels
+    lines = find_and_disable_all_conditions(lines, "capsule_contact.func_sphere_capsule_contact")
 
-    # Insert errno before GJK calls
+    # Insert errno marker in contact0's GJK path (before gjk.func_gjk call, uses i_b)
+    lines = insert_errno_before_call(lines, "gjk.func_gjk(", ERRNO_CALLED_GJK_K1, "MODIFIED: GJK detection in contact0")
+
+    # Insert errno markers in multicontact's GJK path (before _func_multicontact_gjk_full, uses i_b)
     lines = insert_errno_before_call(
-        lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
+        lines,
+        "_func_multicontact_gjk_full(",
+        ERRNO_CALLED_GJK_K2,
+        "MODIFIED: GJK path in multicontact",
+        "i_b",
+    )
+
+    # Insert errno before GJK calls in func_convex_convex_contact (uses i_b)
+    lines = insert_errno_before_call(
+        lines, "diff_gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
     )
     lines = insert_errno_before_call(
-        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK, "MODIFIED: GJK called for collision detection"
+        lines, "gjk.func_gjk_contact(", ERRNO_CALLED_GJK_K2, "MODIFIED: GJK called for collision detection"
     )
 
     content = "\n".join(lines)
 
     # Debug: Check if errno was actually inserted
-    errno_count = content.count(f"errno[i_b] |= {ERRNO_CALLED_GJK}")
-    assert errno_count >= 1
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K1}") >= 1, "contact0 GJK errno marker not inserted"
+    assert content.count(f"|= {ERRNO_CALLED_GJK_K2}") >= 1, "multicontact GJK errno marker not inserted"
 
     temp_narrowphase_path = tmp_path / "narrow.py"
     with open(temp_narrowphase_path, "w") as f:
@@ -254,20 +304,34 @@ def create_modified_narrowphase_file(tmp_path: Path):
     return temp_narrowphase_path
 
 
-def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidGeom":
+def scene_add_sphere(tmp_path: Path, scene: gs.Scene, radius: float) -> "RigidEntity":
     sphere_mjcf = create_sphere_mjcf("sphere", (0, 0, 0), radius)
     sphere_path = tmp_path / "sphere.xml"
     ET.ElementTree(sphere_mjcf).write(sphere_path)
-    entity_sphere = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=sphere_path)))
-    return entity_sphere
+    entity_sphere = scene.add_entity(
+        gs.morphs.MJCF(
+            file=sphere_path,
+            align=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    return cast("RigidEntity", entity_sphere)
 
 
-def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float) -> "RigidGeom":
+def scene_add_capsule(tmp_path: Path, scene: gs.Scene, half_length: float, radius: float) -> "RigidEntity":
     capsule_mjcf = create_capsule_mjcf("capsule", (0, 0, 0), (0, 0, 0), radius, half_length)
     capsule_path = tmp_path / "sphere.xml"
     ET.ElementTree(capsule_mjcf).write(capsule_path)
-    entity_capsule = cast("RigidGeom", scene.add_entity(gs.morphs.MJCF(file=capsule_path)))
-    return entity_capsule
+    entity_capsule = scene.add_entity(
+        gs.morphs.MJCF(
+            file=capsule_path,
+            align=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    return cast("RigidEntity", entity_capsule)
 
 
 class AnalyticalVsGJKSceneCreator:
@@ -284,13 +348,21 @@ class AnalyticalVsGJKSceneCreator:
     def setup_scenes(self) -> tuple[gs.Scene, gs.Scene]:
         """Build both scenes WITHOUT any monkey-patching."""
         # Scene 1: Using ORIGINAL analytical collision detection
-        self.scene_analytical = gs.Scene(show_viewer=self.show_viewer)
-        self.build_scene(scene=self.scene_analytical, tmp_path=self.tmp_path, entities=self.entities_analytical)
+        self.scene_analytical = gs.Scene(
+            show_viewer=self.show_viewer,
+        )
+        self.build_scene(
+            scene=self.scene_analytical,
+            entities=self.entities_analytical,
+            tmp_path=self.tmp_path,
+        )
 
         # Scene 2: Will use GJK after monkey-patching (built now with use_gjk_collision=True)
         self.scene_gjk = gs.Scene(
+            rigid_options=gs.options.RigidOptions(
+                use_gjk_collision=True,
+            ),
             show_viewer=self.show_viewer,
-            rigid_options=gs.options.RigidOptions(use_gjk_collision=True),
         )
         self.build_scene(scene=self.scene_gjk, tmp_path=self.tmp_path, entities=self.entities_gjk)
 
@@ -313,6 +385,16 @@ class AnalyticalVsGJKSceneCreator:
 
         self.monkeypatch.setattr(
             narrowphase,
+            "_func_narrowphase_contact0",
+            narrowphase_modified._func_narrowphase_contact0,
+        )
+        self.monkeypatch.setattr(
+            narrowphase,
+            "_func_narrowphase_multicontact_mixed",
+            narrowphase_modified._func_narrowphase_multicontact_mixed,
+        )
+        self.monkeypatch.setattr(
+            narrowphase,
             "func_narrow_phase_convex_vs_convex",
             narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )
@@ -320,26 +402,31 @@ class AnalyticalVsGJKSceneCreator:
     def update_pos_quat_analytical(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
         self.entities_analytical[entity_idx].set_qpos((*pos, *quat))
-        self.entities_analytical[entity_idx].zero_all_dofs_velocity()
 
     def update_pos_quat_gjk(self, entity_idx: int, pos, euler) -> None:
         quat = gs.utils.geom.xyz_to_quat(xyz=np.array(euler, dtype=gs.np_float), degrees=True)
         self.entities_gjk[entity_idx].set_qpos((*pos, *quat))
-        self.entities_gjk[entity_idx].zero_all_dofs_velocity()
 
     def step_analytical(self):
         # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_analytical._sim.rigid_solver._errno.fill(0)
         self.scene_analytical.step()
         errno_val = self.scene_analytical._sim.rigid_solver._errno[0]
-        assert (errno_val & ERRNO_CALLED_GJK) == 0, "Analytical scene should not use GJK."
+        assert (errno_val & (ERRNO_CALLED_GJK_K1 | ERRNO_CALLED_GJK_K2)) == 0, "Analytical scene should not use GJK."
 
-    def step_gjk(self):
+    def step_gjk(self, expect_collision: bool = True):
         # see section '# errno' above for discussion on our abusing errno, and the assumptions which we make.
         self.scene_gjk._sim.rigid_solver._errno.fill(0)
         self.scene_gjk.step()
         errno_val = self.scene_gjk._sim.rigid_solver._errno[0]
-        assert (errno_val & ERRNO_CALLED_GJK) != 0, "GJK scene should use GJK."
+        use_split_narrowphase = self.scene_gjk._sim.rigid_solver.collider._use_split_narrowphase
+        if use_split_narrowphase:
+            # Kernel1 always runs GJK for collision detection (analytical paths are disabled).
+            assert (errno_val & ERRNO_CALLED_GJK_K1) != 0, "GJK scene should use GJK in contact0."
+        if expect_collision:
+            # On GPU: multicontact is reached when contact0 detects a collision and enqueues the pair.
+            # On CPU: the monolithic kernel calls gjk.func_gjk_contact directly (skipping gjk.func_gjk).
+            assert (errno_val & ERRNO_CALLED_GJK_K2) != 0, "GJK scene should use GJK for contact generation."
 
 
 @pytest.mark.required
@@ -381,6 +468,8 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         monkeypatch=monkeypatch, build_scene=build_scene, tmp_path=tmp_path, show_viewer=show_viewer
     )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
+    assert scene_analytical.rigid_solver.collider is not None
+    assert scene_gjk.rigid_solver.collider is not None
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
@@ -416,7 +505,7 @@ def test_capsule_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewe
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=pos0, euler=euler0)
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=pos1, euler=euler1)
-            scene_creator.step_gjk()
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
@@ -511,9 +600,10 @@ def test_capsule_analytical_accuracy(tmp_path: Path, show_viewer: bool, tol: flo
 
     _cap1 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
     cap2 = scene_add_capsule(tmp_path=tmp_path, scene=scene, half_length=0.25, radius=0.1)
-
     scene.build()
-    cap2.set_qpos(np.array([*(0.15, 0, 0), *(1, 0, 0, 0)], dtype=gs.np_float))
+    assert scene.rigid_solver.collider is not None
+
+    cap2.set_pos((0.15, 0, 0))
     scene.step()
 
     contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
@@ -545,7 +635,7 @@ def create_sphere_mjcf(name, pos, radius):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
+def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer: bool) -> None:
     """
     Compare analytical sphere-capsule collision with GJK by monkey-patching narrowphase.
     Tests multiple configurations with a single scene build (moving objects between tests).
@@ -595,6 +685,8 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         show_viewer=show_viewer,
     )
     scene_analytical, scene_gjk = scene_creator.setup_scenes()
+    assert scene_analytical.rigid_solver.collider is not None
+    assert scene_gjk.rigid_solver.collider is not None
 
     # Phase 1: Run all analytical scenarios (original, unpatched kernel)
     analytical_results = {}
@@ -631,7 +723,7 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
         try:
             scene_creator.update_pos_quat_gjk(entity_idx=0, pos=sphere_pos, euler=[0, 0, 0])
             scene_creator.update_pos_quat_gjk(entity_idx=1, pos=capsule_pos, euler=capsule_euler)
-            scene_creator.step_gjk()
+            scene_creator.step_gjk(should_collide)
 
             contacts_gjk = scene_gjk.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
             contacts_analytical = analytical_results[description]
@@ -671,3 +763,55 @@ def test_sphere_capsule_vs_gjk(backend, monkeypatch, tmp_path: Path, show_viewer
                 f"Sphere radius: {sphere_radius}\n"
                 f"Capsule radius: {capsule_radius}, Half-length: {capsule_half_length}\n"
             ) from e
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
+    """
+    Regression test for sphere-sphere GJK collision detection.
+
+    Smooth geometries like spheres produce extremely small polytope faces near EPA convergence,
+    which amplifies the relative reprojection error and causes false contact rejections.
+    The diagonal_3d case (pos_b=(0.08, 0.06, 0.06)) is the original bug report configuration.
+
+    Uses asymmetric radii (r_a=0.10, r_b=0.08, combined_r=0.18) for all cases.
+    """
+    test_cases = [
+        # (pos_b, should_collide, description, exp_pen, exp_normal)
+        # Original bug report: diagonal offset, dist ≈ 0.1166, pen ≈ 0.0634
+        ((0.08, 0.06, 0.06), True, "diagonal_3d", 0.0634, (0.08, 0.06, 0.06)),
+        # Axis-aligned overlap: dist = 0.15, pen = 0.03
+        ((0.15, 0, 0), True, "axis_aligned", 0.03, (1, 0, 0)),
+        # Near-touching: dist = 0.17, pen = 0.01
+        ((0.17, 0, 0), True, "near_touching", 0.01, (1, 0, 0)),
+        # No collision: dist = 0.25
+        ((0.25, 0, 0), False, "separated", None, None),
+        # Concentric spheres: fully degenerate, just check collision is detected
+        ((0, 0, 0), True, "concentric", None, None),
+    ]
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.0, 1.0, 0.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+        ),
+        show_viewer=show_viewer,
+    )
+    entity_a = scene_add_sphere(tmp_path, scene, radius=0.10)
+    entity_b = scene_add_sphere(tmp_path, scene, radius=0.08)
+    scene.build()
+    assert scene.rigid_solver.collider is not None
+
+    for pos_b, should_collide, description, exp_pen, exp_normal in test_cases:
+        entity_a.set_pos(0.0)
+        entity_b.set_pos(pos_b)
+
+        scene.step()
+
+        contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
+        assert len(contacts["geom_a"]) == should_collide
+        _check_expected_values(contacts, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)

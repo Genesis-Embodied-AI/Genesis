@@ -1,10 +1,14 @@
 import sys
 import platform
+from typing import TYPE_CHECKING
 
 from ..base import Material
 
+if TYPE_CHECKING:
+    from genesis.engine.entities.sph_entity import SPHEntity
 
-class Base(Material):
+
+class Base(Material["SPHEntity"]):
     """
     The base class of SPH materials.
 
@@ -29,10 +33,6 @@ class Base(Material):
         super().__init__()
 
         self._sampler = sampler
-
-    @classmethod
-    def _repr_type(cls):
-        return f"<gs.materials.SPH.{cls.__name__}>"
 
     @property
     def sampler(self):

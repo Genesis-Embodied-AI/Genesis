@@ -265,6 +265,17 @@ class Visualizer(RBC):
         return self._rasterizer
 
     @property
+    @gs.assert_built
+    def is_software(self):
+        if self._batch_renderer is not None or self._raytracer is not None:
+            return False
+        if self._viewer is not None:
+            assert self._viewer._pyrender_viewer is not None
+            return self._viewer._pyrender_viewer._is_software
+        assert self._rasterizer is not None and self._rasterizer._renderer is not None
+        return self._rasterizer._renderer._is_software
+
+    @property
     def batch_renderer(self):
         return self._batch_renderer
 
