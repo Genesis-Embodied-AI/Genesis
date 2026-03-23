@@ -1,4 +1,7 @@
+from typing import Any
+
 import quadrants as qd
+from pydantic import StrictBool
 
 import genesis as gs
 
@@ -12,50 +15,35 @@ class Liquid(Base):
 
     Parameters
     ----------
-    E: float, optional
+    E : float, optional
         Young's modulus. Default is 1e6.
-    nu: float, optional
+    nu : float, optional
         Poisson ratio. Default is 0.2.
-    rho: float, optional
-        Density (kg/m^3). Default is 1000.
-    lam: float, optional
-        The first Lame's parameter. Default is None, computed by E and nu.
-    mu: float, optional
-        The second Lame's parameter. Default is None, computed by E and nu.
-    sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux x86 for now. Defaults
-        to 'pbs' on supported platforms, 'random' otherwise.
-    viscous: str, bool
-        Whether the liquid is viscous. Simply set mu to zero when non-viscuous. Default is False.
+    rho : float, optional
+        Density (kg/m³). Default is 1000.
+    viscous : bool, optional
+        Whether the liquid is viscous. Simply sets mu to zero when non-viscous. Default is False.
     """
 
-    def __init__(
-        self,
-        E=1e6,
-        nu=0.2,
-        rho=1000.0,
-        lam=None,
-        mu=None,
-        viscous=False,
-        sampler=None,
-    ):
-        super().__init__(E, nu, rho, lam, mu, sampler)
+    viscous: StrictBool = False
 
-        if not viscous:
-            self._mu = 0.0
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+        if not self.viscous:
+            self.mu = 0.0
+        self.update_F_S_Jp = self._update_F_S_Jp_liquid
+        self.update_stress = self._update_stress_liquid
 
     @qd.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
+    def _update_F_S_Jp_liquid(self, J, F_tmp, U, S, V, Jp):
         F_new = qd.Matrix.identity(gs.qd_float, 3) * qd.pow(J, 1.0 / 3.0)
         S_new = S
         Jp_new = Jp
         return F_new, S_new, Jp_new
 
     @qd.func
-    def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
-        # NOTE: class member function inheritance will still introduce redundant computation graph in quadrants
-        stress = 2 * self._mu * (F_tmp - U @ V.transpose()) @ F_tmp.transpose() + qd.Matrix.identity(
+    def _update_stress_liquid(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
+        stress = 2 * self.mu * (F_tmp - U @ V.transpose()) @ F_tmp.transpose() + qd.Matrix.identity(
             gs.qd_float, 3
-        ) * self._lam * J * (J - 1)
-
+        ) * self.lam * J * (J - 1)
         return stress

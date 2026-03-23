@@ -273,11 +273,11 @@ class MPMSolver(Solver):
         # Register material update methods if and only if the provided material is not already registered
         for material_i in self._materials:
             if material == material_i:
-                material._idx = material_i._idx
+                material.idx = material_i.idx
                 break
         else:
-            material._idx = len(self._materials_idx)
-            self._materials_idx.append(material._idx)
+            material.idx = len(self._materials_idx)
+            self._materials_idx.append(material.idx)
             self._materials_update_F_S_Jp.append(material.update_F_S_Jp)
             self._materials_update_stress.append(material.update_stress)
         self._materials.append(material)

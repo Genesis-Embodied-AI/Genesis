@@ -1,9 +1,13 @@
-import numpy as np
+import math
+from typing import Any, Literal
+
 import quadrants as qd
+from pydantic import Field
 
 import genesis as gs
+from genesis.typing import PositiveFloat, ValidFloat
 
-from .base import Base
+from .base import Base, SamplerType
 
 
 @qd.data_oriented
@@ -13,43 +17,34 @@ class Sand(Base):
 
     Parameters
     ----------
-    E: float, optional
+    E : float, optional
         Young's modulus. Default is 1e6.
-    nu: float, optional
+    nu : float, optional
         Poisson ratio. Default is 0.2.
-    rho: float, optional
-        Density (kg/m^3). Default is 1000.
-    lam: float, optional
-        The first Lame's parameter. Default is None, computed by E and nu.
-    mu: float, optional
-        The second Lame's parameter. Default is None, computed by E and nu.
-    sampler: str, optional
-        Particle sampler ('pbs', 'regular', 'random'). Note that 'pbs' is only supported on Linux for now. Defaults to
-        'random'.
-    friction_angle: float, optional
+    rho : float, optional
+        Density (kg/m³). Default is 1000.
+    sampler : str, optional
+        Particle sampler. Default is 'random'.
+    friction_angle : float, optional
         Friction angle in degrees, used to compute internal pressure-dependent plasticity. Default is 45.
     """
 
-    def __init__(
-        self,
-        E=1e6,
-        nu=0.2,
-        rho=1000.0,
-        lam=None,
-        mu=None,
-        sampler="random",
-        friction_angle=45,
-    ):
-        super().__init__(E, nu, rho, lam, mu, sampler)
+    sampler: SamplerType = "random"
+    friction_angle: PositiveFloat = 45.0
 
+    # Derived from friction_angle, set in model_post_init.
+    alpha: ValidFloat = Field(default=0.0, exclude=True)
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
         self._default_Jp = 0.0
-
-        self.friction_angle = np.deg2rad(friction_angle)
-        sin_phi = np.sin(self.friction_angle)
-        self.alpha = np.sqrt(2 / 3) * 2 * sin_phi / (3 - sin_phi)
+        sin_phi = math.sin(math.radians(self.friction_angle))
+        self.alpha = math.sqrt(2 / 3) * 2 * sin_phi / (3 - sin_phi)
+        self.update_F_S_Jp = self._update_F_S_Jp_sand
+        self.update_stress = self._update_stress_sand
 
     @qd.func
-    def sand_projection(self, S, Jp):
+    def _sand_projection(self, S, Jp):
         S_out = qd.Matrix.zero(gs.qd_float, 3, 3)
         epsilon = qd.Vector.zero(gs.qd_float, 3)
         for i in qd.static(range(3)):
@@ -64,26 +59,26 @@ class Sand(Base):
             Jp_new = tr
         else:
             Jp_new = 0.0
-            delta_gamma = epsilon_hat_norm + (3 * self._lam + 2 * self._mu) / (2 * self._mu) * tr * self.alpha
+            delta_gamma = epsilon_hat_norm + (3 * self.lam + 2 * self.mu) / (2 * self.mu) * tr * self.alpha
             for i in qd.static(range(3)):
                 S_out[i, i] = qd.exp(epsilon[i] - max(0, delta_gamma) / epsilon_hat_norm * epsilon_hat[i])
 
         return S_out, Jp_new
 
     @qd.func
-    def update_F_S_Jp(self, J, F_tmp, U, S, V, Jp):
-        S_new, Jp_new = self.sand_projection(S, Jp)
+    def _update_F_S_Jp_sand(self, J, F_tmp, U, S, V, Jp):
+        S_new, Jp_new = self._sand_projection(S, Jp)
         F_new = U @ S_new @ V.transpose()
         return F_new, S_new, Jp_new
 
     @qd.func
-    def update_stress(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
+    def _update_stress_sand(self, U, S, V, F_tmp, F_new, J, Jp, actu, m_dir):
         log_S_sum = gs.qd_float(0.0)
         center = qd.Matrix.zero(gs.qd_float, 3, 3)
         for i in qd.static(range(3)):
             log_S_sum += qd.log(S[i, i])
-            center[i, i] = 2.0 * self._mu * qd.log(S[i, i]) * (1 / S[i, i])
+            center[i, i] = 2.0 * self.mu * qd.log(S[i, i]) * (1 / S[i, i])
         for i in qd.static(range(3)):
-            center[i, i] += self._lam * log_S_sum * (1 / S[i, i])
+            center[i, i] += self.lam * log_S_sum * (1 / S[i, i])
         stress = U @ center @ V.transpose() @ F_new.transpose()
         return stress

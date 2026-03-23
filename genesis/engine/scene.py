@@ -408,7 +408,7 @@ class Scene(RBC):
         if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size
             if isinstance(morph_for_checks, gs.morphs.Primitive):
-                material._sdf_max_res = 32
+                material.sdf_max_res = 32
 
         # some morph should not smooth surface normal
         if isinstance(morph_for_checks, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
