@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils import geom as gu
 
 from .usd_context import UsdContext
-from .usd_utils import AXES_T, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
+from .usd_utils import AXES_T, AXES_VECTOR, usd_attr_array_to_numpy, usd_primvar_array_to_numpy
 
 
 def geom_exception(geom_type, geom_id, stage_file, reason_msg):
@@ -67,6 +67,7 @@ def parse_prim_geoms(
 
         # parse geometry
         meshes = []
+        axis_T = None  # Set for primitives with axis attribute (Capsule, Cylinder, Plane)
         if prim.IsA(UsdGeom.Mesh):
             mesh_prim = UsdGeom.Mesh(prim)
 
@@ -235,11 +236,19 @@ def parse_prim_geoms(
 
         else:  # primitive geometries
             geom_S_diag = np.diag(geom_S)
+            if not np.allclose(geom_S_diag, geom_S_diag[0], atol=1e-6):
+                gs.logger.warning(
+                    f"Non-uniform scale {geom_S_diag} on primitive {prim.GetPath()}. "
+                    "Using first axis scale for collision geometry data."
+                )
+            geom_scale = float(geom_S_diag[0])
+
             if prim.IsA(UsdGeom.Plane):
                 plane_prim = UsdGeom.Plane(prim)
                 width = plane_prim.GetWidthAttr().Get()
                 length = plane_prim.GetLengthAttr().Get()
-                axis_T = AXES_T[plane_prim.GetAxisAttr().Get() or "Z"]
+                plane_axis_str = plane_prim.GetAxisAttr().Get() or "Z"
+                axis_T = AXES_T[plane_axis_str]
 
                 w = float(width) * 0.5
                 l = float(length) * 0.5
@@ -248,15 +257,14 @@ def parse_prim_geoms(
                     faces=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32),
                     face_normals=np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]], dtype=np.float32),
                 )
-                tmesh.apply_transform(axis_T)
-                geom_data = np.array([0.0, 0.0, 1.0])
+                geom_data = AXES_VECTOR[plane_axis_str]
                 gs_type = gs.GEOM_TYPE.PLANE
 
             elif prim.IsA(UsdGeom.Sphere):
                 sphere_prim = UsdGeom.Sphere(prim)
                 radius = sphere_prim.GetRadiusAttr().Get()
                 tmesh = trimesh.creation.icosphere(radius=radius, subdivisions=2)
-                geom_data = np.array([radius]) * geom_S_diag
+                geom_data = np.array([radius * geom_scale])
                 gs_type = gs.GEOM_TYPE.SPHERE
 
             elif prim.IsA(UsdGeom.Capsule):
@@ -264,10 +272,8 @@ def parse_prim_geoms(
                 radius = capsule_prim.GetRadiusAttr().Get()
                 height = capsule_prim.GetHeightAttr().Get()
                 axis_T = AXES_T[capsule_prim.GetAxisAttr().Get() or "Z"]
-                # TODO: create different trimesh for visual and collision
                 tmesh = trimesh.creation.capsule(radius=radius, height=height, count=(8, 12))
-                tmesh.apply_transform(axis_T)
-                geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
+                geom_data = np.array([radius * geom_scale, height * geom_scale])
                 gs_type = gs.GEOM_TYPE.CAPSULE
 
             elif prim.IsA(UsdGeom.Cube):
@@ -285,20 +291,25 @@ def parse_prim_geoms(
                 height = cylinder_prim.GetHeightAttr().Get()
                 axis_T = AXES_T[cylinder_prim.GetAxisAttr().Get() or "Z"]
                 tmesh = trimesh.creation.cylinder(radius=radius, height=height, count=(8, 12))
-                tmesh.apply_transform(axis_T)
-                geom_data = np.array([radius, height, 1.0]) * geom_S_diag  # TODO: use the correct direction
+                geom_data = np.array([radius * geom_scale, height * geom_scale])
                 geom_surface.smooth = False
                 gs_type = gs.GEOM_TYPE.CYLINDER
 
             else:
                 gs.raise_exception(f"Unsupported geometry type: {prim.GetTypeName()}")
 
+            # Mesh stays Z-aligned; axis orientation is handled by the quat (matching MuJoCo pattern).
+            # axis_T is NOT baked into mesh vertices — it goes into geom_Q instead.
             tmesh.apply_transform(geom_ST)
             metadata = {
                 "name": geom_id,
                 "bake_success": bool(bake_success),
             }
             meshes.append(gs.Mesh.from_trimesh(tmesh, surface=geom_surface, metadata=metadata))
+
+        # Compose axis rotation into geom transform for oriented primitives.
+        if axis_T is not None:
+            geom_Q = geom_Q @ axis_T
 
         geom_pos = geom_Q[:3, 3]
         geom_quat = gu.R_to_quat(geom_Q[:3, :3])

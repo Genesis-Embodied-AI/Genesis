@@ -1512,7 +1512,7 @@ class USD(FileMorph):
 
     # Mesh Options
     file_meshes_are_zup: StrictBool | None = None
-    fixed: StrictBool = False
+    fixed: StrictBool | None = None
     default_armature: float | None = Field(default=0.1, ge=0)
 
     # Joint Dynamics Options
