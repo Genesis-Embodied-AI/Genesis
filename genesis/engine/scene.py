@@ -42,6 +42,7 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+import genesis.utils.mesh as mu
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
@@ -1269,8 +1270,6 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            import genesis.utils.mesh as mu
-
             mesh = mu.create_camera_frustum(camera, color)
             return self._visualizer.context.draw_debug_mesh(mesh)
 
