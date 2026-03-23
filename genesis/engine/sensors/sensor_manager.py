@@ -121,7 +121,11 @@ class SensorManager:
 
         for dtype in cache_size_per_dtype.keys():
             cache_shape = (self._sim._B, cache_size_per_dtype[dtype])
-            self._ground_truth_cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)
+            # Ground truth cache is stored transposed (cols, B) so that per-class row slices are C-contiguous,
+            # which is required for kernel writes. The cache and ring buffer stay (B, cols) since they only
+            # receive data via .copy_() / torch.lerp which handle non-contiguous targets.
+            gt_cache_shape = (cache_size_per_dtype[dtype], self._sim._B)
+            self._ground_truth_cache[dtype] = torch.zeros(gt_cache_shape, dtype=dtype, device=gs.device)
             self._cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)
             self._buffered_data[dtype] = TensorRingBuffer(max_buffer_len, cache_shape, dtype=dtype)
 
@@ -145,7 +149,7 @@ class SensorManager:
         envs_idx = self._sim._scene._sanitize_envs_idx(envs_idx)
 
         for dtype in self._buffered_data.keys():
-            self._ground_truth_cache[dtype][envs_idx] = 0.0
+            self._ground_truth_cache[dtype][:, envs_idx] = 0.0
             self._cache[dtype][envs_idx] = 0.0
             self._buffered_data[dtype].buffer[:, envs_idx] = 0.0
             for is_ground_truth in (False, True):
@@ -156,9 +160,7 @@ class SensorManager:
         for sensor_cls in self._sensors_by_type.keys():
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
-            sensor_cls.reset(
-                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice], envs_idx
-            )
+            sensor_cls.reset(self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice], envs_idx)
 
     def step(self):
         for buffered_data in self._buffered_data.values():
@@ -167,13 +169,12 @@ class SensorManager:
         for sensor_cls in self._sensors_by_type.keys():
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
-            sensor_cls._update_shared_ground_truth_cache(
-                self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][:, cache_slice]
-            )
+            gt_slice = self._ground_truth_cache[dtype][cache_slice]
+            sensor_cls._update_shared_ground_truth_cache(self._sensors_metadata[sensor_cls], gt_slice)
             if self._should_update_cache_by_type[sensor_cls]:
                 sensor_cls._update_shared_cache(
                     self._sensors_metadata[sensor_cls],
-                    self._ground_truth_cache[dtype][:, cache_slice],
+                    gt_slice.T,
                     self._cache[dtype][:, cache_slice],
                     self._buffered_data[dtype][:, cache_slice],
                 )
@@ -193,7 +194,7 @@ class SensorManager:
         if not self._is_last_cache_cloned[key]:
             self._is_last_cache_cloned[key] = True
             if is_ground_truth:
-                self._cloned_cache[key] = self._ground_truth_cache[dtype].clone()
+                self._cloned_cache[key] = self._ground_truth_cache[dtype].T.contiguous()
             else:
                 self._cloned_cache[key] = self._cache[dtype].clone()
         return self._cloned_cache[key][:, sensor._cache_idx : sensor._cache_idx + sensor._cache_size]
