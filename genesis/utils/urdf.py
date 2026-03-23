@@ -446,29 +446,58 @@ def rotate_inertia(I, R):
     return R @ I @ R.T
 
 
-def principal_axes_rot(I, tol=1e-6):
-    """Return rotation matrix R whose columns are the principal axes of inertia I (sorted by ascending eigenvalue).
-
-    The returned matrix is guaranteed to be right-handed (det = +1).
-    Returns identity if:
-    - the principal axes are already axis-aligned (e.g. box, capsule, cylinder), or
-    - the inertia is nearly isotropic with degenerate eigenvalues (e.g. sphere).
-    """
+def principal_axes_rot(I, tol=1e-3):
+    """Return rotation matrix R whose columns are the (unsorted) principal axes of inertia I."""
     I = 0.5 * (I + I.T)
     eigvals, eigvecs = np.linalg.eigh(I)
 
-    # If each eigenvector is already aligned with a coordinate axis, no rotation is needed
-    A = np.abs(eigvecs)
-    if 1 - np.mean(A.max(axis=1)) < tol:
+    if 1.0 - np.mean(np.abs(eigvecs).max(axis=1)) < tol:
         return np.eye(3)
 
-    # If inertia is nearly isotropic (degenerate eigenvalues, e.g. sphere), use identity
-    order = np.argsort(eigvals)
-    eigvals = eigvals[order]
-    if np.min(np.diff(eigvals)) < tol * eigvals[-1]:
-        return np.eye(3)
+    # Find degenerate groups
+    groups, i = [], 0
+    while i < 3:
+        j = i + 1
+        while j < 3 and eigvals[j] - eigvals[i] < tol * eigvals[-1]:
+            j += 1
+        groups.append(list(range(i, j)))
+        i = j
 
-    R = eigvecs[:, order]
+    # Assign unique eigenvectors to their closest coordinate axis first
+    out_cols = [None, None, None]
+    used_axes = set()
+    for g in groups:
+        if len(g) == 1:
+            col = g[0]
+            for ax in np.argsort(np.abs(eigvecs[:, col]))[::-1]:
+                if ax not in used_axes:
+                    out_cols[ax] = col
+                    used_axes.add(ax)
+                    break
+
+    # Fill remaining axes with degenerate group columns
+    remaining_axes = [ax for ax in range(3) if ax not in used_axes]
+    remaining_cols = [c for g in groups if len(g) > 1 for c in g]
+    for ax, col in zip(remaining_axes, remaining_cols):
+        out_cols[ax] = col
+
+    R = eigvecs[:, out_cols]
+
+    # Procrustes on the degenerate axes (which may be non-contiguous after reordering)
+    if remaining_axes:
+        U = R[:, remaining_axes]
+        T = np.eye(3)[:, remaining_axes]
+        Usvd, _, Vt = np.linalg.svd(U.T @ T)
+        Q = Usvd @ Vt
+        if np.linalg.det(Q) < 0:
+            Usvd[:, -1] *= -1
+            Q = Usvd @ Vt
+        R[:, remaining_axes] = U @ Q
+
+    # Canonicalize sign: largest-magnitude element of each column should be positive
+    R *= np.sign(R[np.argmax(np.abs(R), axis=0), np.arange(3)])
+
+    # Make sure the matrix is a pure rotation
     if np.linalg.det(R) < 0:
         R[:, 0] = -R[:, 0]
     return R
