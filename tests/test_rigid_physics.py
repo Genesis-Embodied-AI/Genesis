@@ -23,8 +23,6 @@ from genesis.utils.misc import get_assets_dir, qd_to_numpy, qd_to_torch, tensor_
 from .utils import (
     assert_allclose,
     assert_equal,
-    build_genesis_sim,
-    build_mujoco_sim,
     check_mujoco_data_consistency,
     check_mujoco_model_consistency,
     get_hf_dataset,

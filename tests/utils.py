@@ -18,6 +18,7 @@ from typing import Literal, Sequence
 
 import cpuinfo
 import mujoco
+import pytest
 import numpy as np
 import torch
 from httpcore import TimeoutException as HTTPTimeoutException
@@ -701,7 +702,15 @@ def check_mujoco_model_consistency(
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]
         mj_invweight_i = mj_sim.model.body(mj_i).invweight0
-        assert_allclose(gs_invweight_i, mj_invweight_i, tol=tol)
+        try:
+            assert_allclose(gs_invweight_i, mj_invweight_i, tol=tol)
+        except AssertionError:
+            if tuple(int(x) for x in mujoco.__version__.split(".")[:2]) < (3, 5):
+                pytest.skip(
+                    "MuJoCo < 3.5 lacks the degenerate invweight fix. "
+                    "See https://github.com/google-deepmind/mujoco/commit/1cda1e7a"
+                )
+            raise
         gs_inertia_i = gs_sim.rigid_solver.links_info.inertial_i.to_numpy()[gs_i, [0, 1, 2], [0, 1, 2]]
         mj_inertia_i = mj_sim.model.body(mj_i).inertia
         assert_allclose(gs_inertia_i, mj_inertia_i, tol=tol)

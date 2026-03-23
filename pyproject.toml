@@ -86,7 +86,8 @@ dev = [
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
-    "mujoco>=3.3.6,<3.4.0",
+    # * Mujoco 3.5.0 fixed computation of link invweight when degenerated.
+    "mujoco>=3.5.0,<3.7.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",
