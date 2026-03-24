@@ -424,7 +424,7 @@ class RigidOptions(Options):
         counterpart. 'approximate_implicitfast' is an even faster approximation of 'implicitfast', which avoid
         computing the inverse mass matrix twice by considering the first order correction terms of the implicit
         integration scheme systematically, including for computing the acceleration resulting from the constraints
-        and external forces. Although this approximation is wrong in theory, it works resonably well in practice.
+        and external forces. Although this approximation is wrong in theory, it works reasonably well in practice.
         Defaults to 'approximate_implicitfast'.
     IK_max_targets : int, optional
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
