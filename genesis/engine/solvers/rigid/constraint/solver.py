@@ -3101,7 +3101,7 @@ def func_solve_iter(
 
 
 @qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=1.0
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=0.0
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
