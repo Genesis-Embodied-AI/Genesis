@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from .rigid_joint import RigidJoint
 
 
+RHO_OBJECT = 600.0
+RHO_ROBOT = 1500.0
+RHO_MUJOCO = 1000.0
+
 # If mass is too small, we do not care much about spatial inertia discrepancy
 MASS_EPS = 0.005
 AABB_EPS = 0.002
@@ -596,6 +600,7 @@ class RigidLink(KinematicLink):
         root_idx: int | None,
         invweight: float | None,
         visualize_contact: bool,
+        is_robot: bool,
     ):
         super().__init__(
             entity,
@@ -611,6 +616,8 @@ class RigidLink(KinematicLink):
             parent_idx,
             root_idx,
         )
+
+        self._is_robot: bool = is_robot
 
         if self._is_fixed and not entity._batch_fixed_verts:
             verts_state_start = fixed_verts_state_start
@@ -681,6 +688,11 @@ class RigidLink(KinematicLink):
 
             # Get material density
             rho = self.entity.material.rho
+            if rho is None:
+                if self._solver._enable_mujoco_compatibility:
+                    rho = RHO_MUJOCO
+                else:
+                    rho = RHO_ROBOT if self._is_robot else RHO_OBJECT
 
             # For heterogeneous links, only use the first variant's geoms for the hint.
             if self._variant_geom_ranges is not None:
@@ -784,6 +796,11 @@ class RigidLink(KinematicLink):
         # Compute per-variant inertial for heterogeneous links
         if self._variant_geom_ranges is not None:
             rho = self.entity.material.rho
+            if rho is None:
+                if self._solver._enable_mujoco_compatibility:
+                    rho = RHO_MUJOCO
+                else:
+                    rho = RHO_ROBOT if self._is_robot else RHO_OBJECT
             self._variant_inertial = []
             for v in range(len(self._variant_geom_ranges)):
                 if v == 0:

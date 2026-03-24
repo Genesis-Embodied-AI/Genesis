@@ -395,6 +395,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             file="urdf/go2/urdf/go2.urdf",
             merge_fixed_links=False,
         ),
+        material=gs.materials.Rigid(rho=200.0),
     )
     cam_debug = scene.add_camera(
         res=(640, 480),
