@@ -1042,6 +1042,70 @@ def test_draw_debug(renderer, show_viewer):
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_draw_debug_frustum_and_trajectory(renderer, show_viewer):
+    """Test that draw_debug_frustum and draw_debug_trajectory render visible content."""
+    if "GS_DISABLE_OFFSCREEN_MARKERS" in os.environ:
+        pytest.skip("Offscreen rendering of markers is forcibly disabled. Skipping...")
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    cam = scene.add_camera(
+        pos=(3.5, 0.5, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        res=(640, 640),
+        debug=True,
+        GUI=show_viewer,
+    )
+    # Add sensor_cam BEFORE build
+    sensor_cam = scene.add_camera(
+        res=(640, 480),
+        pos=(1.0, 0.0, 1.0),
+        lookat=(0.0, 0.0, 0.0),
+        fov=45,
+        GUI=False,
+    )
+    scene.build()
+
+    # Verify scene is initially blank
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+
+    # Test draw_debug_frustum
+    scene.draw_debug_frustum(sensor_cam, color=(0.0, 1.0, 0.0, 0.5))
+    scene.visualizer.update()
+
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
+    assert (np.std(rgb_array_flat, axis=0) > 10.0).any()
+
+    # Clear and verify blank again
+    scene.clear_debug_objects()
+    scene.visualizer.update()
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+
+    # Test draw_debug_trajectory
+    t = np.linspace(0, 2 * np.pi, 50)
+    positions = np.column_stack([np.cos(t), np.sin(t), np.ones_like(t) * 0.5])
+    scene.draw_debug_trajectory(positions, radius=0.01, color=(1.0, 0.5, 0.0, 1.0))
+    scene.visualizer.update()
+
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
+    assert (np.std(rgb_array_flat, axis=0) > 10.0).any()
+
+    # Clear and verify blank again
+    scene.clear_debug_objects()
+    scene.visualizer.update()
+    rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
+    assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
+
+
 @pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
