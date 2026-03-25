@@ -827,7 +827,8 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
 
         if self._shared_metadata.probe_max_raycast_range < gs.EPS:
             aabb = self._link.get_vAABB()
-            self._shared_metadata.probe_max_raycast_range = torch.linalg.norm(aabb[1] - aabb[0], dim=-1).max().item()
+            extents = aabb[..., 1, :] - aabb[..., 0, :]
+            self._shared_metadata.probe_max_raycast_range = torch.linalg.norm(extents, dim=-1).max().item()
 
         self._shared_metadata.total_n_probes += self._n_probes
 
@@ -877,13 +878,15 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
         link_quat = self._link.get_quat(env_idx).squeeze()
 
         data = self.read_ground_truth(env_idx)
-        magnitude = tensor_to_array(get_magnitude(data))
+        magnitudes = tensor_to_array(get_magnitude(data))
+        if magnitudes.ndim > 1:
+            magnitudes = magnitudes[env_idx]
 
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
         probe_global_idx = int(self._shared_metadata.sensor_probe_start[self._idx])
         probe_radius = float(self._shared_metadata.probe_radius[probe_global_idx])
         for is_contact in (False, True):
-            (probes_idx,) = np.nonzero(magnitude >= gs.EPS if is_contact else magnitude < gs.EPS)
+            (probes_idx,) = np.nonzero(magnitudes >= gs.EPS if is_contact else magnitudes < gs.EPS)
             if probes_idx.size > 0:
                 spheres_obj = context.draw_debug_spheres(
                     poss=probe_world[probes_idx],
