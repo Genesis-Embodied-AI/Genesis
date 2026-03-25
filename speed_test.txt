@@ -1,1 +1,0 @@
-env=dex_hand 	| batch_size=4096 	| use_contact_island=False 	| dtype=field 	| backend=cuda 	| compile_time=54.2 	| runtime_fps=8908.0 	| realtime_factor=556.8
