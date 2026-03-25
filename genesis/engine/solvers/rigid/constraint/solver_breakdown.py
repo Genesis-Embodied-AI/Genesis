@@ -27,7 +27,7 @@ LS_BISECT_STEPS = 12
 # Number of alpha candidates evaluated via cooperative constraint reduction.
 # Each candidate is evaluated by ALL K threads cooperating on the constraint sum,
 # reducing per-thread work from O(n_constraints) to O(n_constraints/K).
-LS_N_CANDIDATES = 8
+LS_N_CANDIDATES = 6
 
 # Maximum allowed alpha (prevents divergence from degenerate steps).
 LS_ALPHA_MAX = 1e4
