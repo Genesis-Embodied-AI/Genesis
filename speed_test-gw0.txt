@@ -1,0 +1,1 @@
+env=dex_hand 	| batch_size=4096 	| use_contact_island=False 	| dtype=ndarray 	| backend=cuda 	| compile_time=42.3 	| runtime_fps=6217.0 	| realtime_factor=388.6
