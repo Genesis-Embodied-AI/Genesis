@@ -35,7 +35,7 @@ def smoothstep(alpha: float) -> float:
     return alpha * alpha * (3.0 - 2.0 * alpha)
 
 
-def build_scene(engine="comfree", vis=False, dt=0.01, stiffness=0.2, damping=0.001):
+def build_scene(engine="comfree", vis=False, dt=0.002, stiffness=0.2, damping=0.001):
     """Create the Franka + cube scene (matching examples/rigid/franka_cube.py)."""
 
     gs.init(backend=gs.cpu, precision="64", logging_level="info")
@@ -76,7 +76,7 @@ def build_scene(engine="comfree", vis=False, dt=0.01, stiffness=0.2, damping=0.0
 def run_grasp_trial(
     engine="comfree",
     vis=False,
-    dt=0.01,
+    dt=0.002,
     stiffness=0.2,
     damping=0.001,
     steps_scale=1.0,
@@ -111,10 +111,10 @@ def run_grasp_trial(
         quat=np.array([0, 1, 0, 0]),
     ).numpy()
 
-    # Lift: raised position
+    # Lift: raised position (higher target for ComFree's softer contacts)
     lift_q = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
+        pos=np.array([0.65, 0.0, 0.4]),
         quat=np.array([0, 1, 0, 0]),
     ).numpy()
 
@@ -123,14 +123,16 @@ def run_grasp_trial(
     open_fingers = 0.04
     closed_fingers = 0.0  # fully closed in Genesis finger control
 
+    # Phase step counts are calibrated for dt=0.002; scale proportionally for other dt values
+    dt_scale = 0.002 / dt
     phases = [
-        ("approach", int(100 * steps_scale), approach_q[:ARM_DOF], open_fingers, 0.0),
-        ("grasp", int(100 * steps_scale), approach_q[:ARM_DOF], closed_fingers, 0.0),
-        ("lift", int(200 * steps_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
-        ("hold", int(200 * steps_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
+        ("approach", int(500 * steps_scale * dt_scale), approach_q[:ARM_DOF], open_fingers, 0.0),
+        ("grasp", int(500 * steps_scale * dt_scale), approach_q[:ARM_DOF], closed_fingers, 0.0),
+        ("lift", int(1000 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
+        ("hold", int(1000 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
     ]
     if perturb:
-        phases.append(("perturb", int(500 * steps_scale), lift_q[:ARM_DOF], closed_fingers, 1.5))
+        phases.append(("perturb", int(2500 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 1.5))
 
     # ── Simulation loop ───────────────────────────────────────────────────────
     min_cube_z = float("inf")
@@ -186,7 +188,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--vis", action="store_true", default=False, help="Launch viewer.")
     parser.add_argument("--engine", choices=("comfree", "newton"), default="comfree", help="Constraint solver backend.")
-    parser.add_argument("--dt", type=float, default=0.01, help="Simulation timestep.")
+    parser.add_argument(
+        "--dt", type=float, default=0.002, help="Simulation timestep (ComFree benefits from smaller dt)."
+    )
     parser.add_argument("--stiffness", type=float, default=0.2, help="ComFree stiffness (k_user).")
     parser.add_argument("--damping", type=float, default=0.001, help="ComFree damping (d_user).")
     parser.add_argument("--steps-scale", type=float, default=1.0, help="Scale phase durations.")

@@ -424,6 +424,36 @@ def imp_aref(params, neg_penetration, vel, pos):
     return imp, aref
 
 
+@qd.func
+def comfree_imp(params, pos_imp):
+    """Compute impedance for ComFree efc_mass, using hardcoded width=0.01.
+
+    Matches the reference: comfree_warp/comfree_core/_src/constraint.py:77-111
+    The hardcoded width avoids large jumps when pos_imp is large (e.g., initial penetration).
+    """
+    timeconst, dampratio, dmin, dmax, width, mid, power = params
+
+    MJ_MINIMP = 0.0001
+    MJ_MAXIMP = 0.9999
+
+    dmin = qd.math.clamp(dmin, MJ_MINIMP, MJ_MAXIMP)
+    dmax = qd.math.clamp(dmax, MJ_MINIMP, MJ_MAXIMP)
+    width = 0.01  # hardcoded as in reference constraint.py:93
+    mid = qd.math.clamp(mid, MJ_MINIMP, MJ_MAXIMP)
+    power = qd.max(1.0, power)
+
+    imp_x = qd.abs(pos_imp) / width
+    imp_a = (1.0 / mid ** (power - 1.0)) * imp_x**power
+    imp_b = 1.0 - (1.0 / (1.0 - mid) ** (power - 1.0)) * (1.0 - imp_x) ** power
+    imp_y = imp_a if imp_x < mid else imp_b
+
+    imp = dmin + imp_y * (dmax - dmin)
+    imp = qd.math.clamp(imp, dmin, dmax)
+    imp = dmax if imp_x > 1.0 else imp
+
+    return imp
+
+
 # ------------------------------------------------------------------------------------
 # -------------------------------- torch and numpy -----------------------------------
 # ------------------------------------------------------------------------------------

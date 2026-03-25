@@ -297,7 +297,7 @@ def _comfree_resolve(
                     efc_vel += constraint_state.jac[i_c, i_d, i_b] * v_smooth_pred
 
                 # efc_dist = signed distance/constraint violation
-                # efc_mass = D = constraint impedance (effective inertia at constraint point)
+                # efc_D = constraint impedance (includes friction scaling for contacts)
                 efc_dist = constraint_state.efc_dist[i_c, i_b]
                 efc_mass = constraint_state.efc_D[i_c, i_b]
 
