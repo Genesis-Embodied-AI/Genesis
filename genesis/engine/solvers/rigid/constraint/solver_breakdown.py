@@ -543,33 +543,46 @@ def _kernel_parallel_linesearch_eval(
                     g_best = 2.0 * alpha_eval * qt2_total + qt1_total
 
                     if qd.abs(g_best) > gtol:
-                        # Need bisection — use thread-0 sequential bisection with _ls_eval_cost_grad
-                        # (bisection is ~5 iterations, thread-0 cost is acceptable)
-                        bis_a = alpha_eval * 0.5
-                        bis_b = alpha_eval
-                        if g_best < 0.0:
-                            bis_a = alpha_eval
-                            bis_b = alpha_eval * 2.0
+                        hess_best = 2.0 * qt2_total
+                        newton_done = False
 
-                        _, g_a = _ls_eval_cost_grad(bis_a, i_b, constraint_state)
-                        _, g_b = _ls_eval_cost_grad(bis_b, i_b, constraint_state)
+                        # Try one Newton correction first (O(1) compute + 1 cost eval)
+                        if hess_best > rigid_global_info.EPS[None]:
+                            alpha_nc = alpha_eval - g_best / hess_best
+                            if alpha_nc > 0.0:
+                                c_nc, g_nc = _ls_eval_cost_grad(alpha_nc, i_b, constraint_state)
+                                if c_nc < p0_cost and c_nc < constraint_state.candidates[4, i_b]:
+                                    constraint_state.candidates[0, i_b] = alpha_nc
+                                    constraint_state.candidates[4, i_b] = c_nc
+                                    newton_done = True
 
-                        if g_a < 0.0 and g_b > 0.0:
-                            _N_BISECT = qd.static(LS_BISECT_STEPS)
-                            for _bis_it in range(_N_BISECT):
+                        # Fall back to bisection if Newton didn't converge
+                        if not newton_done:
+                            bis_a = alpha_eval * 0.5
+                            bis_b = alpha_eval
+                            if g_best < 0.0:
+                                bis_a = alpha_eval
+                                bis_b = alpha_eval * 2.0
+
+                            _, g_a = _ls_eval_cost_grad(bis_a, i_b, constraint_state)
+                            _, g_b = _ls_eval_cost_grad(bis_b, i_b, constraint_state)
+
+                            if g_a < 0.0 and g_b > 0.0:
+                                _N_BISECT = qd.static(LS_BISECT_STEPS)
+                                for _bis_it in range(_N_BISECT):
+                                    mid_b = (bis_a + bis_b) * 0.5
+                                    c_mid_b, g_mid_b = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
+                                    if qd.abs(g_mid_b) < gtol or qd.abs(bis_b - bis_a) < rigid_global_info.EPS[None]:
+                                        break
+                                    if g_mid_b < 0.0:
+                                        bis_a = mid_b
+                                    else:
+                                        bis_b = mid_b
                                 mid_b = (bis_a + bis_b) * 0.5
-                                c_mid_b, g_mid_b = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
-                                if qd.abs(g_mid_b) < gtol or qd.abs(bis_b - bis_a) < rigid_global_info.EPS[None]:
-                                    break
-                                if g_mid_b < 0.0:
-                                    bis_a = mid_b
-                                else:
-                                    bis_b = mid_b
-                            mid_b = (bis_a + bis_b) * 0.5
-                            c_mid_b, _ = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
-                            if c_mid_b < p0_cost and c_mid_b < constraint_state.candidates[4, i_b]:
-                                constraint_state.candidates[0, i_b] = mid_b
-                                constraint_state.candidates[4, i_b] = c_mid_b
+                                c_mid_b, _ = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
+                                if c_mid_b < p0_cost and c_mid_b < constraint_state.candidates[4, i_b]:
+                                    constraint_state.candidates[0, i_b] = mid_b
+                                    constraint_state.candidates[4, i_b] = c_mid_b
         else:
             if tid == 0:
                 constraint_state.candidates[0, i_b] = 0.0
