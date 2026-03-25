@@ -211,7 +211,7 @@ class ComFreeSolver:
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def _comfree_solver_kernel_reset(
-    envs_idx: array_class.V_ANNOTATION,
+    envs_idx: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -228,7 +228,7 @@ def _comfree_solver_kernel_reset(
 
 @qd.kernel(fastcache=gs.use_fastcache)
 def _comfree_solver_kernel_clear(
-    envs_idx: array_class.V_ANNOTATION,
+    envs_idx: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
