@@ -430,8 +430,9 @@ class RigidOptions(Options):
         Maximum number of IK targets. Increasing this doesn't affect IK solving speed, but will increase memory usage.
         Defaults to 6.
     constraint_solver : gs.constraint_solver, optional
-        Constraint solver type. Current supported constraint solvers are 'gs.constraint_solver.CG' (conjugate gradient)
-        and 'gs.constraint_solver.Newton' (Newton's method). Defaults to 'Newton'.
+        Constraint solver type. Supported solvers are 'gs.constraint_solver.CG' (conjugate gradient),
+        'gs.constraint_solver.Newton' (Newton's method), and 'gs.constraint_solver.ComFree'
+        (complementarity-free analytical solver). Defaults to 'Newton'.
     iterations : int, optional
         Number of iterations for the constraint solver. Defaults to 50.
     tolerance : float, optional
@@ -503,6 +504,9 @@ class RigidOptions(Options):
     noslip_tolerance: PositiveFloat = 1e-6
     sparse_solve: StrictBool = False
     constraint_timeconst: PositiveFloat = 0.01
+    # ComFree analytical solver parameters
+    comfree_stiffness: PositiveFloat = 0.2
+    comfree_damping: PositiveFloat = 0.001
     use_contact_island: StrictBool = False
     box_box_detection: StrictBool = False
 

@@ -673,6 +673,7 @@ def add_collision_constraints(
                 constraint_state.diag[n_con, i_b] = diag
                 constraint_state.aref[n_con, i_b] = aref
                 constraint_state.efc_D[n_con, i_b] = 1 / diag
+                constraint_state.efc_dist[n_con, i_b] = -contact_data_penetration
 
 
 @qd.func
@@ -785,6 +786,7 @@ def func_equality_connect(
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+        constraint_state.efc_dist[n_con, i_b] = pos_diff[i_3]
 
 
 @qd.func
@@ -865,6 +867,7 @@ def func_equality_joint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+    constraint_state.efc_dist[n_con, i_b] = pos
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -1105,6 +1108,7 @@ def func_equality_weld(
         constraint_state.diag[n_con, i_b] = diag
         constraint_state.aref[n_con, i_b] = aref
         constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+        constraint_state.efc_dist[n_con, i_b] = pos_error[i]
 
     # --- Orientation part (next 3 constraints) ---
     n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 3)
@@ -1161,6 +1165,7 @@ def func_equality_weld(
         constraint_state.diag[i_con, i_b] = diag
         constraint_state.aref[i_con, i_b] = aref
         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
+        constraint_state.efc_dist[i_con, i_b] = rot_error[i_con - n_con]
 
 
 @qd.func
@@ -1206,6 +1211,7 @@ def add_joint_limit_constraints(
                         constraint_state.diag[n_con, i_b] = diag
                         constraint_state.aref[n_con, i_b] = aref
                         constraint_state.efc_D[n_con, i_b] = 1 / diag
+                        constraint_state.efc_dist[n_con, i_b] = pos_delta
 
                         if qd.static(static_rigid_sim_config.sparse_solve):
                             for i_d2_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
@@ -1267,6 +1273,7 @@ def add_frictionloss_constraints(
                         constraint_state.diag[i_con, i_b] = diag
                         constraint_state.aref[i_con, i_b] = aref
                         constraint_state.efc_D[i_con, i_b] = 1.0 / diag
+                        constraint_state.efc_dist[i_con, i_b] = 0.0
                         constraint_state.efc_frictionloss[i_con, i_b] = dofs_info.frictionloss[I_d]
                         for i_d2 in range(n_dofs):
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)

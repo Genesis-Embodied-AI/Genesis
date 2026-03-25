@@ -250,6 +250,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     MinvJT: V_ANNOTATION
     search: V_ANNOTATION
     efc_D: V_ANNOTATION
+    efc_dist: V_ANNOTATION
     efc_frictionloss: V_ANNOTATION
     efc_force: V_ANNOTATION
     efc_b: V_ANNOTATION
@@ -376,6 +377,7 @@ def get_constraint_state(constraint_solver, solver):
         efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_dist=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         jac=V(dtype=gs.qd_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.qd_int, shape=jac_relevant_dofs_shape),
