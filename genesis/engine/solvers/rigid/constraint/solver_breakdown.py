@@ -375,7 +375,7 @@ def _kernel_parallel_linesearch_eval(
     O(n_candidates × n_constraints/K) per thread instead of O(K × n_constraints).
 
     Phase 1: Cooperatively evaluate N_CANDIDATES + Newton alpha, pick best via argmin.
-    Phase 2: Cooperatively evaluate analytical gradient at best, then bisect if needed.
+    Phase 2: Cooperatively evaluate analytical gradient at best, try one Newton correction first then bisect if needed.
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
