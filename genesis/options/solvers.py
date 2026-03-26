@@ -471,7 +471,7 @@ class RigidOptions(Options):
         `sim_options.requires_grad`.
     broadphase_traversal : gs.broadphase_traversal, optional
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``NXN`` (all-vs-all).
-        Defaults to ``gs.broadphase_traversal.SAP``. NXN is not yet implemented.
+        Defaults to ``gs.broadphase_traversal.NXN``.
     broadphase_filter : gs.broadphase_filter, optional
         Broadphase filter bitmask applied to candidate pairs. ``SPHERE`` and ``AABB`` can be
         combined with ``|``. SAP traversal currently requires ``AABB`` only. Defaults to
@@ -529,7 +529,7 @@ class RigidOptions(Options):
     use_gjk_collision: StrictBool | None = None
 
     # broadphase configuration
-    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.SAP
+    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.NXN
     broadphase_filter: gs.broadphase_filter = gs.broadphase_filter.AABB
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
