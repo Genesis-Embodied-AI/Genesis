@@ -261,7 +261,9 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, broadphase_traversal=None, **scene_kwargs):
+def make_anymal(
+    n_envs, solver=None, gjk=None, control=None, with_kinematic=False, broadphase_traversal=None, **scene_kwargs
+):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -797,8 +799,9 @@ def go2(solver, n_envs, gjk):
 
 @pytest.fixture
 def anymal_zero(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control=None,
-                                   broadphase_traversal=gs.broadphase_traversal.SAP)
+    _, step_fn, meta = make_anymal(
+        n_envs, solver=solver, gjk=gjk, control=None, broadphase_traversal=gs.broadphase_traversal.SAP
+    )
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -846,15 +849,17 @@ def franka_accessors(solver, n_envs, gjk):
 
 @pytest.fixture
 def duck_in_box_easy(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=False,
-                                        broadphase_traversal=gs.broadphase_traversal.SAP)
+    _, step_fn, meta = make_duck_in_box(
+        n_envs, solver=solver, gjk=gjk, hard=False, broadphase_traversal=gs.broadphase_traversal.SAP
+    )
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True,
-                                        broadphase_traversal=gs.broadphase_traversal.SAP)
+    _, step_fn, meta = make_duck_in_box(
+        n_envs, solver=solver, gjk=gjk, hard=True, broadphase_traversal=gs.broadphase_traversal.SAP
+    )
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
