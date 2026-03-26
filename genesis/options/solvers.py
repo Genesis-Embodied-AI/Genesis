@@ -544,7 +544,12 @@ class RigidOptions(Options):
                     f"SAP traversal only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
                 )
         elif self.broadphase_traversal == gs.broadphase_traversal.NXN:
-            gs.raise_exception("NXN broadphase traversal is not yet implemented")
+            if self.broadphase_filter != gs.broadphase_filter.AABB:
+                gs.raise_exception(
+                    f"NXN traversal currently only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
+                )
+            if self.use_hibernation:
+                gs.raise_exception("NXN broadphase traversal does not support hibernation")
 
 
 class MPMOptions(Options):
