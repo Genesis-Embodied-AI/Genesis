@@ -5145,6 +5145,7 @@ def test_heterogeneous_robots(show_viewer, tol):
             gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
+            # Allow specifying different controller gains for each env
             batch_dofs_info=True,
         ),
         viewer_options=gs.options.ViewerOptions(
