@@ -366,7 +366,7 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
-            broadphase_traversal=self._options.broadphase_traversal,
+            broadphase_traversal=self._options.resolved_broadphase_traversal,
         )
 
         if self.is_active:

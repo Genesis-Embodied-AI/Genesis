@@ -471,7 +471,7 @@ class RigidOptions(Options):
         `sim_options.requires_grad`.
     broadphase_traversal : gs.broadphase_traversal, optional
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL``.
-        Defaults to ``gs.broadphase_traversal.ALL_VS_ALL``.
+        Defaults to ``None`` (auto: ``SAP`` on CPU, ``ALL_VS_ALL`` on GPU).
 
     Warning
     -------
@@ -525,7 +525,16 @@ class RigidOptions(Options):
     use_gjk_collision: StrictBool | None = None
 
     # broadphase configuration
-    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.ALL_VS_ALL
+    broadphase_traversal: gs.broadphase_traversal | None = None
+
+    @property
+    def resolved_broadphase_traversal(self) -> "gs.broadphase_traversal":
+        """Return the effective traversal strategy, resolving ``None`` via backend."""
+        if self.broadphase_traversal is not None:
+            return self.broadphase_traversal
+        if gs.backend == gs.cpu:
+            return gs.broadphase_traversal.SAP
+        return gs.broadphase_traversal.ALL_VS_ALL
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)
