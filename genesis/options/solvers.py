@@ -470,8 +470,8 @@ class RigidOptions(Options):
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
     broadphase_traversal : gs.broadphase_traversal, optional
-        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``NXN`` (all-vs-all).
-        Defaults to ``gs.broadphase_traversal.NXN``.
+        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL``.
+        Defaults to ``gs.broadphase_traversal.ALL_VS_ALL``.
     broadphase_filter : gs.broadphase_filter, optional
         Broadphase filter bitmask applied to candidate pairs. ``SPHERE`` and ``AABB`` can be
         combined with ``|``. SAP traversal currently requires ``AABB`` only. Defaults to
@@ -529,7 +529,7 @@ class RigidOptions(Options):
     use_gjk_collision: StrictBool | None = None
 
     # broadphase configuration
-    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.NXN
+    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.ALL_VS_ALL
     broadphase_filter: gs.broadphase_filter = gs.broadphase_filter.AABB
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
@@ -543,13 +543,13 @@ class RigidOptions(Options):
                 gs.raise_exception(
                     f"SAP traversal only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
                 )
-        elif self.broadphase_traversal == gs.broadphase_traversal.NXN:
+        elif self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
             if self.broadphase_filter != gs.broadphase_filter.AABB:
                 gs.raise_exception(
-                    f"NXN traversal currently only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
+                    f"ALL_VS_ALL traversal currently only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
                 )
             if self.use_hibernation:
-                gs.raise_exception("NXN broadphase traversal does not support hibernation")
+                gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
 
 
 class MPMOptions(Options):

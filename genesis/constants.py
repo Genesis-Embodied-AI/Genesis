@@ -66,7 +66,7 @@ class constraint_solver(IntEnum):
 # rigid solver broadphase traversal strategy
 class broadphase_traversal(IntEnum):
     SAP = 0
-    NXN = 1
+    ALL_VS_ALL = 1
 
 
 # rigid solver broadphase filter chain (combinable bitmask)

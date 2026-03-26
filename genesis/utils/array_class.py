@@ -722,7 +722,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     max_collision_pairs: V_ANNOTATION
     max_contact_pairs: V_ANNOTATION
     max_collision_pairs_broad: V_ANNOTATION
-    # Pre-filtered valid collision pairs for NXN broadphase
+    # Pre-filtered valid collision pairs for all-vs-all broadphase
     n_valid_pairs: V_ANNOTATION
     valid_pairs_a: V_ANNOTATION
     valid_pairs_b: V_ANNOTATION

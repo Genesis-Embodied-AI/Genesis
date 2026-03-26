@@ -4717,7 +4717,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
     sphere_drop_height = 0.08
 
     # Run homogeneous simulation with box only
-    # NXN broadphase does not support heterogeneous entities; use SAP for all sub-scenes
+    # ALL_VS_ALL broadphase does not support heterogeneous entities; use SAP for all sub-scenes
     # so the homogeneous references match the heterogeneous scene exactly.
     sap_opts = gs.options.RigidOptions(broadphase_traversal=gs.broadphase_traversal.SAP)
     scene_box = gs.Scene(show_viewer=False, rigid_options=sap_opts)

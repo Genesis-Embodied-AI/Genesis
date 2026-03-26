@@ -397,13 +397,13 @@ def func_broad_phase(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase_nxn_clear(
+def func_broad_phase_all_vs_all_clear(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     collider_state: array_class.ColliderState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Clear contacts and zero broadphase counters before the NXN sweep."""
+    """Clear contacts and zero broadphase counters before the all-vs-all sweep."""
     func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
 
     _B = collider_state.n_contacts.shape[0]
@@ -413,7 +413,7 @@ def func_broad_phase_nxn_clear(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase_nxn(
+def func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -427,7 +427,7 @@ def func_broad_phase_nxn(
     errno: array_class.V_ANNOTATION,
 ):
     """
-    All-vs-all (NXN) broad-phase collision detection.
+    All-vs-all broad-phase collision detection.
 
     Iterates over pre-filtered valid geom pairs in parallel across pairs and batches,
     checking 3D AABB overlap. Passing pairs are appended to the output buffer via atomic add.
