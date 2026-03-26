@@ -5342,7 +5342,6 @@ def test_hibernation_and_contact_islands(show_viewer):
         rigid_options=gs.options.RigidOptions(
             use_contact_island=True,
             use_hibernation=True,
-            broadphase_traversal=gs.broadphase_traversal.SAP,
         ),
         show_viewer=show_viewer,
     )

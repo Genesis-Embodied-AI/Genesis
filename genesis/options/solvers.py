@@ -532,7 +532,7 @@ class RigidOptions(Options):
         """Return the effective traversal strategy, resolving ``None`` via backend."""
         if self.broadphase_traversal is not None:
             return self.broadphase_traversal
-        if gs.backend == gs.cpu:
+        if gs.backend == gs.cpu or self.use_hibernation:
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL
 
