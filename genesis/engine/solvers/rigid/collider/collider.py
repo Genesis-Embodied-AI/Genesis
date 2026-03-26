@@ -679,7 +679,7 @@ class Collider:
             return
 
         self._contact_data_cache.clear()
-        if self._solver._options.resolved_broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
+        if self._solver._static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
             func_broad_phase_all_vs_all_clear(
                 self._solver.links_state,
                 self._solver.links_info,

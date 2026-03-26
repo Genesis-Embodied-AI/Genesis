@@ -527,15 +527,6 @@ class RigidOptions(Options):
     # broadphase configuration
     broadphase_traversal: gs.broadphase_traversal | None = None
 
-    @property
-    def resolved_broadphase_traversal(self) -> "gs.broadphase_traversal":
-        """Return the effective traversal strategy, resolving ``None`` via backend."""
-        if self.broadphase_traversal is not None:
-            return self.broadphase_traversal
-        if gs.backend == gs.cpu or self.use_hibernation:
-            return gs.broadphase_traversal.SAP
-        return gs.broadphase_traversal.ALL_VS_ALL
-
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)
         if contact_resolve_time is not None:

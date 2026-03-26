@@ -348,6 +348,13 @@ class RigidSolver(KinematicSolver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_coupling_force = func_apply_coupling_force
 
+    def _resolve_broadphase_traversal(self):
+        if self._options.broadphase_traversal is not None:
+            return self._options.broadphase_traversal
+        if gs.backend == gs.cpu or self._use_hibernation or self._enable_heterogeneous:
+            return gs.broadphase_traversal.SAP
+        return gs.broadphase_traversal.ALL_VS_ALL
+
     def _build_static_config(self):
         static_rigid_sim_config = dict(
             backend=gs.backend,
@@ -366,7 +373,7 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
-            broadphase_traversal=self._options.resolved_broadphase_traversal,
+            broadphase_traversal=self._resolve_broadphase_traversal(),
         )
 
         if self.is_active:

@@ -4717,10 +4717,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
     sphere_drop_height = 0.08
 
     # Run homogeneous simulation with box only
-    # ALL_VS_ALL broadphase does not support heterogeneous entities; use SAP for all sub-scenes
-    # so the homogeneous references match the heterogeneous scene exactly.
-    sap_opts = gs.options.RigidOptions(broadphase_traversal=gs.broadphase_traversal.SAP)
-    scene_box = gs.Scene(show_viewer=False, rigid_options=sap_opts)
+    scene_box = gs.Scene(show_viewer=False)
     scene_box.add_entity(gs.morphs.Plane())
     box_obj = scene_box.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, box_drop_height)))
     scene_box.build()
@@ -4730,7 +4727,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
     box_vel = tensor_to_array(box_obj.get_vel())
 
     # Run homogeneous simulation with sphere only
-    scene_sphere = gs.Scene(show_viewer=False, rigid_options=sap_opts)
+    scene_sphere = gs.Scene(show_viewer=False)
     scene_sphere.add_entity(gs.morphs.Plane())
     sphere_obj = scene_sphere.add_entity(
         gs.morphs.Sphere(
@@ -4746,7 +4743,7 @@ def test_heterogeneous_simulation(show_viewer, tol):
 
     # Run heterogeneous simulation with both variants (different sizes AND positions)
     # 4 envs with 2 variants: envs 0-1 get box, envs 2-3 get sphere
-    scene_het = gs.Scene(show_viewer=show_viewer, rigid_options=sap_opts)
+    scene_het = gs.Scene(show_viewer=show_viewer)
     scene_het.add_entity(gs.morphs.Plane())
     morphs_heterogeneous = (
         gs.morphs.Box(
@@ -4955,10 +4952,7 @@ def test_heterogeneous_aabb(tol):
 @pytest.mark.parametrize("backend", [gs.gpu])  # Grasping physics requires GPU
 def test_pick_heterogenous_objects(show_viewer):
     """Test heterogeneous simulation: CoM at rest, lifting, and gripper width differ per variant."""
-    scene = gs.Scene(
-        show_viewer=show_viewer,
-        rigid_options=gs.options.RigidOptions(broadphase_traversal=gs.broadphase_traversal.SAP),
-    )
+    scene = gs.Scene(show_viewer=show_viewer)
     scene.add_entity(gs.morphs.Plane())
     franka = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
 
@@ -5151,9 +5145,7 @@ def test_heterogeneous_robots(show_viewer, tol):
             gravity=(0.0, 0.0, GRAVITY),
         ),
         rigid_options=gs.options.RigidOptions(
-            # Allow specifying different controller gains for each env
             batch_dofs_info=True,
-            broadphase_traversal=gs.broadphase_traversal.SAP,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(1.0, 1.0, 1.0),
