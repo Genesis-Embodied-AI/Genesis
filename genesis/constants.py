@@ -1,4 +1,5 @@
 import enum
+from enum import IntFlag as _IntFlag
 
 
 # dynamic loading
@@ -60,6 +61,18 @@ class integrator(IntEnum):
 class constraint_solver(IntEnum):
     CG = 0
     Newton = 1
+
+
+# rigid solver broadphase traversal strategy
+class broadphase_traversal(IntEnum):
+    SAP = 0
+    NXN = 1
+
+
+# rigid solver broadphase filter chain (combinable bitmask)
+class broadphase_filter(_IntFlag):
+    SPHERE = 1
+    AABB = 2
 
 
 # backend

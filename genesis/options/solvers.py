@@ -469,6 +469,13 @@ class RigidOptions(Options):
     use_gjk_collision: bool, optional
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
+    broadphase_traversal : gs.broadphase_traversal, optional
+        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``NXN`` (all-vs-all).
+        Defaults to ``gs.broadphase_traversal.SAP``. NXN is not yet implemented.
+    broadphase_filter : gs.broadphase_filter, optional
+        Broadphase filter bitmask applied to candidate pairs. ``SPHERE`` and ``AABB`` can be
+        combined with ``|``. SAP traversal currently requires ``AABB`` only. Defaults to
+        ``gs.broadphase_filter.AABB``.
 
     Warning
     -------
@@ -521,10 +528,23 @@ class RigidOptions(Options):
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
 
+    # broadphase configuration
+    broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.SAP
+    broadphase_filter: gs.broadphase_filter = gs.broadphase_filter.AABB
+
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)
         if contact_resolve_time is not None:
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
+
+    def model_post_init(self, context):
+        if self.broadphase_traversal == gs.broadphase_traversal.SAP:
+            if self.broadphase_filter != gs.broadphase_filter.AABB:
+                gs.raise_exception(
+                    f"SAP traversal only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
+                )
+        elif self.broadphase_traversal == gs.broadphase_traversal.NXN:
+            gs.raise_exception("NXN broadphase traversal is not yet implemented")
 
 
 class MPMOptions(Options):
