@@ -496,7 +496,6 @@ from .constants import (
     integrator,
     constraint_solver,
     broadphase_traversal,
-    broadphase_filter,
 )
 
 from .utils.uid import UID

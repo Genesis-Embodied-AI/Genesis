@@ -472,10 +472,6 @@ class RigidOptions(Options):
     broadphase_traversal : gs.broadphase_traversal, optional
         Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL``.
         Defaults to ``gs.broadphase_traversal.ALL_VS_ALL``.
-    broadphase_filter : gs.broadphase_filter, optional
-        Broadphase filter bitmask applied to candidate pairs. ``SPHERE`` and ``AABB`` can be
-        combined with ``|``. SAP traversal currently requires ``AABB`` only. Defaults to
-        ``gs.broadphase_filter.AABB``.
 
     Warning
     -------
@@ -530,7 +526,6 @@ class RigidOptions(Options):
 
     # broadphase configuration
     broadphase_traversal: gs.broadphase_traversal = gs.broadphase_traversal.ALL_VS_ALL
-    broadphase_filter: gs.broadphase_filter = gs.broadphase_filter.AABB
 
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)
@@ -538,16 +533,7 @@ class RigidOptions(Options):
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
 
     def model_post_init(self, context):
-        if self.broadphase_traversal == gs.broadphase_traversal.SAP:
-            if self.broadphase_filter != gs.broadphase_filter.AABB:
-                gs.raise_exception(
-                    f"SAP traversal only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
-                )
-        elif self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
-            if self.broadphase_filter != gs.broadphase_filter.AABB:
-                gs.raise_exception(
-                    f"ALL_VS_ALL traversal currently only supports broadphase_filter=AABB, got {self.broadphase_filter!r}"
-                )
+        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
             if self.use_hibernation:
                 gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
 

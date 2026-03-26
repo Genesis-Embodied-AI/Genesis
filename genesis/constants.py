@@ -1,6 +1,4 @@
 import enum
-from enum import IntFlag as _IntFlag
-
 
 # dynamic loading
 ACTIVE = 1
@@ -68,11 +66,6 @@ class broadphase_traversal(IntEnum):
     SAP = 0
     ALL_VS_ALL = 1
 
-
-# rigid solver broadphase filter chain (combinable bitmask)
-class broadphase_filter(_IntFlag):
-    SPHERE = 1
-    AABB = 2
 
 
 # backend

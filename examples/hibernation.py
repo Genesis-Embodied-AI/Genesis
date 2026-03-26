@@ -28,7 +28,6 @@ def run_simulation(use_hibernation: bool, n_boxes: int, n_steps: int, show_viewe
             use_contact_island=True,
             use_hibernation=use_hibernation,
             broadphase_traversal=gs.broadphase_traversal.SAP,
-            broadphase_filter=gs.broadphase_filter.AABB,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(0, -3, 2),
