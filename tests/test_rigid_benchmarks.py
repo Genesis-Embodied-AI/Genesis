@@ -321,7 +321,8 @@ def make_anymal(
 
 
 def make_franka(
-    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
+    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False,
+    broadphase_traversal=None, **scene_kwargs,
 ):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
@@ -330,6 +331,7 @@ def make_franka(
                 enable_neutral_collision=True,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+                **(dict(broadphase_traversal=broadphase_traversal) if broadphase_traversal is not None else {}),
             )
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
@@ -831,7 +833,10 @@ def franka(solver, n_envs, gjk):
 
 @pytest.fixture
 def franka_random(solver, n_envs, gjk):
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True)
+    kwargs = {}
+    if n_envs == 0:
+        kwargs["broadphase_traversal"] = gs.broadphase_traversal.SAP
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True, **kwargs)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
