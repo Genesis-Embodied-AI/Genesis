@@ -67,7 +67,6 @@ class broadphase_traversal(IntEnum):
     ALL_VS_ALL = 1
 
 
-
 # backend
 class backend(IntEnum):
     cpu = 0
