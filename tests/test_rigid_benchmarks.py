@@ -268,7 +268,7 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
                 dt=STEP_DT,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            ),
+            )
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
