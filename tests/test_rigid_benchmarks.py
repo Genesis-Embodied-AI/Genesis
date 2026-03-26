@@ -261,9 +261,7 @@ def make_go2(n_envs, solver=None, gjk=None, **scene_kwargs):
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_anymal(
-    n_envs, solver=None, gjk=None, control=None, with_kinematic=False, broadphase_traversal=None, **scene_kwargs
-):
+def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=False, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
@@ -271,7 +269,6 @@ def make_anymal(
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             ),
-            **(dict(broadphase_traversal=broadphase_traversal) if broadphase_traversal is not None else {}),
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
@@ -327,7 +324,6 @@ def make_franka(
     is_collision_free=False,
     is_randomized=False,
     accessors=False,
-    broadphase_traversal=None,
     **scene_kwargs,
 ):
     scene = gs.Scene(
@@ -337,7 +333,6 @@ def make_franka(
                 enable_neutral_collision=True,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-                **(dict(broadphase_traversal=broadphase_traversal) if broadphase_traversal is not None else {}),
             )
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
@@ -407,12 +402,11 @@ def make_franka(
     return scene, step, SceneMeta(compile_time=compile_time)
 
 
-def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, broadphase_traversal=None, **scene_kwargs):
+def make_duck_in_box(n_envs, solver=None, gjk=None, hard=False, **scene_kwargs):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
-            **(dict(broadphase_traversal=broadphase_traversal) if broadphase_traversal is not None else {}),
         ),
         **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
     )
@@ -807,9 +801,7 @@ def go2(solver, n_envs, gjk):
 
 @pytest.fixture
 def anymal_zero(solver, n_envs, gjk):
-    _, step_fn, meta = make_anymal(
-        n_envs, solver=solver, gjk=gjk, control=None, broadphase_traversal=gs.broadphase_traversal.SAP
-    )
+    _, step_fn, meta = make_anymal(n_envs, solver=solver, gjk=gjk, control=None)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -839,10 +831,7 @@ def franka(solver, n_envs, gjk):
 
 @pytest.fixture
 def franka_random(solver, n_envs, gjk):
-    kwargs = {}
-    if n_envs == 0:
-        kwargs["broadphase_traversal"] = gs.broadphase_traversal.SAP
-    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True, **kwargs)
+    _, step_fn, meta = make_franka(n_envs, solver=solver, gjk=gjk, is_randomized=True)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
@@ -860,17 +849,13 @@ def franka_accessors(solver, n_envs, gjk):
 
 @pytest.fixture
 def duck_in_box_easy(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(
-        n_envs, solver=solver, gjk=gjk, hard=False, broadphase_traversal=gs.broadphase_traversal.SAP
-    )
+    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=False)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
 @pytest.fixture
 def duck_in_box_hard(solver, n_envs, gjk):
-    _, step_fn, meta = make_duck_in_box(
-        n_envs, solver=solver, gjk=gjk, hard=True, broadphase_traversal=gs.broadphase_traversal.SAP
-    )
+    _, step_fn, meta = make_duck_in_box(n_envs, solver=solver, gjk=gjk, hard=True)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
 
 
