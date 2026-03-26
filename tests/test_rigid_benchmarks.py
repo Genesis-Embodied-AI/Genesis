@@ -318,13 +318,7 @@ def make_anymal(n_envs, solver=None, gjk=None, control=None, with_kinematic=Fals
 
 
 def make_franka(
-    n_envs,
-    solver=None,
-    gjk=None,
-    is_collision_free=False,
-    is_randomized=False,
-    accessors=False,
-    **scene_kwargs,
+    n_envs, solver=None, gjk=None, is_collision_free=False, is_randomized=False, accessors=False, **scene_kwargs
 ):
     scene = gs.Scene(
         rigid_options=gs.options.RigidOptions(
