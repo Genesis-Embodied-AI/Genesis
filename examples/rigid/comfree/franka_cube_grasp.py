@@ -35,10 +35,10 @@ def smoothstep(alpha: float) -> float:
     return alpha * alpha * (3.0 - 2.0 * alpha)
 
 
-def build_scene(engine="comfree", vis=False, dt=0.002, stiffness=0.2, damping=0.001):
+def build_scene(engine="comfree", vis=False, dt=0.002, stiffness=0.2, damping=0.001, num_envs=1):
     """Create the Franka + cube scene (matching examples/rigid/franka_cube.py)."""
 
-    gs.init(backend=gs.cpu, precision="64", logging_level="info")
+    gs.init(backend=gs.cpu, precision="32", logging_level="info", performance_mode=True)
 
     if engine == "comfree":
         constraint_solver = gs.constraint_solver.ComFree
@@ -59,7 +59,7 @@ def build_scene(engine="comfree", vis=False, dt=0.002, stiffness=0.2, damping=0.
             constraint_solver=constraint_solver,
             comfree_stiffness=stiffness,
             comfree_damping=damping,
-            box_box_detection=True,
+            # box_box_detection not required - MPR/GJK handles box-box pairs
         ),
         show_viewer=vis,
     )
@@ -69,7 +69,7 @@ def build_scene(engine="comfree", vis=False, dt=0.002, stiffness=0.2, damping=0.
     cube = scene.add_entity(
         gs.morphs.Box(size=(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE), pos=(0.65, 0.0, CUBE_HALF)),
     )
-    scene.build()
+    scene.build(n_envs=num_envs)
     return scene, franka, cube
 
 
@@ -81,6 +81,7 @@ def run_grasp_trial(
     damping=0.001,
     steps_scale=1.0,
     perturb=True,
+    num_envs=1,
 ):
     """Run the full grasp trial following examples/rigid/franka_cube.py style.
 
@@ -91,7 +92,9 @@ def run_grasp_trial(
       4. hold      - hold lifted position
       5. perturb   - apply sinusoidal forces to test grasp robustness (optional)
     """
-    scene, franka, cube = build_scene(engine=engine, vis=vis, dt=dt, stiffness=stiffness, damping=damping)
+    scene, franka, cube = build_scene(
+        engine=engine, vis=vis, dt=dt, stiffness=stiffness, damping=damping, num_envs=num_envs
+    )
 
     motors_dof = np.arange(ARM_DOF)
     fingers_dof = np.arange(ARM_DOF, ARM_DOF + 2)
@@ -104,18 +107,23 @@ def run_grasp_trial(
     end_effector = franka.get_link("hand")
 
     # ── Compute IK targets ────────────────────────────────────────────────────
+    # When n_envs >= 1, IK expects pos shape (n_envs, 3) and quat shape (n_envs, 4)
+    approach_pos = np.tile([0.65, 0.0, 0.135], (num_envs, 1))
+    lift_pos = np.tile([0.65, 0.0, 0.4], (num_envs, 1))
+    ik_quat = np.tile([0, 1, 0, 0], (num_envs, 1))
+
     # Approach: above cube (same as franka_cube.py)
     approach_q = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
-        quat=np.array([0, 1, 0, 0]),
+        pos=approach_pos,
+        quat=ik_quat,
     ).numpy()
 
     # Lift: raised position (higher target for ComFree's softer contacts)
     lift_q = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.4]),
-        quat=np.array([0, 1, 0, 0]),
+        pos=lift_pos,
+        quat=ik_quat,
     ).numpy()
 
     # ── Phase definitions ─────────────────────────────────────────────────────
@@ -125,14 +133,17 @@ def run_grasp_trial(
 
     # Phase step counts are calibrated for dt=0.002; scale proportionally for other dt values
     dt_scale = 0.002 / dt
+    approach_arm = approach_q[:, :ARM_DOF]
+    lift_arm = lift_q[:, :ARM_DOF]
+
     phases = [
-        ("approach", int(500 * steps_scale * dt_scale), approach_q[:ARM_DOF], open_fingers, 0.0),
-        ("grasp", int(500 * steps_scale * dt_scale), approach_q[:ARM_DOF], closed_fingers, 0.0),
-        ("lift", int(1000 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
-        ("hold", int(1000 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 0.0),
+        ("approach", int(500 * steps_scale * dt_scale), approach_arm, open_fingers, 0.0),
+        ("grasp", int(500 * steps_scale * dt_scale), approach_arm, closed_fingers, 0.0),
+        ("lift", int(1000 * steps_scale * dt_scale), lift_arm, closed_fingers, 0.0),
+        ("hold", int(1000 * steps_scale * dt_scale), lift_arm, closed_fingers, 0.0),
     ]
     if perturb:
-        phases.append(("perturb", int(2500 * steps_scale * dt_scale), lift_q[:ARM_DOF], closed_fingers, 1.5))
+        phases.append(("perturb", int(2500 * steps_scale * dt_scale), lift_arm, closed_fingers, 1.5))
 
     # ── Simulation loop ───────────────────────────────────────────────────────
     min_cube_z = float("inf")
@@ -180,6 +191,7 @@ def run_grasp_trial(
         "success": success,
         "wall_time": wall_time,
         "steps_per_sec": total_steps / wall_time if wall_time > 0 else 0,
+        "num_envs": num_envs,
     }
     return results
 
@@ -195,6 +207,7 @@ def main():
     parser.add_argument("--damping", type=float, default=0.001, help="ComFree damping (d_user).")
     parser.add_argument("--steps-scale", type=float, default=1.0, help="Scale phase durations.")
     parser.add_argument("--no-perturb", action="store_true", help="Skip perturbation phase.")
+    parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to run in parallel.")
     args = parser.parse_args()
 
     results = run_grasp_trial(
@@ -205,10 +218,12 @@ def main():
         damping=args.damping,
         steps_scale=args.steps_scale,
         perturb=not args.no_perturb,
+        num_envs=args.num_envs,
     )
 
     print("\n" + "=" * 60)
     print(f"Engine:           {results['engine']}")
+    print(f"Number of environments: {results['num_envs']}")
     print(f"Total steps:      {results['total_steps']}")
     print(f"Final cube z:     {results['final_cube_z']:.4f}")
     print(f"Min cube z:       {results['min_cube_z']:.4f}")
