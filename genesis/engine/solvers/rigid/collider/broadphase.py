@@ -429,8 +429,8 @@ def func_broad_phase_all_vs_all(
     """
     All-vs-all broad-phase collision detection.
 
-    Iterates over pre-filtered valid geom pairs in parallel across pairs and batches,
-    checking 3D AABB overlap. Passing pairs are appended to the output buffer via atomic add.
+    Iterates over pre-filtered valid geom pairs in parallel across pairs and batches, checking 3D AABB overlap.
+    Passing pairs are appended to the output buffer via atomic add.
     """
     n_valid_pairs = collider_info.n_valid_pairs[None]
     _B = collider_state.n_contacts.shape[0]
