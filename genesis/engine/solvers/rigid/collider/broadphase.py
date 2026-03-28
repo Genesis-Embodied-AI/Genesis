@@ -397,22 +397,6 @@ def func_broad_phase(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase_all_vs_all_clear(
-    links_state: array_class.LinksState,
-    links_info: array_class.LinksInfo,
-    collider_state: array_class.ColliderState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Clear contacts and zero broadphase counters before the all-vs-all sweep."""
-    func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
-
-    _B = collider_state.n_contacts.shape[0]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        collider_state.n_broad_pairs[i_b] = 0
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -432,9 +416,15 @@ def func_broad_phase_all_vs_all(
     Iterates over pre-filtered valid geom pairs in parallel across pairs and batches,
     checking 3D AABB overlap. Passing pairs are appended to the output buffer via atomic add.
     """
-    n_valid_pairs = collider_info.n_valid_pairs[None]
-    _B = collider_state.n_contacts.shape[0]
 
+    func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
+
+    _B = collider_state.n_contacts.shape[0]
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        collider_state.n_broad_pairs[i_b] = 0
+
+    n_valid_pairs = collider_info.n_valid_pairs[None]
     for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
         i_ga = collider_info.valid_pairs_a[i_vp]
         i_gb = collider_info.valid_pairs_b[i_vp]
