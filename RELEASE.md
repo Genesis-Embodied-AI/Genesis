@@ -302,7 +302,7 @@ Small release mainly polishing features that were introduced in previous release
 
 * Fix increased memory usage due to differentiable simulation. (@duburcqa) (#2074)
 * Fix 'envs_idx' in motion planning. (@duburcqa) (#2093)
-* Fix 'DroneEntity.set_propellers_rpm'. (@duburcqa) (#2095)
+* Fix 'DroneEntity.set_propellels_rpm'. (@duburcqa) (#2095)
 * Fix extended broadcasting. (@duburcqa) (#2096)
 * Fix 'RigidEntity.set_dofs_velocity'. (@robin271828) (#2102)
 * Fix joint stiffness not taking into account neutral position. (@YilingQiao) (#2105)
