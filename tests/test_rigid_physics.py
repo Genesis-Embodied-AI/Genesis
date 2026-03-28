@@ -3394,7 +3394,7 @@ def test_scene_saver_franka(tmp_path, show_viewer, tol):
 
 
 @pytest.mark.required
-def test_drone_propellels_force_substep_consistency(show_viewer, tol):
+def test_drone_propellers_force_substep_consistency(show_viewer, tol):
     BASE_RPM = 15000
 
     scene_ref = gs.Scene(
@@ -3413,17 +3413,17 @@ def test_drone_propellels_force_substep_consistency(show_viewer, tol):
     scene_ref.build(n_envs=2)
 
     # This not only tests setter, but also proper reset (tracking and clearing applied external force)
-    drone_ref.set_propellels_rpm(BASE_RPM)
+    drone_ref.set_propellers_rpm(BASE_RPM)
     with np.testing.assert_raises(gs.GenesisException):
-        drone_ref.set_propellels_rpm(BASE_RPM)
+        drone_ref.set_propellers_rpm(BASE_RPM)
     scene_ref.reset()
-    drone_ref.set_propellels_rpm((BASE_RPM,) * 4)
+    drone_ref.set_propellers_rpm((BASE_RPM,) * 4)
     scene_ref.reset()
-    drone_ref.set_propellels_rpm(torch.full((scene_ref.n_envs, 4), fill_value=BASE_RPM))
+    drone_ref.set_propellers_rpm(torch.full((scene_ref.n_envs, 4), fill_value=BASE_RPM))
     scene_ref.reset()
 
     for _ in range(500):
-        drone_ref.set_propellels_rpm(BASE_RPM)
+        drone_ref.set_propellers_rpm(BASE_RPM)
         scene_ref.step()
 
     scene_test = gs.Scene(
@@ -3441,7 +3441,7 @@ def test_drone_propellels_force_substep_consistency(show_viewer, tol):
     )
     scene_test.build()
     for _ in range(100):
-        drone_test.set_propellels_rpm(BASE_RPM)
+        drone_test.set_propellers_rpm(BASE_RPM)
         scene_test.step()
 
     pos_ref = drone_ref.get_dofs_position()
@@ -3486,7 +3486,7 @@ def test_drone_advanced(show_viewer):
     # Wait for the drones to land on the ground and hold straight
     for i in range(400):
         for drone in drones:
-            drone.set_propellels_rpm(50000.0)
+            drone.set_propellers_rpm(50000.0)
         scene.step()
         if i > 350:
             assert scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] == 2
@@ -3497,7 +3497,7 @@ def test_drone_advanced(show_viewer):
     drones[1].set_dofs_velocity([-0.2], [1])
     for i in range(150):
         for drone in drones:
-            drone.set_propellels_rpm(50000.0)
+            drone.set_propellers_rpm(50000.0)
         scene.step()
         if scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()[0] > 2:
             break
