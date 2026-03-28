@@ -3739,6 +3739,81 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose)
 
     @gs.assert_built
+    def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
+        """
+        Get the total kinetic energy of the entity (translational + rotational).
+
+        Computed using the mass matrix in generalized coordinates:
+        ``KE = 0.5 * dq^T * M(q) * dq``, which correctly accounts for all
+        coupling terms in articulated bodies.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be
+            considered. Defaults to None.
+
+        Returns
+        -------
+        kinetic_energy : torch.Tensor, shape () or (n_envs,)
+            The total kinetic energy of the entity in Joules.
+        """
+        mass_mat = self.get_mass_mat(envs_idx=envs_idx)  # (..., n_dofs, n_dofs)
+        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)  # (..., n_dofs)
+        # KE = 0.5 * dq^T * M * dq
+        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)  # (..., n_dofs)
+        return 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
+
+    @gs.assert_built
+    def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
+        """
+        Get the total gravitational potential energy of the entity.
+
+        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``,
+        where ``p_i`` is the center-of-mass position of link *i* and ``g`` is
+        the gravity vector obtained from the solver.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be
+            considered. Defaults to None.
+
+        Returns
+        -------
+        potential_energy : torch.Tensor, shape () or (n_envs,)
+            The total gravitational potential energy of the entity in Joules.
+        """
+        gravity = self._solver.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
+        links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
+        # Link masses are static properties (not batched per environment),
+        # so always fetch without envs_idx to avoid indexing conflicts.
+        links_mass = self.get_links_inertial_mass()  # (n_links,)
+
+        # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
+        # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
+        g_dot_p = torch.sum(gravity.unsqueeze(-2) * links_pos, dim=-1)  # (..., n_links)
+        return -torch.sum(links_mass * g_dot_p, dim=-1)
+
+    @gs.assert_built
+    def get_total_energy(self, envs_idx=None) -> torch.Tensor:
+        """
+        Get the total mechanical energy of the entity (kinetic + potential).
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be
+            considered. Defaults to None.
+
+        Returns
+        -------
+        total_energy : torch.Tensor, shape () or (n_envs,)
+            The total mechanical energy of the entity in Joules.
+        """
+        return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
+
+    @gs.assert_built
     def detect_collision(self, env_idx=0):
         """
         Detects collision for the entity. This only supports a single environment.
