@@ -157,17 +157,6 @@ def kernel_forward_kinematics(
             static_rigid_sim_config=static_rigid_sim_config,
             is_backward=False,
         )
-        func_forward_velocity_batch(
-            i_b=i_b,
-            entities_info=entities_info,
-            links_info=links_info,
-            links_state=links_state,
-            joints_info=joints_info,
-            dofs_state=dofs_state,
-            rigid_global_info=rigid_global_info,
-            static_rigid_sim_config=static_rigid_sim_config,
-            is_backward=False,
-        )
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -207,17 +196,6 @@ def kernel_masked_forward_kinematics(
                 dofs_state=dofs_state,
                 dofs_info=dofs_info,
                 entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
-            )
-            func_forward_velocity_batch(
-                i_b=i_b,
-                entities_info=entities_info,
-                links_info=links_info,
-                links_state=links_state,
-                joints_info=joints_info,
-                dofs_state=dofs_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
                 is_backward=False,
