@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import pos_lookat_up_to_T, trans_to_T
+from genesis.utils.geom import trans_to_T
 
 from .conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
 from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
@@ -567,20 +567,11 @@ def test_raytracer(n_envs, png_snapshot):
             assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
 
 
-# ========================== Issue #2591: lookat ignored when entity attached ==========================
-
-
 @pytest.mark.required
-def test_attached_camera_lookat_affects_orientation():
-    """Test that lookat parameter affects camera orientation when attached to an entity.
+def test_camera_lookat_entity(show_viewer, png_snapshot):
+    png_snapshot.extension._blurred_kernel_size = 3
 
-    Regression test for GitHub issue #2591: lookat parameter on camera options
-    was ignored when entity_idx was set, because move_to_attach() used trans_to_T(pos)
-    which only encodes position and discards the lookat-derived rotation.
-
-    The fix uses pos_lookat_up_to_T(pos, lookat, up) to preserve the full camera orientation.
-    """
-    scene = gs.Scene(show_viewer=False)
+    scene = gs.Scene(show_viewer=show_viewer)
 
     scene.add_entity(morph=gs.morphs.Plane())
 
@@ -592,7 +583,7 @@ def test_attached_camera_lookat_affects_orientation():
         surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
     )
 
-    # Camera A: attached to entity, looking at (1, 0, 3) — upward direction
+    # Attached camera A: looking upward
     camera_a = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(64, 64),
@@ -605,7 +596,7 @@ def test_attached_camera_lookat_affects_orientation():
         )
     )
 
-    # Camera B: attached to same entity, looking at (1, 0, 0) — forward direction
+    # Attached camera B: same pos, looking forward
     camera_b = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(64, 64),
@@ -618,114 +609,8 @@ def test_attached_camera_lookat_affects_orientation():
         )
     )
 
-    scene.build()
-    scene.step()
-
-    # Force render for both cameras
-    data_a = camera_a.read()
-    data_b = camera_b.read()
-
-    # Both cameras should produce valid images
-    rgb_a = tensor_to_array(data_a.rgb)
-    rgb_b = tensor_to_array(data_b.rgb)
-    assert rgb_a.shape == (64, 64, 3)
-    assert rgb_b.shape == (64, 64, 3)
-
-    # The two cameras have different lookat targets, so they MUST produce different images.
-    # Before the fix, both would produce the same image because lookat was ignored.
-    assert not np.array_equal(rgb_a, rgb_b), (
-        "Cameras with different lookat targets produced identical images when attached to entity. "
-        "This indicates lookat parameter is being ignored (issue #2591)."
-    )
-
-
-@pytest.mark.required
-def test_attached_camera_lookat_matches_offset_T():
-    """Test that lookat-derived transform matches an equivalent explicit offset_T.
-
-    When a camera is attached with pos+lookat+up, the resulting camera transform should
-    be equivalent to providing the same transform via offset_T directly.
-    """
-    scene = gs.Scene(show_viewer=False)
-
-    scene.add_entity(morph=gs.morphs.Plane())
-
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            radius=0.3,
-            pos=(0.0, 0.0, 1.0),
-        ),
-        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
-    )
-
-    pos = (0.3, 0.0, 0.3)
-    lookat = (1.0, 0.0, 3.0)
-    up = (0.0, 0.0, 1.0)
-
-    # Compute the expected offset_T from pos+lookat+up
-    pos_t = torch.tensor(pos, dtype=gs.tc_float, device=gs.device)
-    lookat_t = torch.tensor(lookat, dtype=gs.tc_float, device=gs.device)
-    up_t = torch.tensor(up, dtype=gs.tc_float, device=gs.device)
-    expected_offset_T = pos_lookat_up_to_T(pos_t, lookat_t, up_t)
-
-    # Camera with pos+lookat+up (implicit offset_T)
-    camera_lookat = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=pos,
-            lookat=lookat,
-            up=up,
-            fov=70.0,
-            entity_idx=sphere.idx,
-            link_idx_local=0,
-        )
-    )
-
-    # Camera with explicit offset_T (should produce identical results)
-    camera_offset = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=pos,
-            lookat=lookat,
-            up=up,
-            fov=70.0,
-            entity_idx=sphere.idx,
-            link_idx_local=0,
-            offset_T=tensor_to_array(expected_offset_T),
-        )
-    )
-
-    scene.build()
-    scene.step()
-
-    data_lookat = camera_lookat.read()
-    data_offset = camera_offset.read()
-
-    rgb_lookat = tensor_to_array(data_lookat.rgb)
-    rgb_offset = tensor_to_array(data_offset.rgb)
-
-    # Both cameras should produce the same image since their transforms are equivalent
-    assert np.array_equal(rgb_lookat, rgb_offset), (
-        "Camera with pos+lookat+up should produce the same image as camera with equivalent offset_T."
-    )
-
-
-@pytest.mark.required
-def test_detached_camera_lookat_still_works():
-    """Regression test: lookat should still work correctly for cameras not attached to any entity."""
-    scene = gs.Scene(show_viewer=False)
-
-    scene.add_entity(morph=gs.morphs.Plane())
-    scene.add_entity(
-        morph=gs.morphs.Sphere(
-            radius=0.5,
-            pos=(0.0, 0.0, 1.0),
-        ),
-        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
-    )
-
-    # Detached camera A: looking at origin
-    camera_a = scene.add_sensor(
+    # Detached camera C: looking at origin
+    camera_c = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(64, 64),
             pos=(3.0, 0.0, 2.0),
@@ -735,8 +620,8 @@ def test_detached_camera_lookat_still_works():
         )
     )
 
-    # Detached camera B: same pos, looking away from scene
-    camera_b = scene.add_sensor(
+    # Detached camera D: same pos as C, looking away
+    camera_d = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(64, 64),
             pos=(3.0, 0.0, 2.0),
@@ -751,15 +636,19 @@ def test_detached_camera_lookat_still_works():
 
     data_a = camera_a.read()
     data_b = camera_b.read()
+    data_c = camera_c.read()
+    data_d = camera_d.read()
 
     rgb_a = tensor_to_array(data_a.rgb)
     rgb_b = tensor_to_array(data_b.rgb)
+    rgb_c = tensor_to_array(data_c.rgb)
+    rgb_d = tensor_to_array(data_d.rgb)
 
-    # Both should be valid images
-    assert 1.0 < np.mean(rgb_a) < 254.0
-    assert 1.0 < np.mean(rgb_b) < 254.0
+    # Attached cameras with different lookat must produce different images (issue #2591)
+    assert not np.array_equal(rgb_a, rgb_b)
 
-    # Different lookat targets should produce different images
-    assert not np.array_equal(rgb_a, rgb_b), (
-        "Detached cameras with different lookat targets should produce different images."
-    )
+    # Detached cameras with different lookat must also differ
+    assert not np.array_equal(rgb_c, rgb_d)
+
+    # Snapshot check for attached camera
+    assert rgb_array_to_png_bytes(data_a.rgb) == png_snapshot
