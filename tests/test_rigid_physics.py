@@ -5393,3 +5393,43 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     # Stacked boxes should form 1 contact island
     assert solver.constraint_solver.contact_island.n_islands[0] == 1
+
+
+@pytest.mark.required
+def test_energy_conservation_free_fall(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.001, gravity=(0, 0, -9.81)),
+        show_viewer=show_viewer,
+    )
+    box = scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0, 0, 10.0)))
+    scene.build()
+
+    te_initial = box.get_total_energy()
+
+    for _ in range(100):
+        scene.step()
+
+    te_final = box.get_total_energy()
+    # Numerical integration drift over 100 steps at dt=0.001 is O(1e-3)
+    assert_allclose(te_final, te_initial, tol=1e-3)
+
+
+@pytest.mark.required
+def test_energy_kinetic_potential_relation(show_viewer, tol):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.81)),
+        show_viewer=show_viewer,
+    )
+    sphere = scene.add_entity(gs.morphs.Sphere(radius=0.1, pos=(0, 0, 5.0)))
+    scene.build()
+
+    # Stationary object: KE should be zero
+    assert_allclose(sphere.get_kinetic_energy(), 0.0, tol=tol)
+
+    # Total energy should equal KE + PE
+    for _ in range(10):
+        scene.step()
+
+    ke = sphere.get_kinetic_energy()
+    pe = sphere.get_potential_energy()
+    assert_allclose(sphere.get_total_energy(), ke + pe, tol=tol)

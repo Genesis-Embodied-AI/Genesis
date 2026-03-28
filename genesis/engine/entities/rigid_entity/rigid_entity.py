@@ -3743,9 +3743,10 @@ class RigidEntity(KinematicEntity):
         """
         Get the total kinetic energy of the entity (translational + rotational).
 
-        Computed using the mass matrix in generalized coordinates:
-        ``KE = 0.5 * dq^T * M(q) * dq``, which correctly accounts for all
-        coupling terms in articulated bodies.
+        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
+        The mass matrix is recomputed to include motor armature on the diagonal
+        while excluding implicit damping correction terms that the integrator may
+        have added during the last simulation step.
 
         Parameters
         ----------
@@ -3757,11 +3758,17 @@ class RigidEntity(KinematicEntity):
         -------
         kinetic_energy : torch.Tensor, shape () or (n_envs,)
             The total kinetic energy of the entity in Joules.
+
+        Note
+        ----
+        This method recomputes the solver's shared mass matrix to ensure
+        correctness.  Call it between simulation steps, not mid-step.
         """
-        mass_mat = self.get_mass_mat(envs_idx=envs_idx)  # (..., n_dofs, n_dofs)
-        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)  # (..., n_dofs)
-        # KE = 0.5 * dq^T * M * dq
-        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)  # (..., n_dofs)
+        # Recompute mass matrix: structural inertia + motor armature, no implicit damping
+        self._solver.recompute_mass_matrix()
+        mass_mat = self.get_mass_mat(envs_idx=envs_idx)
+        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
+        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
         return 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
 
     @gs.assert_built

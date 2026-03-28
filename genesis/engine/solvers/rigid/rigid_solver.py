@@ -625,6 +625,19 @@ class RigidSolver(KinematicSolver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
 
+    def recompute_mass_matrix(self):
+        """Recompute mass matrix including motor armature but excluding implicit damping terms."""
+        kernel_compute_mass_matrix(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            decompose=False,
+        )
+
     def _init_mass_mat(self):
         self.mass_mat = self._rigid_global_info.mass_mat
         self.mass_mat_L = self._rigid_global_info.mass_mat_L
