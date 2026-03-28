@@ -533,9 +533,8 @@ class RigidOptions(Options):
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
 
     def model_post_init(self, context):
-        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
-            if self.use_hibernation:
-                gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
+        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
+            gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
 
 
 class MPMOptions(Options):
