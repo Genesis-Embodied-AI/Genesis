@@ -717,12 +717,14 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
     vert_n_neighbors: V_ANNOTATION
+    # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by narrowphase and contact cache for per-pair lookups.
     collision_pair_idx: V_ANNOTATION
     max_possible_pairs: V_ANNOTATION
     max_collision_pairs: V_ANNOTATION
     max_contact_pairs: V_ANNOTATION
     max_collision_pairs_broad: V_ANNOTATION
-    # Pre-filtered valid collision pairs for all-vs-all broadphase
+    # Dense pair index -> (i_ga, i_gb). Inverse of collision_pair_idx, used by all-vs-all broadphase to iterate
+    # valid pairs via qd.ndrange without scanning the full n_geoms x n_geoms matrix.
     n_valid_pairs: V_ANNOTATION
     valid_pairs_a: V_ANNOTATION
     valid_pairs_b: V_ANNOTATION
