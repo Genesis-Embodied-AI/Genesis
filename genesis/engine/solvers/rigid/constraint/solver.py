@@ -1523,28 +1523,41 @@ def func_hessian_direct_tiled(
                         qd.simt.block.sync()
 
                     # Compute `H += J.T @ D @ J` for a single Hessian block
-                    pid = tid
-                    numel = n_dofs_tile_row * n_dofs_tile_col
-                    while pid < numel:
-                        i_d1_ = pid // n_dofs_tile_col
-                        i_d2_ = pid % n_dofs_tile_col
-                        i_d1 = i_d1_ + i_d1_start
-                        i_d2 = i_d2_ + i_d2_start
-                        if i_d1 >= i_d2:
+                    if is_diag_tile:
+                        n_lower_tri_tile = n_dofs_tile_row * (n_dofs_tile_row + 1) // 2
+                        pid = tid
+                        while pid < n_lower_tri_tile:
+                            i_d1_, i_d2_ = linear_to_lower_tri(pid)
+                            i_d1 = i_d1_ + i_d1_start
+                            i_d2 = i_d2_ + i_d2_start
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
                                 coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                            if is_diag_tile:
-                                for j_c_ in range(n_conts_tile):
-                                    coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
-                            else:
-                                for j_c_ in range(n_conts_tile):
-                                    coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
+                            for j_c_ in range(n_conts_tile):
+                                coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
                                 constraint_state.nt_H[i_b, i_d1, i_d2] = coef
                             else:
                                 constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + coef
-                        pid = pid + BLOCK_DIM
+                            pid = pid + BLOCK_DIM
+                    else:
+                        numel = n_dofs_tile_row * n_dofs_tile_col
+                        pid = tid
+                        while pid < numel:
+                            i_d1_ = pid // n_dofs_tile_col
+                            i_d2_ = pid % n_dofs_tile_col
+                            i_d1 = i_d1_ + i_d1_start
+                            i_d2 = i_d2_ + i_d2_start
+                            coef = gs.qd_float(0.0)
+                            if i_c_start == 0:
+                                coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                            for j_c_ in range(n_conts_tile):
+                                coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
+                            if i_c_start == 0:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+                            else:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + coef
+                            pid = pid + BLOCK_DIM
                     qd.simt.block.sync()
 
                     i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
