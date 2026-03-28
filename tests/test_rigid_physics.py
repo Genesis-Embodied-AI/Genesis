@@ -1820,6 +1820,61 @@ def test_inverse_kinematics_multilink_local_points(show_viewer):
         scene.visualizer.update()
 
 
+@pytest.mark.required
+def test_multi_robot_inverse_kinematics(show_viewer):
+    """Test that IK works correctly for multiple robots in the same scene (#2608).
+
+    When a scene contains multiple robot entities, each robot's IK should solve
+    independently. Previously, the IK resample logic used local DOF indices to
+    match against global DOF ranges, causing it to resample the wrong entity's
+    joints for the second and subsequent robots.
+    """
+    TOL = 2e-3
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=0.02),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane(), material=gs.materials.Rigid())
+
+    robot_positions = [
+        (0.0, -0.5, 0.005),
+        (0.0, 0.0, 0.005),
+        (0.0, 0.5, 0.005),
+    ]
+    robots = []
+    for pos in robot_positions:
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda_non_overlap.xml",
+                pos=pos,
+                convexify=True,
+            ),
+            material=gs.materials.Rigid(
+                coup_friction=0.5,
+                gravity_compensation=1.0,
+            ),
+        )
+        robots.append(robot)
+
+    scene.build()
+
+    for i, (robot, pos) in enumerate(zip(robots, robot_positions)):
+        target_pos = np.array(pos) + [0.4, 0.0, 0.4]
+        qpos = robot.inverse_kinematics(
+            link=robot.get_link("hand"),
+            pos=target_pos,
+            quat=[0, 1, 0, 0],
+        )
+        robot.set_qpos(qpos)
+        ee_pos = robot.get_link("hand").get_pos().numpy().flatten()
+        pos_error = np.linalg.norm(target_pos - ee_pos)
+        assert pos_error < TOL, (
+            f"Robot {i + 1} at {pos}: IK position error {pos_error:.6f} exceeds tolerance {TOL}. "
+            f"Target: {target_pos}, Solved: {ee_pos}"
+        )
+
+
 @pytest.mark.slow  # ~180s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
