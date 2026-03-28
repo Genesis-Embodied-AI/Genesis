@@ -1262,7 +1262,8 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
     assert scene.sim is not None
     assert scene.sim.rigid_solver.collider is not None
 
-    pair_idx = scene.sim.rigid_solver.collider._collision_pair_idx
+    collider = scene.sim.rigid_solver.collider
+    pair_set = set(zip(collider._valid_pairs_a.tolist(), collider._valid_pairs_b.tolist()))
 
     # Collect geom indices for entities that should retain rigid solver pairs
     rigid_kept_geoms = {geom.idx for geom in entity.geoms} - ipc_excluded_geoms
@@ -1270,40 +1271,40 @@ def test_collision_delegation_ipc_vs_rigid(coup_type, enable_rigid_ground_contac
     box_geoms = {box.geoms[0].idx}
 
     # Non-IPC box always has rigid solver ground pairs
-    assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in box_geoms for b in ground_geoms)
+    assert any((min(a, b), max(a, b)) in pair_set for a in box_geoms for b in ground_geoms)
 
     # Pairs between IPC-excluded geoms must have no rigid solver pairs (handled by IPC)
     for i_ga in ipc_excluded_geoms:
         for i_gb in ipc_excluded_geoms:
             if i_ga < i_gb:
-                assert pair_idx[i_ga, i_gb] == -1
+                assert (i_ga, i_gb) not in pair_set
 
     if coup_type == "two_way_soft_constraint":
         # Mixed pairs (IPC-excluded ↔ non-IPC) must be kept in rigid solver
         for i_ga in ipc_excluded_geoms:
             for i_gb in box_geoms:
                 a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-                assert pair_idx[a, b] >= 0
+                assert (a, b) in pair_set
 
         # IPC-excluded geom ↔ ground must be kept in rigid solver (ground is not IPC-excluded)
         for i_ga in ipc_excluded_geoms:
             for i_gb in ground_geoms:
                 a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-                assert pair_idx[a, b] >= 0
+                assert (a, b) in pair_set
     else:
         # ipc_only: ALL pairs involving the entity are excluded (IPC fully controls pose)
         for i_ga in ipc_excluded_geoms:
             for i_gb in box_geoms:
                 a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-                assert pair_idx[a, b] == -1
+                assert (a, b) not in pair_set
             for i_gb in ground_geoms:
                 a, b = min(i_ga, i_gb), max(i_ga, i_gb)
-                assert pair_idx[a, b] == -1
+                assert (a, b) not in pair_set
 
     # Non-excluded rigid geoms (if any) keep rigid solver ground and self-collision pairs
     if rigid_kept_geoms:
-        assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in ground_geoms)
-        assert any(pair_idx[min(a, b), max(a, b)] >= 0 for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
+        assert any((min(a, b), max(a, b)) in pair_set for a in rigid_kept_geoms for b in ground_geoms)
+        assert any((min(a, b), max(a, b)) in pair_set for a in rigid_kept_geoms for b in rigid_kept_geoms if a < b)
 
 
 @pytest.mark.slow  # ~200s

@@ -4678,8 +4678,10 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
         box.attach(hand, "right_finger")
 
     # Make sure that collision between hand base link and franka attachment point has been filtered out as adjacent
-    collision_pair_idx = scene.rigid_solver.collider._collider_info.collision_pair_idx.to_numpy()
-    assert collision_pair_idx[franka.get_link("attachment").idx, hand.base_link_idx] == -1
+    collider = scene.rigid_solver.collider
+    valid_pairs = set(zip(collider._valid_pairs_a.tolist(), collider._valid_pairs_b.tolist()))
+    i_a, i_b = franka.get_link("attachment").idx, hand.base_link_idx
+    assert (min(i_a, i_b), max(i_a, i_b)) not in valid_pairs
 
     with pytest.raises(gs.GenesisException):
         hand.set_pos(0.0)

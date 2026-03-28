@@ -717,7 +717,9 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
     vert_n_neighbors: V_ANNOTATION
-    collision_pair_idx: V_ANNOTATION
+    valid_pairs_a: V_ANNOTATION
+    valid_pairs_b: V_ANNOTATION
+    n_valid_pairs: V_ANNOTATION
     max_possible_pairs: V_ANNOTATION
     max_collision_pairs: V_ANNOTATION
     max_contact_pairs: V_ANNOTATION
@@ -736,7 +738,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     diff_normal_tolerance: V_ANNOTATION
 
 
-def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs):
+def get_collider_info(solver, n_vert_neighbors, collider_static_config, n_possible_pairs=0, **kwargs):
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
@@ -748,7 +750,9 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         vert_neighbors=V(dtype=gs.qd_int, shape=(max(n_vert_neighbors, 1),)),
         vert_neighbor_start=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         vert_n_neighbors=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
-        collision_pair_idx=V(dtype=gs.qd_int, shape=(solver.n_geoms_, solver.n_geoms_)),
+        valid_pairs_a=V(dtype=gs.qd_int, shape=(max(n_possible_pairs, 1),)),
+        valid_pairs_b=V(dtype=gs.qd_int, shape=(max(n_possible_pairs, 1),)),
+        n_valid_pairs=V(dtype=gs.qd_int, shape=()),
         max_possible_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
         max_contact_pairs=V(dtype=gs.qd_int, shape=()),

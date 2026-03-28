@@ -16,6 +16,7 @@ import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 
 from . import capsule_contact, diff_gjk, gjk, mpr
+from .broadphase import func_find_pair_idx
 from .box_contact import (
     func_box_box_contact,
     func_plane_box_contact,
@@ -476,9 +477,11 @@ def func_contact_mpr_terrain(
                                             break
 
                                     if valid:
-                                        i_pair = collider_info.collision_pair_idx[
-                                            (i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)
-                                        ]
+                                        i_pair = func_find_pair_idx(
+                                            i_ga if i_ga < i_gb else i_gb,
+                                            i_gb if i_ga < i_gb else i_ga,
+                                            collider_info,
+                                        )
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
@@ -602,7 +605,11 @@ def func_convex_convex_contact(
         axis_1 = qd.Vector.zero(gs.qd_float, 3)
         qrot = qd.Vector.zero(gs.qd_float, 4)
 
-        i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
+        i_pair = func_find_pair_idx(
+            i_ga if i_ga < i_gb else i_gb,
+            i_gb if i_ga < i_gb else i_ga,
+            collider_info,
+        )
         for i_detection in range(5):
             prefer_gjk = (
                 collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.GJK
@@ -1816,7 +1823,11 @@ def _func_narrowphase_contact0(
                 collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK
             )
 
-            i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
+            i_pair = func_find_pair_idx(
+                i_ga if i_ga < i_gb else i_gb,
+                i_gb if i_ga < i_gb else i_ga,
+                collider_info,
+            )
 
             if geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(

@@ -569,4 +569,11 @@ class RigidTetLBVH(LBVH):
         """
         i_ag = self.coupler.rigid_volume_elems_geom_idx[i_a]
         i_qg = self.coupler.rigid_volume_elems_geom_idx[i_q]
-        return self.coupler.rigid_collision_pair_idx[i_ag, i_qg] == -1
+        i_ga = i_ag if i_ag < i_qg else i_qg
+        i_gb = i_qg if i_ag < i_qg else i_ag
+        is_valid = False
+        for i in range(self.coupler.rigid_n_valid_pairs[None]):
+            if self.coupler.rigid_valid_pairs_a[i] == i_ga and self.coupler.rigid_valid_pairs_b[i] == i_gb:
+                is_valid = True
+                break
+        return not is_valid

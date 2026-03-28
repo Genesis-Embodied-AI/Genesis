@@ -30,6 +30,17 @@ def func_find_intersect_midpoint(
 
 
 @qd.func
+def func_find_pair_idx(i_ga, i_gb, collider_info: array_class.ColliderInfo):
+    """Linear scan through valid_pairs to find pair index. Returns -1 if not found."""
+    result = gs.qd_int(-1)
+    for i in range(collider_info.n_valid_pairs[None]):
+        if collider_info.valid_pairs_a[i] == i_ga and collider_info.valid_pairs_b[i] == i_gb:
+            result = i
+            break
+    return result
+
+
+@qd.func
 def func_check_collision_valid(
     i_ga,
     i_gb,
@@ -43,7 +54,7 @@ def func_check_collision_valid(
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
 ):
-    is_valid = collider_info.collision_pair_idx[i_ga, i_gb] != -1
+    is_valid = func_find_pair_idx(i_ga, i_gb, collider_info) != -1
 
     if is_valid:
         i_la = geoms_info.link_idx[i_ga]
@@ -267,7 +278,7 @@ def func_broad_phase(
                         if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                             # Clear collision normal cache if not in contact
                             if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                i_pair = func_find_pair_idx(i_ga, i_gb, collider_info)
                                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                             continue
 
@@ -322,7 +333,7 @@ def func_broad_phase(
                             if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                 # Clear collision normal cache if not in contact
                                 if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                    i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                    i_pair = func_find_pair_idx(i_ga, i_gb, collider_info)
                                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                                 continue
 
@@ -355,7 +366,7 @@ def func_broad_phase(
 
                                 if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
                                     # Clear collision normal cache if not in contact
-                                    i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                    i_pair = func_find_pair_idx(i_ga, i_gb, collider_info)
                                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
                                     continue
 

@@ -149,7 +149,8 @@ class Collider:
         # Compute collision pairs and algorithm flags in a single pass
         (
             self._n_possible_pairs,
-            self._collision_pair_idx,
+            self._valid_pairs_a,
+            self._valid_pairs_b,
             has_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -178,13 +179,14 @@ class Collider:
             self._solver,
             n_vert_neighbors,
             self._collider_static_config,
+            n_possible_pairs=self._n_possible_pairs,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
             mpr_to_gjk_overlap_ratio=self._mpr_to_gjk_overlap_ratio,
             diff_pos_tolerance=self._diff_pos_tolerance,
             diff_normal_tolerance=self._diff_normal_tolerance,
         )
-        self._init_collision_pair_idx(self._collision_pair_idx)
+        self._init_valid_pairs(self._valid_pairs_a, self._valid_pairs_b)
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(self._n_possible_pairs)
         self._init_terrain_state()
@@ -239,8 +241,8 @@ class Collider:
         For each pair of geoms, determine if they can collide based on their properties and the solver configuration.
         Pairs that are already colliding at the initial configuration (qpos0) are filtered out with a warning.
 
-        Returns (n_possible_pairs, collision_pair_idx, pair_flags) where pair_flags is a dict of booleans
-        for has_terrain, has_non_box_plane_convex_convex, has_convex_specialization, has_nonconvex_nonterrain.
+        Returns (n_possible_pairs, valid_pairs_a, valid_pairs_b, has_terrain,
+        has_non_box_plane_convex_convex, has_convex_specialization, has_nonconvex_nonterrain).
         """
         # Links whose contact is handled by an external solver (e.g. IPC) — exclude from GJK collision.
         # Only applies when the IPC coupler is active. Mirrors the link filtering logic in
@@ -252,7 +254,7 @@ class Collider:
         geoms = self._solver.geoms
 
         if n_geoms == 0:
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), False, False, False, False
+            return 0, np.array([], dtype=gs.np_int), np.array([], dtype=gs.np_int), False, False, False, False
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -405,11 +407,11 @@ class Collider:
                 "This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'."
             )
 
-        # --- Build collision_pair_idx and count ---
+        # --- Build valid pairs arrays ---
         valid_indices = np.where(valid)[0]
         n_possible_pairs = len(valid_indices)
-        collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
-        collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
+        valid_pairs_a = row[valid_indices].astype(gs.np_int)
+        valid_pairs_b = col[valid_indices].astype(gs.np_int)
 
         # --- Compute algorithm flags from valid pairs ---
         valid_type_a = geom_type[row[valid_indices]]
@@ -457,7 +459,8 @@ class Collider:
 
         return (
             n_possible_pairs,
-            collision_pair_idx,
+            valid_pairs_a,
+            valid_pairs_b,
             has_any_vs_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -485,11 +488,12 @@ class Collider:
 
         return vert_neighbors, vert_neighbor_start, vert_n_neighbors
 
-    def _init_collision_pair_idx(self, collision_pair_idx):
-        if self._n_possible_pairs == 0:
-            self._collider_info.collision_pair_idx.fill(-1)
-            return
-        self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+    def _init_valid_pairs(self, valid_pairs_a, valid_pairs_b):
+        n = len(valid_pairs_a)
+        self._collider_info.n_valid_pairs.fill(n)
+        if n > 0:
+            self._collider_info.valid_pairs_a.from_numpy(valid_pairs_a)
+            self._collider_info.valid_pairs_b.from_numpy(valid_pairs_b)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:
