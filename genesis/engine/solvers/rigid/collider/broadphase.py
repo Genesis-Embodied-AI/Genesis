@@ -397,7 +397,7 @@ def func_broad_phase(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase_all_vs_all(
+def _func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,

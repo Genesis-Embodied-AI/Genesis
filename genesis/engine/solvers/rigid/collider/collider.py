@@ -30,8 +30,7 @@ from .broadphase import (
     func_check_collision_valid,
     func_collision_clear,
     func_broad_phase,
-    func_broad_phase_all_vs_all_clear,
-    func_broad_phase_all_vs_all,
+    _func_broad_phase_all_vs_all,
 )
 
 from .contact import (
@@ -680,13 +679,7 @@ class Collider:
 
         self._contact_data_cache.clear()
         if self._solver._static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
-            func_broad_phase_all_vs_all_clear(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._collider_state,
-                self._solver._static_rigid_sim_config,
-            )
-            func_broad_phase_all_vs_all(
+            _func_broad_phase_all_vs_all(
                 self._solver.links_state,
                 self._solver.links_info,
                 self._solver.geoms_state,
