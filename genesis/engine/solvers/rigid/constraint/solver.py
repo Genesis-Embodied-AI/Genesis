@@ -1458,8 +1458,7 @@ def func_hessian_direct_tiled(
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
 
-    # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64
-    BLOCK_DIM = qd.static(64)
+    BLOCK_DIM = qd.static(128)
     MAX_DOFS_PER_BLOCK = qd.static(64)
     MAX_CONSTRAINTS_PER_BLOCK = qd.static(32)
 
