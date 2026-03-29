@@ -5396,21 +5396,39 @@ def test_hibernation_and_contact_islands(show_viewer):
 
 
 @pytest.mark.required
-def test_energy_analytical_and_conservation(show_viewer, tol):
+@pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
+def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     g = 9.81
     dt = 0.01
     h0 = 1.0
     radius = 0.1
     n_steps = 100
-    undamped_sol_params = [0.0, 0.0, 0.9, 0.95, 0.001, 0.5, 2.0]
+    # dampratio=0 with non-zero timeconst for numerically stable undamped contact
+    undamped_sol_params = [0.02, 0.0, 0.9, 0.95, 0.001, 0.5, 2.0]
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, gravity=(0, 0, -g)),
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0, 0, -g),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=integrator,
+        ),
         show_viewer=show_viewer,
     )
     plane = scene.add_entity(gs.morphs.Plane())
-    sphere_a = scene.add_entity(gs.morphs.Sphere(radius=radius, pos=(0, 0, h0)))
-    sphere_b = scene.add_entity(gs.morphs.Sphere(radius=radius, pos=(0.5, 0, h0)))
+    sphere_a = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=radius,
+            pos=(0, 0, h0),
+        ),
+    )
+    sphere_b = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=radius,
+            pos=(0.5, 0, h0),
+        ),
+    )
     scene.build()
 
     # Undamped contact for sphere_a: set dampratio=0 on floor and sphere_a geoms

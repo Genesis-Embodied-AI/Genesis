@@ -3742,11 +3742,14 @@ class RigidEntity(KinematicEntity):
     def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
         """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
 
-        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``. The mass matrix is recomputed to include motor armature on the diagonal.
+        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
+        The mass matrix is recomputed to include motor armature on the diagonal.
 
         Note
         ----
-        This method is not optimised for performance. It forces recomputation of the mass matrix on every call.
+        When the ``approximate_implicitfast`` integrator is used, this method forces recomputation of the
+        mass matrix to exclude implicit damping terms added during integration. Other integrators do not
+        require this recomputation.
 
         Parameters
         ----------
@@ -3757,8 +3760,19 @@ class RigidEntity(KinematicEntity):
         -------
         kinetic_energy : torch.Tensor, shape () or (n_envs,)
         """
-        # Recompute mass matrix: structural inertia + motor armature, no implicit damping
-        self._solver.recompute_mass_matrix()
+        if self._solver._static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast:
+            from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
+
+            kernel_compute_mass_matrix(
+                links_state=self._solver.links_state,
+                links_info=self._solver.links_info,
+                dofs_state=self._solver.dofs_state,
+                dofs_info=self._solver.dofs_info,
+                entities_info=self._solver.entities_info,
+                rigid_global_info=self._solver._rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                decompose=False,
+            )
         mass_mat = self.get_mass_mat(envs_idx=envs_idx)
         dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
         Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
@@ -3768,7 +3782,8 @@ class RigidEntity(KinematicEntity):
     def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
         """Get the total gravitational potential energy of the entity in Joules [J].
 
-        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
+        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the
+        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
 
         Parameters
         ----------
