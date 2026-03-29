@@ -247,7 +247,7 @@ def _kernel_solve_gpu_graph(
         _func_check_early_exit(constraint_state, graph_counter)
 
 
-@solver.func_solve_body.register(is_compatible=lambda entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config, _n_iterations: gs.backend in {gs.cuda} and not static_rigid_sim_config.requires_grad)
+@solver.func_solve_body.register(is_compatible=lambda entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config, _n_iterations: not static_rigid_sim_config.requires_grad)
 def func_solve_decomposed(
     entities_info,
     dofs_state,
