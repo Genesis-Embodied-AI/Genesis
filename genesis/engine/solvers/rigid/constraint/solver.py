@@ -2897,8 +2897,22 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.perf_dispatch(
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=0
+)
 def func_solve_init(
+    dofs_info: array_class.DofsInfo,
+    dofs_state: array_class.DofsState,
+    entities_info: array_class.EntitiesInfo,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+) -> None: ...
+
+
+@func_solve_init.register(is_compatible=lambda *args, **kwargs: True)
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_solve_init_monolith(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
