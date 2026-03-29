@@ -287,13 +287,17 @@ def kernel_rigid_entity_inverse_kinematics(
 
                 # Resample init q
                 if respect_joint_limit and i_sample < max_samples - 1:
-                    for i_l in range(links_info.root_idx.shape[0]):
+                    i_e = rigid_entity._idx_in_solver
+                    entity_dof_start = entities_info.dof_start[i_e]
+                    for i_l in range(entities_info.link_start[i_e], entities_info.link_end[i_e]):
                         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
 
                         must_resample = False
                         for i_d_ in range(n_dofs):
                             i_d = dofs_idx[i_d_]
-                            if links_info.dof_start[I_l] <= i_d and i_d < links_info.dof_end[I_l]:
+                            link_dof_start_local = links_info.dof_start[I_l] - entity_dof_start
+                            link_dof_end_local = links_info.dof_end[I_l] - entity_dof_start
+                            if link_dof_start_local <= i_d and i_d < link_dof_end_local:
                                 must_resample = True
                                 break
                         if not must_resample:

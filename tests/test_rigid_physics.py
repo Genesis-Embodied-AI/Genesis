@@ -1820,6 +1820,44 @@ def test_inverse_kinematics_multilink_local_points(show_viewer):
         scene.visualizer.update()
 
 
+@pytest.mark.required
+def test_multi_robot_inverse_kinematics(show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer)
+    scene.add_entity(gs.morphs.Plane())
+
+    robot_positions = [
+        (0.0, -0.5, 0.005),
+        (0.0, 0.0, 0.005),
+        (0.0, 0.5, 0.005),
+    ]
+    robots = []
+    for pos in robot_positions:
+        robot = scene.add_entity(
+            gs.morphs.MJCF(
+                file="xml/franka_emika_panda/panda_non_overlap.xml",
+                pos=pos,
+                convexify=True,
+            ),
+        )
+        robots.append(robot)
+
+    scene.build()
+
+    for robot, pos in zip(robots, robot_positions):
+        target_pos = np.array(pos) + [0.4, 0.0, 0.4]
+        qpos, err = robot.inverse_kinematics(
+            link=robot.get_link("hand"),
+            pos=target_pos,
+            quat=[0, 1, 0, 0],
+            pos_tol=0.1 * tol,
+            return_error=True,
+        )
+        assert_allclose(err, 0.0, tol=tol)
+        robot.set_qpos(qpos)
+        ee_pos = robot.get_link("hand").get_pos()
+        assert_allclose(target_pos, ee_pos, tol=tol)
+
+
 @pytest.mark.slow  # ~180s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
