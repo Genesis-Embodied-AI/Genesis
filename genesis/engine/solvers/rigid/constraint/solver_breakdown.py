@@ -96,58 +96,6 @@ def _ls_eval_cost_grad(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_parallel_linesearch_mv(
-    dofs_info: array_class.DofsInfo,
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Compute mv = M @ search, parallelized over (dof, env).
-
-    Uses per-dof entity lookup to find the entity block boundaries, giving n_dofs * B
-    threads (each computing a single ~6-element dot product) instead of n_entities * B
-    threads (each computing the full block matvec).
-    """
-    n_dofs = constraint_state.search.shape[0]
-    _B = constraint_state.grad.shape[1]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d1, i_b in qd.ndrange(n_dofs, _B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
-            i_e = dofs_info.entity_idx[I_d1]
-            mv = gs.qd_float(0.0)
-            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
-            constraint_state.mv[i_d1, i_b] = mv
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_parallel_linesearch_jv(
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Compute jv = J @ search, parallelized over (constraint, env)."""
-    n_dofs = constraint_state.search.shape[0]
-    len_constraints = constraint_state.jac.shape[0]
-    _B = constraint_state.grad.shape[1]
-
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_c, i_b in qd.ndrange(len_constraints, _B):
-        if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-            jv = gs.qd_float(0.0)
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
-            constraint_state.jv[i_c, i_b] = jv
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_parallel_linesearch_p0(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
@@ -798,39 +746,6 @@ def _kernel_update_search_direction(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
-
-
-# ============================================ Sequential linesearch ================================================
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_linesearch(
-    entities_info: array_class.EntitiesInfo,
-    dofs_state: array_class.DofsState,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    """Sequential iterative linesearch (same as main branch).
-
-    Each thread handles one env, using Newton-guided derivative linesearch.
-    Lower per-env parallelism but less total work than the K=32 grid search.
-    Better for scenes with many constraints per env (e.g. humanoid contact).
-    """
-    _B = constraint_state.grad.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_linesearch_and_apply_alpha(
-                i_b,
-                entities_info=entities_info,
-                dofs_state=dofs_state,
-                rigid_global_info=rigid_global_info,
-                constraint_state=constraint_state,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-        else:
-            constraint_state.improved[i_b] = False
 
 
 # ============================================== Solve body dispatch ================================================
