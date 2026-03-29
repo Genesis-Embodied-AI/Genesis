@@ -1,40 +1,3 @@
-"""Decomposed constraint solver with parallel linesearch.
-
-This module provides an alternative to the monolith solver (solver.py) that splits the
-per-iteration work into separate GPU kernels. The key difference is the linesearch strategy:
-
-Monolith solver (solver.py):
-    Iterative Newton-guided linesearch. Each thread owns one env and performs sequential
-    Newton steps: evaluate cost/gradient/hessian, compute alpha = -grad/hess, repeat until
-    convergence. Adaptive cost: 2-5 evaluations for well-conditioned problems, more for hard ones.
-
-Decomposed solver (this module):
-    Parallel grid-search linesearch. A block of K=32 threads cooperates on each env:
-
-    1. P0 kernel: Fused computation of mv, jv, snorm, quad_gauss, eq_sum, and p0 cost.
-       All 32 threads cooperate on constraint/DOF reductions via shared memory, reducing
-       per-thread work from O(n_constraints) to O(n_constraints/32).
-
-    2. Eval kernel:
-       a) Grid search: Evaluate N_CANDIDATES=6 log-spaced alphas plus the Newton step,
-          all 32 threads cooperating on each candidate's constraint reduction.
-       b) Newton correction: One Newton step from the best grid candidate. Accepted if it
-          improves cost.
-       c) Bisection fallback: If Newton fails, bracket the zero-crossing of the gradient
-          and bisect up to LS_BISECT_STEPS=12 times.
-       d) Apply: Update qacc, Ma, Jaref with the chosen alpha (cooperative over DOFs).
-
-    3. Post-linesearch: Separate kernels for constraint force update, cost update, gradient
-       update, Hessian update (Newton only), and search direction update. These reuse the
-       batch-level functions from solver.py.
-
-Performance dispatch (perf_dispatch) automatically selects the faster variant at runtime,
-controlled by the prefer_parallel_linesearch option:
-    None  -> both variants compete (default)
-    False -> force monolith + iterative
-    True  -> force decomposed + parallel
-"""
-
 import quadrants as qd
 
 import genesis as gs
@@ -141,12 +104,35 @@ def _kernel_parallel_linesearch_p0(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Fused mv + jv + snorm + quad_gauss + eq_sum + p0_cost.
+    """Parallel linesearch P0 kernel: fused mv + jv + snorm + quad_gauss + eq_sum + p0_cost.
 
-    Phase 0a: Compute mv = M @ search (cooperative over DOFs, 32 threads).
-    Phase 0b: Compute jv = J @ search (cooperative over constraints, 32 threads).
-    Phase 1: Fused snorm + quad_gauss parallel reduction over n_dofs.
-    Phase 2: Parallel reduction over n_constraints for eq_sum and p0_cost.
+    Parallel grid-search linesearch algorithm overview
+    --------------------------------------------------
+    A block of K=32 threads cooperates on each env. Both approaches are O(n_constraints) per
+    evaluation, but the grid search parallelizes each evaluation across 32 threads
+    (n_constraints/32 work per thread), whereas the iterative approach runs each evaluation on
+    a single thread.
+
+    The algorithm is split across two kernels:
+
+    P0 kernel (this function):
+        Phase 0a: Compute mv = M @ search (cooperative over DOFs, 32 threads).
+        Phase 0b: Compute jv = J @ search (cooperative over constraints, 32 threads).
+        Phase 1: Fused snorm + quad_gauss parallel reduction over n_dofs.
+        Phase 2: Parallel reduction over n_constraints for eq_sum and p0_cost.
+
+    Eval kernel (_kernel_parallel_linesearch_eval):
+        a) Grid search: Evaluate N_CANDIDATES=6 log-spaced alphas plus the Newton step,
+           all 32 threads cooperating on each candidate's constraint reduction.
+        b) Newton correction: One Newton step from the best grid candidate. Accepted if it
+           improves cost.
+        c) Bisection fallback: If Newton fails, bracket the zero-crossing of the gradient
+           and bisect up to LS_BISECT_STEPS=12 times.
+        d) Apply: Update qacc, Ma, Jaref with the chosen alpha (cooperative over DOFs).
+
+    Post-linesearch: Separate kernels for constraint force update, cost update, gradient
+    update, Hessian update (Newton only), and search direction update. These reuse the
+    batch-level functions from solver.py.
     """
     _B = constraint_state.grad.shape[1]
     _T = qd.static(_P0_BLOCK)
