@@ -1,20 +1,20 @@
-import quadrants as ti
+import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.constraint import solver
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_linesearch(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_linesearch_and_apply_alpha(
@@ -29,34 +29,34 @@ def _kernel_linesearch(
             constraint_state.improved[i_b] = False
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_cg_only_save_prev_grad(
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Save prev_grad and prev_Mgrad (CG only)"""
     _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_constraint_forces(
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Compute active flags and efc_force, parallelized over (constraint, env)."""
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
-    for i_c, i_b in ti.ndrange(len_constraints, _B):
+    for i_c, i_b in qd.ndrange(len_constraints, _B):
         if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
             ne = constraint_state.n_constraints_equality[i_b]
             nef = ne + constraint_state.n_constraints_frictionloss[i_b]
 
-            if ti.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
                 constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
 
             constraint_state.active[i_c, i_b] = True
@@ -78,16 +78,16 @@ def _kernel_update_constraint_forces(
             )
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_constraint_qfrc(
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env)."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 
-    for i_d, i_b in ti.ndrange(n_dofs, _B):
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_con = constraint_state.n_constraints[i_b]
             qfrc = gs.qd_float(0.0)
@@ -96,16 +96,16 @@ def _kernel_update_constraint_qfrc(
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_constraint_cost(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
     _B = constraint_state.grad.shape[1]
 
-    ti.loop_config(block_dim=32)
+    qd.loop_config(block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_dofs = constraint_state.qfrc_constraint.shape[0]
@@ -149,15 +149,15 @@ def _kernel_update_constraint_cost(
             constraint_state.cost[i_b] = cost_i
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_newton_only_nt_hessian(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Step 4: Newton Hessian update (Newton only)"""
     solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
-    if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
+    if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
         solver.func_cholesky_factor_direct_tiled(
             constraint_state=constraint_state,
             rigid_global_info=rigid_global_info,
@@ -165,7 +165,7 @@ def _kernel_newton_only_nt_hessian(
         )
     else:
         _B = constraint_state.jac.shape[2]
-        ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_cholesky_factor_direct_batch(
@@ -173,17 +173,17 @@ def _kernel_newton_only_nt_hessian(
                 )
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_gradient(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Step 5: Update gradient"""
     _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_update_gradient_batch(
@@ -196,15 +196,15 @@ def _kernel_update_gradient(
             )
 
 
-@ti.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_update_search_direction(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: ti.template(),
+    static_rigid_sim_config: qd.template(),
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
-    ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_terminate_or_update_descent_batch(
