@@ -1845,14 +1845,16 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
 
     for robot, pos in zip(robots, robot_positions):
         target_pos = np.array(pos) + [0.4, 0.0, 0.4]
-        qpos = robot.inverse_kinematics(
+        qpos, err = robot.inverse_kinematics(
             link=robot.get_link("hand"),
             pos=target_pos,
             quat=[0, 1, 0, 0],
             pos_tol=0.1 * tol,
+            return_error=True,
         )
+        assert_allclose(err, 0.0, tol=tol)
         robot.set_qpos(qpos)
-        ee_pos = robot.get_link("hand").get_pos().numpy().flatten()
+        ee_pos = robot.get_link("hand").get_pos()
         assert_allclose(target_pos, ee_pos, tol=tol)
 
 
