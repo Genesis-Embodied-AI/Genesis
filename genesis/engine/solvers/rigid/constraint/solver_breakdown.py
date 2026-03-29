@@ -1,3 +1,40 @@
+"""Decomposed constraint solver with parallel linesearch.
+
+This module provides an alternative to the monolith solver (solver.py) that splits the
+per-iteration work into separate GPU kernels. The key difference is the linesearch strategy:
+
+Monolith solver (solver.py):
+    Iterative Newton-guided linesearch. Each thread owns one env and performs sequential
+    Newton steps: evaluate cost/gradient/hessian, compute alpha = -grad/hess, repeat until
+    convergence. Adaptive cost: 2-5 evaluations for well-conditioned problems, more for hard ones.
+
+Decomposed solver (this module):
+    Parallel grid-search linesearch. A block of K=32 threads cooperates on each env:
+
+    1. P0 kernel: Fused computation of mv, jv, snorm, quad_gauss, eq_sum, and p0 cost.
+       All 32 threads cooperate on constraint/DOF reductions via shared memory, reducing
+       per-thread work from O(n_constraints) to O(n_constraints/32).
+
+    2. Eval kernel:
+       a) Grid search: Evaluate N_CANDIDATES=6 log-spaced alphas plus the Newton step,
+          all 32 threads cooperating on each candidate's constraint reduction.
+       b) Newton correction: One Newton step from the best grid candidate. Accepted if it
+          improves cost.
+       c) Bisection fallback: If Newton fails, bracket the zero-crossing of the gradient
+          and bisect up to LS_BISECT_STEPS=12 times.
+       d) Apply: Update qacc, Ma, Jaref with the chosen alpha (cooperative over DOFs).
+
+    3. Post-linesearch: Separate kernels for constraint force update, cost update, gradient
+       update, Hessian update (Newton only), and search direction update. These reuse the
+       batch-level functions from solver.py.
+
+Performance dispatch (perf_dispatch) automatically selects the faster variant at runtime,
+controlled by the prefer_parallel_linesearch option:
+    None  -> both variants compete (default)
+    False -> force monolith + iterative
+    True  -> force decomposed + parallel
+"""
+
 import quadrants as qd
 
 import genesis as gs
