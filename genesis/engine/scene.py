@@ -1271,7 +1271,7 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             mesh = mu.create_camera_frustum(camera, color)
-            return self._visualizer.context.draw_debug_mesh(mesh)
+            return self._visualizer.context.draw_debug_mesh(mesh, T=camera.transform)
 
     @gs.assert_built
     def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
