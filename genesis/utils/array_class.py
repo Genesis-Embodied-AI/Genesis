@@ -306,6 +306,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_w: V_ANNOTATION
     # Timers for profiling
     timers: V_ANNOTATION
+    # CUDA graph iteration counter for graph_do_while
+    cuda_graph_counter: V_ANNOTATION
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -396,6 +398,7 @@ def get_constraint_state(constraint_solver, solver):
         bw_w=V(dtype=gs.qd_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         # Timers
         timers=V(dtype=qd.i64 if gs.backend != gs.metal else qd.i32, shape=(10, _B)),
+        cuda_graph_counter=qd.ndarray(qd.i32, shape=()),
     )
 
 
