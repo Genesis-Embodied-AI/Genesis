@@ -692,8 +692,8 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         def _patched_model_post_init(self, __context):
             _orig_model_post_init(self, __context)
             if self.prefer_parallel_linesearch is None:
-                # Enable parallel linesearch on GPU backends that support shared memory.
-                self.prefer_parallel_linesearch = gs.backend in {gs.cuda, gs.metal}
+                # FIXME: Also enable for gs.metal once Quadrants supports atomics on Apple Metal.
+                self.prefer_parallel_linesearch = gs.backend == gs.cuda
 
         monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
 

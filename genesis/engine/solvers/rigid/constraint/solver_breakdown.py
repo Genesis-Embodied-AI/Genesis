@@ -753,7 +753,8 @@ def _kernel_update_search_direction(
 
 @solver.func_solve_body.register(
     is_compatible=lambda *args, **kwargs: (
-        gs.backend in {gs.cuda, gs.metal} and solver._get_static_config(*args, **kwargs).prefer_parallel_linesearch != 0
+        # FIXME: Enable gs.metal once Quadrants supports atomics on Apple Metal.
+        gs.backend in {gs.cuda} and solver._get_static_config(*args, **kwargs).prefer_parallel_linesearch != 0
     )
 )
 def func_solve_decomposed(
