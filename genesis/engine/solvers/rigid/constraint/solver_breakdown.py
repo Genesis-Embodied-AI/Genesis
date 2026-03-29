@@ -1,3 +1,4 @@
+import numpy as np
 import quadrants as qd
 
 import genesis as gs
@@ -5,8 +6,8 @@ import genesis.utils.array_class as array_class
 from genesis.engine.solvers.rigid.constraint import solver
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_linesearch(
+@qd.func
+def _func_linesearch(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -29,12 +30,11 @@ def _kernel_linesearch(
             constraint_state.improved[i_b] = False
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_cg_only_save_prev_grad(
+@qd.func
+def _func_cg_only_save_prev_grad(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Save prev_grad and prev_Mgrad (CG only)"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -42,12 +42,11 @@ def _kernel_cg_only_save_prev_grad(
             solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_update_constraint_forces(
+@qd.func
+def _func_update_constraint_forces(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute active flags and efc_force, parallelized over (constraint, env)."""
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
@@ -78,12 +77,11 @@ def _kernel_update_constraint_forces(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_update_constraint_qfrc(
+@qd.func
+def _func_update_constraint_qfrc(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env)."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 
@@ -96,13 +94,12 @@ def _kernel_update_constraint_qfrc(
             constraint_state.qfrc_constraint[i_d, i_b] = qfrc
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_update_constraint_cost(
+@qd.func
+def _func_update_constraint_cost(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(block_dim=32)
@@ -118,7 +115,6 @@ def _kernel_update_constraint_cost(
             cost_i = gs.qd_float(0.0)
             gauss_i = gs.qd_float(0.0)
 
-            # Gauss cost from dofs
             for i_d in range(n_dofs):
                 v = (
                     0.5
@@ -128,7 +124,6 @@ def _kernel_update_constraint_cost(
                 gauss_i += v
                 cost_i += v
 
-            # Constraint cost: quadratic + friction linear
             for i_c in range(n_con):
                 cost_i += 0.5 * (
                     constraint_state.Jaref[i_c, i_b] ** 2
@@ -149,13 +144,12 @@ def _kernel_update_constraint_cost(
             constraint_state.cost[i_b] = cost_i
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_newton_only_nt_hessian(
+@qd.func
+def _func_newton_only_nt_hessian(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Step 4: Newton Hessian update (Newton only)"""
     solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
     if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
         solver.func_cholesky_factor_direct_tiled(
@@ -173,15 +167,14 @@ def _kernel_newton_only_nt_hessian(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_update_gradient(
+@qd.func
+def _func_update_gradient(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Step 5: Update gradient"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -196,13 +189,12 @@ def _kernel_update_gradient(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_update_search_direction(
+@qd.func
+def _func_update_search_direction(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
@@ -215,6 +207,46 @@ def _kernel_update_search_direction(
             )
 
 
+@qd.func
+def _func_check_early_exit(
+    constraint_state: array_class.ConstraintState,
+    counter: qd.types.ndarray(qd.i32, ndim=0),
+):
+    """Decrement iteration counter and exit early if no batch element improved."""
+    for _ in range(1):
+        counter[()] = counter[()] - 1
+        _B = constraint_state.grad.shape[1]
+        any_improved = False
+        for i_b in range(_B):
+            if constraint_state.improved[i_b]:
+                any_improved = True
+        if not any_improved:
+            counter[()] = 0
+
+
+@qd.kernel(cuda_graph=True, fastcache=gs.use_fastcache)
+def _kernel_solve_cuda_graph(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    counter: qd.types.ndarray(qd.i32, ndim=0),
+):
+    while qd.graph_do_while(counter):
+        _func_linesearch(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
+            _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
+        _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
+        _func_update_constraint_qfrc(constraint_state, static_rigid_sim_config)
+        _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
+        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            _func_newton_only_nt_hessian(constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_check_early_exit(constraint_state, counter)
+
+
 @solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
 def func_solve_decomposed(
     entities_info,
@@ -225,53 +257,22 @@ def func_solve_decomposed(
     _n_iterations,
 ):
     """
-    Uses separate kernels for each solver step per iteration.
+    CUDA-graph accelerated solver loop with GPU-side iteration via graph_do_while.
 
-    This maximizes kernel granularity, potentially allowing better GPU scheduling
-    and more flexibility in execution, at the cost of more Python→C++ boundary crossings.
+    On SM 9.0+ (Hopper), the entire iteration loop runs on the GPU with no host
+    involvement. On older GPUs, falls back to a host-side do-while loop that still
+    benefits from CUDA graph kernel launch batching.
+
+    Early exits when all batch elements have converged (no improved[i_b] is True).
     """
-    # _n_iterations is a Python-native int to avoid CPU-GPU sync (vs rigid_global_info.iterations[None])
-    for _it in range(_n_iterations):
-        _kernel_linesearch(
-            entities_info,
-            dofs_state,
-            constraint_state,
-            rigid_global_info,
-            static_rigid_sim_config,
-        )
-        if static_rigid_sim_config.solver_type == gs.constraint_solver.CG:
-            _kernel_cg_only_save_prev_grad(
-                constraint_state,
-                static_rigid_sim_config,
-            )
-        _kernel_update_constraint_forces(
-            constraint_state,
-            static_rigid_sim_config,
-        )
-        _kernel_update_constraint_qfrc(
-            constraint_state,
-            static_rigid_sim_config,
-        )
-        _kernel_update_constraint_cost(
-            dofs_state,
-            constraint_state,
-            static_rigid_sim_config,
-        )
-        if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-            _kernel_newton_only_nt_hessian(
-                constraint_state,
-                rigid_global_info,
-                static_rigid_sim_config,
-            )
-        _kernel_update_gradient(
-            entities_info,
-            dofs_state,
-            constraint_state,
-            rigid_global_info,
-            static_rigid_sim_config,
-        )
-        _kernel_update_search_direction(
-            constraint_state,
-            rigid_global_info,
-            static_rigid_sim_config,
-        )
+    if _n_iterations <= 0:
+        return
+    constraint_state.cuda_graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
+    _kernel_solve_cuda_graph(
+        entities_info,
+        dofs_state,
+        constraint_state,
+        rigid_global_info,
+        static_rigid_sim_config,
+        constraint_state.cuda_graph_counter,
+    )
