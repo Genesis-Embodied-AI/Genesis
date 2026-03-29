@@ -1042,19 +1042,24 @@ def test_draw_debug(renderer, show_viewer):
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot):
-    """Test that draw_debug_frustum and draw_debug_trajectory render visible content in the viewer."""
+def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
+    """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(3.5, 0.0, 2.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            camera_pos=(2.0, 2.0, 2.0),
+            camera_lookat=(0.0, 0.0, 0.2),
+            # Force screen-independent low-quality resolution when running unit tests for consistency
             res=(480, 320),
+            # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
         ),
         vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
         profiling_options=gs.options.ProfilingOptions(
@@ -1065,6 +1070,132 @@ def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot
     )
 
     scene.add_entity(gs.morphs.Plane())
+
+    floating_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.0, 0.1),
+            draw_debug=True,
+        )
+    )
+
+    ground_box = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.4, 0.2, 0.1),
+            pos=(-0.25, 0.0, 0.05),
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+            debug_sphere_radius=0.08,
+            debug_color=(1.0, 0.5, 1.0, 1.0),
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=ground_box.idx,
+            draw_debug=True,
+            debug_scale=0.01,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.GridPattern(
+                resolution=0.2,
+                size=(0.4, 0.4),
+                direction=(0.0, 0.0, -1.0),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.2, 0.0, -0.1),
+            return_world_frame=True,
+            draw_debug=True,
+        )
+    )
+    scene.add_sensor(
+        gs.sensors.Raycaster(
+            pattern=gs.sensors.raycaster.SphericalPattern(
+                n_points=(6, 6),
+                fov=(60.0, (-120.0, -60.0)),
+            ),
+            entity_idx=floating_box.idx,
+            pos_offset=(0.0, 0.5, 0.0),
+            return_world_frame=False,
+            draw_debug=True,
+            debug_sphere_radius=0.01,
+            debug_ray_start_color=(1.0, 1.0, 0.0, 1.0),
+            debug_ray_hit_color=(0.5, 1.0, 1.0, 1.0),
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    for _ in range(5):
+        scene.step()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb_arr, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+    )
+
+    if sys.platform == "darwin":
+        glinfo = pyrender_viewer.context.get_info()
+        renderer = glinfo.get_renderer()
+        if renderer == "Apple Software Renderer":
+            pytest.xfail("Tile ground colors are altered on Apple Software Renderer.")
+
+    assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot):
+    """Test that draw_debug_frustum and draw_debug_trajectory render visible content in the viewer."""
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, 0.0, 2.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            # Force screen-independent low-quality resolution when running unit tests for consistency
+            res=(480, 320),
+            # Enable running in background thread if supported by the platform
+            run_in_thread=(sys.platform == "linux"),
+        ),
+        vis_options=gs.options.VisOptions(
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+    # Add a semi-transparent box inside the sensor camera frustum to verify transparency rendering
+    scene.add_entity(
+        gs.morphs.Box(
+            size=(0.05, 0.05, 0.05),
+            pos=(0.4, 0.0, 0.4),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(color=(0.2, 0.6, 1.0, 0.4)),
+    )
 
     sensor_cam = scene.add_camera(
         res=(640, 480),
@@ -1093,6 +1224,7 @@ def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot
     )
     scene.draw_debug_trajectory(positions, radius=0.02, color=(1.0, 0.5, 0.0, 1.0))
 
+    # FIXME: viewer.update() must be called twice to ensure the render state is fully flushed before offscreen capture
     scene.visualizer.viewer.update(auto_refresh=True, force=True)
     scene.visualizer.viewer.update(auto_refresh=True, force=True)
 
