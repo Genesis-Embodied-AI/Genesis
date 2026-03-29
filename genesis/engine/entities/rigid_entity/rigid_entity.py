@@ -3740,29 +3740,22 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
-        """
-        Get the total kinetic energy of the entity (translational + rotational).
+        """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
 
-        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
-        The mass matrix is recomputed to include motor armature on the diagonal
-        while excluding implicit damping correction terms that the integrator may
-        have added during the last simulation step.
+        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``. The mass matrix is recomputed to include motor armature on the diagonal.
+
+        Note
+        ----
+        This method is not optimised for performance. It forces recomputation of the mass matrix on every call.
 
         Parameters
         ----------
         envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be
-            considered. Defaults to None.
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
         kinetic_energy : torch.Tensor, shape () or (n_envs,)
-            The total kinetic energy of the entity in Joules.
-
-        Note
-        ----
-        This method recomputes the solver's shared mass matrix to ensure
-        correctness.  Call it between simulation steps, not mid-step.
         """
         # Recompute mass matrix: structural inertia + motor armature, no implicit damping
         self._solver.recompute_mass_matrix()
@@ -3773,23 +3766,18 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
-        """
-        Get the total gravitational potential energy of the entity.
+        """Get the total gravitational potential energy of the entity in Joules [J].
 
-        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``,
-        where ``p_i`` is the center-of-mass position of link *i* and ``g`` is
-        the gravity vector obtained from the solver.
+        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
 
         Parameters
         ----------
         envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be
-            considered. Defaults to None.
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
         potential_energy : torch.Tensor, shape () or (n_envs,)
-            The total gravitational potential energy of the entity in Joules.
         """
         gravity = self._solver.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
         links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
@@ -3804,19 +3792,16 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     def get_total_energy(self, envs_idx=None) -> torch.Tensor:
-        """
-        Get the total mechanical energy of the entity (kinetic + potential).
+        """Get the total mechanical energy of the entity in Joules [J] (kinetic + potential).
 
         Parameters
         ----------
         envs_idx : None | array_like, optional
-            The indices of the environments. If None, all environments will be
-            considered. Defaults to None.
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
 
         Returns
         -------
         total_energy : torch.Tensor, shape () or (n_envs,)
-            The total mechanical energy of the entity in Joules.
         """
         return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
 
