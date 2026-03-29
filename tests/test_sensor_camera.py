@@ -569,8 +569,6 @@ def test_raytracer(n_envs, png_snapshot):
 
 @pytest.mark.required
 def test_camera_lookat_entity(show_viewer, png_snapshot):
-    png_snapshot.extension._blurred_kernel_size = 3
-
     scene = gs.Scene(show_viewer=show_viewer)
 
     scene.add_entity(morph=gs.morphs.Plane())
@@ -580,75 +578,25 @@ def test_camera_lookat_entity(show_viewer, png_snapshot):
             radius=0.3,
             pos=(0.0, 0.0, 1.0),
         ),
-        surface=gs.surfaces.Smooth(color=(1.0, 0.5, 0.5)),
     )
 
-    # Attached camera A: looking upward
-    camera_a = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=(0.3, 0.0, 0.3),
-            lookat=(1.0, 0.0, 3.0),
-            up=(0.0, 0.0, 1.0),
-            fov=70.0,
-            entity_idx=sphere.idx,
-            link_idx_local=0,
-        )
-    )
-
-    # Attached camera B: same pos, looking forward
-    camera_b = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=(0.3, 0.0, 0.3),
-            lookat=(1.0, 0.0, 0.0),
-            up=(0.0, 0.0, 1.0),
-            fov=70.0,
-            entity_idx=sphere.idx,
-            link_idx_local=0,
-        )
-    )
-
-    # Detached camera C: looking at origin
-    camera_c = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=(3.0, 0.0, 2.0),
-            lookat=(0.0, 0.0, 0.0),
-            up=(0.0, 0.0, 1.0),
-            fov=60.0,
-        )
-    )
-
-    # Detached camera D: same pos as C, looking away
-    camera_d = scene.add_sensor(
-        gs.sensors.RasterizerCameraOptions(
-            res=(64, 64),
-            pos=(3.0, 0.0, 2.0),
-            lookat=(10.0, 0.0, 2.0),
-            up=(0.0, 0.0, 1.0),
-            fov=60.0,
-        )
-    )
+    common_options = dict(res=(64, 64), up=(0.0, 0.0, 1.0))
+    camera_configs = [
+        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 3.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
+        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 0.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
+        dict(pos=(3.0, 0.0, 2.0), lookat=(0.0, 0.0, 0.0), fov=60.0),
+        dict(pos=(3.0, 0.0, 2.0), lookat=(10.0, 0.0, 2.0), fov=60.0),
+    ]
+    cameras = [scene.add_sensor(gs.sensors.RasterizerCameraOptions(**common_options, **cfg)) for cfg in camera_configs]
 
     scene.build()
     scene.step()
 
-    data_a = camera_a.read()
-    data_b = camera_b.read()
-    data_c = camera_c.read()
-    data_d = camera_d.read()
+    images = [tensor_to_array(cam.read().rgb) for cam in cameras]
 
-    rgb_a = tensor_to_array(data_a.rgb)
-    rgb_b = tensor_to_array(data_b.rgb)
-    rgb_c = tensor_to_array(data_c.rgb)
-    rgb_d = tensor_to_array(data_d.rgb)
-
-    # Attached cameras with different lookat must produce different images (issue #2591)
-    assert not np.array_equal(rgb_a, rgb_b)
-
-    # Detached cameras with different lookat must also differ
-    assert not np.array_equal(rgb_c, rgb_d)
+    # Cameras in each pair share position but differ in lookat — images must differ
+    for i in range(0, len(images), 2):
+        assert not np.array_equal(images[i], images[i + 1])
 
     # Snapshot check for attached camera
-    assert rgb_array_to_png_bytes(data_a.rgb) == png_snapshot
+    assert rgb_array_to_png_bytes(cameras[0].read().rgb) == png_snapshot
