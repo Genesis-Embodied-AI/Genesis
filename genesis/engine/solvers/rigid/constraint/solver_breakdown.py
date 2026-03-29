@@ -224,8 +224,8 @@ def _func_check_early_exit(
             graph_counter[()] = 0
 
 
-@qd.kernel(cuda_graph=True, fastcache=gs.use_fastcache)
-def _kernel_solve_cuda_graph(
+@qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
+def _kernel_solve_gpu_graph(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -257,18 +257,19 @@ def func_solve_decomposed(
     _n_iterations,
 ):
     """
-    CUDA-graph accelerated solver loop with GPU-side iteration via graph_do_while.
+    GPU graph accelerated solver loop with GPU-side iteration via graph_do_while.
 
-    On SM 9.0+ (Hopper), the entire iteration loop runs on the GPU with no host
-    involvement. On older GPUs, falls back to a host-side do-while loop that still
-    benefits from CUDA graph kernel launch batching.
+    On CUDA SM 9.0+ (Hopper), the entire iteration loop runs on the GPU with no host
+    involvement. On older CUDA GPUs, falls back to a host-side do-while loop that still
+    benefits from CUDA graph kernel launch batching. On other GPUs, falls back to
+    a host-side C++-side loop, that still reduces python launch overhead.
 
     Early exits when all batch elements have converged (no improved[i_b] is True).
     """
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
-    _kernel_solve_cuda_graph(
+    _kernel_solve_gpu_graph(
         entities_info,
         dofs_state,
         constraint_state,
