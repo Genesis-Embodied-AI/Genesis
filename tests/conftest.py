@@ -692,9 +692,8 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         def _patched_model_post_init(self, __context):
             _orig_model_post_init(self, __context)
             if self.prefer_parallel_linesearch is None:
-                # Only enable parallel linesearch on CUDA; other GPU archs
-                # (e.g. Metal) fall back to iterative since decomp uses shared memory.
-                self.prefer_parallel_linesearch = gs.backend == gs.cuda
+                # Enable parallel linesearch on GPU backends that support shared memory.
+                self.prefer_parallel_linesearch = gs.backend in {gs.cuda, gs.metal}
 
         monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
 
