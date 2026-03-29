@@ -366,6 +366,7 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
+            prefer_parallel_linesearch={None: -1, False: 0, True: 1}[self._options.prefer_parallel_linesearch],
         )
 
         if self.is_active:

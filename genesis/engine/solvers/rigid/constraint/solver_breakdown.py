@@ -840,7 +840,9 @@ def _kernel_linesearch(
     is_compatible=lambda *args, **kwargs: (
         # Note: we do not use parallel linesearch for finite difference gradient validation, as it is highly
         # sensitive to numerical precision and GPU float64 rounding errors can accumulate over many trials.
-        gs.backend in {gs.cuda} and not (args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]).requires_grad
+        gs.backend in {gs.cuda}
+        and not solver._get_static_config(*args, **kwargs).requires_grad
+        and solver._get_static_config(*args, **kwargs).prefer_parallel_linesearch != 0
     )
 )
 def func_solve_decomposed(
