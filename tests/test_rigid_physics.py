@@ -5396,40 +5396,59 @@ def test_hibernation_and_contact_islands(show_viewer):
 
 
 @pytest.mark.required
-def test_energy_conservation_free_fall(show_viewer):
+def test_energy_analytical_and_conservation(show_viewer, tol):
+    g = 9.81
+    dt = 0.01
+    h0 = 1.0
+    radius = 0.1
+    n_steps = 100
+    undamped_sol_params = [0.0, 0.0, 0.9, 0.95, 0.001, 0.5, 2.0]
+
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.001, gravity=(0, 0, -9.81)),
+        sim_options=gs.options.SimOptions(dt=dt, gravity=(0, 0, -g)),
         show_viewer=show_viewer,
     )
-    box = scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0, 0, 10.0)))
+    plane = scene.add_entity(gs.morphs.Plane())
+    sphere_a = scene.add_entity(gs.morphs.Sphere(radius=radius, pos=(0, 0, h0)))
+    sphere_b = scene.add_entity(gs.morphs.Sphere(radius=radius, pos=(0.5, 0, h0)))
     scene.build()
 
-    te_initial = box.get_total_energy()
+    # Undamped contact for sphere_a: set dampratio=0 on floor and sphere_a geoms
+    # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both must be zero
+    plane.geoms[0].set_sol_params(undamped_sol_params)
+    sphere_a.geoms[0].set_sol_params(undamped_sol_params)
 
-    for _ in range(100):
+    mass = sphere_a.get_links_inertial_mass().item()
+    te_initial = sphere_a.get_total_energy().item()
+
+    ke_a, pe_a, ke_b, pe_b, z_a, z_b = [], [], [], [], [], []
+    for _ in range(n_steps):
         scene.step()
+        ke_a.append(sphere_a.get_kinetic_energy().item())
+        pe_a.append(sphere_a.get_potential_energy().item())
+        ke_b.append(sphere_b.get_kinetic_energy().item())
+        pe_b.append(sphere_b.get_potential_energy().item())
+        z_a.append(sphere_a.get_pos()[..., 2].item())
+        z_b.append(sphere_b.get_pos()[..., 2].item())
 
-    te_final = box.get_total_energy()
-    # Numerical integration drift over 100 steps at dt=0.001 is O(1e-3)
-    assert_allclose(te_final, te_initial, tol=1e-3)
+    # First impact timestep (sphere center reaches ~radius above ground)
+    impact_step = next((i for i, z in enumerate(z_a) if z <= radius + dt), n_steps)
 
+    # Free fall: verify analytical KE and PE (semi-implicit Euler)
+    # After step n: v_n = n*g*dt, z_n = h0 - g*dt^2*n*(n+1)/2
+    for i in range(impact_step):
+        n = i + 1
+        expected_ke = 0.5 * mass * (n * g * dt) ** 2
+        expected_pe = mass * g * (h0 - g * dt**2 * n * (n + 1) / 2)
+        assert_allclose(ke_a[i], expected_ke, tol=tol)
+        assert_allclose(pe_a[i], expected_pe, tol=tol)
+        assert_allclose(ke_b[i], expected_ke, tol=tol)
+        assert_allclose(pe_b[i], expected_pe, tol=tol)
 
-@pytest.mark.required
-def test_energy_kinetic_potential_relation(show_viewer, tol):
-    scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=0.01, gravity=(0, 0, -9.81)),
-        show_viewer=show_viewer,
-    )
-    sphere = scene.add_entity(gs.morphs.Sphere(radius=0.1, pos=(0, 0, 5.0)))
-    scene.build()
+    # Undamped sphere_a: energy approximately conserved after bouncing
+    te_a_final = ke_a[-1] + pe_a[-1]
+    assert_allclose(te_a_final, te_initial, tol=5e-2)
 
-    # Stationary object: KE should be zero
-    assert_allclose(sphere.get_kinetic_energy(), 0.0, tol=tol)
-
-    # Total energy should equal KE + PE
-    for _ in range(10):
-        scene.step()
-
-    ke = sphere.get_kinetic_energy()
-    pe = sphere.get_potential_energy()
-    assert_allclose(sphere.get_total_energy(), ke + pe, tol=tol)
+    # Damped sphere_b: energy strictly decreased
+    te_b_final = ke_b[-1] + pe_b[-1]
+    assert te_b_final < te_initial
