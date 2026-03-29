@@ -542,11 +542,6 @@ class RigidOptions(Options):
                 )
             self.prefer_parallel_linesearch = False
 
-    @property
-    def prefer_parallel_linesearch_int(self) -> int:
-        """Map prefer_parallel_linesearch to int for static config: None → -1, False → 0, True → 1."""
-        return {None: -1, False: 0, True: 1}[self.prefer_parallel_linesearch]
-
 
 class MPMOptions(Options):
     """
