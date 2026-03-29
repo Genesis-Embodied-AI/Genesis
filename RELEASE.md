@@ -1,5 +1,49 @@
 # Genesis Release Note
 
+## 0.4.4
+
+### Breaking changes
+
+* [FEATURE] Improve numerical stability of simulation by aligning inertial axes of free joints. (@duburcqa) (#2569, #2571, #2573, #2575)
+* [BUG FIX] Fix default armature incorrectly applied on free joints for MJCF. (@duburcqa) (#2584)
+* [MISC] Set 'RigidEntity.set_quat(..., relative=True)' by default. (@duburcqa) (#2592)
+* [MISC] More realistic default material density for Rigid. (@duburcqa) (#2378)
+
+### New Features
+
+* Support batched camera for Rasterizer. (@duburcqa) (#2564)
+* Add MacOS support for separated envs rendering with Rasterizer. (@duburcqa) (#2560)
+
+### Bug Fixes
+
+* Fix flickering issue for temperature sensor debug draw. (@duburcqa) (#2557)
+* Fix batched env separated rendering with Rasterizer.
+* Fix interactive viewer race condition when running background thread. (@duburcqa) (#2585)
+* Fix color overwrite for MJCF without visuals. (@duburcqa) (#2586)
+* Fix batched sensor read when combining multiple sensor types. (@Milotrince) (#2581)
+* Fix USD parsing. (@duburcqa) (#2594)
+* Fix GPU synchronization issue on Apple Metal. (@duburcqa) (#2600)
+* Fix degenerated invweight computation. (@duburcqa) (#2598)
+* Fix viewer plugin registration after build. (@duburcqa) (#2601)
+* Fix motion planning crashing for short path < 3 nodes. (@Lidang-Jiang) (#2610)
+* Fix mouse interaction void ray casting. (@duburcqa) (#2611)
+* Fix IK solver using wrong entity's DOFs for multi-robot scenes. (@Lidang-Jiang) (#2612)
+
+### Miscellaneous
+
+* Improve mouse interaction visualization. (@duburcqa) (#2574)
+* Add support of batching to 'RigidLink.set_mass'. (@duburcqa) (#2578)
+* Refactor rigid benchmarks into reusable scene factories. (@hughperkins) (#2577)
+* Re-raise viewer exception running in background thread. (@duburcqa) (#2583)
+* Support non-blocking scene reset for rigid solver. (@duburcqa) (#2580)
+* Support more recent GPU devices by migrating Quadrants to LLVM 22. (@hughperkins) (#2595)
+* Migrate materials to new pydantic based options with strict validation. (@duburcqa) (#2597)
+* Disable perf dispatch re-benchmarking to reduce performance penalty. (@erizmr) (#2599)
+* Tune kernel dispatch heuristics to reduce wrong selection. (@erizmr) (#2605)
+* Rename 'Drone.set_propellels_rpm' in 'Drone.set_propellers_rpm'. (@Lidang-Jiang) (#2609)
+* Speed up simulation by tuning tiled Hessian block size. (@hughperkins) (#2617)
+* Optimize performance of collision detection using hardware-derived thread count. (@hughperkins) (#2616)
+
 ## 0.4.3
 
 This release introduces more sensors while significantly speeding up collision detection on GPU (up to 30%). As usual, a few bugs have been fixed.
