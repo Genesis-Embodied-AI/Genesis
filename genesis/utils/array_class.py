@@ -307,7 +307,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     # Timers for profiling
     timers: V_ANNOTATION
     # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
-    graph_continue_loop: qd.types.ndarray()
+    graph_counter: qd.types.ndarray()
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -398,7 +398,7 @@ def get_constraint_state(constraint_solver, solver):
         bw_w=V(dtype=gs.qd_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         # Timers
         timers=V(dtype=qd.i64 if gs.backend != gs.metal else qd.i32, shape=(10, _B)),
-        graph_continue_loop=qd.ndarray(qd.i32, shape=()),
+        graph_counter=qd.ndarray(qd.i32, shape=()),
     )
 
 
