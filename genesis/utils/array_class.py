@@ -306,8 +306,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_w: V_ANNOTATION
     # Timers for profiling
     timers: V_ANNOTATION
-    # CUDA graph iteration counter for graph_do_while
-    cuda_graph_counter: V_ANNOTATION
+    # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
+    cuda_graph_counter: qd.types.ndarray()
 
 
 def get_constraint_state(constraint_solver, solver):
