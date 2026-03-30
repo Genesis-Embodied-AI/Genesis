@@ -60,7 +60,7 @@ def kernel_cast_rays(
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
     output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
-    eps: gs.qd_float,
+    eps: float,
 ):
     """
     Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).

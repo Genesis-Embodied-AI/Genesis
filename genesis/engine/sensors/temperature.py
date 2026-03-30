@@ -68,29 +68,31 @@ class _ScratchIdx(IntEnum):
 
 
 @torch.jit.script
-def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float) -> torch.Tensor:
+def _compute_K2_rfft3(
+    nx: int, ny: int, nz: int, dx: float, dy: float, dz: float, device: torch.device, dtype: torch.dtype, eps: float
+) -> torch.Tensor:
     """Squared wave numbers for 3D real FFT: K2[i,j,k] = (2*pi*kx)^2 + (2*pi*ky)^2 + (2*pi*kz)^2 with rfft layout."""
-    kx = torch.fft.fftfreq(nx, d=dx, device=gs.device).to(gs.tc_float)
-    ky = torch.fft.fftfreq(ny, d=dy, device=gs.device).to(gs.tc_float)
-    kz = torch.fft.rfftfreq(nz, d=dz, device=gs.device).to(gs.tc_float)
+    kx = torch.fft.fftfreq(nx, d=dx, device=device).to(dtype)
+    ky = torch.fft.fftfreq(ny, d=dy, device=device).to(dtype)
+    kz = torch.fft.rfftfreq(nz, d=dz, device=device).to(dtype)
     K2 = (2 * torch.pi * kx).reshape(-1, 1, 1) ** 2
     K2 = K2 + (2 * torch.pi * ky).reshape(1, -1, 1) ** 2
     K2 = K2 + (2 * torch.pi * kz).reshape(1, 1, -1) ** 2
-    K2[0, 0, 0] = max(K2[0, 0, 0], gs.EPS)
+    K2[0, 0, 0] = max(K2[0, 0, 0], eps)
     # MPS silently ignores the device arg on fftfreq/rfftfreq and creates on CPU, so move explicitly.
-    return K2.to(device=gs.device)
+    return K2.to(device=device)
 
 
 @torch.jit.script
-def _compute_surface_mask(nx: int, ny: int, nz: int) -> torch.Tensor:
+def _compute_surface_mask(nx: int, ny: int, nz: int, device: torch.device) -> torch.Tensor:
     """Boolean mask of boundary voxels (at least one face on grid boundary). Shape (nx, ny, nz)."""
     ix, iy, iz = torch.meshgrid(
-        torch.arange(nx, device=gs.device),
-        torch.arange(ny, device=gs.device),
-        torch.arange(nz, device=gs.device),
+        torch.arange(nx, device=device),
+        torch.arange(ny, device=device),
+        torch.arange(nz, device=device),
         indexing="ij",
     )
-    return ((ix == 0) | (ix == nx - 1) | (iy == 0) | (iy == ny - 1) | (iz == 0) | (iz == nz - 1)).to(gs.tc_float)
+    return (ix == 0) | (ix == nx - 1) | (iy == 0) | (iy == ny - 1) | (iz == 0) | (iz == nz - 1)
 
 
 @torch.jit.script
@@ -106,6 +108,7 @@ def _apply_diffusion_and_heat_generation(
     link_conductivity: torch.Tensor,
     K2_spectral: list[torch.Tensor],
     dt: float,
+    eps: float,
     output: torch.Tensor,
 ) -> None:
     """Batched FFT semi-implicit diffusion with mirror padding (Neumann BC, no wrap-around)."""
@@ -126,14 +129,14 @@ def _apply_diffusion_and_heat_generation(
         T_pad = torch.cat([T_xy, torch.flip(T_xy, dims=(2,))], dim=2)
         T_hat = torch.fft.rfftn(T_pad, dim=(0, 1, 2))
         T_hat = T_hat / (1.0 + dt * alpha * K2_spectral[i_s].unsqueeze(-1))
-        T_pad = torch.fft.irfftn(T_hat, s=(2 * nx, 2 * ny, 2 * nz), dim=(0, 1, 2)).real
+        T_pad = torch.fft.irfftn(T_hat, s=(2 * nx, 2 * ny, 2 * nz), dim=(0, 1, 2))
         T = T_pad[:nx, :ny, :nz]
         output[start : start + size] = T.reshape(-1, n_batches)
 
         # Add internal heat generation (W/m² -> Q_vol = Q_surface / dz).
         q = heat_generation[i_s]
         if q is not None:
-            dz = max(voxel_size[i_s, 2], gs.EPS)
+            dz = max(voxel_size[i_s, 2], eps)
             Q_vol = q.reshape(-1) / dz
             delta_T = dt * Q_vol / rcp
             output[start : start + size] += delta_T.unsqueeze(-1).expand(-1, n_batches)
@@ -141,11 +144,11 @@ def _apply_diffusion_and_heat_generation(
 
 @qd.func
 def _qd_polygon_area_from_points_3d(
-    n: gs.qd_int,
+    n: int,
     scratch: qd.types.ndarray(),
-    i_b: gs.qd_int,
-    eps: gs.qd_float,
-) -> gs.qd_float:
+    i_b: int,
+    eps: float,
+) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -223,7 +226,7 @@ def _kernel_compute_contact_areas(
     collider_state: array_class.ColliderState,
     contact_area: qd.types.ndarray(),
     scratch: qd.types.ndarray(),
-    eps: gs.qd_float,
+    eps: float,
 ):
     # contact_area shape (n_c_max, n_batches). scratch (n_batches, n_c_max, len(_ScratchIdx)).
     n_batches = contact_area.shape[1]
@@ -289,7 +292,7 @@ def _kernel_compute_contact_areas(
 
 
 @qd.func
-def _qd_k_eff(k_a: gs.qd_float, k_b: gs.qd_float, eps: gs.qd_float) -> gs.qd_float:
+def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
     """Effective conductivity for series thermal resistance: 2*k_a*k_b/(k_a+k_b+eps)."""
     return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
@@ -312,8 +315,8 @@ def _kernel_contact_heat(
     link_conductivity: qd.types.ndarray(),
     link_rho_cp: qd.types.ndarray(),
     contact_area: qd.types.ndarray(),
-    dt: gs.qd_float,
-    eps: gs.qd_float,
+    dt: float,
+    eps: float,
     output: qd.types.ndarray(),
 ):
     # contact_area shape (n_c_max, n_batches)
@@ -645,10 +648,10 @@ class TemperatureGridSensor(
         grid = torch.stack(torch.meshgrid(xs, ys, zs, indexing="ij"), dim=-1).reshape(-1, 3)
         self._debug_cell_local_positions = (aabb_min_local.unsqueeze(0) + grid * voxel_size.unsqueeze(0)).cpu().numpy()
 
-        K2_padded = _compute_K2_rfft3(nx * 2, ny * 2, nz * 2, dx, dy, dz)
+        K2_padded = _compute_K2_rfft3(nx * 2, ny * 2, nz * 2, dx, dy, dz, gs.device, gs.tc_float, gs.EPS)
         self._shared_metadata.K2_spectral.append(K2_padded)
 
-        surface_mask = _compute_surface_mask(nx, ny, nz)
+        surface_mask = _compute_surface_mask(nx, ny, nz, gs.device).to(gs.tc_float)
         self._shared_metadata.sensor_surface_mask.append(surface_mask)
 
         if self._options.heat_generation is not None:
@@ -726,6 +729,7 @@ class TemperatureGridSensor(
             link_conductivity,
             shared_metadata.K2_spectral,
             dt,
+            gs.EPS,
             shared_ground_truth_cache,
         )
         # 3) Contact heat transfer
