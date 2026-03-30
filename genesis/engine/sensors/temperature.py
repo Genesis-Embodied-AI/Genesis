@@ -77,7 +77,8 @@ def _compute_K2_rfft3(nx: int, ny: int, nz: int, dx: float, dy: float, dz: float
     K2 = K2 + (2 * torch.pi * ky).reshape(1, -1, 1) ** 2
     K2 = K2 + (2 * torch.pi * kz).reshape(1, 1, -1) ** 2
     K2[0, 0, 0] = max(K2[0, 0, 0], gs.EPS)
-    return K2
+    # MPS silently ignores the device arg on fftfreq/rfftfreq and creates on CPU, so move explicitly.
+    return K2.to(device=gs.device)
 
 
 @torch.jit.script
