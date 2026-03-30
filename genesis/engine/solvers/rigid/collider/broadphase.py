@@ -139,7 +139,7 @@ def func_collision_clear(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase(
+def _func_broad_phase_sap(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -456,3 +456,47 @@ def _func_broad_phase_all_vs_all(
             collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
         else:
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
+
+
+def func_broad_phase(
+    links_state,
+    links_info,
+    geoms_state,
+    geoms_info,
+    rigid_global_info,
+    static_rigid_sim_config,
+    constraint_state,
+    collider_state,
+    equalities_info,
+    collider_info,
+    errno,
+):
+    """Dispatch to the appropriate broad-phase kernel based on config."""
+    if static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
+        _func_broad_phase_all_vs_all(
+            links_state,
+            links_info,
+            geoms_state,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            collider_state,
+            equalities_info,
+            collider_info,
+            errno,
+        )
+    else:
+        _func_broad_phase_sap(
+            links_state,
+            links_info,
+            geoms_state,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            collider_state,
+            equalities_info,
+            collider_info,
+            errno,
+        )

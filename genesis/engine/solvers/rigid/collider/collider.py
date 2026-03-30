@@ -30,6 +30,7 @@ from .broadphase import (
     func_check_collision_valid,
     func_collision_clear,
     func_broad_phase,
+    _func_broad_phase_sap,
     _func_broad_phase_all_vs_all,
 )
 
@@ -678,34 +679,19 @@ class Collider:
             return
 
         self._contact_data_cache.clear()
-        if self._solver._static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
-            _func_broad_phase_all_vs_all(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._solver.constraint_solver.constraint_state,
-                self._collider_state,
-                self._solver.equalities_info,
-                self._collider_info,
-                self._solver._errno,
-            )
-        else:
-            func_broad_phase(
-                self._solver.links_state,
-                self._solver.links_info,
-                self._solver.geoms_state,
-                self._solver.geoms_info,
-                self._solver._rigid_global_info,
-                self._solver._static_rigid_sim_config,
-                self._solver.constraint_solver.constraint_state,
-                self._collider_state,
-                self._solver.equalities_info,
-                self._collider_info,
-                self._solver._errno,
-            )
+        func_broad_phase(
+            self._solver.links_state,
+            self._solver.links_info,
+            self._solver.geoms_state,
+            self._solver.geoms_info,
+            self._solver._rigid_global_info,
+            self._solver._static_rigid_sim_config,
+            self._solver.constraint_solver.constraint_state,
+            self._collider_state,
+            self._solver.equalities_info,
+            self._collider_info,
+            self._solver._errno,
+        )
         if self._use_split_narrowphase:
             narrowphase._func_reset_narrowphase_work_queues(
                 self._collider_state,
