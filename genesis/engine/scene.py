@@ -42,6 +42,7 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
+import genesis.utils.mesh as mu
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
@@ -1249,6 +1250,54 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
+    def draw_debug_frustum(self, camera, color=(1.0, 1.0, 1.0, 0.3)):
+        """
+        Draws a camera frustum in the scene for visualization.
+
+        Parameters
+        ----------
+        camera : Camera
+            The camera object whose frustum will be visualized. Works for any
+            camera including sensor cameras.
+        color : array_like, shape (4,), optional
+            The color of the frustum in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
+        with self._visualizer.viewer_lock:
+            mesh = mu.create_camera_frustum(camera, color)
+            return self._visualizer.context.draw_debug_mesh(mesh, T=camera.transform)
+
+    @gs.assert_built
+    def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
+        """
+        Draws a trajectory as a series of connected lines in the scene for visualization.
+
+        Parameters
+        ----------
+        poss : array_like, shape (N, 3)
+            The positions of the trajectory points.
+        radius : float, optional
+            The radius of the trajectory lines.
+        color : array_like, shape (4,), optional
+            The color of the trajectory in RGBA format.
+
+        Returns
+        -------
+        nodes : list
+            List of created debug line objects.
+        """
+        nodes = []
+        with self._visualizer.viewer_lock:
+            for i in range(len(poss) - 1):
+                node = self._visualizer.context.draw_debug_line(poss[i], poss[i + 1], radius, color)
+                nodes.append(node)
+        return nodes
 
     @gs.assert_built
     def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
