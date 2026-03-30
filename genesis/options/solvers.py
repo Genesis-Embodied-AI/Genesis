@@ -469,6 +469,10 @@ class RigidOptions(Options):
     use_gjk_collision: bool, optional
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
+    broadphase_traversal : gs.broadphase_traversal, optional
+        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL`` (parallel pair iteration). Defaults
+        to ``None`` (auto: ``SAP`` on CPU or when hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU
+        otherwise). See ``gs.broadphase_traversal`` for details on each strategy.
 
     Warning
     -------
@@ -521,10 +525,17 @@ class RigidOptions(Options):
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
 
+    # broadphase configuration
+    broadphase_traversal: gs.broadphase_traversal | None = None
+
     def __init__(self, *, contact_resolve_time: float | None = None, **data):
         super().__init__(**data)
         if contact_resolve_time is not None:
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
+
+    def model_post_init(self, context):
+        if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
+            gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
 
 
 class MPMOptions(Options):
