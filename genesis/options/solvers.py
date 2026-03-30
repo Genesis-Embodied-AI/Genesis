@@ -470,8 +470,10 @@ class RigidOptions(Options):
         Whether to use GJK for collision detection instead of MPR. More stable but much slower. Defaults to
         `sim_options.requires_grad`.
     broadphase_traversal : gs.broadphase_traversal, optional
-        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL``.
-        Defaults to ``None`` (auto: ``SAP`` on CPU, ``ALL_VS_ALL`` on GPU).
+        Broadphase traversal strategy. ``SAP`` (sweep-and-prune) or ``ALL_VS_ALL``
+        (parallel pair iteration). Defaults to ``None`` (auto: ``SAP`` on CPU or when
+        hibernation/heterogeneous entities are enabled, ``ALL_VS_ALL`` on GPU otherwise).
+        See ``gs.broadphase_traversal`` for details on each strategy.
 
     Warning
     -------
