@@ -75,7 +75,7 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: "RigidSolver | None" = None
-    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):

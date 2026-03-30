@@ -762,10 +762,10 @@ class KinematicTactileSensorMetadataMixin:
     probe_normals: torch.Tensor = make_tensor_field((0, 3))
     probe_radius: torch.Tensor = make_tensor_field((0,))
     probe_max_raycast_range: float = 0.0
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     total_n_probes: int = 0
 
 
@@ -995,8 +995,8 @@ class ElastomerDisplacementSensorMetadata(
     sensor_normal: torch.Tensor = make_tensor_field((0, 3))
 
     # grid fft for dilation displacement
-    is_grid: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_bool)
-    grid_n: torch.Tensor = make_tensor_field((0, 2), dtype=gs.tc_int)  # (nx, ny) per sensor
+    is_grid: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
+    grid_n: torch.Tensor = make_tensor_field((0, 2), dtype_factory=lambda: gs.tc_int)  # (nx, ny) per sensor
     grid_spacing: torch.Tensor = make_tensor_field((0, 2))  # (dx, dy) per sensor
     fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
     fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0, 0))  # used as H buffer in torch.fft dilate step

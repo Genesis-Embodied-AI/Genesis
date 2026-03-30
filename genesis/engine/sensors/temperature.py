@@ -494,8 +494,8 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
     ambient_temperature: float = 21.0
     convection_coeff: float = 1.0
-    link_to_material_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    link_material_properties: torch.Tensor = make_tensor_field((0, len(_PropIdx)), dtype=gs.tc_float)
+    link_to_material_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    link_material_properties: torch.Tensor = make_tensor_field((0, len(_PropIdx)), dtype_factory=lambda: gs.tc_float)
     properties_dict: dict[int, TemperatureProperties] = field(default_factory=dict)
     simulate_all_link_temps: bool = False
     link_temps: torch.Tensor = make_tensor_field((0, 0))
@@ -503,7 +503,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
     aabb_min: torch.Tensor = make_tensor_field((0, 3))
     aabb_extent: torch.Tensor = make_tensor_field((0, 3))
-    grid_size: torch.Tensor = make_tensor_field((0, 3), dtype=gs.tc_int)
+    grid_size: torch.Tensor = make_tensor_field((0, 3), dtype_factory=lambda: gs.tc_int)
     voxel_size: torch.Tensor = make_tensor_field((0, 3))
     voxel_volume: torch.Tensor = make_tensor_field((0,))
     sensor_time_const: torch.Tensor = make_tensor_field((0,))
@@ -514,7 +514,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
     contact_area_scratch: torch.Tensor = make_tensor_field((0, len(_ScratchIdx)))
     contact_area_buffer: torch.Tensor = make_tensor_field((0, 0))
 
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class TemperatureGridSensor(
