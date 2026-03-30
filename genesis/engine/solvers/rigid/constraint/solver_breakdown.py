@@ -220,7 +220,7 @@ def _func_check_early_exit(
     _B = constraint_state.grad.shape[1]
     for i_b in range(_B):
         if constraint_state.improved[i_b]:
-            constraint_state.early_exit_flag[()] = 1
+            qd.atomic_max(constraint_state.early_exit_flag[()], 1)
 
     for _ in range(1):
         if constraint_state.early_exit_flag[()] == 0:
