@@ -63,6 +63,28 @@ class constraint_solver(IntEnum):
 
 # rigid solver broadphase traversal strategy
 class broadphase_traversal(IntEnum):
+    """
+    Strategy for broad-phase collision detection in the rigid solver.
+
+    Broad-phase quickly eliminates geometry pairs that cannot collide before
+    the more expensive narrow-phase runs.
+
+    Attributes
+    ----------
+    SAP : int
+        Sweep-and-prune. Sorts axis-aligned bounding boxes along one axis and
+        checks sequential overlaps. Required when hibernation or heterogeneous
+        entities are enabled.
+    ALL_VS_ALL : int
+        Iterates over pre-filtered valid geometry pairs in parallel.
+        Faster on GPU but uses more memory and does not support hibernation.
+
+    Notes
+    -----
+    When ``RigidOptions.broadphase_traversal`` is ``None`` (the default), the
+    solver selects automatically: ``SAP`` on CPU, ``ALL_VS_ALL`` on GPU.
+    """
+
     SAP = 0
     ALL_VS_ALL = 1
 
