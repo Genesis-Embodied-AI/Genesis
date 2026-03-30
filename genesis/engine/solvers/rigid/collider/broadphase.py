@@ -426,8 +426,9 @@ def _func_broad_phase_all_vs_all(
 
     n_valid_pairs = collider_info.n_valid_pairs[None]
     for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
-        i_ga = collider_info.valid_pairs_a[i_vp]
-        i_gb = collider_info.valid_pairs_b[i_vp]
+        pair = collider_info.valid_collision_pairs[i_vp]
+        i_ga = pair[0]
+        i_gb = pair[1]
 
         if not func_check_collision_valid(
             i_ga,

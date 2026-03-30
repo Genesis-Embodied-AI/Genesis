@@ -152,8 +152,7 @@ class Collider:
         (
             self._n_possible_pairs,
             self._collision_pair_idx,
-            self._valid_pairs_a,
-            self._valid_pairs_b,
+            self._valid_collision_pairs,
             has_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -175,7 +174,7 @@ class Collider:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
-        n_valid_pairs = len(self._valid_pairs_a)
+        n_valid_pairs = len(self._valid_collision_pairs)
 
         # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
@@ -422,8 +421,7 @@ class Collider:
         collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
         collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
 
-        valid_pairs_a = row[valid_indices].astype(gs.np_int)
-        valid_pairs_b = col[valid_indices].astype(gs.np_int)
+        valid_collision_pairs = np.stack([row[valid_indices], col[valid_indices]], axis=1).astype(gs.np_int)
 
         # --- Compute algorithm flags from valid pairs ---
         valid_type_a = geom_type[row[valid_indices]]
@@ -472,8 +470,7 @@ class Collider:
         return (
             n_possible_pairs,
             collision_pair_idx,
-            valid_pairs_a,
-            valid_pairs_b,
+            valid_collision_pairs,
             has_any_vs_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -508,9 +505,8 @@ class Collider:
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
 
     def _init_valid_pairs(self):
-        if len(self._valid_pairs_a) > 0:
-            self._collider_info.valid_pairs_a.from_numpy(self._valid_pairs_a)
-            self._collider_info.valid_pairs_b.from_numpy(self._valid_pairs_b)
+        if len(self._valid_collision_pairs) > 0:
+            self._collider_info.valid_collision_pairs.from_numpy(self._valid_collision_pairs)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:

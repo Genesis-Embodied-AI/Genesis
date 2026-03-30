@@ -725,8 +725,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     max_collision_pairs_broad: V_ANNOTATION
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
     n_valid_pairs: V_ANNOTATION
-    valid_pairs_a: V_ANNOTATION
-    valid_pairs_b: V_ANNOTATION
+    valid_collision_pairs: V_ANNOTATION
     # Terrain fields
     terrain_hf: V_ANNOTATION
     terrain_rc: V_ANNOTATION
@@ -759,8 +758,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         max_contact_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
-        valid_pairs_a=V(dtype=gs.qd_int, shape=(max(n_valid_pairs, 1),)),
-        valid_pairs_b=V(dtype=gs.qd_int, shape=(max(n_valid_pairs, 1),)),
+        valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
         terrain_rc=V(dtype=gs.qd_int, shape=(2,)),
         terrain_scale=V(dtype=gs.qd_float, shape=(2,)),

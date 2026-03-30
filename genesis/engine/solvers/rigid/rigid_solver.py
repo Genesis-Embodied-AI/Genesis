@@ -353,7 +353,7 @@ class RigidSolver(KinematicSolver):
             return self._options.broadphase_traversal
         # For hibernation, the main missing piece is skipping hibernated-vs-hibernated pairs. This means reading two
         # additional values from global memory, and the associated pipeline stall etc associated with this.
-        # For heterogeneous, the valid_pairs_a/valid_pairs_b arrays are built once at init from the global geom pair
+        # For heterogeneous, the valid_collision_pairs array is built once at init from the global geom pair
         # matrix, but with heterogeneous entities different batch elements have different geoms (different geom_start/
         # geom_end per link per batch), so a pair (ga, gb) might be valid in batch 0 but not exist in batch 3. To
         # support this we'd either need per-batch valid pair lists or runtime filtering that checks both geoms exist
