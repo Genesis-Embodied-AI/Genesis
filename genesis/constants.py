@@ -69,17 +69,29 @@ class broadphase_traversal(IntEnum):
     Broad-phase quickly eliminates geometry pairs that cannot collide before
     the more expensive narrow-phase runs.
 
+    At init time, geometry pairs that can never collide are filtered out
+    (same-link, fixed-vs-fixed, contype/conaffinity mismatch, etc.), producing
+    a list of *valid pairs*.  The number of valid pairs can be up to
+    O(n_geoms^2) but is typically much smaller after filtering.  The two
+    strategies differ in how they search these valid pairs each step:
+
     Attributes
     ----------
     SAP : int
-        Sweep-and-prune. Sorts axis-aligned bounding boxes along one axis and
-        checks sequential overlaps. Works on both CPU and GPU. Required when
+        Sweep-and-prune.  Sorts geometry AABBs along one axis
+        (O(n_geoms log n_geoms)) then only checks pairs that overlap on that
+        axis.  Cost per step is O(n_geoms log n_geoms + k) where k is the
+        number of axis-overlapping pairs — typically much less than the full
+        set of valid pairs.  Works on both CPU and GPU.  Required when
         hibernation or heterogeneous entities are enabled.
     ALL_VS_ALL : int
-        Iterates over pre-filtered valid geometry pairs in parallel. Faster on
-        GPU for scenes with many geometries, but uses more memory (the valid
-        pair list is built at init). Does not support hibernation or
-        heterogeneous entities.
+        Checks every valid pair every step (AABB overlap test), dispatching
+        them in parallel across GPU threads.  Cost per step is O(n_valid_pairs)
+        which is efficient on GPU when the pair count is moderate, but becomes
+        expensive in scenes with many geometries since the valid pair count
+        grows quadratically.  Also uses more memory (the valid pair list is
+        stored at init).  Does not support hibernation or heterogeneous
+        entities.
 
     Notes
     -----
@@ -91,10 +103,10 @@ class broadphase_traversal(IntEnum):
     - **GPU with hibernation or heterogeneous entities** → ``SAP``
       (``ALL_VS_ALL`` is not compatible with these features).
 
-    In most cases the automatic selection is appropriate. Override it only if
-    profiling shows the broadphase is a bottleneck, for example forcing ``SAP``
-    on GPU when the scene has very few geometries and the pair-list memory of
-    ``ALL_VS_ALL`` is wasteful.
+    In most cases the automatic selection is appropriate.  Consider overriding
+    when profiling shows the broadphase is a bottleneck — for example forcing
+    ``SAP`` on GPU in scenes with a large number of geometries where the
+    quadratic valid-pair count makes ``ALL_VS_ALL`` slow.
     """
 
     SAP = 0
