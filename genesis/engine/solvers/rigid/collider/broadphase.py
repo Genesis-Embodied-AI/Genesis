@@ -394,3 +394,65 @@ def func_broad_phase(
                                     n_active_awake = n_active_awake - 1
                                     break
         collider_state.n_broad_pairs[i_b] = n_broad
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def _func_broad_phase_all_vs_all(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    constraint_state: array_class.ConstraintState,
+    collider_state: array_class.ColliderState,
+    equalities_info: array_class.EqualitiesInfo,
+    collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
+):
+    """
+    All-vs-all broad-phase collision detection.
+
+    Iterates over pre-filtered valid geom pairs in parallel across pairs and batches, checking 3D AABB overlap.
+    Passing pairs are appended to the output buffer via atomic add.
+    """
+
+    func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
+
+    _B = collider_state.n_contacts.shape[0]
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_b in range(_B):
+        collider_state.n_broad_pairs[i_b] = 0
+
+    n_valid_pairs = collider_info.n_valid_pairs[None]
+    for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
+        i_ga = collider_info.valid_pairs_a[i_vp]
+        i_gb = collider_info.valid_pairs_b[i_vp]
+
+        if not func_check_collision_valid(
+            i_ga,
+            i_gb,
+            i_b,
+            links_state,
+            links_info,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            equalities_info,
+            collider_info,
+        ):
+            continue
+
+        if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
+            if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            continue
+
+        n_broad = qd.atomic_add(collider_state.n_broad_pairs[i_b], 1)
+        if n_broad < collider_info.max_collision_pairs_broad[None]:
+            collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+            collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+        else:
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS

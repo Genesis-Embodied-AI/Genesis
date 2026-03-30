@@ -30,6 +30,7 @@ from .broadphase import (
     func_check_collision_valid,
     func_collision_clear,
     func_broad_phase,
+    _func_broad_phase_all_vs_all,
 )
 
 from .contact import (
@@ -150,6 +151,8 @@ class Collider:
         (
             self._n_possible_pairs,
             self._collision_pair_idx,
+            self._valid_pairs_a,
+            self._valid_pairs_b,
             has_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -171,12 +174,14 @@ class Collider:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
+        n_valid_pairs = len(self._valid_pairs_a)
 
         # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
         self._collider_info = array_class.get_collider_info(
             self._solver,
             n_vert_neighbors,
+            n_valid_pairs,
             self._collider_static_config,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
@@ -185,6 +190,7 @@ class Collider:
             diff_normal_tolerance=self._diff_normal_tolerance,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
+        self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(self._n_possible_pairs)
         self._init_terrain_state()
@@ -255,7 +261,8 @@ class Collider:
         geoms = self._solver.geoms
 
         if n_geoms == 0:
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), False, False, False, False
+            empty_int = np.array([], dtype=gs.np_int)
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_int, empty_int, False, False, False, False
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -408,11 +415,14 @@ class Collider:
                 "This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'."
             )
 
-        # --- Build collision_pair_idx and count ---
+        # --- Build collision_pair_idx, valid pairs list, and count ---
         valid_indices = np.where(valid)[0]
         n_possible_pairs = len(valid_indices)
         collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
         collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
+
+        valid_pairs_a = row[valid_indices].astype(gs.np_int)
+        valid_pairs_b = col[valid_indices].astype(gs.np_int)
 
         # --- Compute algorithm flags from valid pairs ---
         valid_type_a = geom_type[row[valid_indices]]
@@ -461,6 +471,8 @@ class Collider:
         return (
             n_possible_pairs,
             collision_pair_idx,
+            valid_pairs_a,
+            valid_pairs_b,
             has_any_vs_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -493,6 +505,11 @@ class Collider:
             self._collider_info.collision_pair_idx.fill(-1)
             return
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+
+    def _init_valid_pairs(self):
+        if len(self._valid_pairs_a) > 0:
+            self._collider_info.valid_pairs_a.from_numpy(self._valid_pairs_a)
+            self._collider_info.valid_pairs_b.from_numpy(self._valid_pairs_b)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:
@@ -664,19 +681,34 @@ class Collider:
             return
 
         self._contact_data_cache.clear()
-        func_broad_phase(
-            self._solver.links_state,
-            self._solver.links_info,
-            self._solver.geoms_state,
-            self._solver.geoms_info,
-            self._solver._rigid_global_info,
-            self._solver._static_rigid_sim_config,
-            self._solver.constraint_solver.constraint_state,
-            self._collider_state,
-            self._solver.equalities_info,
-            self._collider_info,
-            self._solver._errno,
-        )
+        if self._solver._static_rigid_sim_config.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL:
+            _func_broad_phase_all_vs_all(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver.constraint_solver.constraint_state,
+                self._collider_state,
+                self._solver.equalities_info,
+                self._collider_info,
+                self._solver._errno,
+            )
+        else:
+            func_broad_phase(
+                self._solver.links_state,
+                self._solver.links_info,
+                self._solver.geoms_state,
+                self._solver.geoms_info,
+                self._solver._rigid_global_info,
+                self._solver._static_rigid_sim_config,
+                self._solver.constraint_solver.constraint_state,
+                self._collider_state,
+                self._solver.equalities_info,
+                self._collider_info,
+                self._solver._errno,
+            )
         if self._use_split_narrowphase:
             narrowphase._func_reset_narrowphase_work_queues(
                 self._collider_state,

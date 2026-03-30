@@ -348,6 +348,25 @@ class RigidSolver(KinematicSolver):
         self._func_vel_at_point = func_vel_at_point
         self._func_apply_coupling_force = func_apply_coupling_force
 
+    def _resolve_broadphase_traversal(self):
+        if self._options.broadphase_traversal is not None:
+            return self._options.broadphase_traversal
+        # For hibernation, the main missing piece is skipping hibernated-vs-hibernated
+        # pairs. This means reading two additional values from global memory, and the
+        # associated pipeline stall etc associated with this.
+        # For heterogeneous, the valid_pairs_a/valid_pairs_b arrays are built once at
+        # init from the global geom pair matrix, but with heterogeneous entities different
+        # batch elements have different geoms (different geom_start/geom_end per link per
+        # batch), so a pair (ga, gb) might be valid in batch 0 but not exist in batch 3.
+        # To support this we'd either need per-batch valid pair lists or runtime filtering
+        # that checks both geoms exist in the current batch element. Per-batch lists
+        # multiply the memory footprint by the batch size, increasing memory usage, and
+        # increasing L1/L2 cache contention. Runtime filtering keeps the single list, but
+        # it will no longer be compact, and we will have thread divergence.
+        if gs.backend == gs.cpu or self._use_hibernation or self._enable_heterogeneous:
+            return gs.broadphase_traversal.SAP
+        return gs.broadphase_traversal.ALL_VS_ALL
+
     def _build_static_config(self):
         static_rigid_sim_config = dict(
             backend=gs.backend,
@@ -366,6 +385,7 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
+            broadphase_traversal=self._resolve_broadphase_traversal(),
         )
 
         if self.is_active:
