@@ -518,6 +518,12 @@ class RigidOptions(Options):
     enable_multi_contact: StrictBool = True
     enable_mujoco_compatibility: StrictBool = False
 
+    # Linesearch strategy selection:
+    #   None  — performance dispatch chooses between monolith + iterative and decomposed + parallel linesearch
+    #   False — force monolith + iterative (Newton-guided) linesearch
+    #   True  — force decomposed + parallel (grid search) linesearch
+    prefer_parallel_linesearch: StrictBool | None = None
+
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
 
@@ -525,6 +531,16 @@ class RigidOptions(Options):
         super().__init__(**data)
         if contact_resolve_time is not None:
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
+
+    def model_post_init(self, __context):
+        super().model_post_init(__context)
+        if self.enable_mujoco_compatibility:
+            if self.prefer_parallel_linesearch is True:
+                raise ValueError(
+                    "prefer_parallel_linesearch=True is incompatible with enable_mujoco_compatibility=True. "
+                    "Mujoco compatibility requires the iterative (Newton-guided) linesearch."
+                )
+            self.prefer_parallel_linesearch = False
 
 
 class MPMOptions(Options):

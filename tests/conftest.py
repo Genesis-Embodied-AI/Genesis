@@ -682,6 +682,21 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         )
         gc.collect()
 
+        # Set default prefer_parallel_linesearch based on backend so that both
+        # iterative (CPU) and parallel (GPU) linesearch paths are systematically
+        # tested, while still allowing individual tests to override explicitly.
+        from genesis.options.solvers import RigidOptions
+
+        _orig_model_post_init = RigidOptions.model_post_init
+
+        def _patched_model_post_init(self, __context):
+            _orig_model_post_init(self, __context)
+            if self.prefer_parallel_linesearch is None:
+                # FIXME: Also enable for gs.metal once Quadrants supports atomics on Apple Metal.
+                self.prefer_parallel_linesearch = gs.backend == gs.cuda
+
+        monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
+
         if gs.backend != gs.cpu and gs.device.index is not None:
             if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
                 raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")
