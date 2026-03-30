@@ -269,10 +269,9 @@ def func_solve_decomposed(
     """
     GPU graph accelerated solver loop with GPU-side iteration via graph_do_while.
 
-    On CUDA SM 9.0+ (Hopper), the entire iteration loop runs on the GPU with no host
-    involvement. On older CUDA GPUs, falls back to a host-side do-while loop that still
-    benefits from CUDA graph kernel launch batching. On other GPUs, falls back to
-    a host-side C++-side loop, that still reduces python launch overhead.
+    On CUDA SM 9.0+ (Hopper), the entire iteration loop runs on the GPU with no host involvement. On older CUDA GPUs,
+    falls back to a host-side do-while loop that still benefits from CUDA graph kernel launch batching. On other GPUs,
+    falls back to a host-side C++-side loop, that still reduces python launch overhead.
 
     Early exits when all batch elements have converged (no improved[i_b] is True).
     """
