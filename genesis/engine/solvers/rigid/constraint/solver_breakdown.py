@@ -253,7 +253,7 @@ def _kernel_solve_gpu_graph(
     constraint_state,
     rigid_global_info,
     static_rigid_sim_config,
-    _n_iterations: not static_rigid_sim_config.requires_grad
+    _n_iterations: not static_rigid_sim_config.requires_grad and static_rigid_sim_config.backend != gs.cuda,
 )
 def func_solve_decomposed(
     entities_info,
