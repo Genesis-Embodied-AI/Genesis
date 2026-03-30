@@ -717,11 +717,15 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     vert_neighbors: V_ANNOTATION
     vert_neighbor_start: V_ANNOTATION
     vert_n_neighbors: V_ANNOTATION
+    # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by SAP broadphase, narrowphase, and contact cache.
     collision_pair_idx: V_ANNOTATION
     max_possible_pairs: V_ANNOTATION
     max_collision_pairs: V_ANNOTATION
     max_contact_pairs: V_ANNOTATION
     max_collision_pairs_broad: V_ANNOTATION
+    # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
+    n_valid_pairs: V_ANNOTATION
+    valid_collision_pairs: V_ANNOTATION
     # Terrain fields
     terrain_hf: V_ANNOTATION
     terrain_rc: V_ANNOTATION
@@ -736,7 +740,7 @@ class StructColliderInfo(metaclass=BASE_METACLASS):
     diff_normal_tolerance: V_ANNOTATION
 
 
-def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs):
+def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_config, **kwargs):
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
@@ -753,6 +757,8 @@ def get_collider_info(solver, n_vert_neighbors, collider_static_config, **kwargs
         max_collision_pairs=V(dtype=gs.qd_int, shape=()),
         max_contact_pairs=V(dtype=gs.qd_int, shape=()),
         max_collision_pairs_broad=V(dtype=gs.qd_int, shape=()),
+        n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
+        valid_collision_pairs=V(dtype=gs.qd_ivec2, shape=(max(n_valid_pairs, 1),)),
         terrain_hf=V(dtype=gs.qd_float, shape=terrain_hf_shape),
         terrain_rc=V(dtype=gs.qd_int, shape=(2,)),
         terrain_scale=V(dtype=gs.qd_float, shape=(2,)),
@@ -2022,6 +2028,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int
     solver_type: int
     requires_grad: bool
+    broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
     tiled_n_dofs_per_entity: int = -1
