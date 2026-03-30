@@ -261,8 +261,8 @@ class Collider:
         geoms = self._solver.geoms
 
         if n_geoms == 0:
-            empty_int = np.array([], dtype=gs.np_int)
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_int, empty_int, False, False, False, False
+            empty_pairs = np.empty((0, 2), dtype=gs.np_int)
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_pairs, False, False, False, False
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
