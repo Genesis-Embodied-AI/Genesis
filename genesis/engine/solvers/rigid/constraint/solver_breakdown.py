@@ -215,7 +215,7 @@ def _kernel_update_search_direction(
             )
 
 
-@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
+@solver.func_solve_body.register(is_compatible=lambda *args, **kwargs: gs.backend is not gs.cpu)
 def func_solve_decomposed(
     entities_info,
     dofs_state,

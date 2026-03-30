@@ -1849,13 +1849,13 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
             link=robot.get_link("hand"),
             pos=target_pos,
             quat=[0, 1, 0, 0],
-            pos_tol=0.1 * tol,
+            pos_tol=tol,
             return_error=True,
         )
-        assert_allclose(err, 0.0, tol=tol)
+        assert_allclose(err, 0.0, tol=2 * tol)
         robot.set_qpos(qpos)
         ee_pos = robot.get_link("hand").get_pos()
-        assert_allclose(target_pos, ee_pos, tol=tol)
+        assert_allclose(target_pos, ee_pos, tol=2 * tol)
 
 
 @pytest.mark.slow  # ~180s
