@@ -80,18 +80,17 @@ class broadphase_traversal(IntEnum):
     SAP : int
         Sweep-and-prune.  Sorts geometry AABBs along one axis
         (O(n_geoms log n_geoms)) then only checks pairs that overlap on that
-        axis.  Cost per step is O(n_geoms log n_geoms + k) where k is the
-        number of axis-overlapping pairs — typically much less than the full
-        set of valid pairs.  Works on both CPU and GPU.  Required when
-        hibernation or heterogeneous entities are enabled.
+        axis.  The sort and sweep are single-threaded, which utilizes GPU
+        cores poorly. However the cost per step is only O(n_geoms log n_geoms + k)
+        where k is the number of axis-overlapping pairs — typically much less than
+        the full set of valid pairs.
     ALL_VS_ALL : int
         Checks every valid pair every step (AABB overlap test), dispatching
         them in parallel across GPU threads.  Cost per step is O(n_valid_pairs)
         which is efficient on GPU when the pair count is moderate, but becomes
         expensive in scenes with many geometries since the valid pair count
-        grows quadratically.  Also uses more memory (the valid pair list is
-        stored at init).  Does not support hibernation or heterogeneous
-        entities.
+        grows quadratically. Does not support hibernation or heterogeneous
+        entities at this time.
 
     Notes
     -----
@@ -102,11 +101,6 @@ class broadphase_traversal(IntEnum):
     - **GPU backend** → ``ALL_VS_ALL`` (parallel pair checking is faster).
     - **GPU with hibernation or heterogeneous entities** → ``SAP``
       (``ALL_VS_ALL`` is not compatible with these features).
-
-    In most cases the automatic selection is appropriate.  Consider overriding
-    when profiling shows the broadphase is a bottleneck — for example forcing
-    ``SAP`` on GPU in scenes with a large number of geometries where the
-    quadratic valid-pair count makes ``ALL_VS_ALL`` slow.
     """
 
     SAP = 0
