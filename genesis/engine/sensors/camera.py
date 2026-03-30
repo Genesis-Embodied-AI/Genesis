@@ -286,7 +286,9 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
             pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_to_T(pos)
+            lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+            up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+            offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()

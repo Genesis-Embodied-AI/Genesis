@@ -565,3 +565,38 @@ def test_raytracer(n_envs, png_snapshot):
                 assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
         else:
             assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
+
+
+@pytest.mark.required
+def test_camera_lookat_entity(show_viewer, png_snapshot):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.3,
+            pos=(0.0, 0.0, 1.0),
+        ),
+    )
+
+    common_options = dict(res=(64, 64), up=(0.0, 0.0, 1.0))
+    camera_configs = [
+        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 3.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
+        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 0.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
+        dict(pos=(3.0, 0.0, 2.0), lookat=(0.0, 0.0, 0.0), fov=60.0),
+        dict(pos=(3.0, 0.0, 2.0), lookat=(10.0, 0.0, 2.0), fov=60.0),
+    ]
+    cameras = [scene.add_sensor(gs.sensors.RasterizerCameraOptions(**common_options, **cfg)) for cfg in camera_configs]
+
+    scene.build()
+    scene.step()
+
+    images = [tensor_to_array(cam.read().rgb) for cam in cameras]
+
+    # Cameras in each pair share position but differ in lookat — images must differ
+    for i in range(0, len(images), 2):
+        assert not np.array_equal(images[i], images[i + 1])
+
+    # Snapshot check for attached camera
+    assert rgb_array_to_png_bytes(cameras[0].read().rgb) == png_snapshot
