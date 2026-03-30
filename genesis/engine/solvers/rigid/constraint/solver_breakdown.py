@@ -512,21 +512,30 @@ def _kernel_parallel_linesearch_eval(
                     qt1_total = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b] + sh_val[0]
                     qt2_total = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b] + sh_val2[0]
                     g_best = 2.0 * alpha_eval * qt2_total + qt1_total
+                    hess_best = 2.0 * qt2_total
+                    newton_done = False
 
-                    if qd.abs(g_best) > gtol:
-                        hess_best = 2.0 * qt2_total
-                        newton_done = False
-
-                        # Try one Newton correction first (O(1) compute + 1 cost eval)
-                        if hess_best > rigid_global_info.EPS[None]:
-                            alpha_nc = alpha_eval - g_best / hess_best
-                            if alpha_nc > 0.0:
-                                c_nc, g_nc = _ls_eval_cost_grad(alpha_nc, i_b, constraint_state)
-                                if c_nc < p0_cost and c_nc < constraint_state.candidates[4, i_b]:
-                                    constraint_state.candidates[0, i_b] = alpha_nc
+                    # Always try one Newton correction to refine the grid search result,
+                    # even when abs(g_best) < gtol. This is nearly free (one cost+grad eval)
+                    # and significantly improves precision for near-converged cases where the
+                    # grid alpha is "good enough" but not optimal.
+                    # FIXME: Running unconditionally (without the gtol gate) means the Newton
+                    # step may overshoot when the grid search already found a near-optimal alpha,
+                    # especially if constraint activations change between alpha_eval and alpha_nc
+                    # (stale hessian). The cost check (c_nc < p0_cost) prevents accepting a
+                    # worse solution, but a tighter guard (e.g. re-checking with fresh hessian)
+                    # may be needed if this causes regressions on other scenes.
+                    if hess_best > rigid_global_info.EPS[None]:
+                        alpha_nc = alpha_eval - g_best / hess_best
+                        if alpha_nc > 0.0:
+                            c_nc, g_nc = _ls_eval_cost_grad(alpha_nc, i_b, constraint_state)
+                            if c_nc < p0_cost:
+                                constraint_state.candidates[0, i_b] = alpha_nc
+                                if c_nc < constraint_state.candidates[4, i_b]:
                                     constraint_state.candidates[4, i_b] = c_nc
-                                    newton_done = True
+                                newton_done = True
 
+                    if qd.abs(g_best) > gtol and not newton_done:
                         # Fall back to bisection if Newton didn't converge
                         if not newton_done:
                             bis_a = alpha_eval * 0.5

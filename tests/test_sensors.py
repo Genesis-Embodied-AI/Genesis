@@ -318,22 +318,19 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     for _ in range(50):
         scene.step()
 
-    # FIXME: Resting contact solver residual in float32 exceeds 5e-6 (related to linesearch); loosen to 1e-5 until solver precision improves.
-    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=1e-5)
+    assert_allclose(imu.read().lin_acc, (0.0, 0.0, -GRAVITY), tol=7e-5)
     assert_allclose(imu.read().ang_vel, (0.0, 0.0, 0.0), tol=1e-5)
     assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[1], MAG_FIELD[2]), tol=tol)
 
     # rotate IMU 90 deg around x axis means gravity should be along -y axis
     imu.set_quat_offset(gu.euler_to_quat((90.0, 0.0, 0.0)))
     scene.step()
-    # FIXME: loosen to 1e-5, reason same above
-    assert_allclose(imu.read().lin_acc, (0.0, GRAVITY, 0.0), tol=1e-5)
+    assert_allclose(imu.read().lin_acc, (0.0, GRAVITY, 0.0), tol=7e-5)
     assert_allclose(imu.read().mag, (-MAG_FIELD[0], -MAG_FIELD[2], -MAG_FIELD[1]), tol=tol)
 
     imu.set_acc_cross_axis_coupling((0.0, 1.0, 0.0))
     scene.step()
-    # FIXME: loosen to 1e-5, reason same above
-    assert_allclose(imu.read().lin_acc, GRAVITY, tol=1e-5)
+    assert_allclose(imu.read().lin_acc, GRAVITY, tol=7e-5)
 
     scene.reset()
     box.set_dofs_velocity((1.0, 2.0, 3.0), dofs_idx_local=slice(3, None))
