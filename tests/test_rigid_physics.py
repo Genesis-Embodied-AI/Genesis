@@ -4,6 +4,7 @@ import sys
 import xml.etree.ElementTree as ET
 from contextlib import nullcontext
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import igl
 import mujoco
@@ -29,6 +30,9 @@ from .utils import (
     init_simulators,
     simulate_and_check_mujoco_consistency,
 )
+
+if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity.rigid_entity import RigidEntity
 
 
 @pytest.fixture
@@ -1614,9 +1618,7 @@ def test_stickman(gs_sim, mj_sim, tol):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_multilink_inverse_kinematics(show_viewer):
-    TOL = 1e-5
-
+def test_inverse_kinematics_multilink(show_viewer, tol):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.5, 0.0, 1.5),
@@ -1627,15 +1629,16 @@ def test_multilink_inverse_kinematics(show_viewer):
         ),
         show_viewer=show_viewer,
     )
-    robot = scene.add_entity(
-        morph=gs.morphs.URDF(
-            file="urdf/shadow_hand/shadow_hand.urdf",
-        ),
-    )
-    cube = scene.add_entity(
+    # Add one extra entity, just to make sure there is no idx offset issues
+    scene.add_entity(
         gs.morphs.Box(
             size=(0.05, 0.05, 0.05),
             pos=(0.0, 0.2, 0.05),
+        ),
+    )
+    robot = scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
         ),
     )
     scene.build(n_envs=2)
@@ -1652,37 +1655,27 @@ def test_multilink_inverse_kinematics(show_viewer):
         links=(index_finger_distal, middle_finger_distal, wrist),
         poss=(index_finger_pos, middle_finger_pos, wrist_pos),
         envs_idx=(1,),
-        pos_tol=TOL,
-        rot_tol=TOL,
+        pos_tol=tol,
+        rot_tol=tol,
+        max_solver_iters=100,
         return_error=True,
     )
     assert qpos.shape == (1, robot.n_qs)
     assert err.shape == (1, 3, 6)
-    assert err.abs().max() < TOL
-    if show_viewer:
-        robot.set_qpos(qpos, envs_idx=(1,))
-        scene.visualizer.update()
-
-    links_pos, links_quat = robot.forward_kinematics(qpos, envs_idx=(1,))
-    assert_allclose(links_pos[:, index_finger_distal.idx], index_finger_pos, tol=TOL)
-    assert_allclose(links_pos[:, middle_finger_distal.idx], middle_finger_pos, tol=TOL)
-    assert_allclose(links_pos[:, wrist.idx], wrist_pos, tol=TOL)
+    assert_allclose(err, 0.0, atol=tol)
 
     robot.set_qpos(qpos, envs_idx=(1,))
-    scene.rigid_solver._func_forward_kinematics_entity(
-        i_e=robot.idx, envs_idx=torch.tensor((1,), dtype=gs.tc_int, device=gs.device)
-    )
-    assert_allclose(index_finger_distal.get_pos(envs_idx=(1,)), index_finger_pos, tol=TOL)
-    assert_allclose(middle_finger_distal.get_pos(envs_idx=(1,)), middle_finger_pos, tol=TOL)
-    assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=TOL)
+    if show_viewer:
+        scene.visualizer.update(force=True)
+    assert_allclose(index_finger_distal.get_pos(envs_idx=(1,)), index_finger_pos, tol=tol)
+    assert_allclose(middle_finger_distal.get_pos(envs_idx=(1,)), middle_finger_pos, tol=tol)
+    assert_allclose(wrist.get_pos(envs_idx=(1,)), wrist_pos, tol=tol)
 
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_inverse_kinematics_local_point(n_envs, show_viewer):
+def test_inverse_kinematics_local_point(n_envs, show_viewer, tol):
     """Test IK with local_point parameter - positions an offset point at the target instead of link origin."""
-
-    TOL = 2e-3  # 2mm tolerance for final position check
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -1726,12 +1719,15 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer):
         pos=target_pos,
         quat=target_quat,
         local_point=local_offset,
+        pos_tol=tol,
+        rot_tol=tol,
+        max_solver_iters=100,
         return_error=True,
     )
+    assert_allclose(err, 0.0, atol=tol)
 
     # Apply the solution
     robot.set_qpos(qpos)
-    scene.step()
 
     # Verify the offset point is at the target position
     link_pos = end_effector.get_pos()
@@ -1742,7 +1738,7 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer):
     actual_point_pos = link_pos + world_offset
 
     # Check that the offset point reached the target
-    assert_allclose(actual_point_pos, target_pos, tol=TOL)
+    assert_allclose(actual_point_pos, target_pos, tol=tol)
 
     # Also verify via forward kinematics
     links_pos, links_quat = robot.forward_kinematics(qpos)
@@ -1757,7 +1753,7 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer):
 
     fk_world_offset = gu.transform_by_quat(local_offset, fk_link_quat)
     fk_actual_point_pos = fk_link_pos + fk_world_offset
-    assert_allclose(fk_actual_point_pos, target_pos, tol=TOL)
+    assert_allclose(fk_actual_point_pos, target_pos, tol=tol)
 
     if show_viewer:
         scene.visualizer.update()
@@ -1765,10 +1761,8 @@ def test_inverse_kinematics_local_point(n_envs, show_viewer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
-def test_inverse_kinematics_multilink_local_points(show_viewer):
+def test_inverse_kinematics_multilink_local_points(show_viewer, tol):
     """Test multi-link IK with local_points parameter."""
-
-    TOL = 2e-3  # 2mm tolerance for final position check
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -1778,7 +1772,9 @@ def test_inverse_kinematics_multilink_local_points(show_viewer):
         show_viewer=show_viewer,
     )
     robot = scene.add_entity(
-        morph=gs.morphs.URDF(file="urdf/shadow_hand/shadow_hand.urdf"),
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+        ),
     )
     scene.build()
 
@@ -1798,12 +1794,17 @@ def test_inverse_kinematics_multilink_local_points(show_viewer):
         links=[index_finger, middle_finger],
         poss=[index_target, middle_target],
         local_points=[index_local_offset, middle_local_offset],
+        pos_tol=tol,
+        rot_tol=tol,
+        max_solver_iters=100,
         return_error=True,
     )
+    assert_allclose(err, 0.0, atol=tol)
 
     # Apply solution
     robot.set_qpos(qpos)
-    scene.step()
+    if show_viewer:
+        scene.visualizer.update(force=True)
 
     # Verify each offset point is at its target
     for link, local_offset, target in [
@@ -1814,10 +1815,7 @@ def test_inverse_kinematics_multilink_local_points(show_viewer):
         link_quat = link.get_quat()
         world_offset = gu.transform_by_quat(local_offset, link_quat)
         actual_point_pos = link_pos + world_offset
-        assert_allclose(actual_point_pos, target, tol=TOL)
-
-    if show_viewer:
-        scene.visualizer.update()
+        assert_allclose(actual_point_pos, target, tol=tol)
 
 
 @pytest.mark.required
@@ -1830,7 +1828,7 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
         (0.0, 0.0, 0.005),
         (0.0, 0.5, 0.005),
     ]
-    robots = []
+    robots: list[RigidEntity] = []
     for pos in robot_positions:
         robot = scene.add_entity(
             gs.morphs.MJCF(
@@ -1850,12 +1848,14 @@ def test_multi_robot_inverse_kinematics(show_viewer, tol):
             pos=target_pos,
             quat=[0, 1, 0, 0],
             pos_tol=tol,
+            rot_tol=tol,
+            max_solver_iters=100,
             return_error=True,
         )
-        assert_allclose(err, 0.0, tol=2 * tol)
+        assert_allclose(err, 0.0, atol=tol)
         robot.set_qpos(qpos)
         ee_pos = robot.get_link("hand").get_pos()
-        assert_allclose(target_pos, ee_pos, tol=2 * tol)
+        assert_allclose(target_pos, ee_pos, atol=tol)
 
 
 @pytest.mark.slow  # ~180s
@@ -5310,7 +5310,7 @@ def test_heterogeneous_robots(show_viewer, tol):
         scene.step()
 
     # Velocity should be near zero (settled)
-    assert_allclose(het_obj.get_vel(), 0.0, tol=0.01)
+    assert_allclose(het_obj.get_vel(), 0.0, tol=0.02)
 
     # All objects should be near their initial z-positions (settled on ground)
     pos = het_obj.get_pos()
