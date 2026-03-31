@@ -2911,20 +2911,26 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=0
-)
 def func_solve_init(
-    dofs_info: array_class.DofsInfo,
-    dofs_state: array_class.DofsState,
-    entities_info: array_class.EntitiesInfo,
-    constraint_state: array_class.ConstraintState,
-    rigid_global_info: array_class.RigidGlobalInfo,
-    static_rigid_sim_config: qd.template(),
-) -> None: ...
+    dofs_info,
+    dofs_state,
+    entities_info,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+):
+    if gs.backend is not gs.cpu:
+        from genesis.engine.solvers.rigid.constraint.solver_breakdown import func_solve_init_decomposed
+
+        func_solve_init_decomposed(
+            dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+    else:
+        func_solve_init_monolith(
+            dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
 
 
-@func_solve_init.register(is_compatible=lambda *args, **kwargs: True)
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_init_monolith(
     dofs_info: array_class.DofsInfo,

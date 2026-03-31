@@ -771,7 +771,6 @@ def _func_update_search_direction(
             )
 
 
-<<<<<<< HEAD
 @qd.func
 def _func_check_early_exit(
     constraint_state: array_class.ConstraintState,
@@ -792,12 +791,11 @@ def _func_check_early_exit(
             graph_counter[()] = 0
 
 
+# ================================================ Init funcs (for gpu_graph) ====================================
 
-# ================================================ Init kernels ================================================
 
-
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_warmstart(
+@qd.func
+def _func_init_warmstart(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -814,8 +812,8 @@ def _kernel_init_warmstart(
             constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_Ma(
+@qd.func
+def _func_init_Ma(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     constraint_state: array_class.ConstraintState,
@@ -833,8 +831,8 @@ def _kernel_init_Ma(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_Jaref(
+@qd.func
+def _func_init_Jaref(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -857,8 +855,8 @@ def _kernel_init_Jaref(
             constraint_state.Jaref[i_c, i_b] = Jaref
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_improved(
+@qd.func
+def _func_init_improved(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -870,8 +868,8 @@ def _kernel_init_improved(
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_search(
+@qd.func
+def _func_init_search(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -884,8 +882,8 @@ def _kernel_init_search(
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_update_constraint(
+@qd.func
+def _func_init_update_constraint(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -901,15 +899,15 @@ def _kernel_init_update_constraint(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def _kernel_init_update_gradient(
+@qd.func
+def _func_init_update_gradient(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Init-only gradient update — wraps monolith's func_update_gradient (dispatches to tiled on GPU)."""
+    """Init-only gradient update — wraps monolith's func_update_gradient."""
     solver.func_update_gradient(
         dofs_state=dofs_state,
         entities_info=entities_info,
@@ -919,7 +917,29 @@ def _kernel_init_update_gradient(
     )
 
 
-@solver.func_solve_init.register(is_compatible=lambda *args, **kwargs: gs.backend in {gs.cuda})
+# ================================================ Init gpu_graph kernel =========================================
+
+
+@qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
+def _kernel_solve_init_gpu_graph(
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    _func_init_warmstart(dofs_state, constraint_state, static_rigid_sim_config)
+    _func_init_Ma(dofs_info, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config)
+    _func_init_Jaref(constraint_state, static_rigid_sim_config)
+    _func_init_improved(constraint_state, static_rigid_sim_config)
+    _func_init_update_constraint(dofs_state, constraint_state, static_rigid_sim_config)
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        _func_newton_only_nt_hessian(constraint_state, rigid_global_info, static_rigid_sim_config)
+    _func_init_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+    _func_init_search(constraint_state, static_rigid_sim_config)
+
+
 def func_solve_init_decomposed(
     dofs_info,
     dofs_state,
@@ -929,47 +949,33 @@ def func_solve_init_decomposed(
     static_rigid_sim_config,
 ):
     """
-    Decomposed version of func_solve_init for CUDA backend (non-mujoco path).
+    GPU graph accelerated init using gpu_graph=True to batch all init steps into a single graph submission.
 
-    Breaks the monolithic init kernel into separate kernel launches:
+    On CUDA, captures all init steps as a CUDA graph for reduced kernel launch overhead.
+    On other backends, falls back to a C++-side loop that still reduces Python launch overhead.
+
+    Steps (each a separate graph node):
     1. Warmstart selection (ndrange over dofs)
     2. Ma = M @ qacc (ndrange over dofs with entity lookup)
-    3. Jaref = -aref + J @ qacc (ndrange over constraints — main optimization)
+    3. Jaref = -aref + J @ qacc (ndrange over constraints)
     4. Set improved flags
-    5. Update constraint (wraps monolith's func_update_constraint for exact FP match)
-    6. Newton hessian (Newton only — reuse existing kernel)
-    7. Update gradient (wraps monolith's func_update_gradient — uses tiled on GPU)
+    5. Update constraint (wraps monolith for exact FP match)
+    6. Newton hessian (Newton only)
+    7. Update gradient
     8. search = -Mgrad (ndrange over dofs)
     """
-    # 1. Warmstart selection
-    _kernel_init_warmstart(dofs_state, constraint_state, static_rigid_sim_config)
-
-    # 2. Ma = M @ qacc
-    _kernel_init_Ma(dofs_info, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config)
-
-    # 3. Jaref = -aref + J @ qacc (parallelized over constraints)
-    _kernel_init_Jaref(constraint_state, static_rigid_sim_config)
-
-    # 4. Set improved flags (needed by decomposed update_constraint kernels)
-    _kernel_init_improved(constraint_state, static_rigid_sim_config)
-
-    # 5. Update constraint (init-specific: wraps monolith's func_update_constraint for exact FP match)
-    _kernel_init_update_constraint(dofs_state, constraint_state, static_rigid_sim_config)
-
-    # 6. Newton hessian (Newton only)
-    if static_rigid_sim_config.solver_type == gs.constraint_solver.Newton:
-        _kernel_newton_only_nt_hessian(constraint_state, rigid_global_info, static_rigid_sim_config)
-
-    # 7. Update gradient (init-specific: wraps monolith's func_update_gradient, dispatches to tiled on GPU)
-    _kernel_init_update_gradient(
-        entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+    _kernel_solve_init_gpu_graph(
+        dofs_info,
+        entities_info,
+        dofs_state,
+        constraint_state,
+        rigid_global_info,
+        static_rigid_sim_config,
     )
-
-    # 8. search = -Mgrad
-    _kernel_init_search(constraint_state, static_rigid_sim_config)
 
 
 # ============================================== Solve body dispatch ================================================
+
 
 @qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
 def _kernel_solve_gpu_graph(
