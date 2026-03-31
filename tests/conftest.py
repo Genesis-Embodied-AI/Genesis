@@ -688,6 +688,23 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         )
         gc.collect()
 
+        # Set default prefer_parallel_linesearch based on backend so that both iterative (CPU) and parallel (GPU)
+        # linesearch paths are systematically tested, while still allowing individual tests to override explicitly.
+        # Skip for benchmarks - let performance dispatch choose freely.
+        expr = Expression.compile(request.config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if not is_benchmarks:
+            from genesis.options.solvers import RigidOptions
+
+            _orig_model_post_init = RigidOptions.model_post_init
+
+            def _patched_model_post_init(self, context):
+                _orig_model_post_init(self, context)
+                if self.prefer_parallel_linesearch is None:
+                    self.prefer_parallel_linesearch = True
+
+            monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
+
         if gs.backend != gs.cpu and gs.device.index is not None:
             if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
                 raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")

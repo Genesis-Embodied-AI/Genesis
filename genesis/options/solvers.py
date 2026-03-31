@@ -522,6 +522,12 @@ class RigidOptions(Options):
     enable_multi_contact: StrictBool = True
     enable_mujoco_compatibility: StrictBool = False
 
+    # Linesearch strategy selection:
+    #   * None:  perf dispatch chooses between monolith + iterative and decomposed + parallel linesearch
+    #   * False: force monolith + iterative (Newton-guided) linesearch
+    #   * True:  force decomposed + parallel (grid search) linesearch
+    prefer_parallel_linesearch: StrictBool | None = None
+
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
 
@@ -534,6 +540,7 @@ class RigidOptions(Options):
             gs.logger.warning("'contact_resolve_time' is deprecated. Use 'constraint_timeconst' instead.")
 
     def model_post_init(self, context):
+        super().model_post_init(context)
         if self.broadphase_traversal == gs.broadphase_traversal.ALL_VS_ALL and self.use_hibernation:
             gs.raise_exception("ALL_VS_ALL broadphase traversal does not support hibernation")
 

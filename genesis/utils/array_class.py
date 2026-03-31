@@ -2033,6 +2033,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int
     solver_type: int
     requires_grad: bool
+    prefer_parallel_linesearch: int = -1  # -1 = None (auto), 0 = False, 1 = True
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False

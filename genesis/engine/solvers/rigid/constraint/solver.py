@@ -219,6 +219,7 @@ class ConstraintSolver:
 
         func_solve_body(
             self._solver.entities_info,
+            self._solver.dofs_info,
             self._solver.dofs_state,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -3117,11 +3118,16 @@ def func_solve_iter(
         )
 
 
+def _get_static_config(*args, **kwargs):
+    return args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]
+
+
 @qd.perf_dispatch(
     get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=1, active=1, repeat_after_seconds=5
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3130,10 +3136,13 @@ def func_solve_body(
 ) -> None: ...
 
 
-@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
+@func_solve_body.register(
+    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+)
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
