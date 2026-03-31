@@ -365,6 +365,11 @@ class RigidSolver(KinematicSolver):
         return gs.broadphase_traversal.ALL_VS_ALL
 
     def _build_static_config(self):
+        prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
+        # FIXME: Enable gs.metal once Quadrants supports shared memory atomics on Apple Metal.
+        if gs.backend in (gs.cpu, gs.metal) or self._enable_mujoco_compatibility:
+            prefer_parallel_linesearch = False
+
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -382,7 +387,7 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
-            prefer_parallel_linesearch={None: -1, False: 0, True: 1}[self._options.prefer_parallel_linesearch],
+            prefer_parallel_linesearch={None: -1, False: 0, True: 1}[prefer_parallel_linesearch],
             broadphase_traversal=self._resolve_broadphase_traversal(),
         )
 

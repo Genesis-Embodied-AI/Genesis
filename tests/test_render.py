@@ -1051,10 +1051,10 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 2.0, 2.0),
+            camera_pos=(1.2, 1.2, 1.2),
             camera_lookat=(0.0, 0.0, 0.2),
             # Force screen-independent low-quality resolution when running unit tests for consistency
-            res=(480, 320),
+            res=(320, 320),
             # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
         ),
@@ -1090,7 +1090,10 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
         gs.morphs.Box(
             size=(0.4, 0.2, 0.1),
             pos=(-0.25, 0.0, 0.05),
-        )
+        ),
+        material=gs.materials.Rigid(
+            rho=200.0,
+        ),
     )
     scene.add_sensor(
         gs.sensors.Contact(
@@ -1144,12 +1147,7 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
-        pyrender_viewer._camera_node,
-        pyrender_viewer._renderer,
-        rgb=True,
-        depth=False,
-        seg=False,
-        normal=False,
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
 
     if sys.platform == "darwin":

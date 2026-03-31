@@ -403,6 +403,9 @@ def pytest_runtest_setup(item):
     warnings.filterwarnings(
         "default", message=r".*The .grad attribute of a Tensor that is not a leaf Tensor is being accessed..*"
     )
+    warnings.filterwarnings(
+        "default", message=r".*not currently supported on the MPS backend and will fall back to run on the CPU.*"
+    )
     warnings.filterwarnings("error", category=UserWarning, module="quadrants")
     warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
 
@@ -682,10 +685,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         )
         gc.collect()
 
-        # Set default prefer_parallel_linesearch based on backend so that both
-        # iterative (CPU) and parallel (GPU) linesearch paths are systematically
-        # tested, while still allowing individual tests to override explicitly.
-        # Skip for benchmarks — let performance dispatch choose freely.
+        # Set default prefer_parallel_linesearch based on backend so that both iterative (CPU) and parallel (GPU)
+        # linesearch paths are systematically tested, while still allowing individual tests to override explicitly.
+        # Skip for benchmarks - let performance dispatch choose freely.
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
         if not is_benchmarks:
@@ -693,11 +695,10 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
 
             _orig_model_post_init = RigidOptions.model_post_init
 
-            def _patched_model_post_init(self, __context):
-                _orig_model_post_init(self, __context)
+            def _patched_model_post_init(self, context):
+                _orig_model_post_init(self, context)
                 if self.prefer_parallel_linesearch is None:
-                    # FIXME: Also enable for gs.metal once Quadrants supports atomics on Apple Metal.
-                    self.prefer_parallel_linesearch = gs.backend == gs.cuda
+                    self.prefer_parallel_linesearch = True
 
             monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
 
