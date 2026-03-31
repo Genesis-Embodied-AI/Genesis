@@ -1475,7 +1475,7 @@ def func_hessian_direct_tiled(
 
     # FIXME: Adding `serialize=False` is causing sync failing for some reason...
     # TODO: Consider moving `H += M` in a dedicated CUDA kernel. It should be both simpler and faster.
-    qd.loop_config(block_dim=BLOCK_DIM)
+    qd.loop_config(name="hessian_direct_tiled", block_dim=BLOCK_DIM)
     for i in range(_B * BLOCK_DIM):
         tid = i % BLOCK_DIM
         i_b = i // BLOCK_DIM
