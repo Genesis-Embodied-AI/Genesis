@@ -446,8 +446,23 @@ class KinematicSolver(Solver):
     def substep_pre_coupling_grad(self, f):
         pass
 
+    def _ensure_forward_vel_updated(self):
+        if not self._is_forward_vel_updated:
+            kernel_forward_velocity(
+                self.scene._envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=False,
+            )
+            self._is_forward_vel_updated = True
+
     def substep_post_coupling(self, f):
-        if not self._is_forward_pos_updated or not self._is_forward_vel_updated:
+        if not self._is_forward_pos_updated:
             kernel_forward_kinematics(
                 self.scene._envs_idx,
                 links_state=self.links_state,
@@ -461,7 +476,6 @@ class KinematicSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
             self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
 
     def substep_post_coupling_grad(self, f):
         pass
@@ -581,6 +595,17 @@ class KinematicSolver(Solver):
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
+            kernel_forward_velocity(
+                envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=False,
+            )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
         else:
@@ -686,7 +711,7 @@ class KinematicSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        self._is_forward_vel_updated = False
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
         if links_idx is None:
@@ -740,7 +765,7 @@ class KinematicSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        self._is_forward_vel_updated = False
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
         if links_idx is None:
@@ -811,7 +836,7 @@ class KinematicSolver(Solver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
             self._is_forward_pos_updated = True
-            self._is_forward_vel_updated = True
+            self._is_forward_vel_updated = False
         else:
             self._is_forward_pos_updated = False
             self._is_forward_vel_updated = False
@@ -923,7 +948,7 @@ class KinematicSolver(Solver):
             static_rigid_sim_config=self._static_rigid_sim_config,
         )
         self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        self._is_forward_vel_updated = False
 
     def get_links_pos(self, links_idx=None, envs_idx=None):
         if not gs.use_zerocopy:
@@ -938,6 +963,7 @@ class KinematicSolver(Solver):
         return tensor[0] if self.n_envs == 0 else tensor
 
     def get_links_vel(self, links_idx=None, envs_idx=None):
+        self._ensure_forward_vel_updated()
         if gs.use_zerocopy:
             mask = (0, *indices_to_mask(links_idx)) if self.n_envs == 0 else indices_to_mask(envs_idx, links_idx)
             cd_vel = qd_to_torch(self.links_state.cd_vel, transpose=True)
@@ -955,6 +981,7 @@ class KinematicSolver(Solver):
         return _tensor
 
     def get_links_ang(self, links_idx=None, envs_idx=None):
+        self._ensure_forward_vel_updated()
         tensor = qd_to_torch(self.links_state.cd_ang, envs_idx, links_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 else tensor
 
