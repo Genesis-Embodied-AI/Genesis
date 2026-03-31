@@ -1723,7 +1723,7 @@ def func_hessian_and_cholesky_factor_direct(
 
     if qd.static(static_rigid_sim_config.backend == gs.cpu or static_rigid_sim_config.sparse_solve):
         # CPU
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(name="hess_cholesky_factor_direct", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             func_hessian_and_cholesky_factor_direct_batch(
                 i_b,
@@ -2689,7 +2689,7 @@ def func_update_constraint(
 ):
     _B = constraint_state.jac.shape[2]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="update_constraint", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         func_update_constraint_batch(
             i_b,
@@ -2796,7 +2796,7 @@ def func_update_gradient(
         not static_rigid_sim_config.enable_tiled_cholesky_hessian or static_rigid_sim_config.backend == gs.cpu
     ):
         # CPU
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             func_update_gradient_batch(
                 i_b,
@@ -2872,7 +2872,7 @@ def initialize_Jaref(
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="init_jaref", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
             Jaref = -constraint_state.aref[i_c, i_b]
@@ -2898,7 +2898,7 @@ def initialize_Ma(
     _B = rigid_global_info.mass_mat.shape[2]
     n_dofs = qacc.shape[0]
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_d1, i_b in qd.ndrange(n_dofs, _B):
         I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
         i_e = dofs_info.entity_idx[I_d1]
@@ -2982,7 +2982,7 @@ def func_solve_init(
                 constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
     else:
         # Always initialize from warmstart
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in qd.ndrange(n_dofs, _B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
                 constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
@@ -3013,7 +3013,7 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="init_improved", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
 
@@ -3033,7 +3033,7 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
