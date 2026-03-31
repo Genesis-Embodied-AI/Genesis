@@ -1923,7 +1923,7 @@ def func_cholesky_solve_tiled(
     n_dofs = constraint_state.jac.shape[1]
     n_dofs_2 = n_dofs**2
 
-    qd.loop_config(block_dim=BLOCK_DIM)
+    qd.loop_config(name="cholesky_solve_tiled", block_dim=BLOCK_DIM)
     for i in range(_B * BLOCK_DIM):
         tid = i % BLOCK_DIM
         i_b = i // BLOCK_DIM
@@ -2746,14 +2746,14 @@ def func_update_gradient_tiled(
     n_dofs = constraint_state.jac.shape[1]
 
     # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         constraint_state.grad[i_d, i_b] = (
             constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
         )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             func_solve_mass_batch(
                 i_b,
@@ -2808,6 +2808,7 @@ def func_update_gradient(
             )
     else:
         # GPU
+        qd.loop_config(name="update_gradient")
         func_update_gradient_tiled(
             dofs_state=dofs_state,
             entities_info=entities_info,

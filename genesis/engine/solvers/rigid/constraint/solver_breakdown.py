@@ -138,7 +138,7 @@ def _func_parallel_linesearch_p0(
     _B = constraint_state.grad.shape[1]
     _T = qd.static(_P0_BLOCK)
 
-    qd.loop_config(block_dim=_T)
+    qd.loop_config(name="parallel_linesearch_p0", block_dim=_T)
     for i_flat in range(_B * _T):
         tid = i_flat % _T
         i_b = i_flat // _T
