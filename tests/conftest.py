@@ -96,6 +96,9 @@ def _skip_reason(reason):
 
 SKIP_NO_GPU = _skip_reason("No GPU available on this machine")
 SKIP_METAL_64BIT = _skip_reason("Apple Metal GPU does not support 64bits precision.")
+SKIP_METAL_GRAD_NDARRAY = _skip_reason(
+    "Metal backend does not support gradient computation with Quadrants dynamic array mode."
+)
 SKIP_BACKEND_UNAVAILABLE = _skip_reason("Backend not available on this machine")
 SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madrona' is not available.")
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
