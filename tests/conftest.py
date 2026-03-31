@@ -403,6 +403,9 @@ def pytest_runtest_setup(item):
     warnings.filterwarnings(
         "default", message=r".*The .grad attribute of a Tensor that is not a leaf Tensor is being accessed..*"
     )
+    warnings.filterwarnings(
+        "default", message=r".*not currently supported on the MPS backend and will fall back to run on the CPU.*"
+    )
     warnings.filterwarnings("error", category=UserWarning, module="quadrants")
     warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
 
