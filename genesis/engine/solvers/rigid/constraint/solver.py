@@ -2919,7 +2919,7 @@ def func_solve_init(
     rigid_global_info,
     static_rigid_sim_config,
 ):
-    if gs.backend is not gs.cpu:
+    if gs.backend is not gs.cpu and not static_rigid_sim_config.requires_grad:
         from genesis.engine.solvers.rigid.constraint.solver_breakdown import func_solve_init_decomposed
 
         func_solve_init_decomposed(
@@ -3158,6 +3158,7 @@ def func_solve_body(
 
 @func_solve_body.register(
     is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+    or _get_static_config(*args, **kwargs).requires_grad
 )
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
