@@ -591,7 +591,7 @@ def add_collision_constraints(
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="add_collision_constraints", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_col in range(collider_state.n_contacts[i_b]):
             contact_data_link_a = collider_state.contact_data.link_a[i_col, i_b]
@@ -1181,7 +1181,9 @@ def add_joint_limit_constraints(
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
     # TODO: sparse mode
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(
+        name="add_joint_limit_constraints", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    )
     for i_b in range(_B):
         for i_l in range(n_links):
             I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
@@ -1242,7 +1244,8 @@ def add_frictionloss_constraints(
     # FIXME: The condition `if dofs_info.frictionloss[I_d] > EPS:` is not correctly evaluated on Apple Metal
     # if `serialize=True`...
     qd.loop_config(
-        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal)
+        name="add_frictionloss_constraints",
+        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal),
     )
     for i_b in range(_B):
         constraint_state.n_constraints_frictionloss[i_b] = 0
@@ -1638,7 +1641,7 @@ def func_cholesky_factor_direct_tiled(
 
     n_lower_tri = n_dofs * (n_dofs + 1) // 2
 
-    qd.loop_config(block_dim=BLOCK_DIM)
+    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=BLOCK_DIM)
     for i in range(_B * BLOCK_DIM):
         tid = i % BLOCK_DIM
         i_b = i // BLOCK_DIM
