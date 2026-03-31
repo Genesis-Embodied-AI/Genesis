@@ -102,6 +102,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         if button == MouseButton.LEFT:  # left mouse button
             ray = self._screen_position_to_ray(x, y)
             ray_hit = self._raycaster.cast(ray[0], ray[1])
+            if ray_hit is None:
+                return
 
             if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
                 link = ray_hit.geom.link
