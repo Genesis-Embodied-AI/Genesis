@@ -96,8 +96,8 @@ def _skip_reason(reason):
 
 SKIP_NO_GPU = _skip_reason("No GPU available on this machine")
 SKIP_METAL_64BIT = _skip_reason("Apple Metal GPU does not support 64bits precision.")
-SKIP_METAL_GRAD_NDARRAY = _skip_reason(
-    "Metal backend does not support gradient computation with Quadrants dynamic array mode."
+SKIP_NDARRAY_PERFORMANCE_MODE = _skip_reason(
+    "Skipping unit tests requiring performance mode when running with Quadrants dynamic array mode."
 )
 SKIP_BACKEND_UNAVAILABLE = _skip_reason("Backend not available on this machine")
 SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madrona' is not available.")
@@ -620,8 +620,6 @@ def performance_mode(request):
             if performance_mode is not None:
                 pytest.fail("'performance_mode' can only be specified once.")
             (performance_mode,) = mark.args
-    if performance_mode is None:
-        performance_mode = False
     return performance_mode
 
 
@@ -677,6 +675,10 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         if sys.platform == "darwin" and backend != gs.cpu:
             if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip(SKIP_METAL_64BIT)
+
+        # Skip test if performance mode is required but 'GS_ENABLE_NDARRAY' != '0' because it cannot be updated
+        if performance_mode is not None and ((os.environ.get("GS_ENABLE_NDARRAY", "1") == "0") ^ performance_mode):
+            pytest.skip(SKIP_NDARRAY_PERFORMANCE_MODE)
 
         gs.init(
             backend=backend,
