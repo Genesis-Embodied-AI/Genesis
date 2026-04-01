@@ -614,57 +614,109 @@ def add_collision_constraints(
             if link_b > -1:
                 invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-            for i in range(4):
-                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
-                n = d * contact_data_friction - contact_data_normal
+            # Pre-compute all 4 friction cone face normals (matching original i=0,1,2,3 ordering)
+            n0 = -d1 * contact_data_friction - contact_data_normal
+            n1 = d1 * contact_data_friction - contact_data_normal
+            n2 = -d2 * contact_data_friction - contact_data_normal
+            n3 = d2 * contact_data_friction - contact_data_normal
 
-                n_con = qd.atomic_add(constraint_state.n_constraints[i_b], 1)
-                if qd.static(static_rigid_sim_config.sparse_solve):
+            # Allocate all 4 constraint slots at once
+            n_con_base = qd.atomic_add(constraint_state.n_constraints[i_b], 4)
+
+            # Zero Jacobian rows for all 4 constraints
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_dir in range(4):
+                    n_con = n_con_base + i_dir
                     for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                         i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
                         constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
-                else:
-                    for i_d in range(n_dofs):
-                        constraint_state.jac[n_con, i_d, i_b] = gs.qd_float(0.0)
+            else:
+                for i_d in range(n_dofs):
+                    constraint_state.jac[n_con_base + 0, i_d, i_b] = gs.qd_float(0.0)
+                    constraint_state.jac[n_con_base + 1, i_d, i_b] = gs.qd_float(0.0)
+                    constraint_state.jac[n_con_base + 2, i_d, i_b] = gs.qd_float(0.0)
+                    constraint_state.jac[n_con_base + 3, i_d, i_b] = gs.qd_float(0.0)
 
-                con_n_relevant_dofs = 0
-                jac_qvel = gs.qd_float(0.0)
-                for i_ab in range(2):
-                    sign = gs.qd_float(-1.0)
-                    link = link_a
-                    if i_ab == 1:
-                        sign = gs.qd_float(1.0)
-                        link = link_b
+            # Walk chain ONCE per contact, computing 4 Jacobian dot products per DOF
+            jac_qvel_0 = gs.qd_float(0.0)
+            jac_qvel_1 = gs.qd_float(0.0)
+            jac_qvel_2 = gs.qd_float(0.0)
+            jac_qvel_3 = gs.qd_float(0.0)
+            con_n_relevant_dofs = 0
 
-                    while link > -1:
-                        link_maybe_batch = [link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link
+            for i_ab in range(2):
+                sign = gs.qd_float(-1.0)
+                link = link_a
+                if i_ab == 1:
+                    sign = gs.qd_float(1.0)
+                    link = link_b
 
-                        # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
-                        for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
-                            i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
+                while link > -1:
+                    link_maybe_batch = [link, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else link
 
-                            cdof_ang = dofs_state.cdof_ang[i_d, i_b]
-                            cdot_vel = dofs_state.cdof_vel[i_d, i_b]
+                    # reverse order to make sure dofs in each row of self.jac_relevant_dofs is strictly descending
+                    for i_d_ in range(links_info.n_dofs[link_maybe_batch]):
+                        i_d = links_info.dof_end[link_maybe_batch] - 1 - i_d_
 
-                            t_quat = gu.qd_identity_quat()
-                            t_pos = contact_data_pos - links_state.root_COM[link, i_b]
-                            _, vel = gu.qd_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
+                        cdof_ang = dofs_state.cdof_ang[i_d, i_b]
+                        cdot_vel = dofs_state.cdof_vel[i_d, i_b]
 
-                            diff = sign * vel
-                            jac = diff @ n
-                            jac_qvel = jac_qvel + jac * dofs_state.vel[i_d, i_b]
-                            constraint_state.jac[n_con, i_d, i_b] = constraint_state.jac[n_con, i_d, i_b] + jac
+                        t_quat = gu.qd_identity_quat()
+                        t_pos = contact_data_pos - links_state.root_COM[link, i_b]
+                        _, vel = gu.qd_transform_motion_by_trans_quat(cdof_ang, cdot_vel, t_pos, t_quat)
 
-                            if qd.static(static_rigid_sim_config.sparse_solve):
-                                constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_d
-                                con_n_relevant_dofs = con_n_relevant_dofs + 1
+                        diff = sign * vel
+                        qvel_d = dofs_state.vel[i_d, i_b]
 
-                        link = links_info.parent_idx[link_maybe_batch]
+                        jac0 = diff @ n0
+                        jac1 = diff @ n1
+                        jac2 = diff @ n2
+                        jac3 = diff @ n3
 
-                if qd.static(static_rigid_sim_config.sparse_solve):
-                    constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                        jac_qvel_0 = jac_qvel_0 + jac0 * qvel_d
+                        jac_qvel_1 = jac_qvel_1 + jac1 * qvel_d
+                        jac_qvel_2 = jac_qvel_2 + jac2 * qvel_d
+                        jac_qvel_3 = jac_qvel_3 + jac3 * qvel_d
+
+                        constraint_state.jac[n_con_base + 0, i_d, i_b] = (
+                            constraint_state.jac[n_con_base + 0, i_d, i_b] + jac0
+                        )
+                        constraint_state.jac[n_con_base + 1, i_d, i_b] = (
+                            constraint_state.jac[n_con_base + 1, i_d, i_b] + jac1
+                        )
+                        constraint_state.jac[n_con_base + 2, i_d, i_b] = (
+                            constraint_state.jac[n_con_base + 2, i_d, i_b] + jac2
+                        )
+                        constraint_state.jac[n_con_base + 3, i_d, i_b] = (
+                            constraint_state.jac[n_con_base + 3, i_d, i_b] + jac3
+                        )
+
+                        if qd.static(static_rigid_sim_config.sparse_solve):
+                            constraint_state.jac_relevant_dofs[n_con_base + 0, con_n_relevant_dofs, i_b] = i_d
+                            constraint_state.jac_relevant_dofs[n_con_base + 1, con_n_relevant_dofs, i_b] = i_d
+                            constraint_state.jac_relevant_dofs[n_con_base + 2, con_n_relevant_dofs, i_b] = i_d
+                            constraint_state.jac_relevant_dofs[n_con_base + 3, con_n_relevant_dofs, i_b] = i_d
+                            con_n_relevant_dofs = con_n_relevant_dofs + 1
+
+                    link = links_info.parent_idx[link_maybe_batch]
+
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_dir in range(4):
+                    constraint_state.jac_n_relevant_dofs[n_con_base + i_dir, i_b] = con_n_relevant_dofs
+
+            # Finalize all 4 constraints
+            for i_dir in range(4):
+                n_con = n_con_base + i_dir
+                jac_qvel_dir = jac_qvel_0
+                if i_dir == 1:
+                    jac_qvel_dir = jac_qvel_1
+                if i_dir == 2:
+                    jac_qvel_dir = jac_qvel_2
+                if i_dir == 3:
+                    jac_qvel_dir = jac_qvel_3
+
                 imp, aref = gu.imp_aref(
-                    contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
+                    contact_data_sol_params, -contact_data_penetration, jac_qvel_dir, -contact_data_penetration
                 )
 
                 diag = invweight + contact_data_friction * contact_data_friction * invweight
