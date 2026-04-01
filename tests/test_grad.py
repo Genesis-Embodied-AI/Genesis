@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -7,7 +9,6 @@ from genesis.utils.geom import R_to_quat
 from genesis.utils.misc import qd_to_torch, qd_to_numpy, tensor_to_array
 from genesis.utils import set_random_seed
 
-from .conftest import SKIP_METAL_GRAD_NDARRAY
 from .utils import assert_allclose
 
 
@@ -18,7 +19,14 @@ pytestmark = [
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,
+        # FIXME: Metal backend does not support gradient computation with Quadrants dynamic array mode
+        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
+    ],
+)
 def test_differentiable_push(show_viewer):
     HORIZON = 10
 
@@ -101,7 +109,13 @@ def test_differentiable_push(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.precision("64")
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,
+        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
+    ],
+)
 def test_diff_contact():
     RTOL = 1e-4
 
@@ -221,6 +235,13 @@ def test_diff_contact():
 # stable way.
 @pytest.mark.required
 @pytest.mark.precision("64")
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,
+        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
+    ],
+)
 def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
@@ -409,11 +430,14 @@ def test_diff_solver(monkeypatch):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        gs.cpu,
+        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
+    ],
+)
 def test_differentiable_rigid(show_viewer):
-    if gs.backend == gs.metal and gs.use_ndarray:
-        pytest.skip(SKIP_METAL_GRAD_NDARRAY)
-
     dt = 1e-2
     horizon = 100
     substeps = 1
@@ -422,7 +446,12 @@ def test_differentiable_rigid(show_viewer):
     goal_quat = goal_quat / torch.norm(goal_quat, dim=-1, keepdim=True)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(dt=dt, substeps=substeps, requires_grad=True, gravity=(0, 0, -1)),
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            substeps=substeps,
+            requires_grad=True,
+            gravity=(0, 0, -1),
+        ),
         rigid_options=gs.options.RigidOptions(
             enable_collision=False,
             enable_self_collision=False,
