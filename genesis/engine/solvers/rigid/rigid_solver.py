@@ -367,7 +367,7 @@ class RigidSolver(KinematicSolver):
     def _build_static_config(self):
         prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
         # FIXME: Enable gs.metal once Quadrants supports shared memory atomics on Apple Metal.
-        if gs.backend in (gs.cpu, gs.metal) or self._enable_mujoco_compatibility:
+        if gs.backend in (gs.cpu, gs.metal) or self._enable_mujoco_compatibility or self.sim.options.requires_grad:
             prefer_parallel_linesearch = False
 
         static_rigid_sim_config = dict(

@@ -139,8 +139,8 @@ def init(
         _use_ndarray = not (is_ndarray_disabled or performance_mode)
     else:
         _use_ndarray = use_ndarray
-        if _use_ndarray and is_ndarray_disabled:
-            raise_exception("Genesis previous initialized. Quadrants dynamic array mode cannot be disabled anymore.")
+        if performance_mode is not None and (_use_ndarray ^ (not (is_ndarray_disabled or performance_mode))):
+            raise_exception("Genesis previous initialized. Quadrants dynamic array mode cannot be updated anymore.")
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
     if use_fastcache is None:
         _use_fastcache = not is_fastcache_disabled and _use_ndarray
