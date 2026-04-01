@@ -96,6 +96,9 @@ def _skip_reason(reason):
 
 SKIP_NO_GPU = _skip_reason("No GPU available on this machine")
 SKIP_METAL_64BIT = _skip_reason("Apple Metal GPU does not support 64bits precision.")
+SKIP_NDARRAY_PERFORMANCE_MODE = _skip_reason(
+    "Skipping unit tests requiring performance mode when running with Quadrants dynamic array mode."
+)
 SKIP_BACKEND_UNAVAILABLE = _skip_reason("Backend not available on this machine")
 SKIP_NO_MADRONA = _skip_reason("BatchRenderer is not supported because 'gs_madrona' is not available.")
 SKIP_NO_LUISA = _skip_reason("RayTracer is not supported because 'LuisaRenderPy' is not available.")
@@ -403,6 +406,9 @@ def pytest_runtest_setup(item):
     warnings.filterwarnings(
         "default", message=r".*The .grad attribute of a Tensor that is not a leaf Tensor is being accessed..*"
     )
+    warnings.filterwarnings(
+        "default", message=r".*not currently supported on the MPS backend and will fall back to run on the CPU.*"
+    )
     warnings.filterwarnings("error", category=UserWarning, module="quadrants")
     warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
 
@@ -614,8 +620,6 @@ def performance_mode(request):
             if performance_mode is not None:
                 pytest.fail("'performance_mode' can only be specified once.")
             (performance_mode,) = mark.args
-    if performance_mode is None:
-        performance_mode = False
     return performance_mode
 
 
@@ -672,6 +676,10 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             if os.environ.get("QD_ENABLE_METAL", "1") != "0" and precision == "64":
                 pytest.skip(SKIP_METAL_64BIT)
 
+        # Skip test if performance mode is required but 'GS_ENABLE_NDARRAY' != '0' because it cannot be updated
+        if performance_mode is not None and ((os.environ.get("GS_ENABLE_NDARRAY", "1") == "0") ^ performance_mode):
+            pytest.skip(SKIP_NDARRAY_PERFORMANCE_MODE)
+
         gs.init(
             backend=backend,
             precision=precision,
@@ -681,6 +689,23 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             performance_mode=performance_mode,
         )
         gc.collect()
+
+        # Set default prefer_parallel_linesearch based on backend so that both iterative (CPU) and parallel (GPU)
+        # linesearch paths are systematically tested, while still allowing individual tests to override explicitly.
+        # Skip for benchmarks - let performance dispatch choose freely.
+        expr = Expression.compile(request.config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
+        if not is_benchmarks:
+            from genesis.options.solvers import RigidOptions
+
+            _orig_model_post_init = RigidOptions.model_post_init
+
+            def _patched_model_post_init(self, context):
+                _orig_model_post_init(self, context)
+                if self.prefer_parallel_linesearch is None:
+                    self.prefer_parallel_linesearch = True
+
+            monkeypatch.setattr(RigidOptions, "model_post_init", _patched_model_post_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():

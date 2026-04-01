@@ -219,6 +219,7 @@ class ConstraintSolver:
 
         func_solve_body(
             self._solver.entities_info,
+            self._solver.dofs_info,
             self._solver.dofs_state,
             self.constraint_state,
             self._solver._rigid_global_info,
@@ -519,9 +520,9 @@ def constraint_solver_kernel_reset(
 
 @qd.func
 def func_clear_constraint_at_env(
-    i_b: gs.qd_int,
-    n_dofs: gs.qd_int,
-    len_constraints: gs.qd_int,
+    i_b: int,
+    n_dofs: int,
+    len_constraints: int,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -1458,9 +1459,13 @@ def func_hessian_direct_tiled(
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
 
-    # Performance is optimal for BLOCK_DIM = MAX_DOFS_PER_BLOCK = 64
-    BLOCK_DIM = qd.static(64)
+    # BLOCK_DIM = 128 is optimal, after grid searching ofter block_dim = 64, 128, 256, and evaluating
+    # the test_rigid_benchmarks.py in production.yml for each value.
+    BLOCK_DIM = qd.static(128)
     MAX_DOFS_PER_BLOCK = qd.static(64)
+    # Note: setting MAX_CONSTRAINTS_PER_BLOCK to 64 provides a benefit for anymal_uniform_kinematic cpu
+    # bs=0 (+14%), but a regression on anymal_uniform cuda ndarray (-9%). Generally gives better
+    # performance on CPU, but worse on CUDA.
     MAX_CONSTRAINTS_PER_BLOCK = qd.static(32)
 
     n_lower_tri = n_dofs * (n_dofs + 1) // 2
@@ -1523,28 +1528,41 @@ def func_hessian_direct_tiled(
                         qd.simt.block.sync()
 
                     # Compute `H += J.T @ D @ J` for a single Hessian block
-                    pid = tid
-                    numel = n_dofs_tile_row * n_dofs_tile_col
-                    while pid < numel:
-                        i_d1_ = pid // n_dofs_tile_col
-                        i_d2_ = pid % n_dofs_tile_col
-                        i_d1 = i_d1_ + i_d1_start
-                        i_d2 = i_d2_ + i_d2_start
-                        if i_d1 >= i_d2:
+                    if is_diag_tile:
+                        n_lower_tri_tile = n_dofs_tile_row * (n_dofs_tile_row + 1) // 2
+                        pid = tid
+                        while pid < n_lower_tri_tile:
+                            i_d1_, i_d2_ = linear_to_lower_tri(pid)
+                            i_d1 = i_d1_ + i_d1_start
+                            i_d2 = i_d2_ + i_d2_start
                             coef = gs.qd_float(0.0)
                             if i_c_start == 0:
                                 coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
-                            if is_diag_tile:
-                                for j_c_ in range(n_conts_tile):
-                                    coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
-                            else:
-                                for j_c_ in range(n_conts_tile):
-                                    coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
+                            for j_c_ in range(n_conts_tile):
+                                coef = coef + jac_row[j_c_, i_d1_] * jac_row[j_c_, i_d2_] * efc_D[j_c_]
                             if i_c_start == 0:
                                 constraint_state.nt_H[i_b, i_d1, i_d2] = coef
                             else:
                                 constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + coef
-                        pid = pid + BLOCK_DIM
+                            pid = pid + BLOCK_DIM
+                    else:
+                        numel = n_dofs_tile_row * n_dofs_tile_col
+                        pid = tid
+                        while pid < numel:
+                            i_d1_ = pid // n_dofs_tile_col
+                            i_d2_ = pid % n_dofs_tile_col
+                            i_d1 = i_d1_ + i_d1_start
+                            i_d2 = i_d2_ + i_d2_start
+                            coef = gs.qd_float(0.0)
+                            if i_c_start == 0:
+                                coef = rigid_global_info.mass_mat[i_d1, i_d2, i_b]
+                            for j_c_ in range(n_conts_tile):
+                                coef = coef + jac_row[j_c_, i_d1_] * jac_col[j_c_, i_d2_] * efc_D[j_c_]
+                            if i_c_start == 0:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = coef
+                            else:
+                                constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + coef
+                            pid = pid + BLOCK_DIM
                     qd.simt.block.sync()
 
                     i_d2_start = i_d2_start + MAX_DOFS_PER_BLOCK
@@ -3100,11 +3118,16 @@ def func_solve_iter(
         )
 
 
+def _get_static_config(*args, **kwargs):
+    return args[5] if len(args) > 5 else kwargs["static_rigid_sim_config"]
+
+
 @qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=3, active=3, repeat_after_seconds=0.0
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=1, active=1, repeat_after_seconds=5
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3113,10 +3136,13 @@ def func_solve_body(
 ) -> None: ...
 
 
-@func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
+@func_solve_body.register(
+    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+)
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
+    dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,

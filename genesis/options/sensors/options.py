@@ -440,7 +440,7 @@ class Raycaster(RigidSensorOptionsMixin["RaycasterSensor"]):
     pattern: RaycastPattern
     min_range: NonNegativeFloat = 0.0
     max_range: PositiveFloat = 20.0
-    no_hit_value: float
+    no_hit_value: float = float("nan")
     return_world_frame: StrictBool = False
 
     debug_sphere_radius: PositiveFloat = 0.02

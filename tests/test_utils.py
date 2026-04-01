@@ -183,7 +183,7 @@ def polar(A, pure_rotation: bool, side, tol):
             if mask:
                 A = np.eye(N, dtype=A.dtype)
     elif isinstance(A, torch.Tensor):
-        dets = torch.linalg.det(A)
+        dets = torch.linalg.det(A.reshape((-1, 3, 3))).reshape(A.shape[:-2])
         mask = torch.abs(dets) < tol
         if A.ndim > 2:
             if mask.any():

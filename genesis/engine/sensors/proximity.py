@@ -119,13 +119,13 @@ class ProximitySensorMetadataMixin:
 
     total_n_probes: int = 0
     probe_positions: torch.Tensor = make_tensor_field((0, 3))
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    track_link_start: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    track_link_end: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    track_link_flat: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    track_link_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    track_link_end: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    track_link_flat: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     nearest_positions: torch.Tensor = make_tensor_field((0, 0, 3))
     max_range: torch.Tensor = make_tensor_field((0,))
 

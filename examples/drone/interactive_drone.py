@@ -123,7 +123,7 @@ def main():
         while is_running:
             # Update and apply RPMs based on current direction
             rpms = controller.update_rpms()
-            drone.set_propellels_rpm(rpms)
+            drone.set_propellers_rpm(rpms)
 
             # Step simulation
             scene.step()
