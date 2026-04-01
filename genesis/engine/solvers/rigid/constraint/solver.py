@@ -2911,6 +2911,18 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
+def _get_gpu_saturation_threshold():
+    """Max concurrent warps the GPU can run — above this, envs alone saturate the GPU."""
+    if not hasattr(_get_gpu_saturation_threshold, "_cached"):
+        import torch
+
+        props = torch.cuda.get_device_properties(torch.cuda.current_device())
+        _get_gpu_saturation_threshold._cached = (
+            props.multi_processor_count * props.max_threads_per_multi_processor // props.warp_size
+        )
+    return _get_gpu_saturation_threshold._cached
+
+
 def func_solve_init(
     dofs_info,
     dofs_state,
@@ -2920,15 +2932,18 @@ def func_solve_init(
     static_rigid_sim_config,
 ):
     if gs.backend is not gs.cpu and not static_rigid_sim_config.requires_grad:
-        from genesis.engine.solvers.rigid.constraint.solver_breakdown import func_solve_init_decomposed
+        n_envs = dofs_state.acc_smooth.shape[1]
+        if n_envs <= _get_gpu_saturation_threshold():
+            from genesis.engine.solvers.rigid.constraint.solver_breakdown import func_solve_init_decomposed
 
-        func_solve_init_decomposed(
-            dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
-        )
-    else:
-        func_solve_init_monolith(
-            dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
-        )
+            func_solve_init_decomposed(
+                dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            return
+
+    func_solve_init_monolith(
+        dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
