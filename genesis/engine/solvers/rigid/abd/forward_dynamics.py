@@ -304,7 +304,7 @@ def func_compute_mass_matrix(
     BW = qd.static(is_backward)
 
     # crb initialize
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="crb_initialize", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -339,7 +339,7 @@ def func_compute_mass_matrix(
                 links_state.crb_mass[i_l, i_b] = links_state.cinr_mass[i_l, i_b]
 
     # crb
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="crb", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -388,7 +388,7 @@ def func_compute_mass_matrix(
                             func_add_safe_backward(links_state.crb_quat, I_p, links_state.crb_quat[i_l, i_b], BW)
 
     # mass_mat
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="mass_mat", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -434,7 +434,7 @@ def func_compute_mass_matrix(
                             dofs_state.cdof_ang[i_d, i_b],
                         )
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(name="FIXME", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -518,14 +518,14 @@ def func_compute_mass_matrix(
                             rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
         I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
         func_add_safe_backward(rigid_global_info.mass_mat, (i_d, i_d, i_b), dofs_info.armature[I_d], BW)
 
     # Take into account first-order correction terms for implicit integration scheme right away
     if qd.static(implicit_damping):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="impint_order_1_corr", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_d, i_b in qd.ndrange(dofs_state.f_ang.shape[0], links_state.pos.shape[1]):
             I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
             rigid_global_info.mass_mat[i_d, i_d, i_b] = (
@@ -560,7 +560,7 @@ def func_factor_mass(
         if qd.static(
             not static_rigid_sim_config.enable_tiled_cholesky_mass_matrix or static_rigid_sim_config.backend == gs.cpu
         ):
-            qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
+            qd.loop_config(name="factor_mass", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
             for i_e, i_b in qd.ndrange(n_entities, _B):
                 if rigid_global_info.mass_mat_mask[i_e, i_b]:
                     entity_dof_start = entities_info.dof_start[i_e]
@@ -607,7 +607,7 @@ def func_factor_mass(
             MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
             WARP_SIZE = qd.static(32)
 
-            qd.loop_config(block_dim=BLOCK_DIM)
+            qd.loop_config(name="factor_mass", block_dim=BLOCK_DIM)
             for i in range(n_entities * _B * BLOCK_DIM):
                 tid = i % BLOCK_DIM
                 i_e = (i // BLOCK_DIM) % n_entities
