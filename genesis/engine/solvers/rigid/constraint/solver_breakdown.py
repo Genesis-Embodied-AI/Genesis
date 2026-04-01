@@ -824,7 +824,15 @@ def _kernel_solve_gpu_graph(
 
 
 @solver.func_solve_body.register(
-    is_compatible=lambda *args, **kwargs: solver._get_static_config(*args, **kwargs).prefer_parallel_linesearch != 0
+    is_compatible=lambda entities_info,
+    dofs_info,
+    dofs_state,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+    _n_iterations: not static_rigid_sim_config.requires_grad
+    and static_rigid_sim_config.backend != gs.cpu
+    and static_rigid_sim_config.prefer_parallel_linesearch != 0,
 )
 def func_solve_decomposed(
     entities_info,

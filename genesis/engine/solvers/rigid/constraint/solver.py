@@ -3137,7 +3137,10 @@ def func_solve_body(
 
 
 @func_solve_body.register(
-    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+    is_compatible=lambda *args, **kwargs: (
+        _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+        or _get_static_config(*args, **kwargs).requires_grad
+    )
 )
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
