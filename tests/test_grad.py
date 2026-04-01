@@ -18,6 +18,7 @@ pytestmark = [
 
 
 @pytest.mark.required
+@pytest.mark.performance_mode(True)
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(show_viewer):
     HORIZON = 10
