@@ -2916,10 +2916,13 @@ def _get_gpu_saturation_threshold():
     if not hasattr(_get_gpu_saturation_threshold, "_cached"):
         import torch
 
-        props = torch.cuda.get_device_properties(torch.cuda.current_device())
-        _get_gpu_saturation_threshold._cached = (
-            props.multi_processor_count * props.max_threads_per_multi_processor // props.warp_size
-        )
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(torch.cuda.current_device())
+            _get_gpu_saturation_threshold._cached = (
+                props.multi_processor_count * props.max_threads_per_multi_processor // props.warp_size
+            )
+        else:
+            _get_gpu_saturation_threshold._cached = 0  # always use monolith on non-CUDA GPUs
     return _get_gpu_saturation_threshold._cached
 
 
