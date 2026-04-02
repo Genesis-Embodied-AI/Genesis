@@ -573,10 +573,14 @@ def kernel_set_dofs_kp(
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     if qd.static(static_rigid_sim_config.batch_dofs_info):
         for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            dofs_info.kp[dofs_idx[i_d_], envs_idx[i_b_]] = kp[i_b_, i_d_]
+            dofs_info.act_gain[dofs_idx[i_d_], envs_idx[i_b_]] = kp[i_b_, i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][0] = 0.0
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][1] = -kp[i_b_, i_d_]
     else:
         for i_d_ in range(dofs_idx.shape[0]):
-            dofs_info.kp[dofs_idx[i_d_]] = kp[i_d_]
+            dofs_info.act_gain[dofs_idx[i_d_]] = kp[i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_]][0] = 0.0
+            dofs_info.act_bias[dofs_idx[i_d_]][1] = -kp[i_d_]
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -590,10 +594,50 @@ def kernel_set_dofs_kv(
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     if qd.static(static_rigid_sim_config.batch_dofs_info):
         for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
-            dofs_info.kv[dofs_idx[i_d_], envs_idx[i_b_]] = kv[i_b_, i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][2] = -kv[i_b_, i_d_]
     else:
         for i_d_ in range(dofs_idx.shape[0]):
-            dofs_info.kv[dofs_idx[i_d_]] = kv[i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_]][2] = -kv[i_d_]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_set_dofs_act_gain(
+    act_gain: qd.types.ndarray(),
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dofs_info: array_class.DofsInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    if qd.static(static_rigid_sim_config.batch_dofs_info):
+        for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            dofs_info.act_gain[dofs_idx[i_d_], envs_idx[i_b_]] = act_gain[i_b_, i_d_]
+    else:
+        for i_d_ in range(dofs_idx.shape[0]):
+            dofs_info.act_gain[dofs_idx[i_d_]] = act_gain[i_d_]
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def kernel_set_dofs_act_bias(
+    bias0: qd.types.ndarray(),
+    bias1: qd.types.ndarray(),
+    bias2: qd.types.ndarray(),
+    dofs_idx: qd.types.ndarray(),
+    envs_idx: qd.types.ndarray(),
+    dofs_info: array_class.DofsInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    if qd.static(static_rigid_sim_config.batch_dofs_info):
+        for i_d_, i_b_ in qd.ndrange(dofs_idx.shape[0], envs_idx.shape[0]):
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][0] = bias0[i_b_, i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][1] = bias1[i_b_, i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_], envs_idx[i_b_]][2] = bias2[i_b_, i_d_]
+    else:
+        for i_d_ in range(dofs_idx.shape[0]):
+            dofs_info.act_bias[dofs_idx[i_d_]][0] = bias0[i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_]][1] = bias1[i_d_]
+            dofs_info.act_bias[dofs_idx[i_d_]][2] = bias2[i_d_]
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -958,11 +1002,14 @@ def kernel_get_dofs_control_force(
         if dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
             force = dofs_state.ctrl_force[i_d, i_b]
         elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
-            force = dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+            force = -dofs_info.act_bias[I_d][2] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
         elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION:
-            force = dofs_info.kp[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]) + dofs_info.kv[
-                I_d
-            ] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+            force = (
+                dofs_info.act_gain[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
+                + dofs_info.act_bias[I_d][0]
+                + (dofs_info.act_gain[I_d] + dofs_info.act_bias[I_d][1]) * dofs_state.pos[i_d, i_b]
+                + dofs_info.act_bias[I_d][2] * (dofs_state.vel[i_d, i_b] - dofs_state.ctrl_vel[i_d, i_b])
+            )
         tensor[i_b_, i_d_] = qd.math.clamp(
             force,
             dofs_info.force_range[I_d][0],

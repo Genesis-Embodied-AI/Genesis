@@ -342,9 +342,12 @@ def parse_link(mj, i_l, scale):
                 j_info["dofs_stiffness"] = np.array([mj_stiffness])
                 j_info["init_qpos"] *= scale
 
-        # Parsing actuator parameters
-        j_info["dofs_kp"] = np.zeros((n_dofs,), dtype=gs.np_float)
-        j_info["dofs_kv"] = np.zeros((n_dofs,), dtype=gs.np_float)
+        # Parsing actuator parameters.
+        # MuJoCo general actuator model (gaintype=FIXED, biastype=AFFINE):
+        #   force = gainprm[0] * ctrl + biasprm[0] + biasprm[1] * pos + biasprm[2] * vel
+        # See: https://mujoco.readthedocs.io/en/stable/XMLreference.html#actuator-general
+        j_info["dofs_act_gain"] = np.zeros((n_dofs,), dtype=gs.np_float)
+        j_info["dofs_act_bias"] = np.zeros((n_dofs, 3), dtype=gs.np_float)
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         i_a = -1
@@ -378,35 +381,21 @@ def parse_link(mj, i_l, scale):
             if n_dofs > 1 and not (mj.actuator_gear[i_a, :n_dofs] == 1.0).all():
                 gs.logger.warning("(MJCF) Actuator transmission gear is only supported of 1DoF joints")
 
+            gear = mj.actuator_gear[i_a, 0]
+
             if biastype == mujoco.mjtBias.mjBIAS_NONE:
-                # Direct-drive
-                actuator_kp = 0.0
-                actuator_kv = 0.0
-            else:  # U = gain_term * ctrl + bias_term
-                # PD control
+                # Direct-drive (motor): force = gainprm[0] * ctrl
+                # FORCE mode handles this directly; store gainprm for model consistency.
+                j_info["dofs_act_gain"] = np.full(
+                    (n_dofs,), float(gear * mj.actuator_gainprm[i_a, 0] * scale**3), dtype=gs.np_float
+                )
+            else:
+                # General actuator: force = gainprm[0] * ctrl + biasprm[0] + biasprm[1] * pos + biasprm[2] * vel
                 gainprm = mj.actuator_gainprm[i_a]
                 biasprm = mj.actuator_biasprm[i_a]
-                if gainprm[1:].any() or biasprm[0]:
-                    gs.logger.warning(
-                        "(MJCF) Actuator control gain and bias parameters not supported. "
-                        f"Using default values for joint `{j_info['name']}`"
-                    )
-                    actuator_kp = gu.default_dofs_kp(1)[0]
-                    actuator_kv = gu.default_dofs_kv(1)[0]
-                elif gainprm[0] != -biasprm[1]:
-                    # Doing our best to approximate the expected behavior: g0 * p_target + b1 * p_mes + b2 * v_mes
-                    gs.logger.warning(
-                        "(MJCF) Actuator control gain and bias parameters cannot be reduced to a unique PD control "
-                        f"position gain. Using max between gain and bias for joint `{j_info['name']}`."
-                    )
-                    actuator_kp = min(-gainprm[0], biasprm[1])
-                    actuator_kv = biasprm[2]
-                else:
-                    actuator_kp, actuator_kv = biasprm[1], biasprm[2]
+                j_info["dofs_act_gain"] = np.full((n_dofs,), float(gear * gainprm[0] * scale**3), dtype=gs.np_float)
+                j_info["dofs_act_bias"] = np.tile(gear * biasprm[:3] * scale**3, (n_dofs, 1)).astype(gs.np_float)
 
-            gear = mj.actuator_gear[i_a, 0]
-            j_info["dofs_kp"] = np.tile(-gear * actuator_kp * scale**3, (n_dofs,))
-            j_info["dofs_kv"] = np.tile(-gear * actuator_kv * scale**3, (n_dofs,))
             if mj.actuator_forcelimited[i_a]:
                 j_info["dofs_force_range"] = np.tile(mj.actuator_forcerange[i_a], (n_dofs, 1))
             if mj.actuator_ctrllimited[i_a] and biastype == mujoco.mjtBias.mjBIAS_NONE:
