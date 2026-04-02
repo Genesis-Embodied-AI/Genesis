@@ -434,7 +434,7 @@ def func_compute_mass_matrix(
                             dofs_state.cdof_ang[i_d, i_b],
                         )
 
-    qd.loop_config(name="FIXME", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+    qd.loop_config(name="mass_mat_assemble", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_0, i_b in (
         qd.ndrange(1, links_state.pos.shape[1])
         if qd.static(static_rigid_sim_config.use_hibernation)
