@@ -1761,16 +1761,19 @@ def _func_narrowphase_multicontact_parallel(
                 # times.  We must NOT break until every group is done,
                 # otherwise the remaining groups' shuffle calls would hang
                 # waiting for the departed lanes.
-                have_work_i = gs.qd_int(0)
+                my_group_has_work = gs.qd_int(0)
                 if idx < collider_state.narrowphase_work_queues.mpr_queue_size[0]:
-                    have_work_i = gs.qd_int(1)
-                # Subgroup-wide OR reduction (covers subgroup sizes up to 32)
-                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 1))
-                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 2))
-                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 4))
-                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 8))
-                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 16))
-                if have_work_i == 0:
+                    my_group_has_work = gs.qd_int(1)
+                # Subgroup-wide OR reduction to decide break (covers subgroup sizes up to 32).
+                # All lanes must stay alive until no group has work, otherwise
+                # departed lanes would deadlock the remaining groups' shuffles.
+                any_subgroup_has_work = my_group_has_work
+                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 1))
+                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 2))
+                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 4))
+                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 8))
+                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 16))
+                if any_subgroup_has_work == 0:
                     break
 
                 # Defaults for lanes/groups without work (safe for shuffles)
@@ -1788,7 +1791,7 @@ def _func_narrowphase_multicontact_parallel(
                 i_gb = gs.qd_int(0)
                 i_pair = gs.qd_int(0)
 
-                if have_work_i != 0:
+                if my_group_has_work != 0:
                     i_b = collider_state.narrowphase_work_queues.mpr_i_b[idx]
                     i_ga = collider_state.narrowphase_work_queues.mpr_i_ga[idx]
                     i_gb = collider_state.narrowphase_work_queues.mpr_i_gb[idx]
@@ -1931,7 +1934,7 @@ def _func_narrowphase_multicontact_parallel(
                 p3_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 3))
 
                 # ── Phase 5: dedup + write (lane 0 only, skip if no work) ──
-                if have_work_i != 0:
+                if my_group_has_work != 0:
                     if any_upgrade:
                         if probe_id == 0:
                             local_idx = qd.atomic_add(
