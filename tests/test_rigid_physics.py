@@ -5403,7 +5403,8 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     h0 = 1.0
     radius = 0.1
     n_steps = 100
-    # dampratio=0 with non-zero timeconst for numerically stable undamped contact
+    # FIXME: timeconst=0 with dampratio=0 causes NaN constraint forces on the field backend.
+    # Using a small non-zero timeconst (0.02) as workaround for numerically stable undamped contact.
     undamped_sol_params = [0.02, 0.0, 0.9, 0.95, 0.001, 0.5, 2.0]
 
     scene = gs.Scene(
