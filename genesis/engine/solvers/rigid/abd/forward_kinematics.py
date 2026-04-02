@@ -1181,7 +1181,7 @@ def func_forward_velocity(
 ):
     # This loop must be the outermost loop to be differentiable
     if qd.static(static_rigid_sim_config.use_hibernation):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(name="forward_velocity_batch", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b in range(links_state.pos.shape[1]):
             func_forward_velocity_batch(
                 i_b,
@@ -1195,7 +1195,10 @@ def func_forward_velocity(
                 is_backward,
             )
     else:
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        qd.loop_config(
+            name="forward_velocity_entity",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+        )
         for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
             func_forward_velocity_entity(
                 i_e,
@@ -1635,7 +1638,9 @@ def func_update_cartesian_space(
 
     # This loop must be the outermost loop to be differentiable
     if qd.static(static_rigid_sim_config.use_hibernation):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(
+            name="update_carteisan_space_batch", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
+        )
         for i_b in range(links_state.pos.shape[1]):
             func_update_cartesian_space_batch(
                 i_b,
@@ -1655,7 +1660,10 @@ def func_update_cartesian_space(
             )
     else:
         # FIXME: Implement parallelization at tree-level (based on root_idx) instead of entity-level
-        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        qd.loop_config(
+            name="update_cartesian_space",
+            serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL),
+        )
         for i_e, i_b in qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1]):
             i_l_start = entities_info.link_start[i_e]
             I_l_start = [i_l_start, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l_start
