@@ -1,6 +1,7 @@
 import math
 
 import torch
+from tensordict import TensorDict
 
 import genesis as gs
 from genesis.utils.geom import quat_to_xyz, transform_by_quat, inv_quat, transform_quat_by_quat
@@ -14,9 +15,8 @@ def gs_rand(lower, upper, batch_shape):
 class Go2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
-        self.num_obs = obs_cfg["num_obs"]
-        self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
+        self.cfg = env_cfg
         self.num_commands = command_cfg["num_commands"]
         self.device = gs.device
 
@@ -106,7 +106,6 @@ class Go2Env:
         self.base_lin_vel = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.base_ang_vel = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.projected_gravity = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
-        self.obs_buf = torch.empty((self.num_envs, self.num_obs), dtype=gs.tc_float, device=gs.device)
         self.rew_buf = torch.empty((self.num_envs,), dtype=gs.tc_float, device=gs.device)
         self.reset_buf = torch.ones((self.num_envs,), dtype=gs.tc_bool, device=gs.device)
         self.episode_length_buf = torch.empty((self.num_envs,), dtype=gs.tc_int, device=gs.device)
@@ -137,7 +136,6 @@ class Go2Env:
             device=gs.device,
         )
         self.extras = dict()  # extra information for logging
-        self.extras["observations"] = dict()
 
         # prepare reward functions and multiply reward scales by dt
         self.reward_functions, self.episode_sums = dict(), dict()
@@ -145,6 +143,8 @@ class Go2Env:
             self.reward_scales[name] *= self.dt
             self.reward_functions[name] = getattr(self, "_reward_" + name)
             self.episode_sums[name] = torch.zeros((self.num_envs,), dtype=gs.tc_float, device=gs.device)
+
+        self.reset()
 
     def _resample_commands(self, envs_idx):
         commands = gs_rand(*self.commands_limits, (self.num_envs,))
@@ -201,16 +201,10 @@ class Go2Env:
         self.last_actions.copy_(self.actions)
         self.last_dof_vel.copy_(self.dof_vel)
 
-        self.extras["observations"]["critic"] = self.obs_buf
-
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
+        return self.get_observations(), self.rew_buf, self.reset_buf, self.extras
 
     def get_observations(self):
-        self.extras["observations"]["critic"] = self.obs_buf
-        return self.obs_buf, self.extras
-
-    def get_privileged_observations(self):
-        return None
+        return TensorDict({"policy": self.obs_buf}, batch_size=[self.num_envs])
 
     def _reset_idx(self, envs_idx=None):
         # reset state
@@ -257,7 +251,10 @@ class Go2Env:
             else:
                 mean = torch.where(n_envs > 0, value[envs_idx].sum() / n_envs, 0.0)
             self.extras["episode"]["rew_" + key] = mean / self.env_cfg["episode_length_s"]
-            value.masked_fill_(envs_idx, 0.0)
+            if envs_idx is None:
+                value.zero_()
+            else:
+                value.masked_fill_(envs_idx, 0.0)
 
         # random sample command upon reset
         self._resample_commands(envs_idx)
@@ -278,7 +275,7 @@ class Go2Env:
     def reset(self):
         self._reset_idx()
         self._update_observation()
-        return self.obs_buf, None
+        return self.get_observations()
 
     # ------------ reward functions----------------
     def _reward_tracking_lin_vel(self):

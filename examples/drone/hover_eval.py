@@ -6,14 +6,10 @@ from importlib import metadata
 import torch
 
 try:
-    try:
-        if metadata.version("rsl-rl"):
-            raise ImportError
-    except metadata.PackageNotFoundError:
-        if metadata.version("rsl-rl-lib") != "2.2.4":
-            raise ImportError
-except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
+    if int(metadata.version("rsl-rl-lib").split(".")[0]) < 5:
+        raise ImportError
+except (metadata.PackageNotFoundError, ImportError, ValueError) as e:
+    raise ImportError("Please install 'rsl-rl-lib>=5.0.0'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -31,7 +27,8 @@ def main():
     gs.init()
 
     log_dir = f"logs/{args.exp_name}"
-    env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(open(f"logs/{args.exp_name}/cfgs.pkl", "rb"))
+    with open(f"logs/{args.exp_name}/cfgs.pkl", "rb") as f:
+        env_cfg, obs_cfg, reward_cfg, command_cfg, train_cfg = pickle.load(f)
     reward_cfg["reward_scales"] = {}
 
     # visualize the target
@@ -51,25 +48,24 @@ def main():
     )
 
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
-    resume_path = os.path.join(log_dir, f"model_{args.ckpt}.pt")
-    runner.load(resume_path)
+    runner.load(os.path.join(log_dir, f"model_{args.ckpt}.pt"))
     policy = runner.get_inference_policy(device=gs.device)
 
-    obs, _ = env.reset()
+    obs_dict = env.reset()
 
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
     with torch.no_grad():
         if args.record:
             env.cam.start_recording()
             for _ in range(max_sim_step):
-                actions = policy(obs)
-                obs, rews, dones, infos = env.step(actions)
+                actions = policy(obs_dict)
+                obs_dict, rews, dones, infos = env.step(actions)
                 env.cam.render()
             env.cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
         else:
             for _ in range(max_sim_step):
-                actions = policy(obs)
-                obs, rews, dones, infos = env.step(actions)
+                actions = policy(obs_dict)
+                obs_dict, rews, dones, infos = env.step(actions)
 
 
 if __name__ == "__main__":
@@ -77,7 +73,7 @@ if __name__ == "__main__":
 
 """
 # evaluation
-python examples/drone/hover_eval.py
+python examples/drone/hover_eval.py --ckpt 300
 
 # Note
 If you experience slow performance or encounter other issues
