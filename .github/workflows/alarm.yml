@@ -31,7 +31,9 @@ jobs:
 
       - name: Install deps
         run: |
-          python -m pip install --quiet --upgrade wandb frozendict
+          # Pin wandb<0.25: 0.25.x changed api.runs() to no longer populate
+          # run.config in batch queries, breaking alarm.py's config["revision"] lookup.
+          python -m pip install --quiet --upgrade 'wandb<0.25' frozendict
 
       - name: Download speed artifacts from triggering run
         id: dl_speed
