@@ -395,6 +395,11 @@ class AnalyticalVsGJKSceneCreator:
         )
         self.monkeypatch.setattr(
             narrowphase,
+            "_func_narrowphase_multicontact_parallel",
+            narrowphase_modified._func_narrowphase_multicontact_mixed,
+        )
+        self.monkeypatch.setattr(
+            narrowphase,
             "func_narrow_phase_convex_vs_convex",
             narrowphase_modified.func_narrow_phase_convex_vs_convex,
         )

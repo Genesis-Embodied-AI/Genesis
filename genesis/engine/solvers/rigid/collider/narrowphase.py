@@ -1676,6 +1676,378 @@ def _func_narrowphase_multicontact_mixed(
                 )
 
 
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def _func_narrowphase_multicontact_parallel(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    geoms_init_AABB: array_class.GeomsInitAABB,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    collider_state: array_class.ColliderState,
+    collider_info: array_class.ColliderInfo,
+    collider_static_config: qd.template(),
+    mpr_state: array_class.MPRState,
+    mpr_info: array_class.MPRInfo,
+    gjk_state: array_class.GJKState,
+    gjk_info: array_class.GJKInfo,
+    gjk_static_config: qd.template(),
+    support_field_info: array_class.SupportFieldInfo,
+    diff_contact_input: array_class.DiffContactInput,
+    errno: array_class.V_ANNOTATION,
+    n_gjk_threads: qd.template(),
+    n_total_threads: qd.template(),
+    max_items_per_thread: qd.template(),
+):
+    """Like _func_narrowphase_multicontact_mixed but MPR perturbation probes
+    run in parallel across 4 lanes of a subgroup.  GJK path is unchanged."""
+    for i_tid in range(n_total_threads):
+        if i_tid < qd.static(n_gjk_threads):
+            # === GJK partition: unchanged ===
+            for _iter in range(max_items_per_thread):
+                idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_work_counter[0], 1)
+                if idx >= collider_state.narrowphase_work_queues.gjk_queue_size[0]:
+                    break
+                i_b = collider_state.narrowphase_work_queues.gjk_i_b[idx]
+                i_ga = collider_state.narrowphase_work_queues.gjk_i_ga[idx]
+                i_gb = collider_state.narrowphase_work_queues.gjk_i_gb[idx]
+                i_pair = collider_state.narrowphase_work_queues.gjk_i_pair[idx]
+
+                _func_multicontact_gjk_full(
+                    i_tid,
+                    i_b,
+                    i_ga,
+                    i_gb,
+                    i_pair,
+                    links_state,
+                    links_info,
+                    geoms_state,
+                    geoms_info,
+                    geoms_init_AABB,
+                    verts_info,
+                    faces_info,
+                    rigid_global_info,
+                    static_rigid_sim_config,
+                    collider_state,
+                    collider_info,
+                    collider_static_config,
+                    mpr_state,
+                    mpr_info,
+                    gjk_state,
+                    gjk_info,
+                    gjk_static_config,
+                    support_field_info,
+                    diff_contact_input,
+                    errno,
+                )
+        else:
+            # === MPR partition: parallel perturbation probes (groups of 4) ===
+            lane_id = qd.simt.subgroup.invocation_id()
+            probe_id = lane_id % 4
+            group_base = (lane_id // 4) * 4
+
+            for _iter in range(max_items_per_thread):
+                # ── Phase 1: work pull (group leader only, broadcast via shuffle) ──
+                raw_idx = gs.qd_int(0)
+                if probe_id == 0:
+                    raw_idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_work_counter[0], 1)
+                idx = qd.simt.subgroup.shuffle(raw_idx, qd.u32(group_base))
+
+                # Groups in the same subgroup may exhaust the queue at different
+                # times.  We must NOT break until every group is done,
+                # otherwise the remaining groups' shuffle calls would hang
+                # waiting for the departed lanes.
+                have_work_i = gs.qd_int(0)
+                if idx < collider_state.narrowphase_work_queues.mpr_queue_size[0]:
+                    have_work_i = gs.qd_int(1)
+                # Subgroup-wide OR reduction (covers subgroup sizes up to 32)
+                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 1))
+                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 2))
+                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 4))
+                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 8))
+                have_work_i = have_work_i | qd.simt.subgroup.shuffle(have_work_i, qd.u32(lane_id ^ 16))
+                if have_work_i == 0:
+                    break
+
+                # Defaults for lanes/groups without work (safe for shuffles)
+                my_valid = gs.qd_int(0)
+                my_pos = qd.Vector.zero(gs.qd_float, 3)
+                my_norm = qd.Vector.zero(gs.qd_float, 3)
+                my_pen = gs.qd_float(0.0)
+                my_needs_upgrade = False
+                tolerance = gs.qd_float(0.0)
+                contact_pos_0 = qd.Vector.zero(gs.qd_float, 3)
+                normal_0 = qd.Vector.zero(gs.qd_float, 3)
+                penetration_0 = gs.qd_float(0.0)
+                i_b = gs.qd_int(0)
+                i_ga = gs.qd_int(0)
+                i_gb = gs.qd_int(0)
+                i_pair = gs.qd_int(0)
+
+                if have_work_i != 0:
+                    i_b = collider_state.narrowphase_work_queues.mpr_i_b[idx]
+                    i_ga = collider_state.narrowphase_work_queues.mpr_i_ga[idx]
+                    i_gb = collider_state.narrowphase_work_queues.mpr_i_gb[idx]
+                    i_pair = collider_state.narrowphase_work_queues.mpr_i_pair[idx]
+                    contact_pos_0 = collider_state.narrowphase_work_queues.mpr_contact_pos_0[idx]
+                    normal_0 = collider_state.narrowphase_work_queues.mpr_normal_0[idx]
+                    penetration_0 = collider_state.narrowphase_work_queues.mpr_penetration_0[idx]
+
+                    # ── Phase 2: setup (all lanes in group, same result) ──
+                    EPS = rigid_global_info.EPS[None]
+                    ga_pos_original = geoms_state.pos[i_ga, i_b]
+                    ga_quat_original = geoms_state.quat[i_ga, i_b]
+                    gb_pos_original = geoms_state.pos[i_gb, i_b]
+                    gb_quat_original = geoms_state.quat[i_gb, i_b]
+
+                    tolerance = func_compute_tolerance(
+                        i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+                    )
+                    axis_0, axis_1 = func_contact_orthogonals(
+                        i_ga, i_gb, normal_0, i_b,
+                        links_state, links_info, geoms_state, geoms_info, geoms_init_AABB,
+                        rigid_global_info, static_rigid_sim_config,
+                    )
+
+                    # ── Phase 3: each lane runs its perturbation probe ──
+                    i_det = probe_id + 1
+                    axis = (2 * (i_det % 2) - 1) * axis_0 + (1 - 2 * ((i_det // 2) % 2)) * axis_1
+                    qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
+
+                    ga_pos_current, ga_quat_current = func_rotate_frame(
+                        ga_pos_original, ga_quat_original, contact_pos_0, qrot
+                    )
+                    gb_pos_current, gb_quat_current = func_rotate_frame(
+                        gb_pos_original, gb_quat_original, contact_pos_0, gu.qd_inv_quat(qrot)
+                    )
+
+                    is_col, normal, contact_pos, penetration, _used_gjk = _func_multicontact_run_detection(
+                        i_ga, i_gb, i_tid, i_b,
+                        ga_pos_current, ga_quat_current,
+                        gb_pos_current, gb_quat_current,
+                        geoms_state, geoms_info, geoms_init_AABB,
+                        verts_info, faces_info,
+                        rigid_global_info, static_rigid_sim_config,
+                        collider_state, collider_info, collider_static_config,
+                        mpr_state, mpr_info,
+                        gjk_state, gjk_info, gjk_static_config,
+                        support_field_info,
+                        i_pair,
+                        use_gjk=False,
+                        is_initial_detection=False,
+                    )
+
+                    if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
+                        if is_col and penetration > tolerance:
+                            if (
+                                collider_info.mc_tolerance[None] * penetration
+                                >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
+                            ):
+                                my_needs_upgrade = True
+
+                    if is_col and not my_needs_upgrade:
+                        if qd.static(
+                            collider_static_config.ccd_algorithm
+                            not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
+                        ):
+                            contact_point_a = (
+                                gu.qd_transform_by_quat(
+                                    (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
+                                    gu.qd_inv_quat(qrot),
+                                )
+                                + contact_pos_0
+                            )
+                            contact_point_b = (
+                                gu.qd_transform_by_quat(
+                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_0, qrot
+                                )
+                                + contact_pos_0
+                            )
+                            contact_pos = 0.5 * (contact_point_a + contact_point_b)
+                            twist_rotvec = qd.math.clamp(
+                                normal.cross(normal_0),
+                                -collider_info.mc_perturbation[None],
+                                collider_info.mc_perturbation[None],
+                            )
+                            normal = normal + twist_rotvec.cross(normal)
+                            penetration = normal.dot(contact_point_b - contact_point_a)
+                            if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
+                                penetration = penetration_0
+
+                        my_pos = contact_pos
+                        my_norm = normal
+                        my_pen = penetration
+                        my_valid = gs.qd_int(1)
+
+                # ── Phase 4: shuffle coordination (ALL UNCONDITIONAL) ──
+
+                # 4a: GJK upgrade reduction (all lanes, tree reduce via XOR)
+                upgrade_i = gs.qd_int(0)
+                if my_needs_upgrade:
+                    upgrade_i = gs.qd_int(1)
+                upgrade_i = upgrade_i | qd.simt.subgroup.shuffle(upgrade_i, qd.u32(lane_id ^ 1))
+                upgrade_i = upgrade_i | qd.simt.subgroup.shuffle(upgrade_i, qd.u32(lane_id ^ 2))
+                any_upgrade = upgrade_i != 0
+
+                # 4b: Collect all 4 probe results (all lanes execute shuffles)
+                p0_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 0))
+                p0_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 0))
+                p0_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 0))
+                p0_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 0))
+                p0_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 0))
+                p0_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 0))
+                p0_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 0))
+                p0_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 0))
+
+                p1_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 1))
+                p1_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 1))
+                p1_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 1))
+                p1_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 1))
+                p1_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 1))
+                p1_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 1))
+                p1_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 1))
+                p1_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 1))
+
+                p2_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 2))
+                p2_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 2))
+                p2_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 2))
+                p2_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 2))
+                p2_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 2))
+                p2_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 2))
+                p2_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 2))
+                p2_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 2))
+
+                p3_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 3))
+                p3_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 3))
+                p3_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 3))
+                p3_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 3))
+                p3_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 3))
+                p3_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 3))
+                p3_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 3))
+                p3_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 3))
+
+                # ── Phase 5: dedup + write (lane 0 only, skip if no work) ──
+                if have_work_i != 0:
+                    if any_upgrade:
+                        if probe_id == 0:
+                            local_idx = qd.atomic_add(
+                                collider_state.narrowphase_work_queues.gjk_queue_size_k2[0], 1
+                            )
+                            gi = collider_state.narrowphase_work_queues.gjk_queue_size[0] + local_idx
+                            collider_state.narrowphase_work_queues.gjk_i_b[gi] = i_b
+                            collider_state.narrowphase_work_queues.gjk_i_ga[gi] = i_ga
+                            collider_state.narrowphase_work_queues.gjk_i_gb[gi] = i_gb
+                            collider_state.narrowphase_work_queues.gjk_i_pair[gi] = i_pair
+                    else:
+                        if probe_id == 0:
+                            n_con = gs.qd_int(1)
+                            lcp = qd.Matrix.zero(gs.qd_float, 5, 3)
+                            lcn = qd.Matrix.zero(gs.qd_float, 5, 3)
+                            lpen = qd.Matrix.zero(gs.qd_float, 5, 1)
+
+                            for k in qd.static(range(3)):
+                                lcp[0, k] = contact_pos_0[k]
+                                lcn[0, k] = normal_0[k]
+                            lpen[0, 0] = penetration_0
+
+                            probe_pos = qd.Matrix.zero(gs.qd_float, 4, 3)
+                            probe_nrm = qd.Matrix.zero(gs.qd_float, 4, 3)
+                            probe_pen = qd.Matrix.zero(gs.qd_float, 4, 1)
+                            probe_val = qd.Matrix.zero(gs.qd_float, 4, 1)
+
+                            probe_pos[0, 0] = p0_px
+                            probe_pos[0, 1] = p0_py
+                            probe_pos[0, 2] = p0_pz
+                            probe_nrm[0, 0] = p0_nx
+                            probe_nrm[0, 1] = p0_ny
+                            probe_nrm[0, 2] = p0_nz
+                            probe_pen[0, 0] = p0_pen
+                            probe_val[0, 0] = gs.qd_float(p0_val)
+
+                            probe_pos[1, 0] = p1_px
+                            probe_pos[1, 1] = p1_py
+                            probe_pos[1, 2] = p1_pz
+                            probe_nrm[1, 0] = p1_nx
+                            probe_nrm[1, 1] = p1_ny
+                            probe_nrm[1, 2] = p1_nz
+                            probe_pen[1, 0] = p1_pen
+                            probe_val[1, 0] = gs.qd_float(p1_val)
+
+                            probe_pos[2, 0] = p2_px
+                            probe_pos[2, 1] = p2_py
+                            probe_pos[2, 2] = p2_pz
+                            probe_nrm[2, 0] = p2_nx
+                            probe_nrm[2, 1] = p2_ny
+                            probe_nrm[2, 2] = p2_nz
+                            probe_pen[2, 0] = p2_pen
+                            probe_val[2, 0] = gs.qd_float(p2_val)
+
+                            probe_pos[3, 0] = p3_px
+                            probe_pos[3, 1] = p3_py
+                            probe_pos[3, 2] = p3_pz
+                            probe_nrm[3, 0] = p3_nx
+                            probe_nrm[3, 1] = p3_ny
+                            probe_nrm[3, 2] = p3_nz
+                            probe_pen[3, 0] = p3_pen
+                            probe_val[3, 0] = gs.qd_float(p3_val)
+
+                            for i_p in range(4):
+                                if probe_val[i_p, 0] > 0.5:
+                                    cp = qd.Vector(
+                                        [probe_pos[i_p, 0], probe_pos[i_p, 1], probe_pos[i_p, 2]],
+                                        dt=gs.qd_float,
+                                    )
+                                    repeated = False
+                                    for ic in range(n_con):
+                                        if not repeated:
+                                            prev = qd.Vector(
+                                                [lcp[ic, 0], lcp[ic, 1], lcp[ic, 2]], dt=gs.qd_float
+                                            )
+                                            if (cp - prev).norm() < tolerance:
+                                                repeated = True
+                                    if not repeated:
+                                        pen_p = probe_pen[i_p, 0]
+                                        if pen_p > -tolerance:
+                                            pen_p = qd.max(pen_p, 0.0)
+                                            for k in qd.static(range(3)):
+                                                lcp[n_con, k] = probe_pos[i_p, k]
+                                                lcn[n_con, k] = probe_nrm[i_p, k]
+                                            lpen[n_con, 0] = pen_p
+                                            n_con = n_con + 1
+
+                            if n_con > 0:
+                                start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
+                                if start_idx + n_con <= collider_info.max_contact_pairs[None]:
+                                    for i in range(n_con):
+                                        i_c = start_idx + i
+                                        pos_i = qd.Vector(
+                                            [lcp[i, 0], lcp[i, 1], lcp[i, 2]], dt=gs.qd_float
+                                        )
+                                        normal_i = qd.Vector(
+                                            [lcn[i, 0], lcn[i, 1], lcn[i, 2]], dt=gs.qd_float
+                                        )
+                                        func_set_contact(
+                                            i_ga,
+                                            i_gb,
+                                            normal_i,
+                                            pos_i,
+                                            lpen[i, 0],
+                                            i_b,
+                                            i_c,
+                                            i_pair,
+                                            geoms_state,
+                                            geoms_info,
+                                            collider_state,
+                                            collider_info,
+                                        )
+                                else:
+                                    errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+
+
 @qd.kernel
 def _func_reset_narrowphase_work_queues(
     collider_state: array_class.ColliderState,
