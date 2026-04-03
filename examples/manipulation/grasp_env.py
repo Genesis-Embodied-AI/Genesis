@@ -1,6 +1,7 @@
 import torch
 import math
 from typing import Literal
+from tensordict import TensorDict
 
 import genesis as gs
 from genesis.utils.geom import (
@@ -19,9 +20,8 @@ class GraspEnv:
         show_viewer: bool = False,
     ) -> None:
         self.num_envs = env_cfg["num_envs"]
-        self.num_obs = env_cfg["num_obs"]
-        self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
+        self.cfg = env_cfg
         self.image_width = env_cfg["image_resolution"][0]
         self.image_height = env_cfg["image_resolution"][1]
         self.rgb_image_shape = (3, self.image_height, self.image_width)
@@ -44,7 +44,7 @@ class GraspEnv:
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(10))),
+            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(min(10, self.num_envs)))),
             viewer_options=gs.options.ViewerOptions(
                 max_FPS=int(0.5 / self.ctrl_dt),
                 camera_pos=(2.0, 0.0, 2.5),
@@ -132,7 +132,6 @@ class GraspEnv:
         self.reset_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=gs.device)
         self.goal_pose = torch.zeros(self.num_envs, 7, device=gs.device)
         self.extras = dict()
-        self.extras["observations"] = dict()
 
     def reset_idx(self, envs_idx: torch.Tensor) -> None:
         if len(envs_idx) == 0:
@@ -176,14 +175,12 @@ class GraspEnv:
             )
             self.episode_sums[key][envs_idx] = 0.0
 
-    def reset(self) -> tuple[torch.Tensor, dict]:
+    def reset(self) -> TensorDict:
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=gs.device))
+        return self.get_observations()
 
-        obs, self.extras = self.get_observations()
-        return obs, self.extras
-
-    def step(self, actions: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+    def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         # update time
         self.episode_length_buf += 1
 
@@ -205,13 +202,7 @@ class GraspEnv:
             reward += rew
             self.episode_sums[name] += rew
 
-        # get observations and fill extras
-        obs, self.extras = self.get_observations()
-
-        return obs, reward, self.reset_buf, self.extras
-
-    def get_privileged_observations(self) -> None:
-        return None
+        return self.get_observations(), reward, self.reset_buf, self.extras
 
     def is_episode_complete(self) -> torch.Tensor:
         time_out_buf = self.episode_length_buf > self.max_episode_length
@@ -225,23 +216,21 @@ class GraspEnv:
         self.extras["time_outs"][time_out_idx] = 1.0
         return self.reset_buf.nonzero(as_tuple=True)[0]
 
-    def get_observations(self) -> tuple[torch.Tensor, dict]:
+    def get_observations(self) -> TensorDict:
         # Current end-effector pose
         finger_pos, finger_quat = (
             self.robot.center_finger_pose[:, :3],
             self.robot.center_finger_pose[:, 3:7],
         )
         obj_pos, obj_quat = self.object.get_pos(), self.object.get_quat()
-        #
         obs_components = [
             finger_pos - obj_pos,  # 3D position difference
             finger_quat,  # current orientation (w, x, y, z)
             obj_pos,  # goal position
             obj_quat,  # goal orientation (w, x, y, z)
         ]
-        obs_tensor = torch.cat(obs_components, dim=-1)
-        self.extras["observations"]["critic"] = obs_tensor
-        return obs_tensor, self.extras
+        self.obs_buf = torch.cat(obs_components, dim=-1)
+        return TensorDict({"policy": self.obs_buf}, batch_size=[self.num_envs])
 
     def rescale_action(self, action: torch.Tensor) -> torch.Tensor:
         rescaled_action = action * self.action_scales

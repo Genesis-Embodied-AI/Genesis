@@ -7,14 +7,10 @@ from pathlib import Path
 import torch
 
 try:
-    try:
-        if metadata.version("rsl-rl"):
-            raise ImportError
-    except metadata.PackageNotFoundError:
-        if metadata.version("rsl-rl-lib") != "2.2.4":
-            raise ImportError
-except (metadata.PackageNotFoundError, ImportError) as e:
-    raise ImportError("Please uninstall 'rsl_rl' and install 'rsl-rl-lib==2.2.4'.") from e
+    if int(metadata.version("rsl-rl-lib").split(".")[0]) < 5:
+        raise ImportError
+except (metadata.PackageNotFoundError, ImportError, ValueError) as e:
+    raise ImportError("Please install 'rsl-rl-lib>=5.0.0'.") from e
 from rsl_rl.runners import OnPolicyRunner
 
 import genesis as gs
@@ -27,7 +23,6 @@ def load_rl_policy(env, train_cfg, log_dir):
     """Load reinforcement learning policy."""
     runner = OnPolicyRunner(env, train_cfg, log_dir, device=gs.device)
 
-    # Find the latest checkpoint
     checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
@@ -44,10 +39,8 @@ def load_rl_policy(env, train_cfg, log_dir):
 
 def load_bc_policy(env, bc_cfg, log_dir):
     """Load behavior cloning policy."""
-    # Create behavior cloning instance
     bc_runner = BehaviorCloning(env, bc_cfg, None, device=gs.device)
 
-    # Find the latest checkpoint
     checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"checkpoint_\d+\.pt", f.name)]
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
@@ -92,13 +85,8 @@ def main():
 
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
 
-    # Load configurations
-    if args.stage == "rl":
-        # For RL, load the standard configs
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
-    else:
-        # For BC, we need to load the configs and create BC config
-        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(open(log_dir / "cfgs.pkl", "rb"))
+    with open(log_dir / "cfgs.pkl", "rb") as f:
+        env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
 
     # set the max FPS for visualization
     env_cfg["max_visualize_FPS"] = 60
@@ -125,7 +113,7 @@ def main():
         policy = load_bc_policy(env, bc_train_cfg, log_dir)
         policy.eval()
 
-    obs, _ = env.reset()
+    obs_dict = env.reset()
 
     max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
 
@@ -137,7 +125,7 @@ def main():
             env.right_cam.start_recording()
         for step in range(max_sim_step):
             if args.stage == "rl":
-                actions = policy(obs)
+                actions = policy(obs_dict)
             else:
                 # Get stereo grayscale images and ensure float32
                 rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
@@ -149,7 +137,7 @@ def main():
             if args.record:
                 env.vis_cam.render()  # render the visualization camera
 
-            obs, rews, dones, infos = env.step(actions)
+            obs_dict, rews, dones, infos = env.step(actions)
         env.grasp_and_lift_demo()
         if args.record:
             print("Stopping video recording...")

@@ -43,7 +43,7 @@ reinforcement learning (Nature 2023)](https://www.nature.com/articles/s41586-023
 At this stage, we have defined the environments. Now, we use the PPO implementation from `rsl-rl` to train the policy. First, install all Python dependencies via `pip`:
 
 ```bash
-pip install tensorboard rsl-rl-lib==2.2.4
+pip install tensorboard "rsl-rl-lib>=5.0.0"
 ```
 
 #### 3.1 Training
