@@ -23,7 +23,6 @@ from genesis.utils.geom import (
     T_to_trans,
     pos_lookat_up_to_T,
     trans_quat_to_T,
-    trans_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
