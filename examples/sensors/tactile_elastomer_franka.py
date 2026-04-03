@@ -128,6 +128,8 @@ if __name__ == "__main__":
     n_dofs = franka.n_dofs
     motor_dofs_idx = np.arange(n_dofs - 2)
     fingers_dof = np.arange(n_dofs - 2, n_dofs)
+    franka.set_dofs_kp([100.0, 100.0], fingers_dof)
+    franka.set_dofs_kv([10.0, 10.0], fingers_dof)
     ee_link = franka.get_link("hand")
 
     # Initialize target pose

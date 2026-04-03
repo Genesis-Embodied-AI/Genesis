@@ -794,13 +794,14 @@ def check_mujoco_model_consistency(
     for v in mj_sim.model.actuator_biastype:
         assert v in (mujoco.mjtBias.mjBIAS_AFFINE, mujoco.mjtBias.mjBIAS_NONE)
 
-    # NOTE: not considering gear
-    gs_kp = gs_sim.rigid_solver.dofs_info.kp.to_numpy()
-    gs_kv = gs_sim.rigid_solver.dofs_info.kv.to_numpy()
-    mj_kp = -mj_sim.model.actuator_biasprm[:, 1]
-    mj_kv = -mj_sim.model.actuator_biasprm[:, 2]
-    assert_allclose(gs_kp[gs_motors_idx], mj_kp[mj_motors_idx], tol=tol)
-    assert_allclose(gs_kv[gs_motors_idx], mj_kv[mj_motors_idx], tol=tol)
+    # NOTE: not considering gear for biasprm (only relevant for AFFINE actuators where gear=1 in practice).
+    gs_act_gain = gs_sim.rigid_solver.dofs_info.act_gain.to_numpy()
+    gs_act_bias = gs_sim.rigid_solver.dofs_info.act_bias.to_numpy()
+    mj_gear = mj_sim.model.actuator_gear[:, 0]
+    mj_gainprm = mj_sim.model.actuator_gainprm[:, 0] * mj_gear
+    mj_biasprm = mj_sim.model.actuator_biasprm[:, :3] * mj_gear[:, None]
+    assert_allclose(gs_act_gain[gs_motors_idx], mj_gainprm[mj_motors_idx], tol=tol)
+    assert_allclose(gs_act_bias[gs_motors_idx], mj_biasprm[mj_motors_idx], tol=tol)
 
 
 def check_mujoco_data_consistency(

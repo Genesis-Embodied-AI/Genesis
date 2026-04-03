@@ -129,6 +129,8 @@ from .abd.accessor import (
     kernel_set_sol_params,
     kernel_set_dofs_kp,
     kernel_set_dofs_kv,
+    kernel_set_dofs_act_gain,
+    kernel_set_dofs_act_bias,
     kernel_set_dofs_force_range,
     kernel_set_dofs_stiffness,
     kernel_set_dofs_armature,
@@ -1980,12 +1982,36 @@ class RigidSolver(KinematicSolver):
         )
 
     def _set_dofs_info(self, tensor_list, dofs_idx, name, envs_idx=None):
-        if gs.use_zerocopy and name in {"kp", "kv", "force_range", "stiffness", "damping", "frictionloss", "limit"}:
+        if gs.use_zerocopy and name in {
+            "kp",
+            "kv",
+            "act_gain",
+            "act_bias",
+            "force_range",
+            "stiffness",
+            "damping",
+            "frictionloss",
+            "limit",
+        }:
             mask = indices_to_mask(*((envs_idx, dofs_idx) if self._options.batch_dofs_info else (dofs_idx,)))
-            data = qd_to_torch(getattr(self.dofs_info, name), transpose=True, copy=False)
-            num_values = len(tensor_list)
-            for j, mask_j in enumerate(((*mask, ..., j) for j in range(num_values)) if num_values > 1 else (mask,)):
-                assign_indexed_tensor(data, mask_j, tensor_list[j])
+            if name == "kp":
+                # kp sets act_gain, act_bias[0] = 0, act_bias[1] = -kp (full PD reset)
+                kp = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+                gain = qd_to_torch(self.dofs_info.act_gain, transpose=True, copy=False)
+                assign_indexed_tensor(gain, mask, kp)
+                bias = qd_to_torch(self.dofs_info.act_bias, transpose=True, copy=False)
+                bias[(*mask, ..., 0)] = 0.0
+                assign_indexed_tensor(bias, (*mask, ..., 1), -kp)
+            elif name == "kv":
+                # kv sets act_bias[..., 2] = -kv
+                kv = torch.as_tensor(tensor_list[0], dtype=gs.tc_float, device=gs.device)
+                bias = qd_to_torch(self.dofs_info.act_bias, transpose=True, copy=False)
+                assign_indexed_tensor(bias, (*mask, ..., 2), -kv)
+            else:
+                data = qd_to_torch(getattr(self.dofs_info, name), transpose=True, copy=False)
+                num_values = len(tensor_list)
+                for j, mask_j in enumerate(((*mask, ..., j) for j in range(num_values)) if num_values > 1 else (mask,)):
+                    assign_indexed_tensor(data, mask_j, tensor_list[j])
             if gs.backend == gs.metal:
                 torch.mps.synchronize()
             return
@@ -2028,6 +2054,10 @@ class RigidSolver(KinematicSolver):
             )
         elif name == "limit":
             kernel_set_dofs_limit(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+        elif name == "act_gain":
+            kernel_set_dofs_act_gain(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
+        elif name == "act_bias":
+            kernel_set_dofs_act_bias(*tensor_list, dofs_idx, envs_idx_, self.dofs_info, self._static_rigid_sim_config)
         else:
             gs.raise_exception(f"Invalid `name` {name}.")
 
@@ -2036,6 +2066,12 @@ class RigidSolver(KinematicSolver):
 
     def set_dofs_kv(self, kv, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([kv], dofs_idx, "kv", envs_idx)
+
+    def set_dofs_act_gain(self, act_gain, dofs_idx=None, envs_idx=None):
+        self._set_dofs_info([act_gain], dofs_idx, "act_gain", envs_idx)
+
+    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx=None, envs_idx=None):
+        self._set_dofs_info([bias0, bias1, bias2], dofs_idx, "act_bias", envs_idx)
 
     def set_dofs_force_range(self, lower, upper, dofs_idx=None, envs_idx=None):
         self._set_dofs_info([lower, upper], dofs_idx, "force_range", envs_idx)
@@ -2341,14 +2377,54 @@ class RigidSolver(KinematicSolver):
     def get_dofs_kp(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
-        tensor = qd_to_torch(self.dofs_info.kp, envs_idx, dofs_idx, transpose=True, copy=True)
-        return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+        gain = qd_to_torch(self.dofs_info.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
+        bias = qd_to_torch(self.dofs_info.act_bias, envs_idx, dofs_idx, transpose=True, copy=True)
+        if self.n_envs == 0 and self._options.batch_dofs_info:
+            gain, bias = gain[0], bias[0]
+        if not (torch.abs(gain + bias[..., 1]) < gs.EPS * torch.clamp(torch.abs(gain), min=1.0)).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_gain != -act_bias[1]). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        if not (torch.abs(bias[..., 0]) < gs.EPS).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_bias[0] != 0). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        return gain
 
     def get_dofs_kv(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:
             gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
-        tensor = qd_to_torch(self.dofs_info.kv, envs_idx, dofs_idx, transpose=True, copy=True)
+        gain = qd_to_torch(self.dofs_info.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
+        bias = qd_to_torch(self.dofs_info.act_bias, envs_idx, dofs_idx, transpose=True, copy=True)
+        if self.n_envs == 0 and self._options.batch_dofs_info:
+            gain, bias = gain[0], bias[0]
+        if not (torch.abs(gain + bias[..., 1]) < gs.EPS * torch.clamp(torch.abs(gain), min=1.0)).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_gain != -act_bias[1]). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        if not (torch.abs(bias[..., 0]) < gs.EPS).all():
+            gs.raise_exception(
+                "Some DOFs use a non-PD-reducible actuator (act_bias[0] != 0). "
+                "Use get_dofs_act_gain() and get_dofs_act_bias() instead."
+            )
+        return -bias[..., 2]
+
+    def get_dofs_act_gain(self, dofs_idx=None, envs_idx=None):
+        if not self._options.batch_dofs_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+        tensor = qd_to_torch(self.dofs_info.act_gain, envs_idx, dofs_idx, transpose=True, copy=True)
         return tensor[0] if self.n_envs == 0 and self._options.batch_dofs_info else tensor
+
+    def get_dofs_act_bias(self, dofs_idx=None, envs_idx=None):
+        if not self._options.batch_dofs_info and envs_idx is not None:
+            gs.raise_exception("`envs_idx` cannot be specified for non-batched dofs info.")
+        tensor = qd_to_torch(self.dofs_info.act_bias, envs_idx, dofs_idx, transpose=True, copy=True)
+        if self.n_envs == 0 and self._options.batch_dofs_info:
+            tensor = tensor[0]
+        return tensor[..., 0], tensor[..., 1], tensor[..., 2]
 
     def get_dofs_force_range(self, dofs_idx=None, envs_idx=None):
         if not self._options.batch_dofs_info and envs_idx is not None:

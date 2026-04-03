@@ -533,13 +533,11 @@ def func_compute_mass_matrix(
             rigid_global_info.mass_mat[i_d, i_d, i_b] = (
                 rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
             )
-            if (
-                dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
-                or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-            ):
-                # qM += d qfrc_actuator / d qvel
+            if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
+                # qM += d qfrc_actuator / d qvel = -act_bias[2] * dt
                 rigid_global_info.mass_mat[i_d, i_d, i_b] = (
-                    rigid_global_info.mass_mat[i_d, i_d, i_b] + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                    rigid_global_info.mass_mat[i_d, i_d, i_b]
+                    - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                 )
 
 
@@ -580,12 +578,10 @@ def func_factor_mass(
                                 + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                             )
                             if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-                                ):
+                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                                     rigid_global_info.mass_mat_L[i_d, i_d, i_b] = (
                                         rigid_global_info.mass_mat_L[i_d, i_d, i_b]
-                                        + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                                     )
 
                     for i_d_ in range(n_dofs):
@@ -644,11 +640,10 @@ def func_factor_mass(
                                 mass_mat[i_d_, i_d_] + dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]
                             )
                             if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if (dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION) or (
-                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-                                ):
+                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                                     mass_mat[i_d_, i_d_] = (
-                                        mass_mat[i_d_, i_d_] + dofs_info.kv[I_d] * rigid_global_info.substep_dt[None]
+                                        mass_mat[i_d_, i_d_]
+                                        - dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None]
                                     )
                             i_d_ = i_d_ + BLOCK_DIM
                         qd.simt.block.sync()
@@ -733,13 +728,10 @@ def func_factor_mass(
                                 (dofs_info.damping[I_d] * rigid_global_info.substep_dt[None]),
                             )
                             if qd.static(static_rigid_sim_config.integrator == gs.integrator.implicitfast):
-                                if (
-                                    dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
-                                    or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-                                ):
+                                if dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY:
                                     qd.atomic_add(
                                         rigid_global_info.mass_mat_L_bw[0, i_pr, i_pr, i_b],
-                                        dofs_info.kv[I_d] * rigid_global_info.substep_dt[None],
+                                        -dofs_info.act_bias[I_d][2] * rigid_global_info.substep_dt[None],
                                     )
 
                 # Cholesky-Banachiewicz algorithm (in the perturbed indices), access pattern is safe for autodiff
@@ -1010,13 +1002,21 @@ def func_torque_and_passive_force(
                             if dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.FORCE:
                                 force = dofs_state.ctrl_force[i_d, i_b]
                             elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY:
-                                force = dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+                                force = -dofs_info.act_bias[I_d][2] * (
+                                    dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b]
+                                )
                             elif dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION and not (
                                 joint_type == gs.JOINT_TYPE.FREE and i_d >= links_info.dof_start[I_l] + 3
                             ):
-                                force = dofs_info.kp[I_d] * (
-                                    dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b]
-                                ) + dofs_info.kv[I_d] * (dofs_state.ctrl_vel[i_d, i_b] - dofs_state.vel[i_d, i_b])
+                                # Unified formula for GENERAL and POSITION modes, factored for float32 stability.
+                                # For PD (act_gain == -act_bias[1], act_bias[0] == 0), the residual terms vanish.
+                                force = (
+                                    dofs_info.act_gain[I_d] * (dofs_state.ctrl_pos[i_d, i_b] - dofs_state.pos[i_d, i_b])
+                                    + dofs_info.act_bias[I_d][0]
+                                    + (dofs_info.act_gain[I_d] + dofs_info.act_bias[I_d][1]) * dofs_state.pos[i_d, i_b]
+                                    + dofs_info.act_bias[I_d][2]
+                                    * (dofs_state.vel[i_d, i_b] - dofs_state.ctrl_vel[i_d, i_b])
+                                )
 
                             dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
                                 force,
@@ -1060,7 +1060,13 @@ def func_torque_and_passive_force(
                         for j in qd.static(range(3)):
                             i_d = dof_start + 3 + j
                             I_d = [i_d, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d
-                            force = dofs_info.kp[I_d] * rotvec[j] - dofs_info.kv[I_d] * dofs_state.vel[i_d, i_b]
+                            force = (
+                                dofs_info.act_gain[I_d] * rotvec[j]
+                                + dofs_info.act_bias[I_d][0]
+                                + (dofs_info.act_gain[I_d] + dofs_info.act_bias[I_d][1]) * dofs_state.pos[i_d, i_b]
+                                + dofs_info.act_bias[I_d][2]
+                                * (dofs_state.vel[i_d, i_b] - dofs_state.ctrl_vel[i_d, i_b])
+                            )
 
                             dofs_state.qf_applied[i_d, i_b] = qd.math.clamp(
                                 force, dofs_info.force_range[I_d][0], dofs_info.force_range[I_d][1]
@@ -1820,9 +1826,9 @@ def func_implicit_damping(
                         rigid_global_info.mass_mat_mask[i_e, i_b] = True
                     if qd.static(static_rigid_sim_config.integrator != gs.integrator.Euler):
                         if (
-                            dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.POSITION
-                            or dofs_state.ctrl_mode[i_d, i_b] == gs.CTRL_MODE.VELOCITY
-                        ) and dofs_info.kv[I_d] > EPS:
+                            dofs_state.ctrl_mode[i_d, i_b] <= gs.CTRL_MODE.VELOCITY
+                            and qd.abs(dofs_info.act_bias[I_d][2]) > EPS
+                        ):
                             rigid_global_info.mass_mat_mask[i_e, i_b] = True
 
     func_factor_mass(

@@ -545,7 +545,7 @@ class KinematicEntity(Entity):
                 for j_info_gs in chain.from_iterable(links_j_infos):
                     for j_info_mj in chain.from_iterable(links_j_infos_mj):
                         if j_info_mj["name"] == j_info_gs["name"]:
-                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_act_gain", "dofs_act_bias"):
                                 j_info_mj[name] = j_info_gs[name]
                             break
                 links_j_infos = links_j_infos_mj
@@ -678,8 +678,8 @@ class KinematicEntity(Entity):
                 mass_tot = sum(l_info.get("inertial_mass") or 0.0 for l_info in l_infos)
                 j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
-            j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
-            j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_act_gain"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_act_bias"] = np.zeros((6, 3), dtype=gs.np_float)
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[0] = [j_info]
 
@@ -849,8 +849,8 @@ class KinematicEntity(Entity):
                 dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
                 dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
                 dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
-                dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
-                dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
+                dofs_act_gain=j_info.get("dofs_act_gain", np.zeros(n_dofs)),
+                dofs_act_bias=j_info.get("dofs_act_bias", np.zeros((n_dofs, 3))),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
             )
             joints.append(joint)
@@ -3394,6 +3394,44 @@ class RigidEntity(KinematicEntity):
         self._solver.set_dofs_kv(kv, dofs_idx, envs_idx)
 
     @gs.assert_built
+    def set_dofs_act_gain(self, act_gain, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the actuator gain for the entity's dofs. Invalidates PD-reducibility.
+
+        Parameters
+        ----------
+        act_gain : array_like
+            The actuator gain values.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the actuator bias for the entity's dofs.
+
+        Parameters
+        ----------
+        bias0 : array_like
+            Constant bias term.
+        bias1 : array_like
+            Position coefficient.
+        bias2 : array_like
+            Velocity coefficient.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
+
+    @gs.assert_built
     def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
         """
         Set the entity's dofs' force range.
@@ -3666,6 +3704,30 @@ class RigidEntity(KinematicEntity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_dofs_kv(dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def get_dofs_act_gain(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the actuator gain for the entity's dofs.
+
+        Returns
+        -------
+        act_gain : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_act_gain(dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def get_dofs_act_bias(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the actuator bias [constant, pos_coeff, vel_coeff] for the entity's dofs.
+
+        Returns
+        -------
+        bias0, bias1, bias2 : tuple of torch.Tensor
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_act_bias(dofs_idx, envs_idx)
 
     @gs.assert_built
     def get_dofs_force_range(self, dofs_idx_local=None, envs_idx=None):

@@ -375,6 +375,36 @@ def ellipsoid():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def general_actuator():
+    """Generate an MJCF model with mixed actuator types: PD, general, and non-actuated."""
+    mjcf = ET.Element("mujoco", model="general_actuator")
+    ET.SubElement(mjcf, "option", timestep="0.01")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    body1 = ET.SubElement(worldbody, "body", name="link1", pos="0 0 1")
+    ET.SubElement(body1, "joint", name="hinge_pd", type="hinge", axis="0 1 0", damping="0.5")
+    ET.SubElement(body1, "geom", type="capsule", size="0.05 0.3", mass="1.0")
+    body2 = ET.SubElement(body1, "body", name="link2", pos="0 0 -0.6")
+    ET.SubElement(body2, "joint", name="hinge_general", type="hinge", axis="0 1 0", damping="0.3")
+    ET.SubElement(body2, "geom", type="capsule", size="0.04 0.2", mass="0.5")
+    body3 = ET.SubElement(body2, "body", name="link3", pos="0 0 -0.4")
+    ET.SubElement(body3, "joint", name="hinge_motor", type="hinge", axis="0 1 0", damping="0.2")
+    ET.SubElement(body3, "geom", type="capsule", size="0.03 0.15", mass="0.3")
+    actuator = ET.SubElement(mjcf, "actuator")
+    ET.SubElement(actuator, "position", name="act_pd", joint="hinge_pd", kp="100")
+    ET.SubElement(
+        actuator,
+        "general",
+        name="act_general",
+        joint="hinge_general",
+        gainprm="20 0 0",
+        biastype="affine",
+        biasprm="0.5 -10 -1",
+    )
+    ET.SubElement(actuator, "motor", name="act_motor", joint="hinge_motor", gear="5")
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -387,6 +417,82 @@ def test_box_plane_dynamics(gs_sim, mj_sim, tol):
     qpos = np.concatenate((cube_pos, cube_quat))
     qvel = np.random.rand(6) * 0.2
     simulate_and_check_mujoco_consistency(gs_sim, mj_sim, qpos, qvel, num_steps=150, tol=tol)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("model_name", ["general_actuator"])
+@pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG])
+@pytest.mark.parametrize("gs_integrator", [gs.integrator.Euler])
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_general_actuator(gs_sim, mj_sim, tol):
+    (entity,) = gs_sim.entities
+
+    # get_dofs_kp raises for all DOFs (joint 1 is non-PD-reducible from parser)
+    with pytest.raises(gs.GenesisException):
+        entity.get_dofs_kp()
+
+    # but succeeds for the PD joint (joint 0)
+    entity.get_dofs_kp(dofs_idx_local=[0])
+
+    # Set different control modes per DOF via public API
+    entity.control_dofs_force(0.0, dofs_idx_local=[0])
+    entity.control_dofs_velocity(0.0, dofs_idx_local=[1])
+    entity.control_dofs_position(0.0, dofs_idx_local=[2])
+    ctrl_mode = gs_sim.rigid_solver.dofs_state.ctrl_mode.to_numpy()[:, 0]
+    assert ctrl_mode[entity.dof_start + 0] == gs.CTRL_MODE.FORCE
+    assert ctrl_mode[entity.dof_start + 1] == gs.CTRL_MODE.VELOCITY
+    assert ctrl_mode[entity.dof_start + 2] == gs.CTRL_MODE.POSITION
+
+    # control_dofs_position overrides all to POSITION
+    entity.control_dofs_position([0.0, 0.0, 0.0])
+    ctrl_mode = gs_sim.rigid_solver.dofs_state.ctrl_mode.to_numpy()[:, 0]
+    assert (ctrl_mode[entity.dof_start : entity.dof_start + 3] == gs.CTRL_MODE.POSITION).all()
+
+    # Disable constraints, keep actuation enabled
+    mj_sim.model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
+    gs_sim.rigid_solver._enable_collision = False
+    gs_sim.rigid_solver._enable_joint_limit = False
+    gs_sim.rigid_solver._disable_constraint = True
+    gs_sim.rigid_solver.collider.clear()
+    gs_sim.rigid_solver.constraint_solver.clear()
+
+    # Compare all dynamic quantities against MuJoCo with both PD and general actuators active.
+    check_mujoco_model_consistency(gs_sim, mj_sim, tol=tol)
+    init_simulators(gs_sim, mj_sim, qpos=np.array([0.2, 0.1, 0.0]), qvel=np.array([0.1, -0.1, 0.0]))
+
+    mj_sim.data.ctrl[:] = [0.5, 0.3, 1.0]
+    entity.control_dofs_position([0.5, 0.3, 0.0])
+    entity.control_dofs_force(5.0, dofs_idx_local=[2])  # motor: gear(5) * gainprm(1) * ctrl(1) = 5
+
+    # Pre-step so that Genesis computes qf_applied (needed for data consistency checks)
+    mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+    mj_sim.data.qvel[:] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+    mujoco.mj_step(mj_sim.model, mj_sim.data)
+    gs_sim.scene.step()
+
+    for _ in range(99):
+        check_mujoco_data_consistency(gs_sim, mj_sim, tol=tol, ignore_constraints=True)
+
+        mj_sim.data.qpos[:] = gs_sim.rigid_solver.qpos.to_numpy()[:, 0]
+        mj_sim.data.qvel[:] = gs_sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
+        mujoco.mj_step(mj_sim.model, mj_sim.data)
+        gs_sim.scene.step()
+
+    # Validate setter/getter round-trips for actuator parameters
+    entity.set_dofs_act_gain([200.0], dofs_idx_local=[1])
+    assert_allclose(entity.get_dofs_act_gain()[1], 200.0, tol=1e-6)
+    entity.set_dofs_act_bias([0.5], [-100.0], [-5.0], dofs_idx_local=[1])
+    b0, b1, b2 = entity.get_dofs_act_bias()
+    assert_allclose(b0[1], 0.5, tol=1e-6)
+    assert_allclose(b1[1], -100.0, tol=1e-6)
+    assert_allclose(b2[1], -5.0, tol=1e-6)
+
+    # set_dofs_kp restores PD on joint 1: act_gain=kp, act_bias[0]=0, act_bias[1]=-kp
+    entity.set_dofs_kp([50.0], dofs_idx_local=[1])
+    assert_allclose(entity.get_dofs_kp(dofs_idx_local=[0, 1]), [100.0, 50.0], tol=1e-6)
+    b0, b1, _ = entity.get_dofs_act_bias()
+    assert_allclose(b0[1], 0.0, tol=1e-6)
+    assert_allclose(b1[1], -50.0, tol=1e-6)
 
 
 @pytest.mark.required
@@ -1362,6 +1468,8 @@ def test_position_control(show_viewer):
     A = 0.1
     f = 1.0
     scene.reset()
+    robot.set_dofs_kp(MOTORS_KP, envs_idx=1)
+    robot.set_dofs_kv(MOTORS_KD, envs_idx=1)
     force_range[:, 1, 0] = float("-inf")
     force_range[:, 1, 1] = float("+inf")
     scene.rigid_solver.dofs_info.force_range.from_numpy(tensor_to_array(force_range))
@@ -2028,7 +2136,7 @@ def test_contact_forces(show_viewer, tol):
         show_FPS=False,
     )
 
-    plane = scene.add_entity(
+    scene.add_entity(
         gs.morphs.Plane(),
     )
     franka = scene.add_entity(
@@ -2043,7 +2151,7 @@ def test_contact_forces(show_viewer, tol):
     )
     scene.build()
 
-    cube_weight = scene.rigid_solver._gravity[0][2] * cube.get_mass()
+    cube_weight = scene.rigid_solver._gravity[0] * cube.get_mass()
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
     qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
@@ -2062,12 +2170,12 @@ def test_contact_forces(show_viewer, tol):
     for i in range(50):
         scene.step()
     contact_forces = cube.get_links_net_contact_force()
-    assert_allclose(contact_forces[0], [0.0, 0.0, -cube_weight], atol=1e-5)
+    assert_allclose(contact_forces[0], -cube_weight, atol=1e-5)
 
     # grasp
+    franka.control_dofs_position(qpos[:-2], motors_dof)
+    franka.control_dofs_position(0.0, fingers_dof)
     for i in range(20):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_position(np.array([0.0, 0.0]), fingers_dof)
         scene.step()
 
     # lift
@@ -2076,12 +2184,11 @@ def test_contact_forces(show_viewer, tol):
         pos=np.array([0.65, 0.0, 0.3]),
         quat=np.array([0, 1, 0, 0]),
     )
+    franka.control_dofs_position(qpos[:-2], motors_dof)
     for i in range(200):
-        franka.control_dofs_position(qpos[:-2], motors_dof)
-        franka.control_dofs_position(np.array([0.0, 0.0]), fingers_dof)
         scene.step()
     contact_forces = cube.get_links_net_contact_force()
-    assert_allclose(contact_forces[0], [0.0, 0.0, -cube_weight], atol=5e-5)
+    assert_allclose(contact_forces[0], -cube_weight, atol=5e-5)
 
 
 @pytest.mark.required
@@ -3784,8 +3891,10 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_s.n_dofs, -1, gs_s.get_dofs_armature, gs_s.set_dofs_armature, gs_s.dofs_info.armature),
         (gs_s.n_dofs, -1, gs_s.get_dofs_damping, gs_s.set_dofs_damping, gs_s.dofs_info.damping),
         (gs_s.n_dofs, -1, gs_s.get_dofs_frictionloss, gs_s.set_dofs_frictionloss, gs_s.dofs_info.frictionloss),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.kp),
-        (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, gs_s.dofs_info.kv),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_kp, gs_s.set_dofs_kp, gs_s.dofs_info.act_gain),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_kv, gs_s.set_dofs_kv, None),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_act_bias, gs_s.set_dofs_act_bias, gs_s.dofs_info.act_bias),
+        (gs_s.n_dofs, -1, gs_s.get_dofs_act_gain, gs_s.set_dofs_act_gain, gs_s.dofs_info.act_gain),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_pos, None, gs_s.geoms_state.pos),
         (gs_s.n_geoms, n_envs, gs_s.get_geoms_quat, None, gs_s.geoms_state.quat),
         (
@@ -3821,6 +3930,8 @@ def test_data_accessor(n_envs, batched, tol):
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_frictionloss, gs_robot.set_dofs_frictionloss, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kp, gs_robot.set_dofs_kp, None),
         (gs_robot.n_dofs, -1, gs_robot.get_dofs_kv, gs_robot.set_dofs_kv, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_act_bias, gs_robot.set_dofs_act_bias, None),
+        (gs_robot.n_dofs, -1, gs_robot.get_dofs_act_gain, gs_robot.set_dofs_act_gain, None),
         (gs_robot.n_qs, n_envs, gs_robot.get_qpos, gs_robot.set_qpos, None),
         (-1, n_envs, gs_robot.get_mass_mat, None, None),
         (-1, n_envs, gs_robot.get_links_net_contact_force, None, None),
@@ -3848,6 +3959,10 @@ def test_data_accessor(n_envs, batched, tol):
         (-1, -1, gs_vgeom.get_vAABB, None, None),
     ):
         getter, spec = (getter_or_spec, None) if callable(getter_or_spec) else (None, getter_or_spec)
+
+        # Restore PD consistency before each iteration (act_gain/act_bias setters may have broken it)
+        gs_s.set_dofs_kp(0.0)
+        gs_s.set_dofs_kv(0.0)
 
         # Check getter and setter without row or column masking
         if getter is not None:
@@ -4711,8 +4826,8 @@ def test_batched_info(batch_links_info, batch_joints_info, batch_dofs_info):
     assert pos.shape == (10, 2, 3) if batch_joints_info else (10, 3)
 
     dofs_info = terrain.solver.data_manager.dofs_info
-    kp = dofs_info.kp.to_numpy()
-    assert kp.shape == (9, 2) if batch_dofs_info else (9,)
+    act_gain = dofs_info.act_gain.to_numpy()
+    assert act_gain.shape == (9, 2) if batch_dofs_info else (9,)
 
 
 @pytest.mark.required
@@ -5134,6 +5249,10 @@ def test_pick_heterogenous_objects(show_viewer):
     fingers_dof = np.arange(7, 9)
     init_qpos = np.array([[-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04]] * 4)
 
+    # Set PD gains for finger joints (MJCF raw params have negligible control gain)
+    franka.set_dofs_kp([100.0, 100.0], fingers_dof)
+    franka.set_dofs_kv([10.0, 10.0], fingers_dof)
+
     # Initialize robot position
     franka.set_qpos(init_qpos)
     scene.step()
@@ -5189,7 +5308,7 @@ def test_pick_heterogenous_objects(show_viewer):
     # Test 3: All 4 objects were lifted
     post_lift_z = het_obj.get_pos()[:, 2]
     lift_deltas = tensor_to_array(post_lift_z - pre_lift_z)
-    assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
+    assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas})"
 
 
 def _build_two_link_revolute_urdf(name, geom_tag=None, geom_attribs=None, *, links_geoms=None, links_inertial=None):
