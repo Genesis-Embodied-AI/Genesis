@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import pos_lookat_up_to_T, trans_to_T
+from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T, trans_to_T
 
 from .conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
 from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
@@ -256,8 +256,9 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
     # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
     camera._shared_metadata.context.shadow = False
 
-    sphere_positions = [[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]]
-    sphere.set_pos(sphere_positions)
+    sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+    # 45° around Z for env 0, 30° around X for env 1
+    sphere.set_quat([[1.0, 0.0, 0.0, 0.4], [1.0, 0.3, 0.0, 0.0]])
     scene.step()
 
     data = camera.read()
@@ -277,9 +278,10 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
         np.array(cam_lookat, dtype=np.float32),
         np.array(cam_up, dtype=np.float32),
     )
-    sphere_pos = tensor_to_array(sphere.get_pos())  # (n_envs, 3)
-    link_T = trans_to_T(sphere_pos)  # (n_envs, 4, 4)
-    expected_T = link_T @ offset_T  # (n_envs, 4, 4)
+    sphere_pos = tensor_to_array(sphere.get_pos())
+    sphere_quat = tensor_to_array(sphere.get_quat())
+    link_T = trans_quat_to_T(sphere_pos, sphere_quat)
+    expected_T = link_T @ offset_T
 
     camera_node = camera._shared_metadata.renderer._camera_nodes[camera._idx]
     actual_pose = camera._shared_metadata.context._scene.get_pose(camera_node)
@@ -639,9 +641,9 @@ def test_camera_lookat_entity(show_viewer, png_snapshot):
     scene.build()
 
     # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
-    for cam in cameras:
+    for camera in cameras:
         camera._shared_metadata.context.shadow = False
 
     # Snapshot check for every camera
-    for cam in cameras:
-        assert rgb_array_to_png_bytes(cam.read().rgb) == png_snapshot
+    for camera in cameras:
+        assert rgb_array_to_png_bytes(camera.read().rgb) == png_snapshot
