@@ -1576,8 +1576,8 @@ def test_set_sol_params(n_envs, batched, tol):
             obj.set_sol_params(sol_params)
             with pytest.raises(AssertionError):
                 assert_allclose(obj.sol_params, sol_params, tol=tol)
-            obj.set_sol_params(0.0)
-            assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+            obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+            assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
 
 
 @pytest.mark.slow  # ~160s
@@ -5031,7 +5031,7 @@ def test_pick_heterogenous_objects(show_viewer):
 
     # Test 3: All 4 objects were lifted
     post_lift_z = het_obj.get_pos()[:, 2]
-    lift_deltas = (post_lift_z - pre_lift_z).cpu().numpy()
+    lift_deltas = tensor_to_array(post_lift_z - pre_lift_z)
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
 
 
@@ -5399,13 +5399,11 @@ def test_hibernation_and_contact_islands(show_viewer):
 @pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
 def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     g = 9.81
-    dt = 0.01
+    dt = 0.002
     h0 = 1.0
     radius = 0.1
-    n_steps = 100
-    # FIXME: timeconst=0 with dampratio=0 causes NaN constraint forces on the field backend.
-    # Using a small non-zero timeconst (0.02) as workaround for numerically stable undamped contact.
-    undamped_sol_params = [0.02, 0.0, 0.9, 0.95, 0.001, 0.5, 2.0]
+    n_steps = 300
+    undamped_sol_params = [10.0, 0.001, 0.9, 0.95, 0.001, 0.5, 2.0]
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -5432,8 +5430,8 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     )
     scene.build()
 
-    # Undamped contact for sphere_a: set dampratio=0 on floor and sphere_a geoms
-    # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both must be zero
+    # Nearly undamped contact for sphere_a: small dampratio gives very stiff elastic spring with minimal damping.
+    # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both geoms must share the same params.
     plane.geoms[0].set_sol_params(undamped_sol_params)
     sphere_a.geoms[0].set_sol_params(undamped_sol_params)
 
@@ -5463,9 +5461,9 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
         assert_allclose(ke_b[i], expected_ke, tol=tol)
         assert_allclose(pe_b[i], expected_pe, tol=tol)
 
-    # Undamped sphere_a: energy approximately conserved after bouncing
+    # Undamped sphere_a: energy conserved after bouncing (drift < 1%)
     te_a_final = ke_a[-1] + pe_a[-1]
-    assert_allclose(te_a_final, te_initial, tol=5e-2)
+    assert_allclose(te_a_final, te_initial, tol=0.01)
 
     # Damped sphere_b: energy strictly decreased
     te_b_final = ke_b[-1] + pe_b[-1]
