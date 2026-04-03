@@ -372,13 +372,15 @@ def parse_urdf(morph, surface):
         if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
             j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
 
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
+        kp = gu.default_dofs_kp(j_info["n_dofs"])
+        kv = gu.default_dofs_kv(j_info["n_dofs"])
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:
-                j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
+                kp = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
             if joint.safety_controller.k_velocity is not None:
-                j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+                kv = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+        j_info["dofs_act_gain"] = kp
+        j_info["dofs_act_bias"] = np.column_stack([np.zeros_like(kp), -kp, -kv])
 
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
         if joint.limit is not None and joint.limit.effort is not None:

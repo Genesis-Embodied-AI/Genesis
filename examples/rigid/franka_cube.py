@@ -48,6 +48,8 @@ def main():
 
     motors_dof = np.arange(7)
     fingers_dof = np.arange(7, 9)
+    franka.set_dofs_kp([100.0, 100.0], fingers_dof)
+    franka.set_dofs_kv([10.0, 10.0], fingers_dof)
     qpos = np.array([-1.0124, 1.5559, 1.3662, -1.6878, -1.5799, 1.7757, 1.4602, 0.04, 0.04])
     franka.set_qpos(qpos)
     scene.step()

@@ -83,6 +83,7 @@ def main():
     end_effector = franka.get_link("hand")
 
     franka.set_dofs_kp([4500.0, 4500.0, 3500.0, 3500.0, 2000.0, 2000.0, 2000.0, 500.0, 500.0])
+    franka.set_dofs_kv([100.0, 100.0], fingers_dof)
 
     qpos = franka.inverse_kinematics(link=end_effector, pos=[0.65, 0.0, 0.4], quat=[0.0, 1.0, 0.0, 0.0])
     if not args.no_ipc or args.coup_type == "external_articulation":

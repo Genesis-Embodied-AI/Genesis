@@ -42,9 +42,9 @@ class EQUALITY_TYPE(IntEnum):
 
 
 class CTRL_MODE(IntEnum):
-    FORCE = 0
+    POSITION = 0
     VELOCITY = 1
-    POSITION = 2
+    FORCE = 2
 
 
 ######### User accessible constants do not capitalize #########
