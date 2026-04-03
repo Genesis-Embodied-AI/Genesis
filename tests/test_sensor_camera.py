@@ -571,21 +571,36 @@ def test_raytracer(n_envs, png_snapshot):
 def test_camera_lookat_entity(show_viewer, png_snapshot):
     scene = gs.Scene(show_viewer=show_viewer)
 
-    scene.add_entity(morph=gs.morphs.Plane())
-
-    sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(
-            radius=0.3,
-            pos=(0.0, 0.0, 1.0),
-        ),
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        surface=gs.surfaces.Rough(color=(0.4, 0.4, 0.4)),
     )
+
+    # Colored spheres at distinct locations so each camera sees different content
+    sphere_configs = [
+        dict(pos=(1.5, 0.0, 0.5), radius=0.5, color=(1.0, 0.2, 0.2)),  # red, +x
+        dict(pos=(-1.5, 0.0, 0.5), radius=0.5, color=(0.2, 1.0, 0.2)),  # green, -x
+        dict(pos=(0.0, 1.5, 0.5), radius=0.5, color=(0.2, 0.2, 1.0)),  # blue, +y
+        dict(pos=(0.0, -1.5, 0.5), radius=0.5, color=(1.0, 1.0, 0.2)),  # yellow, -y
+    ]
+    attach_sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(radius=sphere_configs[0]["radius"], pos=sphere_configs[0]["pos"]),
+        surface=gs.surfaces.Smooth(color=sphere_configs[0]["color"]),
+    )
+    for cfg in sphere_configs[1:]:
+        scene.add_entity(
+            morph=gs.morphs.Sphere(radius=cfg["radius"], pos=cfg["pos"]),
+            surface=gs.surfaces.Smooth(color=cfg["color"]),
+        )
 
     common_options = dict(res=(64, 64), up=(0.0, 0.0, 1.0))
     camera_configs = [
-        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 3.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
-        dict(pos=(0.3, 0.0, 0.3), lookat=(1.0, 0.0, 0.0), fov=70.0, entity_idx=sphere.idx, link_idx_local=0),
-        dict(pos=(3.0, 0.0, 2.0), lookat=(0.0, 0.0, 0.0), fov=60.0),
-        dict(pos=(3.0, 0.0, 2.0), lookat=(10.0, 0.0, 2.0), fov=60.0),
+        # Attached cameras: same offset position, different lookat targets
+        dict(pos=(0.0, 0.0, 1.0), lookat=(0.0, 1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
+        dict(pos=(0.0, 0.0, 1.0), lookat=(0.0, -1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
+        # Detached cameras: same position, different lookat targets
+        dict(pos=(0.0, 0.0, 2.5), lookat=(1.5, 0.0, 0.5), fov=60.0),
+        dict(pos=(0.0, 0.0, 2.5), lookat=(-1.5, 0.0, 0.5), fov=60.0),
     ]
     cameras = [scene.add_sensor(gs.sensors.RasterizerCameraOptions(**common_options, **cfg)) for cfg in camera_configs]
 
@@ -598,5 +613,6 @@ def test_camera_lookat_entity(show_viewer, png_snapshot):
     for i in range(0, len(images), 2):
         assert not np.array_equal(images[i], images[i + 1])
 
-    # Snapshot check for attached camera
-    assert rgb_array_to_png_bytes(cameras[0].read().rgb) == png_snapshot
+    # Snapshot check for every camera
+    for cam in cameras:
+        assert rgb_array_to_png_bytes(cam.read().rgb) == png_snapshot
