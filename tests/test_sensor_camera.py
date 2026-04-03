@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import trans_to_T
+from genesis.utils.geom import pos_lookat_up_to_T, trans_to_T
 
 from .conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
 from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
@@ -217,7 +217,7 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 
 
 @pytest.mark.required
-def test_rasterizer_attached_batched(show_viewer, png_snapshot):
+def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
     scene = gs.Scene(show_viewer=show_viewer)
 
     # Add a plane
@@ -236,22 +236,28 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
         ),
     )
 
-    options = gs.sensors.RasterizerCameraOptions(
-        res=(64, 64),
-        pos=(-0.4, 0.1, 2.0),
-        lookat=(-0.6, 0.4, 1.0),
-        fov=60.0,
-        entity_idx=sphere.idx,
-        draw_debug=show_viewer,
+    cam_pos = (-0.4, 0.1, 2.0)
+    cam_lookat = (-0.6, 0.4, 1.0)
+    cam_up = (0.0, 0.0, 1.0)
+    camera = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(64, 64),
+            pos=cam_pos,
+            lookat=cam_lookat,
+            up=cam_up,
+            fov=60.0,
+            entity_idx=sphere.idx,
+            draw_debug=show_viewer,
+        )
     )
-    camera = scene.add_sensor(options)
 
     scene.build(n_envs=2)
 
     # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
     camera._shared_metadata.context.shadow = False
 
-    sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+    sphere_positions = [[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]]
+    sphere.set_pos(sphere_positions)
     scene.step()
 
     data = camera.read()
@@ -264,6 +270,20 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
         if sys.platform == "darwin" and scene.visualizer.is_software:
             pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
         raise
+
+    # Verify camera pose matches the analytical formula
+    offset_T = pos_lookat_up_to_T(
+        np.array(cam_pos, dtype=np.float32),
+        np.array(cam_lookat, dtype=np.float32),
+        np.array(cam_up, dtype=np.float32),
+    )
+    sphere_pos = tensor_to_array(sphere.get_pos())  # (n_envs, 3)
+    link_T = trans_to_T(sphere_pos)  # (n_envs, 4, 4)
+    expected_T = link_T @ offset_T  # (n_envs, 4, 4)
+
+    camera_node = camera._shared_metadata.renderer._camera_nodes[camera._idx]
+    actual_pose = camera._shared_metadata.context._scene.get_pose(camera_node)
+    assert_allclose(actual_pose, expected_T, tol=tol)
 
     for i in range(scene.n_envs):
         assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
