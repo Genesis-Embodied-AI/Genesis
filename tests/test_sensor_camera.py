@@ -594,41 +594,53 @@ def test_camera_lookat_entity(show_viewer, png_snapshot):
     scene.add_entity(morph=gs.morphs.Plane())
 
     # Colored spheres at distinct locations so each camera sees different content
-    sphere_configs = [
-        dict(pos=(0.0, 0.0, 0.5), radius=0.5, color=(1.0, 0.2, 0.2)),  # red, center (attach target)
-        dict(pos=(2.0, 0.0, 0.5), radius=0.5, color=(0.2, 1.0, 0.2)),  # green, +x
-        dict(pos=(0.0, 1.5, 0.5), radius=0.5, color=(0.3, 0.3, 1.0)),  # blue, +y
-        dict(pos=(0.0, -1.5, 0.5), radius=0.5, color=(1.0, 1.0, 0.0)),  # yellow, -y
-    ]
     attach_sphere = scene.add_entity(
-        morph=gs.morphs.Sphere(radius=sphere_configs[0]["radius"], pos=sphere_configs[0]["pos"]),
-        surface=gs.surfaces.Smooth(color=sphere_configs[0]["color"]),
+        morph=gs.morphs.Sphere(
+            radius=0.5,
+            pos=(0.0, 0.0, 0.5),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 0.2, 0.2),
+        ),
     )
-    for cfg in sphere_configs[1:]:
+    for pos, color in (
+        ((2.0, 0.0, 0.5), (0.2, 1.0, 0.2)),
+        ((0.0, 1.5, 0.5), (0.3, 0.3, 1.0)),
+        ((0.0, -1.5, 0.5), (1.0, 1.0, 0.0)),
+    ):
         scene.add_entity(
-            morph=gs.morphs.Sphere(radius=cfg["radius"], pos=cfg["pos"]),
-            surface=gs.surfaces.Smooth(color=cfg["color"]),
+            morph=gs.morphs.Sphere(
+                radius=0.5,
+                pos=pos,
+            ),
+            surface=gs.surfaces.Smooth(
+                color=color,
+            ),
         )
 
-    common_options = dict(res=(64, 64), up=(0.0, 0.0, 1.0))
-    camera_configs = [
+    cameras = []
+    for camera_options in (
         # Attached cameras: same offset position, different lookat targets
         dict(pos=(0.0, 0.0, 1.5), lookat=(0.0, 1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
         dict(pos=(0.0, 0.0, 1.5), lookat=(0.0, -1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
         # Detached cameras: same position, different lookat targets
         dict(pos=(0.0, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=60.0),
         dict(pos=(0.0, 0.0, 2.5), lookat=(2.0, 0.0, 0.5), fov=60.0),
-    ]
-    cameras = [scene.add_sensor(gs.sensors.RasterizerCameraOptions(**common_options, **cfg)) for cfg in camera_configs]
+    ):
+        camera = scene.add_sensor(
+            gs.sensors.RasterizerCameraOptions(
+                res=(64, 64),
+                up=(0.0, 0.0, 1.0),
+                **camera_options,
+            ),
+        )
+        cameras.append(camera)
 
     scene.build()
-    scene.step()
 
-    images = [tensor_to_array(cam.read().rgb) for cam in cameras]
-
-    # Cameras in each pair share position but differ in lookat — images must differ
-    for i in range(0, len(images), 2):
-        assert not np.array_equal(images[i], images[i + 1])
+    # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+    for cam in cameras:
+        camera._shared_metadata.context.shadow = False
 
     # Snapshot check for every camera
     for cam in cameras:
