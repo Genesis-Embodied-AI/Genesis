@@ -5437,21 +5437,20 @@ def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     plane.geoms[0].set_sol_params(undamped_sol_params)
     sphere_a.geoms[0].set_sol_params(undamped_sol_params)
 
-    mass = sphere_a.get_links_inertial_mass().item()
-    te_initial = sphere_a.get_total_energy().item()
+    mass = sphere_a.get_links_inertial_mass()
+    te_initial = sphere_a.get_total_energy()
 
-    ke_a, pe_a, ke_b, pe_b, z_a, z_b = [], [], [], [], [], []
-    for _ in range(n_steps):
+    ke_a, pe_a, ke_b, pe_b = [], [], [], []
+    impact_step = -1
+    for i in range(n_steps):
         scene.step()
-        ke_a.append(sphere_a.get_kinetic_energy().item())
-        pe_a.append(sphere_a.get_potential_energy().item())
-        ke_b.append(sphere_b.get_kinetic_energy().item())
-        pe_b.append(sphere_b.get_potential_energy().item())
-        z_a.append(sphere_a.get_pos()[..., 2].item())
-        z_b.append(sphere_b.get_pos()[..., 2].item())
-
-    # First impact timestep (sphere center reaches ~radius above ground)
-    impact_step = next((i for i, z in enumerate(z_a) if z <= radius + dt), n_steps)
+        ke_a.append(sphere_a.get_kinetic_energy())
+        pe_a.append(sphere_a.get_potential_energy())
+        ke_b.append(sphere_b.get_kinetic_energy())
+        pe_b.append(sphere_b.get_potential_energy())
+        if impact_step < 0 and scene.rigid_solver.collider._collider_state.n_contacts.to_numpy().any():
+            impact_step = i
+    assert impact_step > 0
 
     # Free fall: verify analytical KE and PE (semi-implicit Euler)
     # After step n: v_n = n*g*dt, z_n = h0 - g*dt^2*n*(n+1)/2
