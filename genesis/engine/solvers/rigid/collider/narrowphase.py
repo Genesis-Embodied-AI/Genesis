@@ -1764,15 +1764,12 @@ def _func_narrowphase_multicontact_parallel(
                 my_group_has_work = gs.qd_int(0)
                 if idx < collider_state.narrowphase_work_queues.mpr_queue_size[0]:
                     my_group_has_work = gs.qd_int(1)
-                # Subgroup-wide OR reduction to decide break (covers subgroup sizes up to 32).
+                # Subgroup-wide OR butterfly reduction (covers subgroup sizes up to 32).
                 # All lanes must stay alive until no group has work, otherwise
                 # departed lanes would deadlock the remaining groups' shuffles.
                 any_subgroup_has_work = my_group_has_work
-                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 1))
-                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 2))
-                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 4))
-                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 8))
-                any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ 16))
+                for _s in qd.static(range(5)):
+                    any_subgroup_has_work = any_subgroup_has_work | qd.simt.subgroup.shuffle(any_subgroup_has_work, qd.u32(lane_id ^ (1 << _s)))
                 if any_subgroup_has_work == 0:
                     break
 
@@ -1896,42 +1893,18 @@ def _func_narrowphase_multicontact_parallel(
                 upgrade_i = upgrade_i | qd.simt.subgroup.shuffle(upgrade_i, qd.u32(lane_id ^ 2))
                 any_upgrade = upgrade_i != 0
 
-                # 4b: Collect all 4 probe results (all lanes execute shuffles)
-                p0_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 0))
-                p0_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 0))
-                p0_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 0))
-                p0_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 0))
-                p0_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 0))
-                p0_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 0))
-                p0_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 0))
-                p0_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 0))
-
-                p1_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 1))
-                p1_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 1))
-                p1_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 1))
-                p1_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 1))
-                p1_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 1))
-                p1_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 1))
-                p1_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 1))
-                p1_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 1))
-
-                p2_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 2))
-                p2_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 2))
-                p2_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 2))
-                p2_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 2))
-                p2_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 2))
-                p2_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 2))
-                p2_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 2))
-                p2_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 2))
-
-                p3_px = qd.simt.subgroup.shuffle(my_pos[0], qd.u32(group_base + 3))
-                p3_py = qd.simt.subgroup.shuffle(my_pos[1], qd.u32(group_base + 3))
-                p3_pz = qd.simt.subgroup.shuffle(my_pos[2], qd.u32(group_base + 3))
-                p3_nx = qd.simt.subgroup.shuffle(my_norm[0], qd.u32(group_base + 3))
-                p3_ny = qd.simt.subgroup.shuffle(my_norm[1], qd.u32(group_base + 3))
-                p3_nz = qd.simt.subgroup.shuffle(my_norm[2], qd.u32(group_base + 3))
-                p3_pen = qd.simt.subgroup.shuffle(my_pen, qd.u32(group_base + 3))
-                p3_val = qd.simt.subgroup.shuffle(my_valid, qd.u32(group_base + 3))
+                # 4b: Shuffle-gather all 4 probe results into matrices
+                probe_pos = qd.Matrix.zero(gs.qd_float, 4, 3)
+                probe_nrm = qd.Matrix.zero(gs.qd_float, 4, 3)
+                probe_pen = qd.Matrix.zero(gs.qd_float, 4, 1)
+                probe_val = qd.Matrix.zero(gs.qd_float, 4, 1)
+                for i_p in qd.static(range(4)):
+                    src = qd.u32(group_base + i_p)
+                    for k in qd.static(range(3)):
+                        probe_pos[i_p, k] = qd.simt.subgroup.shuffle(my_pos[k], src)
+                        probe_nrm[i_p, k] = qd.simt.subgroup.shuffle(my_norm[k], src)
+                    probe_pen[i_p, 0] = qd.simt.subgroup.shuffle(my_pen, src)
+                    probe_val[i_p, 0] = gs.qd_float(qd.simt.subgroup.shuffle(my_valid, src))
 
                 # ── Phase 5: dedup + write (lane 0 only, skip if no work) ──
                 if my_group_has_work != 0:
@@ -1956,47 +1929,6 @@ def _func_narrowphase_multicontact_parallel(
                                 lcp[0, k] = contact_pos_0[k]
                                 lcn[0, k] = normal_0[k]
                             lpen[0, 0] = penetration_0
-
-                            probe_pos = qd.Matrix.zero(gs.qd_float, 4, 3)
-                            probe_nrm = qd.Matrix.zero(gs.qd_float, 4, 3)
-                            probe_pen = qd.Matrix.zero(gs.qd_float, 4, 1)
-                            probe_val = qd.Matrix.zero(gs.qd_float, 4, 1)
-
-                            probe_pos[0, 0] = p0_px
-                            probe_pos[0, 1] = p0_py
-                            probe_pos[0, 2] = p0_pz
-                            probe_nrm[0, 0] = p0_nx
-                            probe_nrm[0, 1] = p0_ny
-                            probe_nrm[0, 2] = p0_nz
-                            probe_pen[0, 0] = p0_pen
-                            probe_val[0, 0] = gs.qd_float(p0_val)
-
-                            probe_pos[1, 0] = p1_px
-                            probe_pos[1, 1] = p1_py
-                            probe_pos[1, 2] = p1_pz
-                            probe_nrm[1, 0] = p1_nx
-                            probe_nrm[1, 1] = p1_ny
-                            probe_nrm[1, 2] = p1_nz
-                            probe_pen[1, 0] = p1_pen
-                            probe_val[1, 0] = gs.qd_float(p1_val)
-
-                            probe_pos[2, 0] = p2_px
-                            probe_pos[2, 1] = p2_py
-                            probe_pos[2, 2] = p2_pz
-                            probe_nrm[2, 0] = p2_nx
-                            probe_nrm[2, 1] = p2_ny
-                            probe_nrm[2, 2] = p2_nz
-                            probe_pen[2, 0] = p2_pen
-                            probe_val[2, 0] = gs.qd_float(p2_val)
-
-                            probe_pos[3, 0] = p3_px
-                            probe_pos[3, 1] = p3_py
-                            probe_pos[3, 2] = p3_pz
-                            probe_nrm[3, 0] = p3_nx
-                            probe_nrm[3, 1] = p3_ny
-                            probe_nrm[3, 2] = p3_nz
-                            probe_pen[3, 0] = p3_pen
-                            probe_val[3, 0] = gs.qd_float(p3_val)
 
                             for i_p in range(4):
                                 if probe_val[i_p, 0] > 0.5:
