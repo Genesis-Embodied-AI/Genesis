@@ -1,9 +1,10 @@
 import math
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Annotated, Mapping, Sequence
+from typing import TYPE_CHECKING, Annotated, Any, Mapping, Sequence, TypeVar, get_args
 
 import numpy as np
-from pydantic import BeforeValidator, Field, GetPydanticSchema
+from frozendict import frozendict
+from pydantic import BeforeValidator, Field, GetCoreSchemaHandler, GetPydanticSchema
 from pydantic_core import PydanticCustomError, core_schema
 
 
@@ -41,6 +42,31 @@ def _is_sequence(v):
     except TypeError:
         return False
     return True
+
+
+# Pydantic-compatible frozendict annotation.
+# Reference: https://github.com/pydantic/pydantic/discussions/8721
+class _FrozenDictValidator:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        args = get_args(source_type)
+        dict_type = dict[args[0], args[1]] if args else dict
+        frozendict_schema = core_schema.chain_schema(
+            [
+                handler.generate_schema(dict_type),
+                core_schema.no_info_plain_validator_function(lambda d: frozendict(d)),
+                core_schema.is_instance_schema(frozendict),
+            ]
+        )
+        return core_schema.json_or_python_schema(
+            json_schema=frozendict_schema,
+            python_schema=frozendict_schema,
+            serialization=core_schema.plain_serializer_function_ser_schema(dict),
+        )
+
+
+_K = TypeVar("_K")
+_V = TypeVar("_V")
 
 
 # type aliases
@@ -83,6 +109,7 @@ if TYPE_CHECKING:
     StrArrayType = Sequence[str]
     NDArrayType = np.ndarray
     PathType = str | PurePath
+    FrozenDictType = frozendict[_K, _V]
 else:
     ValidFloat = Annotated[float, Field(allow_inf_nan=False, strict=False)]
     NonNegativeFloat = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=False)]
@@ -165,3 +192,4 @@ else:
         np.ndarray, GetPydanticSchema(lambda tp, handler: core_schema.no_info_plain_validator_function(lambda v: v))
     ]
     PathType = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, PurePath) else v)]
+    FrozenDictType = Annotated[frozendict[_K, _V], _FrozenDictValidator]

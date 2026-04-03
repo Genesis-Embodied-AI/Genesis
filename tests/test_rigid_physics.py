@@ -4566,6 +4566,125 @@ def test_urdf_align(show_viewer, tol):
     assert (-0.002 < fork.get_AABB()[0, 2] < 0.0).all()
 
 
+@pytest.fixture
+def xacro_robot(tmp_path):
+    """Generate a XACRO file with a two-link chain using macros, properties, overridable args, and a mesh geometry."""
+    XACRO_NS = "http://www.ros.org/wiki/xacro"
+    ET.register_namespace("xacro", XACRO_NS)
+
+    # Symlink a mesh file into the tmp directory so the xacro can reference it with a relative path
+    mesh_src = os.path.join(get_assets_dir(), "meshes", "sphere.obj")
+    mesh_dir = tmp_path / "meshes"
+    mesh_dir.mkdir()
+    (mesh_dir / "sphere.obj").symlink_to(mesh_src)
+
+    robot = ET.Element("robot", name="xacro_chain")
+
+    # Overridable args with defaults
+    ET.SubElement(robot, f"{{{XACRO_NS}}}arg", name="link_mass", default="1.0")
+    ET.SubElement(robot, f"{{{XACRO_NS}}}arg", name="link_length", default="0.4")
+
+    # Properties derived from args
+    ET.SubElement(robot, f"{{{XACRO_NS}}}property", name="mass", value="$(arg link_mass)")
+    ET.SubElement(robot, f"{{{XACRO_NS}}}property", name="length", value="$(arg link_length)")
+    ET.SubElement(robot, f"{{{XACRO_NS}}}property", name="radius", value="0.05")
+
+    # Macro for a cylindrical link with inertial
+    macro = ET.SubElement(robot, f"{{{XACRO_NS}}}macro", name="cyl_link", params="name")
+    link = ET.SubElement(macro, "link", name="${name}")
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "mass", value="${mass}")
+    ET.SubElement(inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.001")
+    visual = ET.SubElement(link, "visual")
+    ET.SubElement(ET.SubElement(visual, "geometry"), "cylinder", radius="${radius}", length="${length}")
+    collision = ET.SubElement(link, "collision")
+    ET.SubElement(ET.SubElement(collision, "geometry"), "cylinder", radius="${radius}", length="${length}")
+
+    # Macro for a mesh link (uses relative path)
+    mesh_macro = ET.SubElement(robot, f"{{{XACRO_NS}}}macro", name="mesh_link", params="name")
+    mesh_link = ET.SubElement(mesh_macro, "link", name="${name}")
+    mesh_inertial = ET.SubElement(mesh_link, "inertial")
+    ET.SubElement(mesh_inertial, "mass", value="${mass}")
+    ET.SubElement(mesh_inertial, "inertia", ixx="0.01", ixy="0", ixz="0", iyy="0.01", iyz="0", izz="0.001")
+    for tag in ("visual", "collision"):
+        group = ET.SubElement(mesh_link, tag)
+        ET.SubElement(ET.SubElement(group, "geometry"), "mesh", filename="meshes/sphere.obj", scale="0.05 0.05 0.05")
+
+    # Instantiate: two cylinder links + one mesh link
+    ET.SubElement(robot, f"{{{XACRO_NS}}}cyl_link", name="base_link")
+    ET.SubElement(robot, f"{{{XACRO_NS}}}cyl_link", name="child_link")
+    ET.SubElement(robot, f"{{{XACRO_NS}}}mesh_link", name="mesh_link")
+
+    # Revolute joint: base_link -> child_link
+    joint = ET.SubElement(robot, "joint", name="joint_0", type="revolute")
+    ET.SubElement(joint, "parent", link="base_link")
+    ET.SubElement(joint, "child", link="child_link")
+    ET.SubElement(joint, "origin", xyz="0 0 ${length}")
+    ET.SubElement(joint, "axis", xyz="0 1 0")
+    ET.SubElement(joint, "limit", lower="-1.57", upper="1.57", effort="100", velocity="1")
+
+    # Fixed joint: child_link -> mesh_link
+    joint2 = ET.SubElement(robot, "joint", name="joint_1", type="fixed")
+    ET.SubElement(joint2, "parent", link="child_link")
+    ET.SubElement(joint2, "child", link="mesh_link")
+    ET.SubElement(joint2, "origin", xyz="0 0 ${length}")
+
+    file_path = str(tmp_path / "two_link.urdf.xacro")
+    ET.ElementTree(robot).write(file_path, encoding="utf-8", xml_declaration=True)
+    return file_path
+
+
+@pytest.mark.required
+def test_xacro_loading(xacro_robot, show_viewer, tol):
+    """Test that .urdf.xacro files are preprocessed and loaded with correct structure and properties."""
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    # Load with default args (mass=1.0, length=0.4)
+    morph = gs.morphs.URDF(
+        file=xacro_robot,
+        fixed=True,
+        merge_fixed_links=False,
+    )
+
+    # After xacro processing, morph.file is a urdfpy.URDF with absolute mesh paths
+    assert isinstance(morph.file, urdfpy.URDF)
+    for link in morph.file.links:
+        for geom_prop in (*link.collisions, *link.visuals):
+            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
+                assert os.path.isabs(geom_prop.geometry.geometry.filename)
+
+    entity = scene.add_entity(morph)
+
+    # Load again with overridden mass via xacro_args
+    heavy = scene.add_entity(
+        gs.morphs.URDF(
+            file=xacro_robot,
+            fixed=True,
+            merge_fixed_links=False,
+            xacro_args={"link_mass": "5.0"},
+        ),
+    )
+    scene.build()
+
+    # Entity name from <robot name="xacro_chain">
+    assert entity.name.startswith("xacro_chain_")
+
+    # Three links (base_link + child_link + mesh_link), one revolute DOF
+    assert entity.n_links == 3
+    assert [l.name for l in entity.links] == ["base_link", "child_link", "mesh_link"]
+    assert entity.n_dofs == 1
+    assert entity.links[1].joints[0].type == gs.JOINT_TYPE.REVOLUTE
+
+    # Geom types: cylinder on first two links, mesh on third
+    assert entity.links[0].geoms[0].type == gs.GEOM_TYPE.CYLINDER
+    assert entity.links[1].geoms[0].type == gs.GEOM_TYPE.CYLINDER
+    assert entity.links[2].geoms[0].type == gs.GEOM_TYPE.MESH
+
+    # Mass check: 3 links at 1.0 each (default) vs 5.0 each (overridden)
+    assert_allclose(entity.get_mass(), 3.0, tol=tol)
+    assert_allclose(heavy.get_mass(), 15.0, tol=tol)
+
+
 @pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize("batch_links_info", [False, True])
