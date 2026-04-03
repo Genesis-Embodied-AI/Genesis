@@ -1580,8 +1580,8 @@ def test_set_sol_params(n_envs, batched, tol):
             obj.set_sol_params(sol_params)
             with pytest.raises(AssertionError):
                 assert_allclose(obj.sol_params, sol_params, tol=tol)
-            obj.set_sol_params(0.0)
-            assert_allclose(obj.sol_params, [2.0e-02, 0.0, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
+            obj.set_sol_params([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+            assert_allclose(obj.sol_params, [2.0e-02, 0.5, 1e-4, 1e-4, 0.0, 1e-4, 1.0], tol=tol)
 
 
 @pytest.mark.slow  # ~160s
@@ -5188,7 +5188,7 @@ def test_pick_heterogenous_objects(show_viewer):
 
     # Test 3: All 4 objects were lifted
     post_lift_z = het_obj.get_pos()[:, 2]
-    lift_deltas = (post_lift_z - pre_lift_z).cpu().numpy()
+    lift_deltas = tensor_to_array(post_lift_z - pre_lift_z)
     assert np.all(lift_deltas > 0.05), f"All objects should be lifted (deltas={lift_deltas:.3f})"
 
 
@@ -5550,3 +5550,78 @@ def test_hibernation_and_contact_islands(show_viewer):
 
     # Stacked boxes should form 1 contact island
     assert solver.constraint_solver.contact_island.n_islands[0] == 1
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
+def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
+    g = 9.81
+    dt = 0.002
+    h0 = 1.0
+    radius = 0.1
+    n_steps = 300
+    undamped_sol_params = [10.0, 0.001, 0.9, 0.95, 0.001, 0.5, 2.0]
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=dt,
+            gravity=(0, 0, -g),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            integrator=integrator,
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    sphere_a = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=radius,
+            pos=(0, 0, h0),
+        ),
+    )
+    sphere_b = scene.add_entity(
+        gs.morphs.Sphere(
+            radius=radius,
+            pos=(0.5, 0, h0),
+        ),
+    )
+    scene.build()
+
+    # Nearly undamped contact for sphere_a: small dampratio gives very stiff elastic spring with minimal damping.
+    # Contact sol_params are averaged: 0.5*(geom_a + geom_b), so both geoms must share the same params.
+    plane.geoms[0].set_sol_params(undamped_sol_params)
+    sphere_a.geoms[0].set_sol_params(undamped_sol_params)
+
+    mass = sphere_a.get_links_inertial_mass()
+    te_initial = sphere_a.get_total_energy()
+
+    ke_a, pe_a, ke_b, pe_b = [], [], [], []
+    impact_step = -1
+    for i in range(n_steps):
+        scene.step()
+        ke_a.append(sphere_a.get_kinetic_energy())
+        pe_a.append(sphere_a.get_potential_energy())
+        ke_b.append(sphere_b.get_kinetic_energy())
+        pe_b.append(sphere_b.get_potential_energy())
+        if impact_step < 0 and scene.rigid_solver.collider._collider_state.n_contacts.to_numpy().any():
+            impact_step = i
+    assert impact_step > 0
+
+    # Free fall: verify analytical KE and PE (semi-implicit Euler)
+    # After step n: v_n = n*g*dt, z_n = h0 - g*dt^2*n*(n+1)/2
+    for i in range(impact_step):
+        n = i + 1
+        expected_ke = 0.5 * mass * (n * g * dt) ** 2
+        expected_pe = mass * g * (h0 - g * dt**2 * n * (n + 1) / 2)
+        assert_allclose(ke_a[i], expected_ke, tol=tol)
+        assert_allclose(pe_a[i], expected_pe, tol=tol)
+        assert_allclose(ke_b[i], expected_ke, tol=tol)
+        assert_allclose(pe_b[i], expected_pe, tol=tol)
+
+    # Undamped sphere_a: energy conserved after bouncing (drift < 1%)
+    te_a_final = ke_a[-1] + pe_a[-1]
+    assert_allclose(te_a_final, te_initial, tol=0.01)
+
+    # Damped sphere_b: energy strictly decreased
+    te_b_final = ke_b[-1] + pe_b[-1]
+    assert te_b_final < te_initial

@@ -3739,6 +3739,88 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose)
 
     @gs.assert_built
+    def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
+
+        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
+        The mass matrix is recomputed to include motor armature on the diagonal.
+
+        Note
+        ----
+        When the ``approximate_implicitfast`` integrator is used, this method forces recomputation of the
+        mass matrix to exclude implicit damping terms added during integration. Other integrators do not
+        require this recomputation.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        kinetic_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        if self._solver._static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast:
+            from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
+
+            kernel_compute_mass_matrix(
+                links_state=self._solver.links_state,
+                links_info=self._solver.links_info,
+                dofs_state=self._solver.dofs_state,
+                dofs_info=self._solver.dofs_info,
+                entities_info=self._solver.entities_info,
+                rigid_global_info=self._solver._rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                decompose=False,
+            )
+        mass_mat = self.get_mass_mat(envs_idx=envs_idx)
+        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
+        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
+        return 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
+
+    @gs.assert_built
+    def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total gravitational potential energy of the entity in Joules [J].
+
+        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the
+        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        potential_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        gravity = self._solver.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
+        links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
+        # Link masses are static properties (not batched per environment),
+        # so always fetch without envs_idx to avoid indexing conflicts.
+        links_mass = self.get_links_inertial_mass()  # (n_links,)
+
+        # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
+        # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
+        g_dot_p = torch.sum(gravity.unsqueeze(-2) * links_pos, dim=-1)  # (..., n_links)
+        return -torch.sum(links_mass * g_dot_p, dim=-1)
+
+    @gs.assert_built
+    def get_total_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total mechanical energy of the entity in Joules [J] (kinetic + potential).
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        total_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
+
+    @gs.assert_built
     def detect_collision(self, env_idx=0):
         """
         Detects collision for the entity. This only supports a single environment.
