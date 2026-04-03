@@ -203,7 +203,11 @@ def _sanitize_sol_params(
         )
     timeconst[timeconst < gs.EPS] = default_timeconst
     timeconst[:] = timeconst.clip(min_timeconst)
-    dampratio[:] = dampratio.clip(0.0)
+    if (dampratio < gs.EPS).any():
+        gs.raise_exception(
+            "Constraint solver `dampratio` must be strictly positive. Despite its name, it controls spring stiffness, "
+            "not damping. See `genesis.utils.geom.default_solver_params` for details."
+        )
     dmin[:] = dmin.clip(IMP_MIN, IMP_MAX)
     dmax[:] = dmax.clip(IMP_MIN, IMP_MAX)
     mid[:] = mid.clip(IMP_MIN, IMP_MAX)
@@ -1920,6 +1924,9 @@ class RigidSolver(KinematicSolver):
     def set_sol_params(self, sol_params, geoms_idx=None, envs_idx=None, *, joints_idx=None, eqs_idx=None):
         """
         Set constraint solver parameters.
+
+        See :func:`genesis.utils.geom.default_solver_params` for the parameter semantics, in particular the
+        relationship between ``dampratio``, spring stiffness, and velocity damping.
 
         Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
 
