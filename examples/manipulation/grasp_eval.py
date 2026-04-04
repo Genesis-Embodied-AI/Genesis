@@ -78,10 +78,7 @@ def main():
     )
     args = parser.parse_args()
 
-    # Set PyTorch default dtype to float32 for better performance
-    torch.set_default_dtype(torch.float32)
-
-    gs.init()
+    gs.init(backend=gs.cpu)
 
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
 
@@ -89,6 +86,7 @@ def main():
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
 
     env_cfg["num_envs"] = 10
+    env_cfg["box_fixed"] = False
     env_cfg["visualize_camera"] = args.record
     if args.record:
         env_cfg["record_video"] = {

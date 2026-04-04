@@ -86,6 +86,7 @@ class GraspEnv:
         self.object = self.scene.add_entity(
             gs.morphs.Box(
                 size=env_cfg["box_size"],
+                fixed=env_cfg.get("box_fixed", True),
                 batch_fixed_verts=True,
             ),
             surface=gs.surfaces.Rough(
@@ -203,15 +204,17 @@ class GraspEnv:
         goal_yaw = transform_quat_by_quat(q_yaw, q_downward)
         goal_pose = torch.cat([random_pos, goal_yaw], dim=-1)
 
-        # Reset object (skip_forward=False triggers FK once for both robot and object)
+        # Reset object — set_pos/set_quat with skip_forward, then FK runs once for everything
         if envs_idx is None:
             self.goal_pose.copy_(goal_pose)
-            self.object.set_qpos(goal_pose, zero_velocity=True, skip_forward=False)
+            self.object.set_pos(random_pos, skip_forward=True)
+            self.object.set_quat(goal_yaw, skip_forward=False)
             self.episode_length_buf.zero_()
             self.reset_buf.fill_(True)
         else:
             torch.where(envs_idx[:, None], goal_pose, self.goal_pose, out=self.goal_pose)
-            self.object.set_qpos(goal_pose, envs_idx=envs_idx, zero_velocity=True, skip_forward=False)
+            self.object.set_pos(random_pos, envs_idx=envs_idx, skip_forward=True)
+            self.object.set_quat(goal_yaw, envs_idx=envs_idx, skip_forward=False)
             self.episode_length_buf.masked_fill_(envs_idx, 0)
             self.reset_buf.masked_fill_(envs_idx, True)
 

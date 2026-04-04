@@ -1642,141 +1642,189 @@ class RigidSolver(KinematicSolver):
     def set_links_pos(self, pos, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_pos' instead.")
 
-    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False):
+    def set_base_links_pos(self, pos, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        pos, links_idx, envs_idx = self._sanitize_io_variables(
-            pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
-        )
-        if self.n_envs == 0:
-            pos = pos[None]
 
-        # FIXME: This check is too expensive
-        # if not torch.isin(links_idx, self._base_links_idx).all():
-        #     gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
-
-        # Raise exception for fixed links with at least one geom and non-batched fixed vertices, except if setting same
-        # location for all envs at once
-        set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
-        has_fixed_verts = any(
-            link.is_fixed and link.geoms and not link.entity._batch_fixed_verts
-            for link in (self.links[i_l] for i_l in links_idx)
-        )
-        if has_fixed_verts and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
-            gs.raise_exception(
-                "Specifying env-specific pos for fixed links with at least one geometry requires setting morph "
-                "option 'batch_fixed_verts=True'."
+        # Zero-copy fast path: single base link, bool mask, non-relative
+        if (
+            gs.use_zerocopy
+            and not relative
+            and isinstance(links_idx, int)
+            and isinstance(envs_idx, torch.Tensor)
+            and envs_idx.dtype == torch.bool
+        ):
+            link = self.links[links_idx]
+            if link.is_fixed:
+                data = qd_to_torch(self.links_state.pos, transpose=True, copy=False)
+                target = data[:, links_idx]
+            else:
+                data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+                target = data[:, link.q_start : link.q_start + 3]
+            pos = broadcast_tensor(pos, gs.tc_float, target.shape)
+            torch.where(envs_idx[:, None], pos, target, out=target)
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+        else:
+            pos, links_idx, envs_idx = self._sanitize_io_variables(
+                pos, links_idx, self.n_links, "links_idx", envs_idx, (3,), skip_allocation=True
             )
+            if self.n_envs == 0:
+                pos = pos[None]
 
-        # Wake up hibernated entities before setting position
-        if self._options.use_hibernation:
-            kernel_wake_up_entities_by_links(
+            # Raise exception for fixed links with at least one geom and non-batched fixed vertices, except if setting
+            # same location for all envs at once
+            set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
+            has_fixed_verts = any(
+                link.is_fixed and link.geoms and not link.entity._batch_fixed_verts
+                for link in (self.links[i_l] for i_l in links_idx)
+            )
+            if has_fixed_verts and not (set_all_envs and (torch.diff(pos, dim=0).abs() < gs.EPS).all()):
+                gs.raise_exception(
+                    "Specifying env-specific pos for fixed links with at least one geometry requires setting morph "
+                    "option 'batch_fixed_verts=True'."
+                )
+
+            # Wake up hibernated entities before setting position (fixed links don't need wake-up)
+            if self._options.use_hibernation and not all(self.links[i_l].is_fixed for i_l in links_idx):
+                kernel_wake_up_entities_by_links(
+                    links_idx,
+                    envs_idx,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    entities_state=self.entities_state,
+                    entities_info=self.entities_info,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+
+            kernel_set_links_pos(
+                relative,
+                pos,
                 links_idx,
                 envs_idx,
                 links_info=self.links_info,
                 links_state=self.links_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                dofs_state=self.dofs_state,
-                geoms_state=self.geoms_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-        kernel_set_links_pos(
-            relative,
-            pos,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-
-        kernel_forward_kinematics_links_geoms(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        if not skip_forward:
+            if not isinstance(envs_idx, torch.Tensor):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
+                envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
 
-    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False):
+    def set_base_links_quat(self, quat, links_idx=None, envs_idx=None, *, relative=False, skip_forward=False):
         if links_idx is None:
             links_idx = self._base_links_idx
-        quat, links_idx, envs_idx = self._sanitize_io_variables(
-            quat, links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
-        )
-        if self.n_envs == 0:
-            quat = quat[None]
 
-        # FIXME: This check is too expensive
-        # if not torch.isin(links_idx, self._base_links_idx).all():
-        #     gs.raise_exception("`links_idx` contains at least one link that is not a base link.")
+        # Zero-copy fast path: single base link, bool mask, non-relative
+        if (
+            gs.use_zerocopy
+            and not relative
+            and isinstance(links_idx, int)
+            and isinstance(envs_idx, torch.Tensor)
+            and envs_idx.dtype == torch.bool
+        ):
+            link = self.links[links_idx]
+            if link.is_fixed:
+                data = qd_to_torch(self.links_state.quat, transpose=True, copy=False)
+                target = data[:, links_idx]
+            else:
+                data = qd_to_torch(self._rigid_global_info.qpos, transpose=True, copy=False)
+                target = data[:, link.q_start + 3 : link.q_start + 7]
+            quat = broadcast_tensor(quat, gs.tc_float, target.shape)
+            torch.where(envs_idx[:, None], quat, target, out=target)
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+        else:
+            quat, links_idx, envs_idx = self._sanitize_io_variables(
+                quat, links_idx, self.n_links, "links_idx", envs_idx, (4,), skip_allocation=True
+            )
+            if self.n_envs == 0:
+                quat = quat[None]
 
-        set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
-        has_fixed_verts = any(
-            link.is_fixed and link.geoms and not link.entity._batch_fixed_verts
-            for link in (self.links[i_l] for i_l in links_idx)
-        )
-        if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
-            gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
+            set_all_envs = torch.equal(torch.sort(envs_idx).values, self._scene._envs_idx)
+            has_fixed_verts = any(
+                link.is_fixed and link.geoms and not link.entity._batch_fixed_verts
+                for link in (self.links[i_l] for i_l in links_idx)
+            )
+            if has_fixed_verts and not (set_all_envs and (torch.diff(quat, dim=0).abs() < gs.EPS).all()):
+                gs.raise_exception("Impossible to set env-specific quat for fixed links with at least one geometry.")
 
-        # Wake up hibernated entities before setting quaternion
-        if self._options.use_hibernation:
-            kernel_wake_up_entities_by_links(
+            # Wake up hibernated entities before setting quaternion (fixed links don't need wake-up)
+            if self._options.use_hibernation and not all(self.links[i_l].is_fixed for i_l in links_idx):
+                kernel_wake_up_entities_by_links(
+                    links_idx,
+                    envs_idx,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    entities_state=self.entities_state,
+                    entities_info=self.entities_info,
+                    dofs_state=self.dofs_state,
+                    geoms_state=self.geoms_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                )
+
+            kernel_set_links_quat(
+                relative,
+                quat,
                 links_idx,
                 envs_idx,
                 links_info=self.links_info,
                 links_state=self.links_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                dofs_state=self.dofs_state,
-                geoms_state=self.geoms_state,
                 rigid_global_info=self._rigid_global_info,
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-        kernel_set_links_quat(
-            relative,
-            quat,
-            links_idx,
-            envs_idx,
-            links_info=self.links_info,
-            links_state=self.links_state,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-
-        kernel_forward_kinematics_links_geoms(
-            envs_idx,
-            links_state=self.links_state,
-            links_info=self.links_info,
-            joints_state=self.joints_state,
-            joints_info=self.joints_info,
-            dofs_state=self.dofs_state,
-            dofs_info=self.dofs_info,
-            geoms_state=self.geoms_state,
-            geoms_info=self.geoms_info,
-            entities_info=self.entities_info,
-            rigid_global_info=self._rigid_global_info,
-            static_rigid_sim_config=self._static_rigid_sim_config,
-        )
-        self._is_forward_pos_updated = True
-        self._is_forward_vel_updated = True
+        if not skip_forward:
+            if not isinstance(envs_idx, torch.Tensor):
+                envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+            if envs_idx.dtype == torch.bool:
+                fn = kernel_masked_forward_kinematics_links_geoms
+            else:
+                fn = kernel_forward_kinematics_links_geoms
+            fn(
+                envs_idx,
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+            self._is_forward_pos_updated = True
+            self._is_forward_vel_updated = True
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
