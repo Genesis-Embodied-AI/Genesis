@@ -1,10 +1,11 @@
 from collections import defaultdict
-import subprocess
 import time
 import os
 import argparse
 import psutil
 import re
+
+import pynvml
 
 
 CHECK_INTERVAL = 2.0
@@ -47,26 +48,23 @@ def parse_test_name(test_name: str) -> dict[str, str]:
     return filtered_params
 
 
+try:
+    pynvml.nvmlInit()
+    _device_count = pynvml.nvmlDeviceGetCount()
+    _device_handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(_device_count)]
+except pynvml.NVMLError as exc:
+    print(f"WARNING: NVML initialization failed ({exc}), GPU memory monitoring disabled", flush=True)
+    _device_count = 0
+    _device_handles = []
+
+
 def get_cuda_usage() -> dict[int, int]:
-    output = subprocess.check_output(["nvidia-smi"]).decode("utf-8")
-    section = 0
-    subsec = 0
-    res = {}
-    for line in output.split("\n"):
-        if line.startswith("|============"):
-            section += 1
-            subsec = 0
-            continue
-        if line.startswith("+-------"):
-            subsec += 1
-            continue
-        if section == 2 and subsec == 0:
-            if "No running processes" in line:
-                continue
-            split_line = line.split()
-            pid = int(split_line[4])
-            mem = int(split_line[-2].split("MiB")[0])
-            res[pid] = mem
+    """Return {pid: memory_MiB} for all processes using any GPU, via NVML (no subprocess spawn)."""
+    res: dict[int, int] = {}
+    for handle in _device_handles:
+        for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+            mem_mb = (proc.usedGpuMemory or 0) // (1024 * 1024)
+            res[proc.pid] = res.get(proc.pid, 0) + mem_mb
     return res
 
 

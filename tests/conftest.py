@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import setproctitle
 import psutil
+import pynvml
 import pyglet
 import pytest
 from _pytest.mark import Expression, MarkMatcher
@@ -109,9 +110,10 @@ SKIP_NO_OMNIVERSE_KIT = _skip_reason("omniverse-kit support not available")
 def is_mem_monitoring_supported():
     try:
         assert sys.platform.startswith("linux")
-        subprocess.check_output(["nvidia-smi"], stderr=subprocess.STDOUT, timeout=10)
+        pynvml.nvmlInit()
+        pynvml.nvmlShutdown()
         return True, None
-    except Exception as exc:  # platform or nvidia-smi unavailable
+    except (AssertionError, pynvml.NVMLError) as exc:
         return False, exc
 
 
@@ -307,15 +309,14 @@ def pytest_xdist_auto_num_workers(config):
         # Cannot rely on 'torch' because this would force loading devices before configuring CUDA device visibility
         devices_vram_memory = None
         try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True,
-                text=True,
+            pynvml.nvmlInit()
+            _n = pynvml.nvmlDeviceGetCount()
+            devices_vram_memory = tuple(
+                pynvml.nvmlDeviceGetMemoryInfo(pynvml.nvmlDeviceGetHandleByIndex(i)).total // (1024 * 1024)
+                for i in range(_n)
             )
-            devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
-        except (FileNotFoundError, subprocess.CalledProcessError):
+            pynvml.nvmlShutdown()
+        except pynvml.NVMLError:
             try:
                 result = subprocess.run(
                     ["rocm-smi", "--showmeminfo", "vram", "-d", "0-255"],
