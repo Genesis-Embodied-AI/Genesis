@@ -210,6 +210,7 @@ class ProximitySensor(
         )
         slice_start = self._shared_metadata.sensor_probe_start[self._idx]
         self._nearest_points_slice = slice(slice_start, slice_start + self._n_probes)
+        self._shared_metadata.update_ground_truth_only = False
 
     @classmethod
     def reset(cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):

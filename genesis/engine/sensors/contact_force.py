@@ -102,6 +102,7 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
         self._shared_metadata.expanded_links_idx = concat_with_tensor(
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
+        self._shared_metadata.update_ground_truth_only = False
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
@@ -196,6 +197,7 @@ class ContactForceSensor(
         self._shared_metadata.max_force = concat_with_tensor(
             self._shared_metadata.max_force, self._options.max_force, expand=(1, 3)
         )
+        self._shared_metadata.update_ground_truth_only = False
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (3,)

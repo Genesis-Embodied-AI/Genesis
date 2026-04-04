@@ -675,6 +675,7 @@ class TemperatureGridSensor(
         self._shared_metadata.contact_area_scratch = torch.empty(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
+        self._shared_metadata.update_ground_truth_only = False
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._options.grid_size,)

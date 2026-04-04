@@ -842,6 +842,7 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
         self._shared_metadata.probe_radius = concat_with_tensor(
             self._shared_metadata.probe_radius, probe_radius_tensor, expand=(self._n_probes,)
         )
+        self._shared_metadata.update_ground_truth_only = False
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:

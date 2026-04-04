@@ -236,6 +236,10 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
         super().__init__(options, idx, manager)
         self._stale: bool = True
 
+    def build(self):
+        super().build()
+        self._shared_metadata.update_ground_truth_only = True
+
     # ========================== Cache Integration (shared) ==========================
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
