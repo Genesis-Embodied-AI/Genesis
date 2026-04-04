@@ -1995,7 +1995,7 @@ def func_cholesky_factor_direct_tiled(
                 for t in range(_CHOL_TILE):
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
-                        v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
+                        v = constraint_state.nt_L[i_b, k0 + tid, j0 + t]
                     r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
                         _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
                                           r8, r9, r10, r11, r12, r13, r14, r15)
@@ -2038,9 +2038,9 @@ def func_cholesky_factor_direct_tiled(
                         v_own = gs.qd_float(0.0)
                         v_diag = gs.qd_float(0.0)
                         if i0 + tid < n_dofs:
-                            v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
+                            v_own = constraint_state.nt_L[i_b, i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
-                            v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
+                            v_diag = constraint_state.nt_L[i_b, k0 + tid, j0 + t]
                         q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
                             _tile_gemm_sub_offdiag_16(v_own, v_diag,
                                                       q0, q1, q2, q3, q4, q5, q6, q7,
@@ -2055,41 +2055,41 @@ def func_cholesky_factor_direct_tiled(
 
                 # Store off-diagonal result (skip out-of-bounds)
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 0] = q0
-                    if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 1] = q1
-                    if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 2] = q2
-                    if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 3] = q3
-                    if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 4] = q4
-                    if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 5] = q5
-                    if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 6] = q6
-                    if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 7] = q7
-                    if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 8] = q8
-                    if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 9] = q9
-                    if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 10] = q10
-                    if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 11] = q11
-                    if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 12] = q12
-                    if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 13] = q13
-                    if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 14] = q14
-                    if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 15] = q15
+                    if k0 + 0 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 0] = q0
+                    if k0 + 1 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 1] = q1
+                    if k0 + 2 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 2] = q2
+                    if k0 + 3 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 3] = q3
+                    if k0 + 4 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 4] = q4
+                    if k0 + 5 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 5] = q5
+                    if k0 + 6 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 6] = q6
+                    if k0 + 7 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 7] = q7
+                    if k0 + 8 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 8] = q8
+                    if k0 + 9 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 9] = q9
+                    if k0 + 10 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 10] = q10
+                    if k0 + 11 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 11] = q11
+                    if k0 + 12 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 12] = q12
+                    if k0 + 13 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 13] = q13
+                    if k0 + 14 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 14] = q14
+                    if k0 + 15 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 15] = q15
 
             # Store diagonal result (skip out-of-bounds)
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 0] = r0
-                if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 1] = r1
-                if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 2] = r2
-                if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 3] = r3
-                if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 4] = r4
-                if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 5] = r5
-                if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 6] = r6
-                if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 7] = r7
-                if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 8] = r8
-                if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 9] = r9
-                if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 10] = r10
-                if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 11] = r11
-                if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 12] = r12
-                if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 13] = r13
-                if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 14] = r14
-                if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 15] = r15
+                if k0 + 0 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 0] = r0
+                if k0 + 1 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 1] = r1
+                if k0 + 2 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 2] = r2
+                if k0 + 3 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 3] = r3
+                if k0 + 4 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 4] = r4
+                if k0 + 5 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 5] = r5
+                if k0 + 6 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 6] = r6
+                if k0 + 7 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 7] = r7
+                if k0 + 8 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 8] = r8
+                if k0 + 9 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 9] = r9
+                if k0 + 10 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 10] = r10
+                if k0 + 11 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 11] = r11
+                if k0 + 12 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 12] = r12
+                if k0 + 13 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 13] = r13
+                if k0 + 14 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 14] = r14
+                if k0 + 15 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 15] = r15
 
 
 @qd.func
