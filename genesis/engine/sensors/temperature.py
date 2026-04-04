@@ -791,7 +791,6 @@ class TemperatureGridSensor(
         buffered_data: "TensorRingBuffer",
     ):
         dt = shared_metadata.solver._sim.dt
-        buffered_data.set(shared_ground_truth_cache)
         _apply_T_measured_filter(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
