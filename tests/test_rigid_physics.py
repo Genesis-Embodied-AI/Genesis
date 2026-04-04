@@ -3734,6 +3734,7 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
 
         scene.step()
+        assert not scene.rigid_solver.get_error_envs_mask().any()
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
         nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
@@ -3741,6 +3742,50 @@ def test_cholesky_tiling(monkeypatch, tol):
         values.append(nt_H)
 
     assert_allclose(*values, tol=tol)
+
+
+@pytest.mark.precision("32")
+@pytest.mark.parametrize("backend", [gs.cuda])
+def test_cholesky_tiling_large_shared_memory(show_viewer):
+    if gs.device.type != "cuda":
+        pytest.skip("Requires CUDA device")
+
+    from cuda.bindings import runtime  # Transitive dependency of torch CUDA
+
+    _, max_shared_mem = runtime.cudaDeviceGetAttribute(
+        runtime.cudaDeviceAttr.cudaDevAttrMaxSharedMemoryPerBlockOptin, gs.device.index
+    )
+    if max_shared_mem <= 49152:
+        pytest.skip("GPU does not support opt-in shared memory beyond the default 48kB")
+
+    # Stack 17 free boxes (6 DOFs each = 102 total) to exceed the default 48kB tiling limit of 96 DOFs for f32
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.5, 1.0, 2.5),
+            camera_lookat=(0.0, 0.0, 1.2),
+        ),
+        rigid_options=gs.options.RigidOptions(
+            constraint_solver=gs.constraint_solver.Newton,
+            sparse_solve=False,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    for i in range(17):
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.1, 0.1, 0.1),
+                pos=(0, 0, 0.5 + i * 0.15),
+            )
+        )
+    scene.build(n_envs=2)
+
+    assert scene.rigid_solver.n_dofs == 102
+    assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian
+
+    scene.step()
+    assert not scene.rigid_solver.get_error_envs_mask().any()
 
 
 @pytest.mark.slow  # ~100s

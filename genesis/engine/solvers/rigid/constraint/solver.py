@@ -520,9 +520,9 @@ def constraint_solver_kernel_reset(
 
 @qd.func
 def func_clear_constraint_at_env(
-    i_b: int,
-    n_dofs: int,
-    len_constraints: int,
+    i_b,
+    n_dofs,
+    len_constraints,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),

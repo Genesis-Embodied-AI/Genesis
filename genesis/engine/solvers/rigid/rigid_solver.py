@@ -405,7 +405,17 @@ class RigidSolver(KinematicSolver):
             # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
             max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
             if gs.backend != gs.cpu:
-                max_shared_mem = 32.0 if gs.backend == gs.metal else 48.0
+                if gs.backend == gs.metal:
+                    max_shared_mem = 32.0
+                elif gs.device.type == "cuda":
+                    from cuda.bindings import runtime  # Transitive dependency of torch CUDA
+
+                    _, max_shared_mem = runtime.cudaDeviceGetAttribute(
+                        runtime.cudaDeviceAttr.cudaDevAttrMaxSharedMemoryPerBlockOptin, gs.device.index
+                    )
+                    max_shared_mem /= 1024.0
+                else:
+                    max_shared_mem = 48.0
                 max_n_warps = int(math.sqrt(max_shared_mem * 1024 / (4 if gs.qd_float == qd.f32 else 8))) // 32
                 max_n_threads = max_n_warps * 32
 
