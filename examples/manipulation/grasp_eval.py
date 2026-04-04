@@ -83,10 +83,15 @@ def main():
     env_cfg["box_fixed"] = False
     env_cfg["visualize_camera"] = args.record
     if args.record:
+        pattern = r"model_\d+\.pt" if args.stage == "rl" else r"checkpoint_\d+\.pt"
+        ckpt_files = [f for f in log_dir.iterdir() if re.match(pattern, f.name)]
+        ckpt_name = max(ckpt_files, key=lambda f: int(re.search(r"\d+", f.stem).group())).stem
+        video_dir = log_dir / ckpt_name
+        video_dir.mkdir(exist_ok=True)
         env_cfg["record_video"] = {
-            "vis_cam": args.video_path or "video.mp4",
-            "left_cam": "left_cam.mp4",
-            "right_cam": "right_cam.mp4",
+            "vis_cam": str(video_dir / (args.video_path or "video.mp4")),
+            "left_cam": str(video_dir / "left_cam.mp4"),
+            "right_cam": str(video_dir / "right_cam.mp4"),
         }
 
     env = GraspEnv(

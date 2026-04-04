@@ -59,10 +59,11 @@ class GraspEnv:
             ),
             vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(min(10, self.num_envs)))),
             viewer_options=gs.options.ViewerOptions(
+                res=(1280, 960),
+                camera_pos=(2.5, -1.0, 2.5),
+                camera_lookat=(0.5, -0.3, 0.1),
+                camera_fov=55,
                 max_FPS=int(0.5 / self.ctrl_dt),
-                camera_pos=(2.0, 0.0, 2.5),
-                camera_lookat=(0.0, 0.0, 0.5),
-                camera_fov=40,
             ),
             profiling_options=gs.options.ProfilingOptions(show_FPS=False),
             show_viewer=show_viewer,
@@ -99,11 +100,11 @@ class GraspEnv:
         # == visualization camera (debug only, uses scene camera API) ==
         if self.env_cfg.get("visualize_camera", False):
             self.vis_cam = self.scene.add_camera(
-                res=(1280, 720),
-                pos=(1.5, 0.0, 0.2),
-                lookat=(0.0, 0.0, 0.2),
-                fov=60,
-                GUI=True,
+                res=(1280, 960),
+                pos=(3.5, 0.0, 2.5),
+                lookat=(1.2, 1.0, 0.0),
+                fov=52,
+                GUI=False,
                 debug=True,
             )
 
@@ -136,7 +137,10 @@ class GraspEnv:
 
         # == set up video recording (must be before build) ==
         def _read_scene_cam(cam):
-            return cam.render(rgb=True)[0][0, ..., :3]
+            rgb = cam.render(rgb=True)[0]
+            if rgb.ndim == 4:
+                rgb = rgb[0]
+            return rgb[..., :3]
 
         def _read_sensor_cam(cam):
             return cam.read(envs_idx=0).rgb
