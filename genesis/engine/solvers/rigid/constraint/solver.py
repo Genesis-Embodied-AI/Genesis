@@ -1492,6 +1492,8 @@ def func_hessian_direct_tiled(
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
+        if constraint_state.use_full_hessian[i_b] == 0:
+            continue
 
         jac_row = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
         jac_col = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
@@ -1607,18 +1609,23 @@ def func_cholesky_factor_direct_batch(
 
     n_dofs = constraint_state.nt_H.shape[1]
 
-    for i_d in range(n_dofs):
-        tmp = constraint_state.nt_H[i_b, i_d, i_d]
-        for j_d in range(i_d):
-            tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
-        constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+    # Copy H to L before in-place factorization
+    for i_d1 in range(n_dofs):
+        for i_d2 in range(i_d1 + 1):
+            constraint_state.nt_L[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
 
-        tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
+    for i_d in range(n_dofs):
+        tmp = constraint_state.nt_L[i_b, i_d, i_d]
+        for j_d in range(i_d):
+            tmp = tmp - constraint_state.nt_L[i_b, i_d, j_d] ** 2
+        constraint_state.nt_L[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+
+        tmp = 1.0 / constraint_state.nt_L[i_b, i_d, i_d]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.qd_float(0.0)
             for k_d in range(i_d):
-                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
-            constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
+                dot = dot + constraint_state.nt_L[i_b, j_d, k_d] * constraint_state.nt_L[i_b, i_d, k_d]
+            constraint_state.nt_L[i_b, j_d, i_d] = (constraint_state.nt_L[i_b, j_d, i_d] - dot) * tmp
 
 
 @qd.func
@@ -1694,11 +1701,11 @@ def func_cholesky_factor_direct_tiled(
                 j_d = j_d + BLOCK_DIM
             qd.simt.block.sync()
 
-        # Copy the final result back from shared memory, only considered the lower triangular part
+        # Copy the final result back from shared memory to nt_L (separate from nt_H to allow H patching)
         i_pair = tid
         while i_pair < n_lower_tri:
             i_d1, i_d2 = linear_to_lower_tri(i_pair)
-            constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
+            constraint_state.nt_L[i_b, i_d1, i_d2] = H[i_d1, i_d2]
             i_pair = i_pair + BLOCK_DIM
 
 
@@ -1799,7 +1806,7 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
 
         for k in range(n_dofs):
             if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                Lkk = constraint_state.nt_H[i_b, k, k]
+                Lkk = constraint_state.nt_L[i_b, k, k]
                 tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
                 if tmp < EPS:
                     is_degenerated = True
@@ -1808,15 +1815,15 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
                 c = r / Lkk
                 cinv = 1 / c
                 s = constraint_state.nt_vec[k, i_b] / Lkk
-                constraint_state.nt_H[i_b, k, k] = r
+                constraint_state.nt_L[i_b, k, k] = r
                 for i in range(k + 1, n_dofs):
-                    constraint_state.nt_H[i_b, i, k] = (
-                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                    constraint_state.nt_L[i_b, i, k] = (
+                        constraint_state.nt_L[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                     ) * cinv
 
                 for i in range(k + 1, n_dofs):
                     constraint_state.nt_vec[i, i_b] = (
-                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_L[i_b, i, k]
                     )
 
     return is_degenerated
@@ -1842,7 +1849,7 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
 
         for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
             k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-            Lkk = constraint_state.nt_H[i_b, k, k]
+            Lkk = constraint_state.nt_L[i_b, k, k]
             tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
             if tmp < EPS:
                 is_degenerated = True
@@ -1851,17 +1858,17 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
             c = r / Lkk
             cinv = 1 / c
             s = constraint_state.nt_vec[k, i_b] / Lkk
-            constraint_state.nt_H[i_b, k, k] = r
+            constraint_state.nt_L[i_b, k, k] = r
             for i_ in range(k_):
                 i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                constraint_state.nt_H[i_b, i, k] = (
-                    constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                constraint_state.nt_L[i_b, i, k] = (
+                    constraint_state.nt_L[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                 ) * cinv
 
             for i_ in range(k_):
                 i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
                 constraint_state.nt_vec[i, i_b] = (
-                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
+                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_L[i_b, i, k]
                 )
 
     return is_degenerated
@@ -1899,15 +1906,15 @@ def func_cholesky_solve_batch(
     for i_d in range(n_dofs):
         curr_out = constraint_state.grad[i_d, i_b]
         for j_d in range(i_d):
-            curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_L[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_L[i_b, i_d, i_d]
 
     for i_d_ in range(n_dofs):
         i_d = n_dofs - 1 - i_d_
         curr_out = constraint_state.Mgrad[i_d, i_b]
         for j_d in range(i_d + 1, n_dofs):
-            curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_L[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_L[i_b, i_d, i_d]
 
 
 @qd.func
@@ -1954,13 +1961,13 @@ def func_cholesky_solve_tiled(
             (NUM_WARPS if qd.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.qd_float
         )
 
-        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
+        # Copy the lower triangular part of L (Cholesky factor) to shared memory for efficiency
         i_flat = tid
         while i_flat < n_dofs_2:
             i_d1 = i_flat // n_dofs
             i_d2 = i_flat % n_dofs
             if i_d2 <= i_d1:
-                H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+                H[i_d1, i_d2] = constraint_state.nt_L[i_b, i_d1, i_d2]
             i_flat = i_flat + BLOCK_DIM
 
         # Copy the gradient to shared memory for efficiency
@@ -3037,6 +3044,8 @@ def func_solve_init(
     qd.loop_config(name="init_improved", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
+        constraint_state.use_full_hessian[i_b] = 1
+    constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_hessian_and_cholesky_factor_direct(
