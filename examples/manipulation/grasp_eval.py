@@ -27,10 +27,7 @@ def load_rl_policy(env, train_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    try:
-        *_, last_ckpt = sorted(checkpoint_files)
-    except ValueError as e:
-        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    last_ckpt = max(checkpoint_files, key=lambda f: int(re.search(r"\d+", f.stem).group()))
     runner.load(last_ckpt)
     print(f"Loaded RL checkpoint from {last_ckpt}")
 
@@ -45,10 +42,7 @@ def load_bc_policy(env, bc_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    try:
-        *_, last_ckpt = sorted(checkpoint_files)
-    except ValueError as e:
-        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    last_ckpt = max(checkpoint_files, key=lambda f: int(re.search(r"\d+", f.stem).group()))
     print(f"Loaded BC checkpoint from {last_ckpt}")
     bc_runner.load(last_ckpt)
 
@@ -78,9 +72,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Set PyTorch default dtype to float32 for better performance
-    torch.set_default_dtype(torch.float32)
-
     gs.init()
 
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
@@ -88,16 +79,16 @@ def main():
     with open(log_dir / "cfgs.pkl", "rb") as f:
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
 
-    # set the max FPS for visualization
-    env_cfg["max_visualize_FPS"] = 60
-    # set the box collision
-    env_cfg["box_collision"] = True
-    # set the box fixed
-    env_cfg["box_fixed"] = False
-    # set the number of envs for evaluation
     env_cfg["num_envs"] = 10
-    # for video recording
-    env_cfg["visualize_camera"] = args.record
+    env_cfg["box_fixed"] = False
+    env_cfg["visualize_camera"] = True
+
+    if args.record:
+        env_cfg["record_video"] = {
+            "vis_cam": str(log_dir / (args.video_path or "video.mp4")),
+            "left_cam": str(log_dir / "left_cam.mp4"),
+            "right_cam": str(log_dir / "right_cam.mp4"),
+        }
 
     env = GraspEnv(
         env_cfg=env_cfg,
@@ -115,35 +106,21 @@ def main():
 
     obs_dict = env.reset()
 
-    max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
+    max_sim_step = int(env_cfg["episode_length_s"] / env_cfg["ctrl_dt"])
 
     with torch.no_grad():
-        if args.record:
-            print("Recording video...")
-            env.vis_cam.start_recording()
-            env.left_cam.start_recording()
-            env.right_cam.start_recording()
         for step in range(max_sim_step):
             if args.stage == "rl":
                 actions = policy(obs_dict)
             else:
-                # Get stereo grayscale images and ensure float32
                 rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
                 ee_pose = env.robot.ee_pose.float()
-
                 actions = policy(rgb_obs, ee_pose)
-
-            # Collect frame for video recording
-            if args.record:
-                env.vis_cam.render()  # render the visualization camera
 
             obs_dict, rews, dones, infos = env.step(actions)
         env.grasp_and_lift_demo()
         if args.record:
-            print("Stopping video recording...")
-            env.vis_cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
-            env.left_cam.stop_recording(save_to_filename="left_cam.mp4", fps=env_cfg["max_visualize_FPS"])
-            env.right_cam.stop_recording(save_to_filename="right_cam.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.scene.stop_recording()
 
 
 if __name__ == "__main__":

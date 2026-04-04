@@ -14,7 +14,7 @@ def gs_rand(lower, upper, batch_shape):
 
 class Go2Env:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
-        self.num_envs = num_envs
+        self.num_envs: int = num_envs
         self.num_actions = env_cfg["num_actions"]
         self.cfg = env_cfg
         self.num_commands = command_cfg["num_commands"]
@@ -29,8 +29,8 @@ class Go2Env:
         self.reward_cfg = reward_cfg
         self.command_cfg = command_cfg
 
-        self.obs_scales = obs_cfg["obs_scales"]
-        self.reward_scales = reward_cfg["reward_scales"]
+        self.obs_scales: dict[str, float] = obs_cfg["obs_scales"]
+        self.reward_scales: dict[str, float] = reward_cfg["reward_scales"]
 
         # create scene
         self.scene = gs.Scene(
@@ -115,14 +115,14 @@ class Go2Env:
             device=gs.device,
             dtype=gs.tc_float,
         )
-        self.commands_limits = [
+        self.commands_limits: tuple[torch.Tensor, torch.Tensor] = tuple(
             torch.tensor(values, dtype=gs.tc_float, device=gs.device)
             for values in zip(
                 self.command_cfg["lin_vel_x_range"],
                 self.command_cfg["lin_vel_y_range"],
                 self.command_cfg["ang_vel_range"],
             )
-        ]
+        )
         self.actions = torch.zeros((self.num_envs, self.num_actions), dtype=gs.tc_float, device=gs.device)
         self.last_actions = torch.zeros_like(self.actions)
         self.dof_pos = torch.empty_like(self.actions)
@@ -130,6 +130,7 @@ class Go2Env:
         self.last_dof_vel = torch.zeros_like(self.actions)
         self.base_pos = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.base_quat = torch.empty((self.num_envs, 4), dtype=gs.tc_float, device=gs.device)
+        self.base_euler = torch.empty((self.num_envs, 3), dtype=gs.tc_float, device=gs.device)
         self.default_dof_pos = torch.tensor(
             [self.env_cfg["default_joint_angles"][name] for name in self.env_cfg["joint_names"]],
             dtype=gs.tc_float,
@@ -188,6 +189,7 @@ class Go2Env:
         self.reset_buf = self.episode_length_buf > self.max_episode_length
         self.reset_buf |= torch.abs(self.base_euler[:, 1]) > self.env_cfg["termination_if_pitch_greater_than"]
         self.reset_buf |= torch.abs(self.base_euler[:, 0]) > self.env_cfg["termination_if_roll_greater_than"]
+        self.reset_buf |= self.scene.rigid_solver.get_error_envs_mask()
 
         # Compute timeout
         self.extras["time_outs"] = (self.episode_length_buf > self.max_episode_length).to(dtype=gs.tc_float)
@@ -216,7 +218,6 @@ class Go2Env:
             self.base_quat.copy_(self.init_base_quat)
             self.projected_gravity.copy_(self.init_projected_gravity)
             self.dof_pos.copy_(self.init_dof_pos)
-            self.base_pos.copy_(self.init_base_pos)
             self.base_lin_vel.zero_()
             self.base_ang_vel.zero_()
             self.dof_vel.zero_()
@@ -232,7 +233,6 @@ class Go2Env:
                 envs_idx[:, None], self.init_projected_gravity, self.projected_gravity, out=self.projected_gravity
             )
             torch.where(envs_idx[:, None], self.init_dof_pos, self.dof_pos, out=self.dof_pos)
-            torch.where(envs_idx[:, None], self.init_base_pos, self.base_pos, out=self.base_pos)
             self.base_lin_vel.masked_fill_(envs_idx[:, None], 0.0)
             self.base_ang_vel.masked_fill_(envs_idx[:, None], 0.0)
             self.dof_vel.masked_fill_(envs_idx[:, None], 0.0)

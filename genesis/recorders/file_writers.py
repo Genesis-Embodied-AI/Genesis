@@ -1,7 +1,9 @@
 import csv
 import logging
 import os
+import tempfile
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +27,36 @@ except ImportError:
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=None)
+def _probe_h264_codec(codec: str, width: int, height: int) -> bool:
+    """Test whether a codec can actually encode a single frame at the given resolution.
+
+    Some hardware encoders (e.g. NVENC) reject small resolutions, so the actual target resolution must be tested.
+    """
+    # Use mkstemp instead of NamedTemporaryFile because Windows cannot open a NamedTemporaryFile from another handle
+    path = None
+    try:
+        fd, path = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        container = av.open(path, mode="w")
+        stream = container.add_stream(codec, rate=30)
+        stream.width = width
+        stream.height = height
+        stream.pix_fmt = "yuv420p"
+        frame = av.VideoFrame(width, height, "yuv420p")
+        for packet in stream.encode(frame):
+            container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
+        container.close()
+        return True
+    except (av.error.FFmpegError, ValueError):  # FFmpegError: codec/permission failures, ValueError: invalid parameters
+        return False
+    finally:
+        if path is not None:
+            os.remove(path)
 
 
 class BaseFileWriter(Recorder):
@@ -102,13 +134,48 @@ class VideoFileWriter(BaseFileWriter):
             gs.raise_exception(f"[{type(self).__name__}] Data must be either grayscale [H, W] or color [H, W, RGB]")
         height, width, *_ = data.shape
 
+        # Auto-select best available codec at the actual recording resolution.
+        # Deferred to here because hardware encoders (e.g. NVENC) have minimum resolution
+        # requirements that can only be validated with the real frame size.
+        codec = self._options.codec
+        if not codec:
+            for candidate in (
+                "h264_videotoolbox",  # macOS hardware
+                "h264_nvenc",  # NVIDIA hardware
+                "h264_vaapi",  # Linux VA-API hardware
+                "h264_qsv",  # Intel Quick Sync
+                "libx264",  # Software fallback
+            ):
+                if candidate in av.codecs_available and _probe_h264_codec(candidate, width, height):
+                    codec = candidate
+                    break
+            else:
+                gs.raise_exception(
+                    "No supported H.264 codec found. Please install libx264 or specify a codec explicitly."
+                )
+
+        # Apply sensible defaults per codec when no explicit options are provided
+        codec_options = self._options.codec_options
+        if not codec_options:
+            codec_options = {
+                "h264_videotoolbox": {"realtime": "1"},
+                "h264_nvenc": {"preset": "p1", "tune": "ull"},
+                "h264_vaapi": {},
+                "h264_qsv": {"preset": "veryfast"},
+                "libx264": {"preset": "veryfast", "tune": "zerolatency"},
+            }.get(codec, {})
+
+        gs.logger.debug(
+            f"Starting video recording using codec '{codec}' ({codec_options}) at {width}x{height} {self.fps}fps."
+        )
+
         # Create ffmpeg video stream
-        self.video_stream = self.video_container.add_stream(self._options.codec, rate=self.fps)
+        self.video_stream = self.video_container.add_stream(codec, rate=self.fps)
         assert isinstance(self.video_stream, av.video.stream.VideoStream)
         self.video_stream.width, self.video_stream.height = (width, height)
         self.video_stream.pix_fmt = "yuv420p"
         self.video_stream.bit_rate = int(self._options.bitrate * (8 * 1024**2))
-        self.video_stream.codec_context.options = self._options.codec_options
+        self.video_stream.codec_context.options = codec_options
 
         # Create frame storage once for efficiency
         if is_color:

@@ -123,10 +123,7 @@ def get_task_cfgs():
         "episode_length_s": 3.0,
         "ctrl_dt": 0.01,
         "box_size": [0.08, 0.03, 0.06],
-        "box_collision": False,
-        "box_fixed": True,
         "image_resolution": (64, 64),
-        "use_rasterizer": True,
         "visualize_camera": False,
     }
     reward_scales = {
@@ -148,11 +145,9 @@ def load_teacher_policy(env, rl_train_cfg, exp_name):
     log_dir = Path("logs") / f"{exp_name + '_' + 'rl'}"
     assert log_dir.exists(), f"Log directory {log_dir} does not exist"
     checkpoint_files = [f for f in log_dir.iterdir() if re.match(r"model_\d+\.pt", f.name)]
-    try:
-        *_, last_ckpt = sorted(checkpoint_files)
-    except ValueError as e:
-        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
-    assert last_ckpt is not None, f"No checkpoint found in {log_dir}"
+    if not checkpoint_files:
+        raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
+    last_ckpt = max(checkpoint_files, key=lambda f: int(re.search(r"\d+", f.stem).group()))
     runner = OnPolicyRunner(env, rl_train_cfg, log_dir, device=gs.device)
     runner.load(last_ckpt)
     print(f"Loaded teacher policy from checkpoint {last_ckpt} from {log_dir}")
@@ -181,12 +176,12 @@ def main():
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(log_dir / "cfgs.pkl", "wb") as f:
-        pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
-
     # === env ===
     # BC only needs a small number of envs, e.g., 10
     env_cfg["num_envs"] = args.num_envs if args.stage == "rl" else 10
+
+    with open(log_dir / "cfgs.pkl", "wb") as f:
+        pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
     env = GraspEnv(
         env_cfg=env_cfg,
         reward_cfg=reward_scales,

@@ -18,11 +18,11 @@ def _coerce_int(v):
 
 
 def _normalize(vec):
-    if not _is_sequence(vec):
+    if not is_sequence(vec):
         raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
     sq_norm = 0.0
     for e in vec:
-        if _is_sequence(e):
+        if is_sequence(e):
             raise PydanticCustomError("invalid_type", "Input should be a valid sequence of scalars", {"value": vec})
         sq_norm += e**2
     if sq_norm > 0:
@@ -32,7 +32,7 @@ def _normalize(vec):
     raise PydanticCustomError("zero_division", "Cannot be normalized", {"value": vec})
 
 
-def _is_sequence(v):
+def is_sequence(v):
     if isinstance(v, (str, bytes, Mapping)):
         return False
     if not (hasattr(v, "__len__") and hasattr(v, "__getitem__")):
@@ -129,7 +129,7 @@ else:
     Vec3FType = Annotated[tuple[ValidFloat, ValidFloat, ValidFloat], Field(strict=False)]
     LaxVec3FType = Annotated[
         tuple[ValidFloat, ValidFloat, ValidFloat],
-        BeforeValidator(lambda v: v if _is_sequence(v) else (v,) * 3),
+        BeforeValidator(lambda v: v if is_sequence(v) else (v,) * 3),
         Field(strict=False),
     ]
     UnitVec3FType = Annotated[
@@ -142,17 +142,17 @@ else:
     UnitIntervalArrayType = Annotated[tuple[UnitInterval, ...], Field(min_length=1, strict=False)]
     LaxUnitIntervalArrayType = Annotated[
         tuple[UnitInterval, ...],
-        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
+        BeforeValidator(lambda v: v if is_sequence(v) else (v,)),
         Field(min_length=1, strict=False),
     ]
     LaxFArrayType = Annotated[
         tuple[ValidFloat, ...],
-        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
+        BeforeValidator(lambda v: v if is_sequence(v) else (v,)),
         Field(min_length=1, strict=False),
     ]
     LaxPositiveFArrayType = Annotated[
         tuple[PositiveFloat, ...],
-        BeforeValidator(lambda v: v if _is_sequence(v) else (v,)),
+        BeforeValidator(lambda v: v if is_sequence(v) else (v,)),
         Field(min_length=1, strict=False),
     ]
     UnitIntervalVec3Type = Annotated[tuple[UnitInterval, UnitInterval, UnitInterval], Field(strict=False)]
@@ -163,12 +163,12 @@ else:
     UnitVec3FArrayType = Annotated[tuple[UnitVec3FType, ...], Field(min_length=1, strict=False)]
     Vec3FLaxArrayType = Annotated[
         tuple[Vec3FType, ...],
-        BeforeValidator(lambda v: v if _is_sequence(v) and len(v) > 0 and _is_sequence(v[0]) else (v,)),
+        BeforeValidator(lambda v: v if is_sequence(v) and len(v) > 0 and is_sequence(v[0]) else (v,)),
         Field(min_length=1, strict=False),
     ]
     UnitVec3FLaxArrayType = Annotated[
         tuple[UnitVec3FType, ...],
-        BeforeValidator(lambda v: v if _is_sequence(v) and len(v) > 0 and _is_sequence(v[0]) else (v,)),
+        BeforeValidator(lambda v: v if is_sequence(v) and len(v) > 0 and is_sequence(v[0]) else (v,)),
         Field(min_length=1, strict=False),
     ]
     RotationMatrixType = Annotated[

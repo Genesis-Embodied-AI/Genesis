@@ -209,14 +209,13 @@ class KinematicEntity(Entity):
                     self._add_heterogeneous_variant(link, cg_infos, vg_infos)
                     self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
 
-            elif isinstance(morph, gs.morphs.Mesh):
-                g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
-                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
-                init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
-                self._variant_init_qpos.append(init_qpos)
-            elif isinstance(morph, gs.morphs.Primitive):
-                g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+            elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
+                if isinstance(morph, gs.morphs.Mesh):
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                else:
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                if morph.fixed != self._morph.fixed:
+                    gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
                 init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
@@ -1515,7 +1514,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=False, relative=False):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=False, relative=False, skip_forward=False):
         """
         Set position of the entity's base link.
 
@@ -1530,13 +1529,15 @@ class KinematicEntity(Entity):
         relative : bool, optional
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting position. Defaults to False.
         """
         # Throw exception in entity no longer has a "true" base link becaused it has attached
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
-        self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative)
+        self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
@@ -1544,7 +1545,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True, skip_forward=False):
         """
         Set quaternion of the entity's base link.
 
@@ -1559,12 +1560,16 @@ class KinematicEntity(Entity):
         relative : bool, optional
             True the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
-        self._solver.set_base_links_quat(quat, self.base_link_idx, envs_idx, relative=relative)
+        self._solver.set_base_links_quat(
+            quat, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward
+        )
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
@@ -3240,7 +3245,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False, skip_forward=False):
         """
         Set position of the entity's base link.
 
@@ -3256,6 +3261,8 @@ class RigidEntity(KinematicEntity):
         relative : bool, optional
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting position. Defaults to False.
         """
         from genesis.engine.couplers import IPCCoupler
 
@@ -3263,7 +3270,7 @@ class RigidEntity(KinematicEntity):
             gs.raise_exception(
                 "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
             )
-        super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative)
+        super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
@@ -3271,7 +3278,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False, skip_forward=False):
         """
         Set quaternion of the entity's base link.
 
@@ -3287,6 +3294,8 @@ class RigidEntity(KinematicEntity):
         relative : bool, optional
             Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
         from genesis.engine.couplers import IPCCoupler
 
@@ -3294,7 +3303,7 @@ class RigidEntity(KinematicEntity):
             gs.raise_exception(
                 "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
             )
-        super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative)
+        super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):

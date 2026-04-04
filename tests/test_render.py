@@ -1815,3 +1815,76 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
     for env_rgb in (rgb, rgb_debug):
         env_diff = np.abs(env_rgb[0].astype(np.float32) - env_rgb[1].astype(np.float32))
         assert env_diff.mean() > 5.0, "Per-env renders are too similar — env isolation may be broken"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("context_mode", ["sensor_only", "with_scene_camera", "with_viewer"])
+def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
+    if context_mode == "with_viewer" and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip(SKIP_NO_VIEWER)
+
+    CAM_RES = (128, 128)
+    N_ENVS = 4
+
+    def build_scene(env_spacing):
+        show_viewer = context_mode == "with_viewer"
+        viewer_options = (
+            gs.options.ViewerOptions(
+                res=CAM_RES,
+                run_in_thread=False,
+            )
+            if show_viewer
+            else None
+        )
+        scene = gs.Scene(
+            vis_options=gs.options.VisOptions(
+                env_separate_rigid=True,
+                shadow=False,
+            ),
+            viewer_options=viewer_options,
+            renderer=renderer,
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.5, 0.0, 0.1),
+            )
+        )
+        cam = scene.add_sensor(
+            RasterizerCameraOptions(
+                res=CAM_RES,
+                pos=(1.5, 0.0, 0.5),
+                lookat=(0.5, 0.0, 0.1),
+                fov=60,
+            )
+        )
+        if context_mode == "with_scene_camera":
+            scene.add_camera(
+                res=CAM_RES,
+                pos=(2.0, 0.0, 1.0),
+                lookat=(0.0, 0.0, 0.0),
+                fov=60,
+                GUI=False,
+            )
+        build_kwargs = {"n_envs": N_ENVS}
+        if env_spacing is not None:
+            build_kwargs["env_spacing"] = env_spacing
+        scene.build(**build_kwargs)
+        return scene, cam
+
+    # Reference: no spacing
+    scene_ref, cam_ref = build_scene(env_spacing=None)
+    img_ref = tensor_to_array(cam_ref.read(envs_idx=0).rgb)
+    scene_ref.destroy()
+
+    # Test: with spacing
+    scene_test, cam_test = build_scene(env_spacing=(2.0, 2.0))
+    img_test = tensor_to_array(cam_test.read(envs_idx=0).rgb)
+    scene_test.destroy()
+
+    # Per-env sensor images must be invariant to env_spacing — the offset is purely for
+    # visual separation in the interactive viewer and must be transparent to sensors.
+    assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0
