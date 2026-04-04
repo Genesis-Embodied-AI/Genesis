@@ -410,7 +410,7 @@ class Manipulator:
 
         # == Genesis configurations ==
         material: gs.materials.Rigid = gs.materials.Rigid()
-        morph: gs.morphs.URDF = gs.morphs.MJCF(
+        morph: gs.morphs.MJCF = gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
             pos=(0.0, 0.0, 0.0),
             quat=(1.0, 0.0, 0.0, 0.0),

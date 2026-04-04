@@ -1819,11 +1819,7 @@ def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.parametrize(
-    "context_mode",
-    ["sensor_only", "with_scene_camera", "with_viewer"],
-    ids=["sensor_only", "scene_camera", "viewer"],
-)
+@pytest.mark.parametrize("context_mode", ["sensor_only", "with_scene_camera", "with_viewer"])
 def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
     if context_mode == "with_viewer" and not IS_INTERACTIVE_VIEWER_AVAILABLE:
         pytest.skip(SKIP_NO_VIEWER)
@@ -1833,17 +1829,30 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
 
     def build_scene(env_spacing):
         show_viewer = context_mode == "with_viewer"
-        kwargs = {}
-        if show_viewer:
-            kwargs["viewer_options"] = gs.options.ViewerOptions(res=CAM_RES, run_in_thread=False)
+        viewer_options = (
+            gs.options.ViewerOptions(
+                res=CAM_RES,
+                run_in_thread=False,
+            )
+            if show_viewer
+            else None
+        )
         scene = gs.Scene(
-            vis_options=gs.options.VisOptions(env_separate_rigid=True, shadow=False),
+            vis_options=gs.options.VisOptions(
+                env_separate_rigid=True,
+                shadow=False,
+            ),
+            viewer_options=viewer_options,
             renderer=renderer,
             show_viewer=show_viewer,
             show_FPS=False,
-            **kwargs,
         )
-        scene.add_entity(gs.morphs.Box(size=(0.2, 0.2, 0.2), pos=(0.5, 0.0, 0.1)))
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.5, 0.0, 0.1),
+            )
+        )
         cam = scene.add_sensor(
             RasterizerCameraOptions(
                 res=CAM_RES,
@@ -1853,7 +1862,13 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
             )
         )
         if context_mode == "with_scene_camera":
-            scene.add_camera(res=CAM_RES, pos=(2.0, 0.0, 1.0), lookat=(0.0, 0.0, 0.0), fov=60, GUI=False)
+            scene.add_camera(
+                res=CAM_RES,
+                pos=(2.0, 0.0, 1.0),
+                lookat=(0.0, 0.0, 0.0),
+                fov=60,
+                GUI=False,
+            )
         build_kwargs = {"n_envs": N_ENVS}
         if env_spacing is not None:
             build_kwargs["env_spacing"] = env_spacing

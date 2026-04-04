@@ -218,7 +218,6 @@ class Go2Env:
             self.base_quat.copy_(self.init_base_quat)
             self.projected_gravity.copy_(self.init_projected_gravity)
             self.dof_pos.copy_(self.init_dof_pos)
-            self.base_pos.copy_(self.init_base_pos)
             self.base_lin_vel.zero_()
             self.base_ang_vel.zero_()
             self.dof_vel.zero_()
@@ -234,7 +233,6 @@ class Go2Env:
                 envs_idx[:, None], self.init_projected_gravity, self.projected_gravity, out=self.projected_gravity
             )
             torch.where(envs_idx[:, None], self.init_dof_pos, self.dof_pos, out=self.dof_pos)
-            torch.where(envs_idx[:, None], self.init_base_pos, self.base_pos, out=self.base_pos)
             self.base_lin_vel.masked_fill_(envs_idx[:, None], 0.0)
             self.base_ang_vel.masked_fill_(envs_idx[:, None], 0.0)
             self.dof_vel.masked_fill_(envs_idx[:, None], 0.0)
