@@ -88,16 +88,14 @@ def main():
     with open(log_dir / "cfgs.pkl", "rb") as f:
         env_cfg, reward_cfg, robot_cfg, rl_train_cfg, bc_train_cfg = pickle.load(f)
 
-    # set the max FPS for visualization
-    env_cfg["max_visualize_FPS"] = 60
-    # set the box collision
-    env_cfg["box_collision"] = True
-    # set the box fixed
-    env_cfg["box_fixed"] = False
-    # set the number of envs for evaluation
     env_cfg["num_envs"] = 10
-    # for video recording
     env_cfg["visualize_camera"] = args.record
+    if args.record:
+        env_cfg["record_video"] = {
+            "vis_cam": args.video_path or "video.mp4",
+            "left_cam": "left_cam.mp4",
+            "right_cam": "right_cam.mp4",
+        }
 
     env = GraspEnv(
         env_cfg=env_cfg,
@@ -115,35 +113,21 @@ def main():
 
     obs_dict = env.reset()
 
-    max_sim_step = int(env_cfg["episode_length_s"] * env_cfg["max_visualize_FPS"])
+    max_sim_step = int(env_cfg["episode_length_s"] / env_cfg["ctrl_dt"])
 
     with torch.no_grad():
-        if args.record:
-            print("Recording video...")
-            env.vis_cam.start_recording()
-            env.left_cam.start_recording()
-            env.right_cam.start_recording()
         for step in range(max_sim_step):
             if args.stage == "rl":
                 actions = policy(obs_dict)
             else:
-                # Get stereo grayscale images and ensure float32
                 rgb_obs = env.get_stereo_rgb_images(normalize=True).float()
                 ee_pose = env.robot.ee_pose.float()
-
                 actions = policy(rgb_obs, ee_pose)
-
-            # Collect frame for video recording
-            if args.record:
-                env.vis_cam.render()  # render the visualization camera
 
             obs_dict, rews, dones, infos = env.step(actions)
         env.grasp_and_lift_demo()
         if args.record:
-            print("Stopping video recording...")
-            env.vis_cam.stop_recording(save_to_filename="video.mp4", fps=env_cfg["max_visualize_FPS"])
-            env.left_cam.stop_recording(save_to_filename="left_cam.mp4", fps=env_cfg["max_visualize_FPS"])
-            env.right_cam.stop_recording(save_to_filename="right_cam.mp4", fps=env_cfg["max_visualize_FPS"])
+            env.scene.stop_recording()
 
 
 if __name__ == "__main__":

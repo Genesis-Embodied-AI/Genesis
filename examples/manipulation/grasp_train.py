@@ -123,10 +123,7 @@ def get_task_cfgs():
         "episode_length_s": 3.0,
         "ctrl_dt": 0.01,
         "box_size": [0.08, 0.03, 0.06],
-        "box_collision": False,
-        "box_fixed": True,
         "image_resolution": (64, 64),
-        "use_rasterizer": True,
         "visualize_camera": False,
     }
     reward_scales = {

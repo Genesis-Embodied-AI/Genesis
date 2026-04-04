@@ -1,3 +1,4 @@
+import sys
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, Field, StrictBool
@@ -94,7 +95,7 @@ class VideoFile(BaseFileWriterOptions):
     filename: PathType = Field(pattern=r"(?i).*\.mp4$")
     fps: PositiveInt | None = None
     name: str = ""
-    codec: str = "libx264"
+    codec: str = "h264_videotoolbox" if sys.platform == "darwin" else "libx264"
     bitrate: float = 1.0
     codec_options: dict[str, str] = Field(default_factory=dict)
 
