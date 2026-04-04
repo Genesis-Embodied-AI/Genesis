@@ -176,12 +176,12 @@ def main():
     log_dir = Path("logs") / f"{args.exp_name + '_' + args.stage}"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(log_dir / "cfgs.pkl", "wb") as f:
-        pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
-
     # === env ===
     # BC only needs a small number of envs, e.g., 10
     env_cfg["num_envs"] = args.num_envs if args.stage == "rl" else 10
+
+    with open(log_dir / "cfgs.pkl", "wb") as f:
+        pickle.dump((env_cfg, reward_scales, robot_cfg, rl_train_cfg, bc_train_cfg), f)
     env = GraspEnv(
         env_cfg=env_cfg,
         reward_cfg=reward_scales,
