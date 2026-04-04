@@ -1628,85 +1628,404 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_L[i_b, j_d, i_d] = (constraint_state.nt_L[i_b, j_d, i_d] - dot) * tmp
 
 
+# ---------------------------------------------------------------------------
+# 16x16 tile-level building blocks for blocked Cholesky (inlined via @qd.func)
+#
+# Each operates on a 16x16 tile held in 16 scalar registers (r0-r15 or q0-q15),
+# distributed one row per thread across 16 threads in a subgroup. Cross-thread
+# communication uses warp shuffles — no shared memory or synchronization.
+# ---------------------------------------------------------------------------
+
+_CHOL_TILE = 16
+
+
+@qd.func
+def _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
+    """Symmetric GEMM subtract for a single element: r_c -= v * shuffle(v, c)."""
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(0)); r0 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(1)); r1 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(2)); r2 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(3)); r3 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(4)); r4 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(5)); r5 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(6)); r6 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(7)); r7 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(8)); r8 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(9)); r9 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(10)); r10 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(11)); r11 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(12)); r12 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(13)); r13 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(14)); r14 -= v * vc
+    vc = qd.simt.subgroup.shuffle(v, qd.u32(15)); r15 -= v * vc
+    return r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15
+
+
+@qd.func
+def _tile_gemm_sub_offdiag_16(
+    v_own, v_diag, q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
+):
+    """Off-diagonal GEMM subtract: q_c -= v_own * shuffle(v_diag, c)."""
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(0)); q0 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(1)); q1 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(2)); q2 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(3)); q3 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(4)); q4 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(5)); q5 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(6)); q6 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(7)); q7 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(8)); q8 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(9)); q9 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(10)); q10 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(11)); q11 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(12)); q12 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(13)); q13 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(14)); q14 -= v_own * vc
+    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(15)); q15 -= v_own * vc
+    return q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
+
+
+@qd.func
+def _tile_potrf_16(tid, eps, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
+    """In-register 16x16 Cholesky POTRF via warp shuffles."""
+    for k in range(_CHOL_TILE):
+        diag_val = gs.qd_float(0.0)
+        if tid == k:
+            s = gs.qd_float(0.0)
+            if k > 0: s += r0 * r0
+            if k > 1: s += r1 * r1
+            if k > 2: s += r2 * r2
+            if k > 3: s += r3 * r3
+            if k > 4: s += r4 * r4
+            if k > 5: s += r5 * r5
+            if k > 6: s += r6 * r6
+            if k > 7: s += r7 * r7
+            if k > 8: s += r8 * r8
+            if k > 9: s += r9 * r9
+            if k > 10: s += r10 * r10
+            if k > 11: s += r11 * r11
+            if k > 12: s += r12 * r12
+            if k > 13: s += r13 * r13
+            if k > 14: s += r14 * r14
+            cur = gs.qd_float(0.0)
+            if k == 0: cur = r0
+            if k == 1: cur = r1
+            if k == 2: cur = r2
+            if k == 3: cur = r3
+            if k == 4: cur = r4
+            if k == 5: cur = r5
+            if k == 6: cur = r6
+            if k == 7: cur = r7
+            if k == 8: cur = r8
+            if k == 9: cur = r9
+            if k == 10: cur = r10
+            if k == 11: cur = r11
+            if k == 12: cur = r12
+            if k == 13: cur = r13
+            if k == 14: cur = r14
+            if k == 15: cur = r15
+            diag_val = qd.sqrt(qd.max(cur - s, eps))
+            if k == 0: r0 = diag_val
+            if k == 1: r1 = diag_val
+            if k == 2: r2 = diag_val
+            if k == 3: r3 = diag_val
+            if k == 4: r4 = diag_val
+            if k == 5: r5 = diag_val
+            if k == 6: r6 = diag_val
+            if k == 7: r7 = diag_val
+            if k == 8: r8 = diag_val
+            if k == 9: r9 = diag_val
+            if k == 10: r10 = diag_val
+            if k == 11: r11 = diag_val
+            if k == 12: r12 = diag_val
+            if k == 13: r13 = diag_val
+            if k == 14: r14 = diag_val
+            if k == 15: r15 = diag_val
+
+        diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
+
+        dot = gs.qd_float(0.0)
+        if k > 0:
+            Lkj = qd.simt.subgroup.shuffle(r0, qd.u32(k)); dot += Lkj * r0
+        if k > 1:
+            Lkj = qd.simt.subgroup.shuffle(r1, qd.u32(k)); dot += Lkj * r1
+        if k > 2:
+            Lkj = qd.simt.subgroup.shuffle(r2, qd.u32(k)); dot += Lkj * r2
+        if k > 3:
+            Lkj = qd.simt.subgroup.shuffle(r3, qd.u32(k)); dot += Lkj * r3
+        if k > 4:
+            Lkj = qd.simt.subgroup.shuffle(r4, qd.u32(k)); dot += Lkj * r4
+        if k > 5:
+            Lkj = qd.simt.subgroup.shuffle(r5, qd.u32(k)); dot += Lkj * r5
+        if k > 6:
+            Lkj = qd.simt.subgroup.shuffle(r6, qd.u32(k)); dot += Lkj * r6
+        if k > 7:
+            Lkj = qd.simt.subgroup.shuffle(r7, qd.u32(k)); dot += Lkj * r7
+        if k > 8:
+            Lkj = qd.simt.subgroup.shuffle(r8, qd.u32(k)); dot += Lkj * r8
+        if k > 9:
+            Lkj = qd.simt.subgroup.shuffle(r9, qd.u32(k)); dot += Lkj * r9
+        if k > 10:
+            Lkj = qd.simt.subgroup.shuffle(r10, qd.u32(k)); dot += Lkj * r10
+        if k > 11:
+            Lkj = qd.simt.subgroup.shuffle(r11, qd.u32(k)); dot += Lkj * r11
+        if k > 12:
+            Lkj = qd.simt.subgroup.shuffle(r12, qd.u32(k)); dot += Lkj * r12
+        if k > 13:
+            Lkj = qd.simt.subgroup.shuffle(r13, qd.u32(k)); dot += Lkj * r13
+        if k > 14:
+            Lkj = qd.simt.subgroup.shuffle(r14, qd.u32(k)); dot += Lkj * r14
+
+        if tid > k:
+            cur = gs.qd_float(0.0)
+            if k == 0: cur = r0
+            if k == 1: cur = r1
+            if k == 2: cur = r2
+            if k == 3: cur = r3
+            if k == 4: cur = r4
+            if k == 5: cur = r5
+            if k == 6: cur = r6
+            if k == 7: cur = r7
+            if k == 8: cur = r8
+            if k == 9: cur = r9
+            if k == 10: cur = r10
+            if k == 11: cur = r11
+            if k == 12: cur = r12
+            if k == 13: cur = r13
+            if k == 14: cur = r14
+            if k == 15: cur = r15
+            new_val = (cur - dot) / diag_k
+            if k == 0: r0 = new_val
+            if k == 1: r1 = new_val
+            if k == 2: r2 = new_val
+            if k == 3: r3 = new_val
+            if k == 4: r4 = new_val
+            if k == 5: r5 = new_val
+            if k == 6: r6 = new_val
+            if k == 7: r7 = new_val
+            if k == 8: r8 = new_val
+            if k == 9: r9 = new_val
+            if k == 10: r10 = new_val
+            if k == 11: r11 = new_val
+            if k == 12: r12 = new_val
+            if k == 13: r13 = new_val
+            if k == 14: r14 = new_val
+            if k == 15: r15 = new_val
+
+    return r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15
+
+
+@qd.func
+def _tile_trsm_16(
+    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15,
+    q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15,
+):
+    """In-register 16x16 TRSM: solve L_kk @ X^T = Q^T.
+
+    r0-r15: factorized L_kk (read-only), q0-q15: block to solve.
+    """
+    for c in range(_CHOL_TILE):
+        dot = gs.qd_float(0.0)
+        if c > 0:
+            Lkj = qd.simt.subgroup.shuffle(r0, qd.u32(c)); dot += q0 * Lkj
+        if c > 1:
+            Lkj = qd.simt.subgroup.shuffle(r1, qd.u32(c)); dot += q1 * Lkj
+        if c > 2:
+            Lkj = qd.simt.subgroup.shuffle(r2, qd.u32(c)); dot += q2 * Lkj
+        if c > 3:
+            Lkj = qd.simt.subgroup.shuffle(r3, qd.u32(c)); dot += q3 * Lkj
+        if c > 4:
+            Lkj = qd.simt.subgroup.shuffle(r4, qd.u32(c)); dot += q4 * Lkj
+        if c > 5:
+            Lkj = qd.simt.subgroup.shuffle(r5, qd.u32(c)); dot += q5 * Lkj
+        if c > 6:
+            Lkj = qd.simt.subgroup.shuffle(r6, qd.u32(c)); dot += q6 * Lkj
+        if c > 7:
+            Lkj = qd.simt.subgroup.shuffle(r7, qd.u32(c)); dot += q7 * Lkj
+        if c > 8:
+            Lkj = qd.simt.subgroup.shuffle(r8, qd.u32(c)); dot += q8 * Lkj
+        if c > 9:
+            Lkj = qd.simt.subgroup.shuffle(r9, qd.u32(c)); dot += q9 * Lkj
+        if c > 10:
+            Lkj = qd.simt.subgroup.shuffle(r10, qd.u32(c)); dot += q10 * Lkj
+        if c > 11:
+            Lkj = qd.simt.subgroup.shuffle(r11, qd.u32(c)); dot += q11 * Lkj
+        if c > 12:
+            Lkj = qd.simt.subgroup.shuffle(r12, qd.u32(c)); dot += q12 * Lkj
+        if c > 13:
+            Lkj = qd.simt.subgroup.shuffle(r13, qd.u32(c)); dot += q13 * Lkj
+        if c > 14:
+            Lkj = qd.simt.subgroup.shuffle(r14, qd.u32(c)); dot += q14 * Lkj
+
+        diag_reg = gs.qd_float(0.0)
+        if c == 0: diag_reg = r0
+        if c == 1: diag_reg = r1
+        if c == 2: diag_reg = r2
+        if c == 3: diag_reg = r3
+        if c == 4: diag_reg = r4
+        if c == 5: diag_reg = r5
+        if c == 6: diag_reg = r6
+        if c == 7: diag_reg = r7
+        if c == 8: diag_reg = r8
+        if c == 9: diag_reg = r9
+        if c == 10: diag_reg = r10
+        if c == 11: diag_reg = r11
+        if c == 12: diag_reg = r12
+        if c == 13: diag_reg = r13
+        if c == 14: diag_reg = r14
+        if c == 15: diag_reg = r15
+        diag_c = qd.simt.subgroup.shuffle(diag_reg, qd.u32(c))
+
+        cur = gs.qd_float(0.0)
+        if c == 0: cur = q0
+        if c == 1: cur = q1
+        if c == 2: cur = q2
+        if c == 3: cur = q3
+        if c == 4: cur = q4
+        if c == 5: cur = q5
+        if c == 6: cur = q6
+        if c == 7: cur = q7
+        if c == 8: cur = q8
+        if c == 9: cur = q9
+        if c == 10: cur = q10
+        if c == 11: cur = q11
+        if c == 12: cur = q12
+        if c == 13: cur = q13
+        if c == 14: cur = q14
+        if c == 15: cur = q15
+
+        new_val = (cur - dot) / diag_c
+
+        if c == 0: q0 = new_val
+        if c == 1: q1 = new_val
+        if c == 2: q2 = new_val
+        if c == 3: q3 = new_val
+        if c == 4: q4 = new_val
+        if c == 5: q5 = new_val
+        if c == 6: q6 = new_val
+        if c == 7: q7 = new_val
+        if c == 8: q8 = new_val
+        if c == 9: q9 = new_val
+        if c == 10: q10 = new_val
+        if c == 11: q11 = new_val
+        if c == 12: q12 = new_val
+        if c == 13: q13 = new_val
+        if c == 14: q14 = new_val
+        if c == 15: q15 = new_val
+
+    return q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
+
+
 @qd.func
 def func_cholesky_factor_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
+    """Blocked Cholesky factorization using register-resident 16x16 tiles with warp shuffles.
 
-    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
-    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
-    precision due to shared memory storage being limited to 48kB. Note that the amount of shared memory available is
-    hardware-specific, but the 48kB default limit without enabling dedicated GPU context flag is hardware-agnostic on
-    modern GPUs.
+    Uses a left-looking blocked algorithm with 4 tile-level primitives (POTRF, TRSM, GEMM, off-diagonal GEMM),
+    all operating entirely in registers via warp shuffle communication. No shared memory or block synchronization
+    is needed — occupancy is limited only by register pressure, enabling higher throughput than shared-memory
+    approaches.
 
-    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to sparse memory resources.
-
-    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    Requires n_dofs to be a multiple of 16. The Hessian is factorized in-place.
     """
     EPS = rigid_global_info.EPS[None]
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = n_dofs // _CHOL_TILE
 
-    # Performance is optimal for BLOCK_DIM = 64
-    BLOCK_DIM = qd.static(64)
-    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
-
-    n_lower_tri = n_dofs * (n_dofs + 1) // 2
-
-    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=BLOCK_DIM)
-    for i in range(_B * BLOCK_DIM):
-        tid = i % BLOCK_DIM
-        i_b = i // BLOCK_DIM
+    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=_CHOL_TILE)
+    for i in range(_B * _CHOL_TILE):
+        tid = i % _CHOL_TILE
+        i_b = i // _CHOL_TILE
         if i_b >= _B:
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
-        # Padding +1 to avoid memory bank conflicts that would cause access serialization
-        H = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        H = constraint_state.nt_H
 
-        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
-        i_pair = tid
-        while i_pair < n_lower_tri:
-            i_d1, i_d2 = linear_to_lower_tri(i_pair)
-            H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-            i_pair = i_pair + BLOCK_DIM
-        qd.simt.block.sync()
+        for kb in range(N_BLOCKS):
+            k0 = kb * _CHOL_TILE
 
-        # Loop over all columns sequentially, which is an integral part of Cholesky-Crout algorithm and cannot be
-        # avoided.
-        for i_d in range(n_dofs):
-            # Compute the diagonal of the Cholesky factor L for the column i being considered, ie
-            # L_{i,i} = sqrt(A_{i,i} - sum_{j=1}^{i-1}(L_{i,j} ** 2 ))
-            if tid == 0:
-                tmp = H[i_d, i_d]
-                for j_d in range(i_d):
-                    tmp = tmp - H[i_d, j_d] ** 2
-                H[i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
-            qd.simt.block.sync()
+            # Load diagonal block H[k0:k0+16, k0:k0+16] into registers
+            r0 = H[i_b, k0 + tid, k0 + 0]; r1 = H[i_b, k0 + tid, k0 + 1]
+            r2 = H[i_b, k0 + tid, k0 + 2]; r3 = H[i_b, k0 + tid, k0 + 3]
+            r4 = H[i_b, k0 + tid, k0 + 4]; r5 = H[i_b, k0 + tid, k0 + 5]
+            r6 = H[i_b, k0 + tid, k0 + 6]; r7 = H[i_b, k0 + tid, k0 + 7]
+            r8 = H[i_b, k0 + tid, k0 + 8]; r9 = H[i_b, k0 + tid, k0 + 9]
+            r10 = H[i_b, k0 + tid, k0 + 10]; r11 = H[i_b, k0 + tid, k0 + 11]
+            r12 = H[i_b, k0 + tid, k0 + 12]; r13 = H[i_b, k0 + tid, k0 + 13]
+            r14 = H[i_b, k0 + tid, k0 + 14]; r15 = H[i_b, k0 + tid, k0 + 15]
 
-            # Compute all the off-diagonal terms of the Cholesky factor L for the column i being considered, ie
-            # L_{j,i} = 1 / L_{i,i} (A_{j,i} - sum_{k=1}^{i-1}(L_{j,k} L_{i,k}), for j > i
-            inv_diag = 1.0 / H[i_d, i_d]
-            j_d = i_d + 1 + tid
-            while j_d < n_dofs:
-                dot = gs.qd_float(0.0)
-                for k_d in range(i_d):
-                    dot = dot + H[j_d, k_d] * H[i_d, k_d]
-                H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
-                j_d = j_d + BLOCK_DIM
-            qd.simt.block.sync()
+            # Diagonal GEMM subtract: A_kk -= L_k* @ L_k*^T
+            for jb in range(kb):
+                j0 = jb * _CHOL_TILE
+                for t in range(_CHOL_TILE):
+                    v = H[i_b, k0 + tid, j0 + t]
+                    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
+                        _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
+                                          r8, r9, r10, r11, r12, r13, r14, r15)
 
-        # Copy the final result back from shared memory to nt_L (separate from nt_H to allow H patching)
-        i_pair = tid
-        while i_pair < n_lower_tri:
-            i_d1, i_d2 = linear_to_lower_tri(i_pair)
-            constraint_state.nt_L[i_b, i_d1, i_d2] = H[i_d1, i_d2]
-            i_pair = i_pair + BLOCK_DIM
+            # POTRF: factorize diagonal tile
+            r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
+                _tile_potrf_16(tid, EPS, r0, r1, r2, r3, r4, r5, r6, r7,
+                               r8, r9, r10, r11, r12, r13, r14, r15)
+
+            # Off-diagonal blocks
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * _CHOL_TILE
+
+                # Load off-diagonal block H[i0:i0+16, k0:k0+16]
+                q0 = H[i_b, i0 + tid, k0 + 0]; q1 = H[i_b, i0 + tid, k0 + 1]
+                q2 = H[i_b, i0 + tid, k0 + 2]; q3 = H[i_b, i0 + tid, k0 + 3]
+                q4 = H[i_b, i0 + tid, k0 + 4]; q5 = H[i_b, i0 + tid, k0 + 5]
+                q6 = H[i_b, i0 + tid, k0 + 6]; q7 = H[i_b, i0 + tid, k0 + 7]
+                q8 = H[i_b, i0 + tid, k0 + 8]; q9 = H[i_b, i0 + tid, k0 + 9]
+                q10 = H[i_b, i0 + tid, k0 + 10]; q11 = H[i_b, i0 + tid, k0 + 11]
+                q12 = H[i_b, i0 + tid, k0 + 12]; q13 = H[i_b, i0 + tid, k0 + 13]
+                q14 = H[i_b, i0 + tid, k0 + 14]; q15 = H[i_b, i0 + tid, k0 + 15]
+
+                # Off-diagonal GEMM subtract: A_ik -= L_i* @ L_k*^T
+                for jb in range(kb):
+                    j0 = jb * _CHOL_TILE
+                    for t in range(_CHOL_TILE):
+                        v_own = H[i_b, i0 + tid, j0 + t]
+                        v_diag = H[i_b, k0 + tid, j0 + t]
+                        q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
+                            _tile_gemm_sub_offdiag_16(v_own, v_diag,
+                                                      q0, q1, q2, q3, q4, q5, q6, q7,
+                                                      q8, q9, q10, q11, q12, q13, q14, q15)
+
+                # TRSM: solve L_kk @ X^T = Q^T
+                q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
+                    _tile_trsm_16(r0, r1, r2, r3, r4, r5, r6, r7,
+                                  r8, r9, r10, r11, r12, r13, r14, r15,
+                                  q0, q1, q2, q3, q4, q5, q6, q7,
+                                  q8, q9, q10, q11, q12, q13, q14, q15)
+
+                # Store off-diagonal result
+                H[i_b, i0 + tid, k0 + 0] = q0; H[i_b, i0 + tid, k0 + 1] = q1
+                H[i_b, i0 + tid, k0 + 2] = q2; H[i_b, i0 + tid, k0 + 3] = q3
+                H[i_b, i0 + tid, k0 + 4] = q4; H[i_b, i0 + tid, k0 + 5] = q5
+                H[i_b, i0 + tid, k0 + 6] = q6; H[i_b, i0 + tid, k0 + 7] = q7
+                H[i_b, i0 + tid, k0 + 8] = q8; H[i_b, i0 + tid, k0 + 9] = q9
+                H[i_b, i0 + tid, k0 + 10] = q10; H[i_b, i0 + tid, k0 + 11] = q11
+                H[i_b, i0 + tid, k0 + 12] = q12; H[i_b, i0 + tid, k0 + 13] = q13
+                H[i_b, i0 + tid, k0 + 14] = q14; H[i_b, i0 + tid, k0 + 15] = q15
+
+            # Store diagonal result
+            H[i_b, k0 + tid, k0 + 0] = r0; H[i_b, k0 + tid, k0 + 1] = r1
+            H[i_b, k0 + tid, k0 + 2] = r2; H[i_b, k0 + tid, k0 + 3] = r3
+            H[i_b, k0 + tid, k0 + 4] = r4; H[i_b, k0 + tid, k0 + 5] = r5
+            H[i_b, k0 + tid, k0 + 6] = r6; H[i_b, k0 + tid, k0 + 7] = r7
+            H[i_b, k0 + tid, k0 + 8] = r8; H[i_b, k0 + tid, k0 + 9] = r9
+            H[i_b, k0 + tid, k0 + 10] = r10; H[i_b, k0 + tid, k0 + 11] = r11
+            H[i_b, k0 + tid, k0 + 12] = r12; H[i_b, k0 + tid, k0 + 13] = r13
+            H[i_b, k0 + tid, k0 + 14] = r14; H[i_b, k0 + tid, k0 + 15] = r15
 
 
 @qd.func
