@@ -691,7 +691,15 @@ class Viewer(pyglet.window.Window):
             self._event_loop_step_offscreen()
 
     def render_offscreen(
-        self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False, skip_markers=False
+        self,
+        camera_node,
+        render_target,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+        skip_markers=False,
+        env_separate_rigid=None,
     ):
         if not self.is_active:
             gs.raise_exception("Viewer already closed.")
@@ -701,6 +709,9 @@ class Viewer(pyglet.window.Window):
         self.render_flags["rgb"] = rgb
         self.render_flags["seg"] = seg
         self.render_flags["depth"] = depth
+        saved_env_separate_rigid = self.render_flags["env_separate_rigid"]
+        if env_separate_rigid is not None:
+            self.render_flags["env_separate_rigid"] = env_separate_rigid
         self._offscreen_pending_render = (camera_node, render_target, normal, skip_markers)
         if self._run_in_thread:
             # Send offscreen request
@@ -713,6 +724,7 @@ class Viewer(pyglet.window.Window):
         self.render_flags["rgb"] = True
         self.render_flags["seg"] = False
         self.render_flags["depth"] = False
+        self.render_flags["env_separate_rigid"] = saved_env_separate_rigid
         return self._offscreen_result
 
     def wait_until_initialized(self):

@@ -196,7 +196,15 @@ class Viewer(RBC):
         return self._pyrender_viewer.close_offscreen(render_target)
 
     def render_offscreen(
-        self, camera_node, render_target, rgb=True, depth=False, seg=False, normal=False, skip_markers=False
+        self,
+        camera_node,
+        render_target,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+        skip_markers=False,
+        env_separate_rigid=None,
     ):
         return self._pyrender_viewer.render_offscreen(
             camera_node,
@@ -206,6 +214,7 @@ class Viewer(RBC):
             seg,
             normal,
             skip_markers=skip_markers,
+            env_separate_rigid=env_separate_rigid,
         )
 
     def set_camera_pose(self, pose=None, pos=None, lookat=None):

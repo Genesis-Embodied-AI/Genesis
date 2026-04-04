@@ -23,7 +23,6 @@ from genesis.utils.geom import (
     T_to_trans,
     pos_lookat_up_to_T,
     trans_quat_to_T,
-    trans_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
@@ -286,7 +285,9 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
             pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_to_T(pos)
+            lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+            up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+            offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()
@@ -640,7 +641,9 @@ class RaytracerCameraSensor(
                 offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
             else:
                 pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-                offset_T = trans_to_T(pos)
+                lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+                up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+                offset_T = pos_lookat_up_to_T(pos, lookat, up)
             self._camera_obj.attach(self._link, offset_T)
 
         _B = max(n_envs, 1)
