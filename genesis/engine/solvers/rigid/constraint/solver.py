@@ -1917,99 +1917,6 @@ def _tile_trsm_16(
 
 
 @qd.func
-def _tile_load_diag_16(H, i_b, k0, tid, n_dofs):
-    """Load a diagonal 16x16 tile with identity padding for out-of-bounds rows/cols."""
-    z = gs.qd_float(0.0)
-    r0 = z; r1 = z; r2 = z; r3 = z; r4 = z; r5 = z; r6 = z; r7 = z
-    r8 = z; r9 = z; r10 = z; r11 = z; r12 = z; r13 = z; r14 = z; r15 = z
-    if k0 + tid < n_dofs:
-        if k0 + 0 < n_dofs: r0 = H[i_b, k0 + tid, k0 + 0]
-        if k0 + 1 < n_dofs: r1 = H[i_b, k0 + tid, k0 + 1]
-        if k0 + 2 < n_dofs: r2 = H[i_b, k0 + tid, k0 + 2]
-        if k0 + 3 < n_dofs: r3 = H[i_b, k0 + tid, k0 + 3]
-        if k0 + 4 < n_dofs: r4 = H[i_b, k0 + tid, k0 + 4]
-        if k0 + 5 < n_dofs: r5 = H[i_b, k0 + tid, k0 + 5]
-        if k0 + 6 < n_dofs: r6 = H[i_b, k0 + tid, k0 + 6]
-        if k0 + 7 < n_dofs: r7 = H[i_b, k0 + tid, k0 + 7]
-        if k0 + 8 < n_dofs: r8 = H[i_b, k0 + tid, k0 + 8]
-        if k0 + 9 < n_dofs: r9 = H[i_b, k0 + tid, k0 + 9]
-        if k0 + 10 < n_dofs: r10 = H[i_b, k0 + tid, k0 + 10]
-        if k0 + 11 < n_dofs: r11 = H[i_b, k0 + tid, k0 + 11]
-        if k0 + 12 < n_dofs: r12 = H[i_b, k0 + tid, k0 + 12]
-        if k0 + 13 < n_dofs: r13 = H[i_b, k0 + tid, k0 + 13]
-        if k0 + 14 < n_dofs: r14 = H[i_b, k0 + tid, k0 + 14]
-        if k0 + 15 < n_dofs: r15 = H[i_b, k0 + tid, k0 + 15]
-    else:
-        if tid == 0: r0 = gs.qd_float(1.0)
-        if tid == 1: r1 = gs.qd_float(1.0)
-        if tid == 2: r2 = gs.qd_float(1.0)
-        if tid == 3: r3 = gs.qd_float(1.0)
-        if tid == 4: r4 = gs.qd_float(1.0)
-        if tid == 5: r5 = gs.qd_float(1.0)
-        if tid == 6: r6 = gs.qd_float(1.0)
-        if tid == 7: r7 = gs.qd_float(1.0)
-        if tid == 8: r8 = gs.qd_float(1.0)
-        if tid == 9: r9 = gs.qd_float(1.0)
-        if tid == 10: r10 = gs.qd_float(1.0)
-        if tid == 11: r11 = gs.qd_float(1.0)
-        if tid == 12: r12 = gs.qd_float(1.0)
-        if tid == 13: r13 = gs.qd_float(1.0)
-        if tid == 14: r14 = gs.qd_float(1.0)
-        if tid == 15: r15 = gs.qd_float(1.0)
-    return r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15
-
-
-@qd.func
-def _tile_load_offdiag_16(H, i_b, i0, k0, tid, n_dofs):
-    """Load an off-diagonal 16x16 tile with zero padding for out-of-bounds."""
-    z = gs.qd_float(0.0)
-    q0 = z; q1 = z; q2 = z; q3 = z; q4 = z; q5 = z; q6 = z; q7 = z
-    q8 = z; q9 = z; q10 = z; q11 = z; q12 = z; q13 = z; q14 = z; q15 = z
-    if i0 + tid < n_dofs:
-        if k0 + 0 < n_dofs: q0 = H[i_b, i0 + tid, k0 + 0]
-        if k0 + 1 < n_dofs: q1 = H[i_b, i0 + tid, k0 + 1]
-        if k0 + 2 < n_dofs: q2 = H[i_b, i0 + tid, k0 + 2]
-        if k0 + 3 < n_dofs: q3 = H[i_b, i0 + tid, k0 + 3]
-        if k0 + 4 < n_dofs: q4 = H[i_b, i0 + tid, k0 + 4]
-        if k0 + 5 < n_dofs: q5 = H[i_b, i0 + tid, k0 + 5]
-        if k0 + 6 < n_dofs: q6 = H[i_b, i0 + tid, k0 + 6]
-        if k0 + 7 < n_dofs: q7 = H[i_b, i0 + tid, k0 + 7]
-        if k0 + 8 < n_dofs: q8 = H[i_b, i0 + tid, k0 + 8]
-        if k0 + 9 < n_dofs: q9 = H[i_b, i0 + tid, k0 + 9]
-        if k0 + 10 < n_dofs: q10 = H[i_b, i0 + tid, k0 + 10]
-        if k0 + 11 < n_dofs: q11 = H[i_b, i0 + tid, k0 + 11]
-        if k0 + 12 < n_dofs: q12 = H[i_b, i0 + tid, k0 + 12]
-        if k0 + 13 < n_dofs: q13 = H[i_b, i0 + tid, k0 + 13]
-        if k0 + 14 < n_dofs: q14 = H[i_b, i0 + tid, k0 + 14]
-        if k0 + 15 < n_dofs: q15 = H[i_b, i0 + tid, k0 + 15]
-    return q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
-
-
-@qd.func
-def _tile_store_16(H, i_b, r0, k0, tid, n_dofs,
-                   r0v, r1v, r2v, r3v, r4v, r5v, r6v, r7v,
-                   r8v, r9v, r10v, r11v, r12v, r13v, r14v, r15v):
-    """Store a 16x16 tile, skipping out-of-bounds rows/cols."""
-    if r0 + tid < n_dofs:
-        if k0 + 0 < n_dofs: H[i_b, r0 + tid, k0 + 0] = r0v
-        if k0 + 1 < n_dofs: H[i_b, r0 + tid, k0 + 1] = r1v
-        if k0 + 2 < n_dofs: H[i_b, r0 + tid, k0 + 2] = r2v
-        if k0 + 3 < n_dofs: H[i_b, r0 + tid, k0 + 3] = r3v
-        if k0 + 4 < n_dofs: H[i_b, r0 + tid, k0 + 4] = r4v
-        if k0 + 5 < n_dofs: H[i_b, r0 + tid, k0 + 5] = r5v
-        if k0 + 6 < n_dofs: H[i_b, r0 + tid, k0 + 6] = r6v
-        if k0 + 7 < n_dofs: H[i_b, r0 + tid, k0 + 7] = r7v
-        if k0 + 8 < n_dofs: H[i_b, r0 + tid, k0 + 8] = r8v
-        if k0 + 9 < n_dofs: H[i_b, r0 + tid, k0 + 9] = r9v
-        if k0 + 10 < n_dofs: H[i_b, r0 + tid, k0 + 10] = r10v
-        if k0 + 11 < n_dofs: H[i_b, r0 + tid, k0 + 11] = r11v
-        if k0 + 12 < n_dofs: H[i_b, r0 + tid, k0 + 12] = r12v
-        if k0 + 13 < n_dofs: H[i_b, r0 + tid, k0 + 13] = r13v
-        if k0 + 14 < n_dofs: H[i_b, r0 + tid, k0 + 14] = r14v
-        if k0 + 15 < n_dofs: H[i_b, r0 + tid, k0 + 15] = r15v
-
-
-@qd.func
 def func_cholesky_factor_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -2040,14 +1947,47 @@ def func_cholesky_factor_direct_tiled(
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
-        H = constraint_state.nt_H
-
         for kb in range(N_BLOCKS):
             k0 = kb * _CHOL_TILE
 
-            # Load diagonal block with identity padding
-            r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                _tile_load_diag_16(H, i_b, k0, tid, n_dofs)
+            # Load diagonal block with identity padding for out-of-bounds
+            z = gs.qd_float(0.0)
+            r0 = z; r1 = z; r2 = z; r3 = z; r4 = z; r5 = z; r6 = z; r7 = z
+            r8 = z; r9 = z; r10 = z; r11 = z; r12 = z; r13 = z; r14 = z; r15 = z
+            if k0 + tid < n_dofs:
+                if k0 + 0 < n_dofs: r0 = constraint_state.nt_H[i_b, k0 + tid, k0 + 0]
+                if k0 + 1 < n_dofs: r1 = constraint_state.nt_H[i_b, k0 + tid, k0 + 1]
+                if k0 + 2 < n_dofs: r2 = constraint_state.nt_H[i_b, k0 + tid, k0 + 2]
+                if k0 + 3 < n_dofs: r3 = constraint_state.nt_H[i_b, k0 + tid, k0 + 3]
+                if k0 + 4 < n_dofs: r4 = constraint_state.nt_H[i_b, k0 + tid, k0 + 4]
+                if k0 + 5 < n_dofs: r5 = constraint_state.nt_H[i_b, k0 + tid, k0 + 5]
+                if k0 + 6 < n_dofs: r6 = constraint_state.nt_H[i_b, k0 + tid, k0 + 6]
+                if k0 + 7 < n_dofs: r7 = constraint_state.nt_H[i_b, k0 + tid, k0 + 7]
+                if k0 + 8 < n_dofs: r8 = constraint_state.nt_H[i_b, k0 + tid, k0 + 8]
+                if k0 + 9 < n_dofs: r9 = constraint_state.nt_H[i_b, k0 + tid, k0 + 9]
+                if k0 + 10 < n_dofs: r10 = constraint_state.nt_H[i_b, k0 + tid, k0 + 10]
+                if k0 + 11 < n_dofs: r11 = constraint_state.nt_H[i_b, k0 + tid, k0 + 11]
+                if k0 + 12 < n_dofs: r12 = constraint_state.nt_H[i_b, k0 + tid, k0 + 12]
+                if k0 + 13 < n_dofs: r13 = constraint_state.nt_H[i_b, k0 + tid, k0 + 13]
+                if k0 + 14 < n_dofs: r14 = constraint_state.nt_H[i_b, k0 + tid, k0 + 14]
+                if k0 + 15 < n_dofs: r15 = constraint_state.nt_H[i_b, k0 + tid, k0 + 15]
+            else:
+                if tid == 0: r0 = gs.qd_float(1.0)
+                if tid == 1: r1 = gs.qd_float(1.0)
+                if tid == 2: r2 = gs.qd_float(1.0)
+                if tid == 3: r3 = gs.qd_float(1.0)
+                if tid == 4: r4 = gs.qd_float(1.0)
+                if tid == 5: r5 = gs.qd_float(1.0)
+                if tid == 6: r6 = gs.qd_float(1.0)
+                if tid == 7: r7 = gs.qd_float(1.0)
+                if tid == 8: r8 = gs.qd_float(1.0)
+                if tid == 9: r9 = gs.qd_float(1.0)
+                if tid == 10: r10 = gs.qd_float(1.0)
+                if tid == 11: r11 = gs.qd_float(1.0)
+                if tid == 12: r12 = gs.qd_float(1.0)
+                if tid == 13: r13 = gs.qd_float(1.0)
+                if tid == 14: r14 = gs.qd_float(1.0)
+                if tid == 15: r15 = gs.qd_float(1.0)
 
             # Diagonal GEMM subtract: A_kk -= L_k* @ L_k*^T
             for jb in range(kb):
@@ -2055,7 +1995,7 @@ def func_cholesky_factor_direct_tiled(
                 for t in range(_CHOL_TILE):
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
-                        v = H[i_b, k0 + tid, j0 + t]
+                        v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                     r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
                         _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
                                           r8, r9, r10, r11, r12, r13, r14, r15)
@@ -2069,9 +2009,27 @@ def func_cholesky_factor_direct_tiled(
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * _CHOL_TILE
 
-                # Load off-diagonal block with zero padding
-                q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                    _tile_load_offdiag_16(H, i_b, i0, k0, tid, n_dofs)
+                # Load off-diagonal block with zero padding for out-of-bounds
+                z2 = gs.qd_float(0.0)
+                q0 = z2; q1 = z2; q2 = z2; q3 = z2; q4 = z2; q5 = z2; q6 = z2; q7 = z2
+                q8 = z2; q9 = z2; q10 = z2; q11 = z2; q12 = z2; q13 = z2; q14 = z2; q15 = z2
+                if i0 + tid < n_dofs:
+                    if k0 + 0 < n_dofs: q0 = constraint_state.nt_H[i_b, i0 + tid, k0 + 0]
+                    if k0 + 1 < n_dofs: q1 = constraint_state.nt_H[i_b, i0 + tid, k0 + 1]
+                    if k0 + 2 < n_dofs: q2 = constraint_state.nt_H[i_b, i0 + tid, k0 + 2]
+                    if k0 + 3 < n_dofs: q3 = constraint_state.nt_H[i_b, i0 + tid, k0 + 3]
+                    if k0 + 4 < n_dofs: q4 = constraint_state.nt_H[i_b, i0 + tid, k0 + 4]
+                    if k0 + 5 < n_dofs: q5 = constraint_state.nt_H[i_b, i0 + tid, k0 + 5]
+                    if k0 + 6 < n_dofs: q6 = constraint_state.nt_H[i_b, i0 + tid, k0 + 6]
+                    if k0 + 7 < n_dofs: q7 = constraint_state.nt_H[i_b, i0 + tid, k0 + 7]
+                    if k0 + 8 < n_dofs: q8 = constraint_state.nt_H[i_b, i0 + tid, k0 + 8]
+                    if k0 + 9 < n_dofs: q9 = constraint_state.nt_H[i_b, i0 + tid, k0 + 9]
+                    if k0 + 10 < n_dofs: q10 = constraint_state.nt_H[i_b, i0 + tid, k0 + 10]
+                    if k0 + 11 < n_dofs: q11 = constraint_state.nt_H[i_b, i0 + tid, k0 + 11]
+                    if k0 + 12 < n_dofs: q12 = constraint_state.nt_H[i_b, i0 + tid, k0 + 12]
+                    if k0 + 13 < n_dofs: q13 = constraint_state.nt_H[i_b, i0 + tid, k0 + 13]
+                    if k0 + 14 < n_dofs: q14 = constraint_state.nt_H[i_b, i0 + tid, k0 + 14]
+                    if k0 + 15 < n_dofs: q15 = constraint_state.nt_H[i_b, i0 + tid, k0 + 15]
 
                 # Off-diagonal GEMM subtract: A_ik -= L_i* @ L_k*^T
                 for jb in range(kb):
@@ -2080,9 +2038,9 @@ def func_cholesky_factor_direct_tiled(
                         v_own = gs.qd_float(0.0)
                         v_diag = gs.qd_float(0.0)
                         if i0 + tid < n_dofs:
-                            v_own = H[i_b, i0 + tid, j0 + t]
+                            v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
-                            v_diag = H[i_b, k0 + tid, j0 + t]
+                            v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                         q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
                             _tile_gemm_sub_offdiag_16(v_own, v_diag,
                                                       q0, q1, q2, q3, q4, q5, q6, q7,
@@ -2096,14 +2054,42 @@ def func_cholesky_factor_direct_tiled(
                                   q8, q9, q10, q11, q12, q13, q14, q15)
 
                 # Store off-diagonal result (skip out-of-bounds)
-                _tile_store_16(H, i_b, i0, k0, tid, n_dofs,
-                               q0, q1, q2, q3, q4, q5, q6, q7,
-                               q8, q9, q10, q11, q12, q13, q14, q15)
+                if i0 + tid < n_dofs:
+                    if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 0] = q0
+                    if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 1] = q1
+                    if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 2] = q2
+                    if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 3] = q3
+                    if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 4] = q4
+                    if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 5] = q5
+                    if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 6] = q6
+                    if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 7] = q7
+                    if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 8] = q8
+                    if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 9] = q9
+                    if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 10] = q10
+                    if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 11] = q11
+                    if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 12] = q12
+                    if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 13] = q13
+                    if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 14] = q14
+                    if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 15] = q15
 
             # Store diagonal result (skip out-of-bounds)
-            _tile_store_16(H, i_b, k0, k0, tid, n_dofs,
-                           r0, r1, r2, r3, r4, r5, r6, r7,
-                           r8, r9, r10, r11, r12, r13, r14, r15)
+            if k0 + tid < n_dofs:
+                if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 0] = r0
+                if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 1] = r1
+                if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 2] = r2
+                if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 3] = r3
+                if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 4] = r4
+                if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 5] = r5
+                if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 6] = r6
+                if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 7] = r7
+                if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 8] = r8
+                if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 9] = r9
+                if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 10] = r10
+                if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 11] = r11
+                if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 12] = r12
+                if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 13] = r13
+                if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 14] = r14
+                if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 15] = r15
 
 
 @qd.func
