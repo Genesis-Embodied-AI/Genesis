@@ -1734,6 +1734,9 @@ class RigidSolver(KinematicSolver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     def set_links_quat(self, quat, links_idx=None, envs_idx=None):
         raise DeprecationError("This method has been removed. Please use 'set_base_links_quat' instead.")
@@ -1825,6 +1828,9 @@ class RigidSolver(KinematicSolver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     def set_links_mass_shift(self, mass, links_idx=None, envs_idx=None):
         mass, links_idx, envs_idx = self._sanitize_io_variables(
