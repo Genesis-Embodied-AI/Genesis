@@ -711,17 +711,16 @@ def _func_update_constraint_cost(
 
 # Number of full Hessian+Cholesky rebuilds at the start of the solver loop (after the init's iter-0 full rebuild).
 # 0 = all incremental, 2 = full for loop iters 0-1 then incremental, 999 = always full.
-_N_FULL_HESSIAN_ITERS = 0
-
-
 @qd.func
 def _func_build_changed_and_decide_hessian_mode(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Build changed-constraint lists and set per-env use_full_hessian flag."""
-    N_FULL = qd.static(_N_FULL_HESSIAN_ITERS)
+    """Build changed-constraint lists and set per-env use_full_hessian flag.
 
+    Adaptive policy: use full rebuild if more than half the constraints changed,
+    otherwise patch. Init (iter 0) always does full rebuild via func_solve_init.
+    """
     qd.loop_config(name="increment_iter_counter")
     for _ in range(1):
         constraint_state.solver_iter_counter[()] = constraint_state.solver_iter_counter[()] + 1
@@ -731,7 +730,9 @@ def _func_build_changed_and_decide_hessian_mode(
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-            if constraint_state.solver_iter_counter[()] <= N_FULL:
+            n_changed = constraint_state.incr_n_changed[i_b]
+            n_total = constraint_state.n_constraints[i_b]
+            if n_changed * 2 > n_total:
                 constraint_state.use_full_hessian[i_b] = 1
             else:
                 constraint_state.use_full_hessian[i_b] = 0
