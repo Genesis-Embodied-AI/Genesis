@@ -358,6 +358,117 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
+    """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
+    GRAVITY = -10.0
+    DT = 1e-2
+    H = 4
+    MAG_FIELD = (0.3, 0.1, 0.5)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            substeps=1,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+
+    contact_h = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+            history_length=H,
+        )
+    )
+    imu_h = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
+            history_length=H,
+            acc_noise=0.0,
+            gyro_noise=0.0,
+            mag_noise=0.0,
+            acc_random_walk=0.0,
+            gyro_random_walk=0.0,
+            mag_random_walk=0.0,
+        )
+    )
+    imu_ref = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            magnetic_field=MAG_FIELD,
+            acc_noise=0.0,
+            gyro_noise=0.0,
+            mag_noise=0.0,
+            acc_random_walk=0.0,
+            gyro_random_walk=0.0,
+            mag_random_walk=0.0,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def _expected_hist_lead_shape(lead: int, rest: tuple[int, ...]):
+        if n_envs == 0:
+            return (lead, *rest)
+        return (n_envs, lead, *rest)
+
+    prev_c = None
+    prev_i = None
+    for _ in range(12):
+        scene.step()
+        cg = contact_h.read_ground_truth()
+        assert cg.shape == _expected_hist_lead_shape(H, (1,))
+        ig = imu_h.read_ground_truth()
+        assert ig.lin_acc.shape == _expected_hist_lead_shape(H, (3,))
+        assert ig.ang_vel.shape == _expected_hist_lead_shape(H, (3,))
+        assert ig.mag.shape == _expected_hist_lead_shape(H, (3,))
+
+        assert_equal(contact_h.read(), cg)
+
+        assert_allclose(
+            ig.lin_acc[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().lin_acc, tol=tol
+        )
+        assert_allclose(
+            ig.ang_vel[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().ang_vel, tol=tol
+        )
+        assert_allclose(ig.mag[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().mag, tol=tol)
+
+        if prev_c is not None:
+            assert_equal(
+                cg[1 if n_envs == 0 else (slice(None), 1)],
+                prev_c[0 if n_envs == 0 else (slice(None), 0)],
+            )
+        if prev_i is not None:
+            assert_allclose(
+                ig.lin_acc[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.lin_acc[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+            assert_allclose(
+                ig.ang_vel[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.ang_vel[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+            assert_allclose(
+                ig.mag[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.mag[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+        prev_c = cg
+        prev_i = ig
+
+
 # ------------------------------------------------------------------------------------------
 # ------------------------------------ Contact Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
