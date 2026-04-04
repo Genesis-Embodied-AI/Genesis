@@ -1609,23 +1609,19 @@ def func_cholesky_factor_direct_batch(
 
     n_dofs = constraint_state.nt_H.shape[1]
 
-    # Copy H to L before in-place factorization
-    for i_d1 in range(n_dofs):
-        for i_d2 in range(i_d1 + 1):
-            constraint_state.nt_L[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-
+    # In-place factorization on nt_H (batch path never uses H patching)
     for i_d in range(n_dofs):
-        tmp = constraint_state.nt_L[i_b, i_d, i_d]
+        tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
-            tmp = tmp - constraint_state.nt_L[i_b, i_d, j_d] ** 2
-        constraint_state.nt_L[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+            tmp = tmp - constraint_state.nt_H[i_b, i_d, j_d] ** 2
+        constraint_state.nt_H[i_b, i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
 
-        tmp = 1.0 / constraint_state.nt_L[i_b, i_d, i_d]
+        tmp = 1.0 / constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d + 1, n_dofs):
             dot = gs.qd_float(0.0)
             for k_d in range(i_d):
-                dot = dot + constraint_state.nt_L[i_b, j_d, k_d] * constraint_state.nt_L[i_b, i_d, k_d]
-            constraint_state.nt_L[i_b, j_d, i_d] = (constraint_state.nt_L[i_b, j_d, i_d] - dot) * tmp
+                dot = dot + constraint_state.nt_H[i_b, j_d, k_d] * constraint_state.nt_H[i_b, i_d, k_d]
+            constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
 # ---------------------------------------------------------------------------
@@ -2511,18 +2507,19 @@ def func_cholesky_solve_batch(
 ):
     n_dofs = constraint_state.Mgrad.shape[0]
 
+    # Batch path: L is in nt_H (in-place factorization)
     for i_d in range(n_dofs):
         curr_out = constraint_state.grad[i_d, i_b]
         for j_d in range(i_d):
-            curr_out = curr_out - constraint_state.nt_L[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_L[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, i_d, j_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
     for i_d_ in range(n_dofs):
         i_d = n_dofs - 1 - i_d_
         curr_out = constraint_state.Mgrad[i_d, i_b]
         for j_d in range(i_d + 1, n_dofs):
-            curr_out = curr_out - constraint_state.nt_L[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
-        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_L[i_b, i_d, i_d]
+            curr_out = curr_out - constraint_state.nt_H[i_b, j_d, i_d] * constraint_state.Mgrad[j_d, i_b]
+        constraint_state.Mgrad[i_d, i_b] = curr_out / constraint_state.nt_H[i_b, i_d, i_d]
 
 
 @qd.func
