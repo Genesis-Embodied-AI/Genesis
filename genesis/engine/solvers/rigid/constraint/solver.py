@@ -1991,7 +1991,7 @@ def func_cholesky_factor_direct_tiled(
                 for t in range(_CHOL_TILE):
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
-                        v = constraint_state.nt_L[i_b, k0 + tid, j0 + t]
+                        v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                     r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
                         _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
                                           r8, r9, r10, r11, r12, r13, r14, r15)
@@ -2034,9 +2034,9 @@ def func_cholesky_factor_direct_tiled(
                         v_own = gs.qd_float(0.0)
                         v_diag = gs.qd_float(0.0)
                         if i0 + tid < n_dofs:
-                            v_own = constraint_state.nt_L[i_b, i0 + tid, j0 + t]
+                            v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
-                            v_diag = constraint_state.nt_L[i_b, k0 + tid, j0 + t]
+                            v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                         q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
                             _tile_gemm_sub_offdiag_16(v_own, v_diag,
                                                       q0, q1, q2, q3, q4, q5, q6, q7,
@@ -2051,41 +2051,41 @@ def func_cholesky_factor_direct_tiled(
 
                 # Store off-diagonal result (skip out-of-bounds)
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 0] = q0
-                    if k0 + 1 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 1] = q1
-                    if k0 + 2 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 2] = q2
-                    if k0 + 3 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 3] = q3
-                    if k0 + 4 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 4] = q4
-                    if k0 + 5 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 5] = q5
-                    if k0 + 6 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 6] = q6
-                    if k0 + 7 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 7] = q7
-                    if k0 + 8 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 8] = q8
-                    if k0 + 9 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 9] = q9
-                    if k0 + 10 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 10] = q10
-                    if k0 + 11 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 11] = q11
-                    if k0 + 12 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 12] = q12
-                    if k0 + 13 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 13] = q13
-                    if k0 + 14 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 14] = q14
-                    if k0 + 15 < n_dofs: constraint_state.nt_L[i_b, i0 + tid, k0 + 15] = q15
+                    if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 0] = q0
+                    if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 1] = q1
+                    if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 2] = q2
+                    if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 3] = q3
+                    if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 4] = q4
+                    if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 5] = q5
+                    if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 6] = q6
+                    if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 7] = q7
+                    if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 8] = q8
+                    if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 9] = q9
+                    if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 10] = q10
+                    if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 11] = q11
+                    if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 12] = q12
+                    if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 13] = q13
+                    if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 14] = q14
+                    if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 15] = q15
 
             # Store diagonal result (skip out-of-bounds)
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 0] = r0
-                if k0 + 1 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 1] = r1
-                if k0 + 2 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 2] = r2
-                if k0 + 3 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 3] = r3
-                if k0 + 4 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 4] = r4
-                if k0 + 5 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 5] = r5
-                if k0 + 6 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 6] = r6
-                if k0 + 7 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 7] = r7
-                if k0 + 8 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 8] = r8
-                if k0 + 9 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 9] = r9
-                if k0 + 10 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 10] = r10
-                if k0 + 11 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 11] = r11
-                if k0 + 12 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 12] = r12
-                if k0 + 13 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 13] = r13
-                if k0 + 14 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 14] = r14
-                if k0 + 15 < n_dofs: constraint_state.nt_L[i_b, k0 + tid, k0 + 15] = r15
+                if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 0] = r0
+                if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 1] = r1
+                if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 2] = r2
+                if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 3] = r3
+                if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 4] = r4
+                if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 5] = r5
+                if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 6] = r6
+                if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 7] = r7
+                if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 8] = r8
+                if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 9] = r9
+                if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 10] = r10
+                if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 11] = r11
+                if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 12] = r12
+                if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 13] = r13
+                if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 14] = r14
+                if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 15] = r15
 
 
 @qd.func
@@ -2098,11 +2098,11 @@ def func_cholesky_and_solve_fused_tiled(
 
     Keeps L entirely in shared memory during factorization (for GEMM lookback)
     and solve (for forward/backward substitution). Never writes L to global
-    memory, eliminating the nt_L write-allocate overhead.
+    memory, eliminating global-memory write-allocate overhead.
 
     Uses the same register-resident 16x16 tile primitives as
     func_cholesky_factor_direct_tiled, but copies completed L tiles to shared
-    memory instead of nt_L. After factorization, reads the gradient vector,
+    memory instead of global memory. After factorization, reads the gradient vector,
     performs Ly=g (forward) and L^Tx=y (backward) using L from shared memory,
     and writes Mgrad = x to global memory.
     """
@@ -2414,7 +2414,7 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
 
         for k in range(n_dofs):
             if qd.abs(constraint_state.nt_vec[k, i_b]) > EPS:
-                Lkk = constraint_state.nt_L[i_b, k, k]
+                Lkk = constraint_state.nt_H[i_b, k, k]
                 tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
                 if tmp < EPS:
                     is_degenerated = True
@@ -2423,15 +2423,15 @@ def func_hessian_and_cholesky_factor_incremental_dense_batch(
                 c = r / Lkk
                 cinv = 1 / c
                 s = constraint_state.nt_vec[k, i_b] / Lkk
-                constraint_state.nt_L[i_b, k, k] = r
+                constraint_state.nt_H[i_b, k, k] = r
                 for i in range(k + 1, n_dofs):
-                    constraint_state.nt_L[i_b, i, k] = (
-                        constraint_state.nt_L[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                    constraint_state.nt_H[i_b, i, k] = (
+                        constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                     ) * cinv
 
                 for i in range(k + 1, n_dofs):
                     constraint_state.nt_vec[i, i_b] = (
-                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_L[i_b, i, k]
+                        constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                     )
 
     return is_degenerated
@@ -2457,7 +2457,7 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
 
         for k_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
             k = constraint_state.jac_relevant_dofs[i_c, k_, i_b]
-            Lkk = constraint_state.nt_L[i_b, k, k]
+            Lkk = constraint_state.nt_H[i_b, k, k]
             tmp = Lkk**2 + sign * constraint_state.nt_vec[k, i_b] ** 2
             if tmp < EPS:
                 is_degenerated = True
@@ -2466,17 +2466,17 @@ def func_hessian_and_cholesky_factor_incremental_sparse_batch(
             c = r / Lkk
             cinv = 1 / c
             s = constraint_state.nt_vec[k, i_b] / Lkk
-            constraint_state.nt_L[i_b, k, k] = r
+            constraint_state.nt_H[i_b, k, k] = r
             for i_ in range(k_):
                 i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
-                constraint_state.nt_L[i_b, i, k] = (
-                    constraint_state.nt_L[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
+                constraint_state.nt_H[i_b, i, k] = (
+                    constraint_state.nt_H[i_b, i, k] + s * constraint_state.nt_vec[i, i_b] * sign
                 ) * cinv
 
             for i_ in range(k_):
                 i = constraint_state.jac_relevant_dofs[i_c, i_, i_b]  # i is strictly > k
                 constraint_state.nt_vec[i, i_b] = (
-                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_L[i_b, i, k]
+                    constraint_state.nt_vec[i, i_b] * c - s * constraint_state.nt_H[i_b, i, k]
                 )
 
     return is_degenerated
@@ -2576,7 +2576,7 @@ def func_cholesky_solve_tiled(
             i_d1 = i_flat // n_dofs
             i_d2 = i_flat % n_dofs
             if i_d2 <= i_d1:
-                H[i_d1, i_d2] = constraint_state.nt_L[i_b, i_d1, i_d2]
+                H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
             i_flat = i_flat + BLOCK_DIM
 
         # Copy the gradient to shared memory for efficiency

@@ -281,10 +281,8 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     # Hessian matrix of the optimization problem as a dense 2D tensor.
     # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
     # As a result, the values of the strictly upper triangular part is undefined.
-    # When H patching is used, nt_L stores the Cholesky factor (so nt_H can keep the Hessian for patching).
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
     nt_H: V_ANNOTATION
-    nt_L: V_ANNOTATION
     nt_vec: V_ANNOTATION
     # Compacted list of constraints whose active state changed, used by incremental Cholesky update
     # to reduce GPU thread divergence by iterating only over constraints that need processing.
@@ -372,7 +370,6 @@ def get_constraint_state(constraint_solver, solver):
         cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
-        nt_L=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),

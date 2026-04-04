@@ -3737,11 +3737,9 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert not scene.rigid_solver.get_error_envs_mask().any()
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
-        # Tiled Cholesky writes L to nt_L; batch Cholesky writes L to nt_H in-place
-        cs = scene.rigid_solver.constraint_solver.constraint_state
-        chol_factor = cs.nt_L.to_numpy() if enable_tiled_cholesky else cs.nt_H.to_numpy()
-        assert (np.linalg.norm(chol_factor.reshape((-1, 2)), axis=0) > 5.0).all()
-        values.append(chol_factor)
+        nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
+        assert (np.linalg.norm(nt_H.reshape((-1, 2)), axis=0) > 5.0).all()
+        values.append(nt_H)
 
     assert_allclose(*values, tol=tol)
 
