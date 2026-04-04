@@ -224,10 +224,24 @@ def _get_gpu_indices():
         return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
-        nvidia_gpu_indices = []
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
         if os.path.exists(nvidia_gpu_interface_path):
             return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
+
+        # Fallback to nvidia-smi for environments where /proc/driver/nvidia/ is unavailable (e.g. WSL2)
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader,nounits"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+                text=True,
+            )
+            indices = tuple(int(line.strip()) for line in result.stdout.splitlines() if line.strip())
+            if indices:
+                return indices
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
 
     return (0,)
 
@@ -243,11 +257,30 @@ def _torch_get_gpu_idx(device):
         device_uuid = str(device_property.uuid)
 
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-            with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                device_info = f.read()
-            if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return device_idx
+        if os.path.exists(nvidia_gpu_interface_path):
+            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
+                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                    device_info = f.read()
+                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
+                    return device_idx
+        else:
+            # Fallback to nvidia-smi for environments where /proc/driver/nvidia/ is unavailable (e.g. WSL2)
+            try:
+                result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                    text=True,
+                )
+                for line in result.stdout.splitlines():
+                    parts = line.strip().split(", ")
+                    if len(parts) == 2:
+                        idx_str, uuid_str = parts
+                        if uuid_str == f"GPU-{device_uuid}":
+                            return int(idx_str)
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                pass
 
     return -1
 
