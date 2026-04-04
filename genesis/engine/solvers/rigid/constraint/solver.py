@@ -2271,8 +2271,10 @@ def func_cholesky_and_solve_fused_tiled(
 
         # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
         # L is fully computed in L_sh. Load gradient into v_sh.
-        if tid < n_dofs:
-            v_sh[tid] = constraint_state.grad[tid, i_b]
+        k = tid
+        while k < n_dofs:
+            v_sh[k] = constraint_state.grad[k, i_b]
+            k = k + _CHOL_TILE
         qd.simt.block.sync()
 
         # Forward substitution: solve L @ y = grad (parallel dot with 16 threads)
@@ -2309,8 +2311,10 @@ def func_cholesky_and_solve_fused_tiled(
             qd.simt.block.sync()
 
         # Write Mgrad to global memory
-        if tid < n_dofs:
-            constraint_state.Mgrad[tid, i_b] = v_sh[tid]
+        k = tid
+        while k < n_dofs:
+            constraint_state.Mgrad[k, i_b] = v_sh[k]
+            k = k + _CHOL_TILE
 
 
 @qd.func
