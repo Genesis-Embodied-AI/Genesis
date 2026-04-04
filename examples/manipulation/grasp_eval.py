@@ -27,10 +27,7 @@ def load_rl_policy(env, train_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    try:
-        *_, last_ckpt = sorted(checkpoint_files)
-    except ValueError as e:
-        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    last_ckpt = max(checkpoint_files, key=lambda f: int(re.search(r"\d+", f.stem).group()))
     runner.load(last_ckpt)
     print(f"Loaded RL checkpoint from {last_ckpt}")
 
@@ -45,10 +42,7 @@ def load_bc_policy(env, bc_cfg, log_dir):
     if not checkpoint_files:
         raise FileNotFoundError(f"No checkpoint files found in {log_dir}")
 
-    try:
-        *_, last_ckpt = sorted(checkpoint_files)
-    except ValueError as e:
-        raise FileNotFoundError(f"No checkpoint files found in {log_dir}") from e
+    last_ckpt = max(checkpoint_files, key=lambda f: int(re.search(r"\d+", f.stem).group()))
     print(f"Loaded BC checkpoint from {last_ckpt}")
     bc_runner.load(last_ckpt)
 
