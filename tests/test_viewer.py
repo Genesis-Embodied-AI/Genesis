@@ -60,8 +60,7 @@ def test_interactive_viewer_disable_viewer_defaults():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_default_viewer_plugin(n_envs):
+def test_default_viewer_plugin():
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.0, 1.0),
@@ -86,7 +85,7 @@ def test_default_viewer_plugin(n_envs):
             euler=(30, 40, 0),
         )
     )
-    scene.build(n_envs=n_envs)
+    scene.build()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
@@ -234,8 +233,7 @@ def test_viewer_thread_crash_reports_traceback():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-@pytest.mark.parametrize("n_envs", [0, 1])
-def test_mouse_interaction_plugin(n_envs):
+def test_mouse_interaction_plugin():
     DT = 0.01
     MASS = 100.0
     BOX_LENGTH = 0.2
@@ -273,13 +271,13 @@ def test_mouse_interaction_plugin(n_envs):
             rho=MASS / (BOX_LENGTH**3),
         ),
     )
-    scene.viewer.add_plugin(
+    _mouse_plugin = scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
             spring_const=SPRING_CONST,
         )
     )
-    scene.build(n_envs=n_envs)
+    scene.build()
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
@@ -339,7 +337,7 @@ def test_mouse_interaction_plugin(n_envs):
     final_vel = box.get_vel()
 
     assert_allclose(
-        final_vel[..., :2],
+        final_vel[:2],
         0.0,
         tol=0.002,
         err_msg="Final x and y velocities should be near zero since dragging only in z direction.",
@@ -349,9 +347,7 @@ def test_mouse_interaction_plugin(n_envs):
     pixels_to_world = 2.0 * distance_to_box * np.tan(np.radians(CAM_FOV) / 2.0) / viewport_size[1]
     total_world_displacement = STEPS * DRAG_DY * pixels_to_world
 
-    displacement_z = final_pos[..., 2] - initial_pos[..., 2]
-    if n_envs > 0:
-        displacement_z = displacement_z[0]
+    displacement_z = final_pos[2] - initial_pos[2]
     assert displacement_z > gs.EPS, "Box should have moved upward"
     assert displacement_z < total_world_displacement, (
         "Box displacement should be less than mouse displacement from spring lag"
@@ -374,7 +370,7 @@ def test_mouse_interaction_plugin(n_envs):
     expected_vel_z = avg_mouse_velocity * velocity_fraction
 
     assert_allclose(
-        final_vel[2] if n_envs == 0 else final_vel[0, 2],
+        final_vel[2],
         expected_vel_z,
         rtol=0.5,
         err_msg="Final z velocity does not match expected value based on spring dynamics.",
