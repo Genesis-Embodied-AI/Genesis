@@ -1641,7 +1641,7 @@ _CHOL_TILE = 16
 
 
 @qd.func
-def _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
+def _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
     """Symmetric GEMM subtract for a single element: r_c -= v * shuffle(v, c)."""
     vc = qd.simt.subgroup.shuffle(v, qd.u32(0)); r0 -= v * vc
     vc = qd.simt.subgroup.shuffle(v, qd.u32(1)); r1 -= v * vc
@@ -1663,7 +1663,7 @@ def _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, 
 
 
 @qd.func
-def _tile_gemm_sub_offdiag_16(
+def _tile_ger_sub_16(
     v_own, v_diag, q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
 ):
     """Off-diagonal GEMM subtract: q_c -= v_own * shuffle(v_diag, c)."""
@@ -1998,7 +1998,7 @@ def func_cholesky_factor_direct_tiled(
                     if k0 + tid < n_dofs:
                         v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                     r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                        _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
+                        _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
                                           r8, r9, r10, r11, r12, r13, r14, r15)
 
             # POTRF: factorize diagonal tile
@@ -2043,7 +2043,7 @@ def func_cholesky_factor_direct_tiled(
                         if k0 + tid < n_dofs:
                             v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
                         q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                            _tile_gemm_sub_offdiag_16(v_own, v_diag,
+                            _tile_ger_sub_16(v_own, v_diag,
                                                       q0, q1, q2, q3, q4, q5, q6, q7,
                                                       q8, q9, q10, q11, q12, q13, q14, q15)
 
@@ -2180,7 +2180,7 @@ def func_cholesky_and_solve_fused_tiled(
                     if k0 + tid < n_dofs:
                         v = L_sh[k0 + tid, j0 + t]
                     r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                        _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
+                        _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
                                           r8, r9, r10, r11, r12, r13, r14, r15)
 
             # POTRF: factorize diagonal tile
@@ -2225,7 +2225,7 @@ def func_cholesky_and_solve_fused_tiled(
                         if k0 + tid < n_dofs:
                             v_diag = L_sh[k0 + tid, j0 + t]
                         q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                            _tile_gemm_sub_offdiag_16(v_own, v_diag,
+                            _tile_ger_sub_16(v_own, v_diag,
                                                       q0, q1, q2, q3, q4, q5, q6, q7,
                                                       q8, q9, q10, q11, q12, q13, q14, q15)
 
