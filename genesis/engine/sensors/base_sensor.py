@@ -48,6 +48,9 @@ class SharedSensorMetadata:
     cache_sizes: list[int] = field(default_factory=list)
     delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
     history_lengths: list[int] = field(default_factory=list)
+    # If True, skip _update_shared_cache for this sensor class. Defaults True; concrete sensors set False when they
+    # need per-step measured-cache updates (cameras set True in BaseCameraSensor.build for lazy render-on-read).
+    update_ground_truth_only: bool = True
 
     def __del__(self):
         try:
@@ -172,6 +175,8 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         )
         self._shared_metadata.cache_sizes.append(self._cache_size)
         self._shared_metadata.history_lengths.append(self._options.history_length)
+        if self._delay_ts > 0:
+            self._shared_metadata.update_ground_truth_only = False
 
     @classmethod
     def reset(cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx):
@@ -519,6 +524,26 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
         )
         self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)
+        if self._noisy_options_require_measured_cache():
+            self._shared_metadata.update_ground_truth_only = False
+
+    def _noisy_options_require_measured_cache(self) -> bool:
+        """Analog-style options (beyond delay, which Sensor.build handles)."""
+        o = self._options
+        if o.jitter > gs.EPS:
+            return True
+        if o.interpolate and (self._delay_ts > 0 or o.jitter > gs.EPS):
+            return True
+        to_t = partial(_to_tuple, length_per_value=self._cache_size)
+        if np.any(np.abs(to_t(o.resolution)) > gs.EPS):
+            return True
+        if np.any(np.abs(to_t(o.bias)) > gs.EPS):
+            return True
+        if np.any(np.abs(to_t(o.noise)) > gs.EPS):
+            return True
+        if np.any(np.abs(to_t(o.random_walk)) > gs.EPS):
+            return True
+        return False
 
     @classmethod
     def reset(cls, shared_metadata: NoisySensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):

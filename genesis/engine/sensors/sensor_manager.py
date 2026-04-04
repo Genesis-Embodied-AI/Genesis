@@ -101,7 +101,6 @@ class SensorManager:
         cache_size_per_dtype = {}
         delay_depth_per_dtype: dict[type[torch.dtype], int] = {}
         max_history_per_dtype: dict[type[torch.dtype], int] = {}
-        measured_history_dtype: set[type[torch.dtype]] = set()
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_cache_dtype()
 
@@ -113,17 +112,12 @@ class SensorManager:
             cache_size_per_dtype.setdefault(dtype, 0)
             cls_cache_start_idx = cache_size_per_dtype[dtype]
 
-            update_ground_truth_only = True
             for sensor in sensors:
-                update_ground_truth_only &= sensor._options.update_ground_truth_only
                 sensor._cache_idx = cache_size_per_dtype[dtype]
                 cache_size_per_dtype[dtype] += sensor._cache_size
                 delay_depth_per_dtype[dtype] = max(delay_depth_per_dtype.get(dtype, 0), sensor._delay_ts + 1)
                 if sensor._history_length > 0:
                     max_history_per_dtype[dtype] = max(max_history_per_dtype.get(dtype, 0), sensor._history_length)
-                if not sensor._options.update_ground_truth_only:
-                    measured_history_dtype.add(dtype)
-            self._should_update_cache_by_type[sensor_cls] = not update_ground_truth_only
 
             cls_cache_end_idx = cache_size_per_dtype[dtype]
             self._cache_slices_by_type[sensor_cls] = slice(cls_cache_start_idx, cls_cache_end_idx)
@@ -143,14 +137,28 @@ class SensorManager:
             delay_n = max(delay_depth_per_dtype.get(dtype, 1), 1)
             hist_n = max_history_per_dtype.get(dtype, 0)
             self._gt_timeline_ring[dtype] = TensorRingBuffer(max(delay_n, hist_n), cache_shape, dtype=dtype)
-            if hist_n > 0 and dtype in measured_history_dtype:
-                self._measured_history_ring[dtype] = TensorRingBuffer(hist_n, cache_shape, dtype=dtype)
 
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_cache_dtype()
             for sensor in sensors:
                 sensor.build()
                 sensor._is_built = True
+
+        for sensor_cls in self._sensors_by_type.keys():
+            self._should_update_cache_by_type[sensor_cls] = not self._sensors_metadata[
+                sensor_cls
+            ].update_ground_truth_only
+
+        for dtype in cache_size_per_dtype.keys():
+            cache_shape = (self._sim._B, cache_size_per_dtype[dtype])
+            hist_n = max_history_per_dtype.get(dtype, 0)
+            needs_measured_history = any(
+                not self._sensors_metadata[sensor_cls].update_ground_truth_only
+                for sensor_cls in self._sensors_by_type
+                if sensor_cls._get_cache_dtype() == dtype
+            )
+            if hist_n > 0 and needs_measured_history:
+                self._measured_history_ring[dtype] = TensorRingBuffer(hist_n, cache_shape, dtype=dtype)
 
     def destroy(self):
         for sensors_metadata in self._sensors_metadata.values():

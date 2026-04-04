@@ -61,15 +61,12 @@ class SensorOptions(Options, Generic[SensorT]):
         The length of the history to store. Defaults to 0 (no history).
     delay : float
         The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
-    update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth data, and not the measured data. Defaults to False.
     draw_debug : bool
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
     history_length: NonNegativeInt = 0
     delay: NonNegativeFloat = 0.0
-    update_ground_truth_only: StrictBool = False
     draw_debug: StrictBool = False
 
     def validate_scene(self, scene: "Scene"):

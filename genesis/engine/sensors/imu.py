@@ -153,6 +153,8 @@ class IMUSensor(
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
+        self._shared_metadata.update_ground_truth_only = False
+
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,), (3,)
 

@@ -79,8 +79,6 @@ class RasterizerCameraOptions(BaseCameraOptions["RasterizerCameraSensor"]):
 
     near: PositiveFloat = 0.01
     far: PositiveFloat = 100.0
-    # Camera images are updated lazily on read(), so skip per-step measured-cache updates
-    update_ground_truth_only: StrictBool = True
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)
@@ -126,7 +124,6 @@ class RaytracerCameraOptions(BaseCameraOptions["RaytracerCameraSensor"]):
     env_radius: PositiveFloat = 15.0
     env_pos: Vec3FType = (0.0, 0.0, 0.0)
     env_quat: UnitVec4FType = (1.0, 0.0, 0.0, 0.0)
-    update_ground_truth_only: StrictBool = True
 
 
 class BatchRendererCameraOptions(BaseCameraOptions["BatchRendererCameraSensor"]):
@@ -145,7 +142,6 @@ class BatchRendererCameraOptions(BaseCameraOptions["BatchRendererCameraSensor"])
     near: PositiveFloat = 0.01
     far: PositiveFloat = 100.0
     use_rasterizer: StrictBool = True
-    update_ground_truth_only: StrictBool = True
 
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)

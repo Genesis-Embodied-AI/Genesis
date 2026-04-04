@@ -364,13 +364,11 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
     """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
     GRAVITY = -10.0
     DT = 1e-2
-    H = 4
-    MAG_FIELD = (0.3, 0.1, 0.5)
+    HISTORY_LEN = 4
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=DT,
-            substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
         profiling_options=gs.options.ProfilingOptions(show_FPS=False),
@@ -387,52 +385,36 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
     contact_h = scene.add_sensor(
         gs.sensors.Contact(
             entity_idx=box.idx,
-            history_length=H,
+            history_length=HISTORY_LEN,
         )
     )
     imu_h = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            magnetic_field=MAG_FIELD,
-            history_length=H,
-            acc_noise=0.0,
-            gyro_noise=0.0,
-            mag_noise=0.0,
-            acc_random_walk=0.0,
-            gyro_random_walk=0.0,
-            mag_random_walk=0.0,
+            history_length=HISTORY_LEN,
         )
     )
     imu_ref = scene.add_sensor(
         gs.sensors.IMU(
             entity_idx=box.idx,
-            magnetic_field=MAG_FIELD,
-            acc_noise=0.0,
-            gyro_noise=0.0,
-            mag_noise=0.0,
-            acc_random_walk=0.0,
-            gyro_random_walk=0.0,
-            mag_random_walk=0.0,
         )
     )
 
     scene.build(n_envs=n_envs)
 
-    def _expected_hist_lead_shape(lead: int, rest: tuple[int, ...]):
-        if n_envs == 0:
-            return (lead, *rest)
-        return (n_envs, lead, *rest)
+    def _expected_shape_with_history(shape: tuple[int, ...]):
+        return (HISTORY_LEN, *shape) if n_envs == 0 else (n_envs, HISTORY_LEN, *shape)
 
     prev_c = None
     prev_i = None
-    for _ in range(12):
+    for _ in range(HISTORY_LEN * 2):
         scene.step()
         cg = contact_h.read_ground_truth()
-        assert cg.shape == _expected_hist_lead_shape(H, (1,))
+        assert cg.shape == _expected_shape_with_history((1,))
         ig = imu_h.read_ground_truth()
-        assert ig.lin_acc.shape == _expected_hist_lead_shape(H, (3,))
-        assert ig.ang_vel.shape == _expected_hist_lead_shape(H, (3,))
-        assert ig.mag.shape == _expected_hist_lead_shape(H, (3,))
+        assert ig.lin_acc.shape == _expected_shape_with_history((3,))
+        assert ig.ang_vel.shape == _expected_shape_with_history((3,))
+        assert ig.mag.shape == _expected_shape_with_history((3,))
 
         assert_equal(contact_h.read(), cg)
 
