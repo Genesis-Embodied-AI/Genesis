@@ -57,7 +57,10 @@ class GraspEnv:
                 enable_collision=True,
                 enable_joint_limit=True,
             ),
-            vis_options=gs.options.VisOptions(rendered_envs_idx=list(range(min(10, self.num_envs)))),
+            vis_options=gs.options.VisOptions(
+                rendered_envs_idx=list(range(min(10, self.num_envs))),
+                env_separate_rigid=True,
+            ),
             viewer_options=gs.options.ViewerOptions(
                 res=(1280, 960),
                 camera_pos=(2.5, -1.0, 2.5),
@@ -135,7 +138,7 @@ class GraspEnv:
             )
         )
 
-        # == set up video recording (must be before build) ==
+        # == camera data readers ==
         def _read_scene_cam(cam):
             rgb = cam.render(rgb=True)[0]
             if rgb.ndim == 4:
@@ -144,6 +147,19 @@ class GraspEnv:
 
         def _read_sensor_cam(cam):
             return cam.read(envs_idx=0).rgb
+
+        # Debug live preview of sensor cameras
+        if self.env_cfg.get("visualize_camera", False):
+            self.scene.start_recording(
+                data_func=partial(_read_sensor_cam, self.left_cam),
+                rec_options=gs.recorders.MPLImagePlot(title="Left Camera"),
+            )
+            self.scene.start_recording(
+                data_func=partial(_read_sensor_cam, self.right_cam),
+                rec_options=gs.recorders.MPLImagePlot(title="Right Camera"),
+            )
+
+        # == set up video recording (must be before build) ==
 
         record_video = env_cfg.get("record_video", {})
         for cam_name, filename in record_video.items():

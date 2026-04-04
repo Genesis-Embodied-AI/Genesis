@@ -688,6 +688,9 @@ class KinematicSolver(Solver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     def set_base_links_pos_grad(self, links_idx, envs_idx, relative, pos_grad):
         if links_idx is None:
@@ -743,6 +746,9 @@ class KinematicSolver(Solver):
             )
             self._is_forward_pos_updated = True
             self._is_forward_vel_updated = True
+        else:
+            self._is_forward_pos_updated = False
+            self._is_forward_vel_updated = False
 
     def set_base_links_quat_grad(self, links_idx, envs_idx, relative, quat_grad):
         if links_idx is None:

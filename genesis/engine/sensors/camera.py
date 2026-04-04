@@ -431,6 +431,12 @@ class RasterizerCameraSensor(
 
         self._shared_metadata.sensors.append(self)
 
+        if self._manager._sim.n_envs > 1 and not self._shared_metadata.context.env_separate_rigid:
+            gs.raise_exception(
+                "RasterizerCameraSensor with n_envs > 1 requires 'env_separate_rigid=True' in VisOptions "
+                "for correct per-environment rendering."
+            )
+
         # Register camera now if standalone (offscreen), or defer to first render if using visualizer's rasterizer
         # (visualizer isn't built yet at sensor.build() time)
         if self._shared_metadata.renderer.offscreen:
