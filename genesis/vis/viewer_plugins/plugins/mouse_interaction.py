@@ -8,7 +8,7 @@ from typing_extensions import override
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.mesh import create_cylinder, create_plane
-from genesis.utils.misc import qd_to_numpy, tensor_to_array
+from genesis.utils.misc import tensor_to_array
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
 from genesis.vis.keybindings import MouseButton
 
@@ -50,7 +50,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
         self._lock: Lock = Lock()
         self._held_link: "RigidLink | None" = None
-        self._held_env_idx: int | None = None
         self._held_point_local: np.ndarray | None = None  # Held point in link-local frame
         self._mouse_drag_plane: tuple[np.ndarray, float] | None = None
         self._prev_mouse_screen_pos: tuple[int, int] = (0, 0)
@@ -106,25 +105,18 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             if ray_hit is None:
                 return
 
-            if (
-                ray_hit is not None
-                and ray_hit.geom
-                and ray_hit.geom.link is not None
-                and not ray_hit.geom.link.is_fixed
-            ):
+            if ray_hit.geom and ray_hit.geom.link is not None and not ray_hit.geom.link.is_fixed:
                 link = ray_hit.geom.link
-                hit_env_idx = self._get_last_raycast_env_idx()
 
                 # Validate mass is not too small to prevent numerical instability
-                if self._get_mass_for_env(link, hit_env_idx) < MIN_PICKABLE_MASS:
+                if link.get_mass() < MIN_PICKABLE_MASS:
                     gs.logger.warning(
-                        f"Link '{link.name}' has very small mass ({self._get_mass_for_env(link, hit_env_idx):.2e}). "
+                        f"Link '{link.name}' has very small mass ({link.get_mass():.2e}). "
                         "Skipping interaction to avoid numerical instability."
                     )
                     return
 
                 self._held_link = link
-                self._held_env_idx = hit_env_idx
 
                 # Store the surface normal for rotation
                 self._surface_normal = ray_hit.normal
@@ -135,9 +127,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 self._update_drag_plane()
 
                 # Store held point in link-local frame
-                envs_idx = self._interaction_envs_idx()
-                link_pos = self._as_array(link.get_pos(envs_idx=envs_idx))
-                link_quat = self._as_array(link.get_quat(envs_idx=envs_idx))
+                link_pos = tensor_to_array(link.get_pos())
+                link_quat = tensor_to_array(link.get_quat())
                 self._held_point_local = gu.inv_transform_by_trans_quat(ray_hit.position, link_pos, link_quat)
 
     @with_lock
@@ -145,7 +136,6 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
     def on_mouse_release(self, x: int, y: int, button: int, modifiers: int) -> EVENT_HANDLE_STATE:
         if button == MouseButton.LEFT:
             self._held_link = None
-            self._held_env_idx = None
             self._held_point_local = None
             self._mouse_drag_plane = None
             self._prev_mouse_scene_pos = None
@@ -172,10 +162,9 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 self._apply_spring_force(ray_hit.position, self.scene.sim.dt)
             else:
                 assert self._held_point_local is not None
-                envs_idx = self._interaction_envs_idx()
-                link_quat = self._as_array(self._held_link.get_quat(envs_idx=envs_idx))
+                link_quat = tensor_to_array(self._held_link.get_quat())
                 offset_world = gu.transform_by_quat(self._held_point_local, link_quat)
-                self._held_link.entity.set_pos(ray_hit.position - offset_world, envs_idx=envs_idx)
+                self._held_link.entity.set_pos(ray_hit.position - offset_world)
 
     @with_lock
     @override
@@ -195,9 +184,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             assert self._mouse_drag_plane is not None
             assert self._held_point_local is not None
 
-            envs_idx = self._interaction_envs_idx()
-            link_pos = self._as_array(self._held_link.get_pos(envs_idx=envs_idx))
-            link_quat = self._as_array(self._held_link.get_quat(envs_idx=envs_idx))
+            link_pos = tensor_to_array(self._held_link.get_pos())
+            link_quat = tensor_to_array(self._held_link.get_quat())
             held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
 
             plane_hit: RayHit | None = plane_raycast(*self._mouse_drag_plane, mouse_ray)
@@ -252,12 +240,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
             closest_hit: RayHit = self._raycaster.cast(mouse_ray[0], mouse_ray[1])
             link = closest_hit.geom.link if closest_hit is not None and closest_hit.geom is not None else None
-            hit_env_idx = self._get_last_raycast_env_idx()
-            is_pickable = (
-                link is not None
-                and not link.is_fixed
-                and self._get_mass_for_env(link, hit_env_idx) >= MIN_PICKABLE_MASS
-            )
+            is_pickable = link is not None and not link.is_fixed and link.get_mass() >= MIN_PICKABLE_MASS
             if is_pickable:
                 arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
                 if self._arrow_node is None:
@@ -310,20 +293,18 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         if not self._held_link:
             return
 
-        envs_idx = self._interaction_envs_idx()
-
         # Get current link state
-        link_pos = self._as_array(self._held_link.get_pos(envs_idx=envs_idx))
-        link_quat = self._as_array(self._held_link.get_quat(envs_idx=envs_idx))
-        lin_vel = self._as_array(self._held_link.get_vel(envs_idx=envs_idx))
-        ang_vel = self._as_array(self._held_link.get_ang(envs_idx=envs_idx))
+        link_pos = tensor_to_array(self._held_link.get_pos())
+        link_quat = tensor_to_array(self._held_link.get_quat())
+        lin_vel = tensor_to_array(self._held_link.get_vel())
+        ang_vel = tensor_to_array(self._held_link.get_ang())
 
         # Compute current world position of held point
         held_point_world = gu.transform_by_trans_quat(self._held_point_local, link_pos, link_quat)
 
         # Compute inertial frame properties
-        inertial_pos = self._as_array(self._held_link.inertial_pos)
-        inertial_quat = self._as_array(self._held_link.inertial_quat)
+        inertial_pos = tensor_to_array(self._held_link.inertial_pos)
+        inertial_quat = tensor_to_array(self._held_link.inertial_quat)
         world_principal_quat = gu.transform_quat_by_quat(inertial_quat, link_quat)
 
         # Compute arm from COM to held point in world frame
@@ -336,7 +317,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         inv_inertia_world = np.linalg.inv(inertia_world)
 
         pos_err_v = control_point - held_point_world
-        inv_mass = float(1.0 / self._get_mass_for_env(self._held_link, self._held_env_idx))
+        inv_mass = float(1.0 / self._held_link.get_mass())
 
         total_impulse = np.zeros(3, dtype=gs.np_float)
         total_torque_impulse = np.zeros(3, dtype=gs.np_float)
@@ -370,39 +351,8 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
 
         # Apply the new force
         self._held_link.solver.apply_links_external_force(
-            total_impulse / dt,
-            (self._held_link.idx,),
-            envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
+            total_impulse / dt, (self._held_link.idx,), ref="link_com", local=False
         )
         self._held_link.solver.apply_links_external_torque(
-            total_torque_impulse / dt,
-            (self._held_link.idx,),
-            envs_idx=envs_idx,
-            ref="link_com",
-            local=False,
+            total_torque_impulse / dt, (self._held_link.idx,), ref="link_com", local=False
         )
-
-    def _interaction_envs_idx(self) -> int | None:
-        return self._held_env_idx if self.scene.n_envs > 0 and self._held_env_idx is not None else None
-
-    def _get_last_raycast_env_idx(self) -> int | None:
-        if self.scene.n_envs == 0:
-            return None
-        env_idx = int(qd_to_numpy(self._raycaster.result.env_idx))
-        return env_idx if env_idx >= 0 else None
-
-    def _as_array(self, value: np.ndarray | Any) -> np.ndarray:
-        arr = tensor_to_array(value)
-        if arr.ndim > 1:
-            arr = arr[0]
-        return arr
-
-    def _get_mass_for_env(self, link: "RigidLink", env_idx: int | None) -> float:
-        mass = tensor_to_array(link.get_mass())
-        if mass.ndim == 0:
-            return float(mass)
-        if env_idx is None:
-            return float(mass[0])
-        return float(mass[env_idx])
