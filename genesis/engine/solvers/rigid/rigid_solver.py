@@ -1525,6 +1525,8 @@ class RigidSolver(KinematicSolver):
                 mass_dst[envs_idx] = state.mass_shift[envs_idx]
                 if self.n_geoms:
                     fric_dst[envs_idx] = state.friction_ratio[envs_idx]
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
         else:
             envs_idx = self._scene._sanitize_envs_idx(envs_idx)
             kernel_set_zero(envs_idx, self._errno)
@@ -1816,19 +1818,22 @@ class RigidSolver(KinematicSolver):
             assign_indexed_tensor(mass_data, mask, mass_data[mask] * ratio_t)
             assign_indexed_tensor(inertial_i_data, mask, inertial_i_data[mask] * ratio_t[..., None, None])
             assign_indexed_tensor(invweight_data, mask, invweight_data[mask] / ratio_t[..., None])
-        else:
-            ratio, links_idx, envs_idx = self._sanitize_io_variables(
-                ratio,
-                links_idx,
-                self.n_links,
-                "links_idx",
-                envs_idx,
-                batched=self._options.batch_links_info,
-                skip_allocation=True,
-            )
-            if self.n_envs == 0 and self._options.batch_links_info:
-                ratio = ratio[None]
-            kernel_adjust_link_inertia(ratio, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+            return
+
+        ratio, links_idx, envs_idx = self._sanitize_io_variables(
+            ratio,
+            links_idx,
+            self.n_links,
+            "links_idx",
+            envs_idx,
+            batched=self._options.batch_links_info,
+            skip_allocation=True,
+        )
+        if self.n_envs == 0 and self._options.batch_links_info:
+            ratio = ratio[None]
+        kernel_adjust_link_inertia(ratio, links_idx, envs_idx, self.links_info, self._static_rigid_sim_config)
 
     def set_geoms_friction_ratio(self, friction_ratio, geoms_idx=None, envs_idx=None):
         friction_ratio, geoms_idx, envs_idx = self._sanitize_io_variables(
@@ -1869,6 +1874,8 @@ class RigidSolver(KinematicSolver):
                 errno[envs_idx] = 0
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
         else:
             qpos, qs_idx, envs_idx = self._sanitize_io_variables(
                 qpos, qs_idx, self.n_qs, "qs_idx", envs_idx, skip_allocation=True
@@ -2544,8 +2551,11 @@ class RigidSolver(KinematicSolver):
             for tensor in (self.links_state.cfrc_applied_ang, self.links_state.cfrc_applied_vel):
                 out = qd_to_torch(tensor, copy=False)
                 out.zero_()
-        else:
-            kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+            return
+
+        kernel_clear_external_force(self.links_state, self._rigid_global_info, self._static_rigid_sim_config)
 
     @gs.assert_built
     def set_gravity(self, gravity, envs_idx=None):

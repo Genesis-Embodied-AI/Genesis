@@ -5675,16 +5675,20 @@ def test_hibernation_and_contact_islands(show_viewer):
 @pytest.mark.parametrize("integrator", [gs.integrator.Euler, gs.integrator.approximate_implicitfast])
 def test_energy_analytical_and_conservation(show_viewer, tol, integrator):
     g = 9.81
-    dt = 0.002
-    h0 = 1.0
+    dt = 0.001
+    h0 = 0.5
     radius = 0.1
-    n_steps = 300
+    n_steps = 400
     undamped_sol_params = [10.0, 0.001, 0.9, 0.95, 0.001, 0.5, 2.0]
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=dt,
             gravity=(0, 0, -g),
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.25, 1.5, 0.7),
+            camera_lookat=(0.25, 0.0, 0.2),
         ),
         rigid_options=gs.options.RigidOptions(
             integrator=integrator,
