@@ -2,6 +2,7 @@
 import sys
 import types
 import time
+import os
 
 sys.path.insert(0, "tests")
 tests_pkg = types.ModuleType("tests")
@@ -9,6 +10,13 @@ tests_pkg.__path__ = ["tests"]
 sys.modules["tests"] = tests_pkg
 
 import genesis as gs
+
+# Monkey-patch the visualizer build to skip OpenGL/EGL on headless nodes
+_orig_vis_build = gs.vis.visualizer.Visualizer.build
+def _noop_build(self):
+    pass
+gs.vis.visualizer.Visualizer.build = _noop_build
+
 gs.init()
 
 from tests.test_rigid_benchmarks import make_dex_hand

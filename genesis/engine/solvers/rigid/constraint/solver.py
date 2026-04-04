@@ -2093,6 +2093,231 @@ def func_cholesky_factor_direct_tiled(
 
 
 @qd.func
+def func_cholesky_and_solve_fused_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Fused blocked Cholesky factorization + forward/backward solve.
+
+    Keeps L entirely in shared memory during factorization (for GEMM lookback)
+    and solve (for forward/backward substitution). Never writes L to global
+    memory, eliminating the nt_L write-allocate overhead.
+
+    Uses the same register-resident 16x16 tile primitives as
+    func_cholesky_factor_direct_tiled, but copies completed L tiles to shared
+    memory instead of nt_L. After factorization, reads the gradient vector,
+    performs Ly=g (forward) and L^Tx=y (backward) using L from shared memory,
+    and writes Mgrad = x to global memory.
+    """
+    EPS = rigid_global_info.EPS[None]
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + _CHOL_TILE - 1) // _CHOL_TILE
+
+    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=_CHOL_TILE)
+    for i in range(_B * _CHOL_TILE):
+        tid = i % _CHOL_TILE
+        i_b = i // _CHOL_TILE
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS), gs.qd_float)
+        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+
+        for kb in range(N_BLOCKS):
+            k0 = kb * _CHOL_TILE
+
+            # Load diagonal block from nt_H with identity padding
+            z = gs.qd_float(0.0)
+            r0 = z; r1 = z; r2 = z; r3 = z; r4 = z; r5 = z; r6 = z; r7 = z
+            r8 = z; r9 = z; r10 = z; r11 = z; r12 = z; r13 = z; r14 = z; r15 = z
+            if k0 + tid < n_dofs:
+                if k0 + 0 < n_dofs: r0 = constraint_state.nt_H[i_b, k0 + tid, k0 + 0]
+                if k0 + 1 < n_dofs: r1 = constraint_state.nt_H[i_b, k0 + tid, k0 + 1]
+                if k0 + 2 < n_dofs: r2 = constraint_state.nt_H[i_b, k0 + tid, k0 + 2]
+                if k0 + 3 < n_dofs: r3 = constraint_state.nt_H[i_b, k0 + tid, k0 + 3]
+                if k0 + 4 < n_dofs: r4 = constraint_state.nt_H[i_b, k0 + tid, k0 + 4]
+                if k0 + 5 < n_dofs: r5 = constraint_state.nt_H[i_b, k0 + tid, k0 + 5]
+                if k0 + 6 < n_dofs: r6 = constraint_state.nt_H[i_b, k0 + tid, k0 + 6]
+                if k0 + 7 < n_dofs: r7 = constraint_state.nt_H[i_b, k0 + tid, k0 + 7]
+                if k0 + 8 < n_dofs: r8 = constraint_state.nt_H[i_b, k0 + tid, k0 + 8]
+                if k0 + 9 < n_dofs: r9 = constraint_state.nt_H[i_b, k0 + tid, k0 + 9]
+                if k0 + 10 < n_dofs: r10 = constraint_state.nt_H[i_b, k0 + tid, k0 + 10]
+                if k0 + 11 < n_dofs: r11 = constraint_state.nt_H[i_b, k0 + tid, k0 + 11]
+                if k0 + 12 < n_dofs: r12 = constraint_state.nt_H[i_b, k0 + tid, k0 + 12]
+                if k0 + 13 < n_dofs: r13 = constraint_state.nt_H[i_b, k0 + tid, k0 + 13]
+                if k0 + 14 < n_dofs: r14 = constraint_state.nt_H[i_b, k0 + tid, k0 + 14]
+                if k0 + 15 < n_dofs: r15 = constraint_state.nt_H[i_b, k0 + tid, k0 + 15]
+            else:
+                if tid == 0: r0 = gs.qd_float(1.0)
+                if tid == 1: r1 = gs.qd_float(1.0)
+                if tid == 2: r2 = gs.qd_float(1.0)
+                if tid == 3: r3 = gs.qd_float(1.0)
+                if tid == 4: r4 = gs.qd_float(1.0)
+                if tid == 5: r5 = gs.qd_float(1.0)
+                if tid == 6: r6 = gs.qd_float(1.0)
+                if tid == 7: r7 = gs.qd_float(1.0)
+                if tid == 8: r8 = gs.qd_float(1.0)
+                if tid == 9: r9 = gs.qd_float(1.0)
+                if tid == 10: r10 = gs.qd_float(1.0)
+                if tid == 11: r11 = gs.qd_float(1.0)
+                if tid == 12: r12 = gs.qd_float(1.0)
+                if tid == 13: r13 = gs.qd_float(1.0)
+                if tid == 14: r14 = gs.qd_float(1.0)
+                if tid == 15: r15 = gs.qd_float(1.0)
+
+            # Diagonal GEMM subtract: A_kk -= L_k* @ L_k*^T (lookback from shared memory)
+            for jb in range(kb):
+                j0 = jb * _CHOL_TILE
+                for t in range(_CHOL_TILE):
+                    v = gs.qd_float(0.0)
+                    if k0 + tid < n_dofs:
+                        v = L_sh[k0 + tid, j0 + t]
+                    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
+                        _tile_gemm_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
+                                          r8, r9, r10, r11, r12, r13, r14, r15)
+
+            # POTRF: factorize diagonal tile
+            r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
+                _tile_potrf_16(tid, EPS, r0, r1, r2, r3, r4, r5, r6, r7,
+                               r8, r9, r10, r11, r12, r13, r14, r15)
+
+            # Off-diagonal blocks
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * _CHOL_TILE
+
+                # Load off-diagonal block from nt_H with zero padding
+                z2 = gs.qd_float(0.0)
+                q0 = z2; q1 = z2; q2 = z2; q3 = z2; q4 = z2; q5 = z2; q6 = z2; q7 = z2
+                q8 = z2; q9 = z2; q10 = z2; q11 = z2; q12 = z2; q13 = z2; q14 = z2; q15 = z2
+                if i0 + tid < n_dofs:
+                    if k0 + 0 < n_dofs: q0 = constraint_state.nt_H[i_b, i0 + tid, k0 + 0]
+                    if k0 + 1 < n_dofs: q1 = constraint_state.nt_H[i_b, i0 + tid, k0 + 1]
+                    if k0 + 2 < n_dofs: q2 = constraint_state.nt_H[i_b, i0 + tid, k0 + 2]
+                    if k0 + 3 < n_dofs: q3 = constraint_state.nt_H[i_b, i0 + tid, k0 + 3]
+                    if k0 + 4 < n_dofs: q4 = constraint_state.nt_H[i_b, i0 + tid, k0 + 4]
+                    if k0 + 5 < n_dofs: q5 = constraint_state.nt_H[i_b, i0 + tid, k0 + 5]
+                    if k0 + 6 < n_dofs: q6 = constraint_state.nt_H[i_b, i0 + tid, k0 + 6]
+                    if k0 + 7 < n_dofs: q7 = constraint_state.nt_H[i_b, i0 + tid, k0 + 7]
+                    if k0 + 8 < n_dofs: q8 = constraint_state.nt_H[i_b, i0 + tid, k0 + 8]
+                    if k0 + 9 < n_dofs: q9 = constraint_state.nt_H[i_b, i0 + tid, k0 + 9]
+                    if k0 + 10 < n_dofs: q10 = constraint_state.nt_H[i_b, i0 + tid, k0 + 10]
+                    if k0 + 11 < n_dofs: q11 = constraint_state.nt_H[i_b, i0 + tid, k0 + 11]
+                    if k0 + 12 < n_dofs: q12 = constraint_state.nt_H[i_b, i0 + tid, k0 + 12]
+                    if k0 + 13 < n_dofs: q13 = constraint_state.nt_H[i_b, i0 + tid, k0 + 13]
+                    if k0 + 14 < n_dofs: q14 = constraint_state.nt_H[i_b, i0 + tid, k0 + 14]
+                    if k0 + 15 < n_dofs: q15 = constraint_state.nt_H[i_b, i0 + tid, k0 + 15]
+
+                # Off-diagonal GEMM subtract (lookback from shared memory)
+                for jb in range(kb):
+                    j0 = jb * _CHOL_TILE
+                    for t in range(_CHOL_TILE):
+                        v_own = gs.qd_float(0.0)
+                        v_diag = gs.qd_float(0.0)
+                        if i0 + tid < n_dofs:
+                            v_own = L_sh[i0 + tid, j0 + t]
+                        if k0 + tid < n_dofs:
+                            v_diag = L_sh[k0 + tid, j0 + t]
+                        q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
+                            _tile_gemm_sub_offdiag_16(v_own, v_diag,
+                                                      q0, q1, q2, q3, q4, q5, q6, q7,
+                                                      q8, q9, q10, q11, q12, q13, q14, q15)
+
+                # TRSM: solve L_kk @ X^T = Q^T
+                q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
+                    _tile_trsm_16(r0, r1, r2, r3, r4, r5, r6, r7,
+                                  r8, r9, r10, r11, r12, r13, r14, r15,
+                                  q0, q1, q2, q3, q4, q5, q6, q7,
+                                  q8, q9, q10, q11, q12, q13, q14, q15)
+
+                # Store off-diagonal result to shared memory
+                if i0 + tid < n_dofs:
+                    if k0 + 0 < n_dofs: L_sh[i0 + tid, k0 + 0] = q0
+                    if k0 + 1 < n_dofs: L_sh[i0 + tid, k0 + 1] = q1
+                    if k0 + 2 < n_dofs: L_sh[i0 + tid, k0 + 2] = q2
+                    if k0 + 3 < n_dofs: L_sh[i0 + tid, k0 + 3] = q3
+                    if k0 + 4 < n_dofs: L_sh[i0 + tid, k0 + 4] = q4
+                    if k0 + 5 < n_dofs: L_sh[i0 + tid, k0 + 5] = q5
+                    if k0 + 6 < n_dofs: L_sh[i0 + tid, k0 + 6] = q6
+                    if k0 + 7 < n_dofs: L_sh[i0 + tid, k0 + 7] = q7
+                    if k0 + 8 < n_dofs: L_sh[i0 + tid, k0 + 8] = q8
+                    if k0 + 9 < n_dofs: L_sh[i0 + tid, k0 + 9] = q9
+                    if k0 + 10 < n_dofs: L_sh[i0 + tid, k0 + 10] = q10
+                    if k0 + 11 < n_dofs: L_sh[i0 + tid, k0 + 11] = q11
+                    if k0 + 12 < n_dofs: L_sh[i0 + tid, k0 + 12] = q12
+                    if k0 + 13 < n_dofs: L_sh[i0 + tid, k0 + 13] = q13
+                    if k0 + 14 < n_dofs: L_sh[i0 + tid, k0 + 14] = q14
+                    if k0 + 15 < n_dofs: L_sh[i0 + tid, k0 + 15] = q15
+
+            # Store diagonal result to shared memory
+            if k0 + tid < n_dofs:
+                if k0 + 0 < n_dofs: L_sh[k0 + tid, k0 + 0] = r0
+                if k0 + 1 < n_dofs: L_sh[k0 + tid, k0 + 1] = r1
+                if k0 + 2 < n_dofs: L_sh[k0 + tid, k0 + 2] = r2
+                if k0 + 3 < n_dofs: L_sh[k0 + tid, k0 + 3] = r3
+                if k0 + 4 < n_dofs: L_sh[k0 + tid, k0 + 4] = r4
+                if k0 + 5 < n_dofs: L_sh[k0 + tid, k0 + 5] = r5
+                if k0 + 6 < n_dofs: L_sh[k0 + tid, k0 + 6] = r6
+                if k0 + 7 < n_dofs: L_sh[k0 + tid, k0 + 7] = r7
+                if k0 + 8 < n_dofs: L_sh[k0 + tid, k0 + 8] = r8
+                if k0 + 9 < n_dofs: L_sh[k0 + tid, k0 + 9] = r9
+                if k0 + 10 < n_dofs: L_sh[k0 + tid, k0 + 10] = r10
+                if k0 + 11 < n_dofs: L_sh[k0 + tid, k0 + 11] = r11
+                if k0 + 12 < n_dofs: L_sh[k0 + tid, k0 + 12] = r12
+                if k0 + 13 < n_dofs: L_sh[k0 + tid, k0 + 13] = r13
+                if k0 + 14 < n_dofs: L_sh[k0 + tid, k0 + 14] = r14
+                if k0 + 15 < n_dofs: L_sh[k0 + tid, k0 + 15] = r15
+
+        # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
+        # L is fully computed in L_sh. Load gradient into v_sh.
+        if tid < n_dofs:
+            v_sh[tid] = constraint_state.grad[tid, i_b]
+        qd.simt.block.sync()
+
+        # Forward substitution: solve L @ y = grad (parallel dot with 16 threads)
+        for i_d in range(n_dofs):
+            dot = gs.qd_float(0.0)
+            j = tid
+            while j < i_d:
+                dot = dot + L_sh[i_d, j] * v_sh[j]
+                j = j + _CHOL_TILE
+            # Butterfly reduction via subgroup shuffle (16 threads = 4 rounds)
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 8))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 4))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 2))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 1))
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        # Backward substitution: solve L^T @ x = y (parallel dot with 16 threads)
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.qd_float(0.0)
+            j = i_d + 1 + tid
+            while j < n_dofs:
+                dot = dot + L_sh[j, i_d] * v_sh[j]
+                j = j + _CHOL_TILE
+            # Butterfly reduction via subgroup shuffle (16 threads = 4 rounds)
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 8))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 4))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 2))
+            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 1))
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        # Write Mgrad to global memory
+        if tid < n_dofs:
+            constraint_state.Mgrad[tid, i_b] = v_sh[tid]
+
+
+@qd.func
 def func_hessian_and_cholesky_factor_direct_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
