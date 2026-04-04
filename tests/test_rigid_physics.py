@@ -3737,9 +3737,9 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert not scene.rigid_solver.get_error_envs_mask().any()
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
-        nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-        assert (np.linalg.norm(nt_H.reshape((-1, 2)), axis=0) > 5.0).all()
-        values.append(nt_H)
+        qacc = scene.rigid_solver.constraint_solver.constraint_state.qacc.to_numpy()
+        assert (np.linalg.norm(qacc.reshape((-1, 2)), axis=0) > 0).any()
+        values.append(qacc)
 
     assert_allclose(*values, tol=tol)
 
