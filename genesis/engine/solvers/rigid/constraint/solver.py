@@ -1456,6 +1456,7 @@ def func_hessian_direct_batch(
 def func_hessian_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    check_full_hessian: qd.template() = False,
 ):
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
 
@@ -1467,6 +1468,9 @@ def func_hessian_direct_tiled(
     optimization problem fits in a single block, i.e. n_constraints <= 32 and n_dofs <= 64.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+
+    When check_full_hessian is True (used with H patching), skips envs where
+    use_full_hessian == 0 (those get patched instead of rebuilt).
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
@@ -1492,8 +1496,9 @@ def func_hessian_direct_tiled(
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
-        if constraint_state.use_full_hessian[i_b] == 0:
-            continue
+        if qd.static(check_full_hessian):
+            if constraint_state.use_full_hessian[i_b] == 0:
+                continue
 
         jac_row = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
         jac_col = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)

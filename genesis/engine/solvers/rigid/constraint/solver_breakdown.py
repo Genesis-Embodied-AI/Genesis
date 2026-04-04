@@ -805,7 +805,9 @@ def _func_newton_only_nt_hessian(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Full tiled Hessian rebuild for envs with use_full_hessian == 1 (skips others)."""
-    solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
+    solver.func_hessian_direct_tiled(
+        constraint_state=constraint_state, rigid_global_info=rigid_global_info, check_full_hessian=True
+    )
 
 
 @qd.func
