@@ -2932,8 +2932,46 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+def _get_gpu_saturation_threshold():
+    """Max concurrent warps the GPU can run — above this, envs alone saturate the GPU."""
+    if not hasattr(_get_gpu_saturation_threshold, "_cached"):
+        import torch
+
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(torch.cuda.current_device())
+            _get_gpu_saturation_threshold._cached = (
+                props.multi_processor_count * props.max_threads_per_multi_processor // props.warp_size
+            )
+        else:
+            _get_gpu_saturation_threshold._cached = 0  # always use monolith on non-CUDA GPUs
+    return _get_gpu_saturation_threshold._cached
+
+
 def func_solve_init(
+    dofs_info,
+    dofs_state,
+    entities_info,
+    constraint_state,
+    rigid_global_info,
+    static_rigid_sim_config,
+):
+    if gs.backend is not gs.cpu and not static_rigid_sim_config.requires_grad:
+        n_envs = dofs_state.acc_smooth.shape[1]
+        if n_envs <= _get_gpu_saturation_threshold():
+            from genesis.engine.solvers.rigid.constraint.solver_breakdown import func_solve_init_decomposed
+
+            func_solve_init_decomposed(
+                dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            return
+
+    func_solve_init_monolith(
+        dofs_info, dofs_state, entities_info, constraint_state, rigid_global_info, static_rigid_sim_config
+    )
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_solve_init_monolith(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -3159,6 +3197,7 @@ def func_solve_body(
 
 @func_solve_body.register(
     is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+    or _get_static_config(*args, **kwargs).requires_grad
 )
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
