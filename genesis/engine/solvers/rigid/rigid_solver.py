@@ -914,7 +914,15 @@ class RigidSolver(KinematicSolver):
             self.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
     def _init_constraint_solver(self):
-        if self._use_contact_island:
+        if self._options.constraint_solver == gs.constraint_solver.ComFree:
+            from .comfree import ComFreeSolver
+
+            self.constraint_solver = ComFreeSolver(
+                self,
+                comfree_stiffness=self._options.comfree_stiffness,
+                comfree_damping=self._options.comfree_damping,
+            )
+        elif self._use_contact_island:
             self.constraint_solver = ConstraintSolverIsland(self)
         else:
             self.constraint_solver = ConstraintSolver(self)

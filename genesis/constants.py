@@ -59,6 +59,7 @@ class integrator(IntEnum):
 class constraint_solver(IntEnum):
     CG = 0
     Newton = 1
+    ComFree = 2
 
 
 # rigid solver broadphase traversal strategy
