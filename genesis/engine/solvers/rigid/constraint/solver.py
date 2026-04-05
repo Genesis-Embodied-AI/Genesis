@@ -1634,6 +1634,16 @@ _CHOL_TILE = 16
 
 
 @qd.func
+def _butterfly_reduce_16(val, tid):
+    """Sum val across 16 threads using butterfly reduction via subgroup shuffles (4 rounds)."""
+    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 8))
+    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 4))
+    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 2))
+    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 1))
+    return val
+
+
+@qd.func
 def func_cholesky_factor_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -1809,11 +1819,7 @@ def func_cholesky_and_solve_fused_tiled(
             while j < i_d:
                 dot = dot + L_sh[i_d, j] * v_sh[j]
                 j = j + _CHOL_TILE
-            # Butterfly reduction via subgroup shuffle (16 threads = 4 rounds)
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 8))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 4))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 2))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 1))
+            dot = _butterfly_reduce_16(dot, tid)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
@@ -1826,11 +1832,7 @@ def func_cholesky_and_solve_fused_tiled(
             while j < n_dofs:
                 dot = dot + L_sh[j, i_d] * v_sh[j]
                 j = j + _CHOL_TILE
-            # Butterfly reduction via subgroup shuffle (16 threads = 4 rounds)
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 8))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 4))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 2))
-            dot = dot + qd.simt.subgroup.shuffle(dot, qd.u32(tid ^ 1))
+            dot = _butterfly_reduce_16(dot, tid)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
