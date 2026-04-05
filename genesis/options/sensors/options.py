@@ -13,9 +13,11 @@ from genesis.typing import (
     NonNegativeInt,
     OptionalIArrayType,
     PositiveFloat,
+    PositiveVec3IType,
     RotationMatrixType,
     UnitIntervalVec3Type,
     UnitIntervalVec4Type,
+    Vec2FType,
     Vec3FArrayType,
     Vec3FType,
     Vec4FType,
@@ -282,12 +284,11 @@ class TemperatureGrid(
     convection_coefficient: float | None = None
     simulate_all_link_temperatures: bool = False
 
-    grid_size: tuple[int, int, int] = (1, 1, 1)
+    grid_size: PositiveVec3IType = (1, 1, 1)
     heat_generation: Grid3DFloatType | None = None
-    sensor_time_constant: float = 0.01
-    contact_depth_weight: float = 1.0
-
-    debug_temperature_range: tuple[float, float] = (0.0, 100.0)
+    sensor_time_constant: NonNegativeFloat = 0.0
+    contact_depth_weight: NonNegativeFloat = 1.0
+    debug_temperature_range: Vec2FType = (0.0, 100.0)
 
 
 class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSensor"]):
@@ -362,7 +363,7 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSens
     gyro_bias: LaxVec3FType = 0.0
     gyro_random_walk: LaxVec3FType = 0.0
 
-    # Magnetometer (New)
+    # Magnetometer
     mag_resolution: LaxVec3FType = 0.0
     mag_cross_axis_coupling: CrossCouplingAxisType = 0.0
     mag_noise: LaxVec3FType = 0.0

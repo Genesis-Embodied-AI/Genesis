@@ -160,6 +160,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
 
     # =============================== methods to implement ===============================
 
+    def _options_require_measured_cache(self):
+        return False
+
     def build(self):
         """
         Build the sensor.
@@ -167,6 +170,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         This method is called by SensorManager during the scene build phase.
         This is where any shared metadata should be initialized.
         """
+        if self._options_require_measured_cache():
+            self._shared_metadata.update_ground_truth_only = False
+
         self._shared_metadata.delays_ts = concat_with_tensor(
             self._shared_metadata.delays_ts,
             self._delay_ts,
@@ -471,29 +477,41 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
     Base sensor class for analog sensors that are attached to a RigidEntity.
     """
 
+    def _assert_measured_cache_will_update(self):
+        assert self._shared_metadata.update_ground_truth_only is False, (
+            "Tried to update noise option but update_ground_truth_only is True. "
+            "Set a noisy option to nonzero value so that the measured cache will be updated."
+        )
+
     @gs.assert_built
     def set_resolution(self, resolution, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(resolution, self._shared_metadata.resolution, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_bias(self, bias, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_random_walk(self, random_walk, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(random_walk, self._shared_metadata.random_walk, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_noise(self, noise, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_jitter(self, jitter, envs_idx=None):
+        self._assert_measured_cache_will_update()
         jitter_ts = np.asarray(jitter, dtype=gs.np_float) / self._dt
         self._set_metadata_field(jitter_ts, self._shared_metadata.jitter_ts, 1, envs_idx)
 
     @gs.assert_built
     def set_delay(self, delay, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(delay, self._shared_metadata.delay_in_steps, 1, envs_idx)
 
     def build(self):
@@ -524,25 +542,15 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
         )
         self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)
-        if self._noisy_options_require_measured_cache():
-            self._shared_metadata.update_ground_truth_only = False
 
-    def _noisy_options_require_measured_cache(self) -> bool:
-        """Analog-style options (beyond delay, which Sensor.build handles)."""
-        if self._options.jitter > gs.EPS:
-            return True
-        if self._options.interpolate and (self._delay_ts > 0 or self._options.jitter > gs.EPS):
-            return True
-        to_t = partial(_to_tuple, length_per_value=self._cache_size)
-        if np.any(np.abs(to_t(self._options.resolution)) > gs.EPS):
-            return True
-        if np.any(np.abs(to_t(self._options.bias)) > gs.EPS):
-            return True
-        if np.any(np.abs(to_t(self._options.noise)) > gs.EPS):
-            return True
-        if np.any(np.abs(to_t(self._options.random_walk)) > gs.EPS):
-            return True
-        return False
+    def _options_require_measured_cache(self) -> bool:
+        return super()._options_require_measured_cache() or (
+            self._options.jitter > gs.EPS
+            or (self._options.interpolate and (self._delay_ts > 0 or self._options.jitter > gs.EPS))
+            or np.any(np.abs(self._options.bias) > gs.EPS)
+            or np.any(np.abs(self._options.noise) > gs.EPS)
+            or np.any(np.abs(self._options.random_walk) > gs.EPS)
+        )
 
     @classmethod
     def reset(cls, shared_metadata: NoisySensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):

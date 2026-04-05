@@ -676,6 +676,9 @@ class TemperatureGridSensor(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
+    def _options_require_measured_cache(self) -> bool:
+        return super()._options_require_measured_cache() or (self._options.sensor_time_constant > gs.EPS)
+
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._options.grid_size,)
 
