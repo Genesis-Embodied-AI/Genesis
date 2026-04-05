@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     NumericType = int | float | bool | np.number
     NumArrayType = Sequence[NumericType] | np.ndarray
     IArrayType = Sequence[StrictInt] | np.ndarray
+    OptionalIArrayType = Sequence[StrictInt] | np.ndarray
     FArrayType = Sequence[ValidFloat] | np.ndarray
     PositiveFArrayType = FArrayType
     Vec2IType = IArrayType
@@ -120,6 +121,7 @@ else:
     NumericType = int | float | bool
     NumArrayType = Annotated[tuple[NumericType, ...], Field(min_length=1, strict=False)]
     IArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=1, strict=False)]
+    OptionalIArrayType = Annotated[tuple[StrictInt, ...], Field(min_length=0, strict=False)]
     FArrayType = Annotated[tuple[ValidFloat, ...], Field(min_length=1, strict=False)]
     PositiveFArrayType = Annotated[tuple[PositiveFloat, ...], Field(min_length=1, strict=False)]
     Vec2IType = Annotated[tuple[StrictInt, StrictInt], Field(strict=False)]

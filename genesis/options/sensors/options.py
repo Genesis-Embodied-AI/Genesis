@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, NamedTuple, TypeVar
 
 import numpy as np
 from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_validator
@@ -11,6 +11,7 @@ from genesis.typing import (
     LaxVec3FType,
     NonNegativeFloat,
     NonNegativeInt,
+    OptionalIArrayType,
     PositiveFloat,
     RotationMatrixType,
     UnitIntervalVec3Type,
@@ -162,14 +163,27 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
 
     Parameters
     ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link where the other
+        participant is one of these links are ignored. Default is empty (no filtering).
     debug_sphere_radius : float, optional
         The radius of the debug sphere. Defaults to 0.05.
     debug_color : array-like[float, float, float, float], optional
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
     debug_sphere_radius: PositiveFloat = 0.05
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.filter_link_idx:
+            n_links = scene.sim.rigid_solver.n_links
+            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
+                gs.raise_exception(
+                    f"Contact sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
+                )
 
 
 class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], NoisySensorOptionsMixin["ContactForceSensor"]):
