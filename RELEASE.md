@@ -1,5 +1,36 @@
 # Genesis Release Note
 
+## 0.4.5
+
+### New Features
+
+* Add support of xacro URDF. (@duburcqa) (#2642)
+* Add public API to RigidEntity for kinematic and potential energy. (@Lidang-Jiang) (#2613)
+* Add support of Mujoco general actuator model. (@duburcqa) (#2641)
+* Add support of zerocopy to set_pos/set_quat. (@duburcqa) (#2657)
+
+### Bug Fixes
+
+* Guard gradient computation not supported on Metal backend with dynamic array mode. (@duburcqa) (#2628)
+* Fix plotter video export race condition. (@duburcqa) (#2647)
+* Fix sensor camera 'lookat' being ignored when 'entity_idx' is set. (@Lidang-Jiang) (#2614)
+* Fix various regressions on Metal backend. (@duburcqa) (#2651, #2624, #2657)
+* Fix camera sensor per-env rendering with Rasterizer. (@duburcqa) (#2657)
+
+### Miscellaneous
+
+* Add parallel linesearch for constraint solver to speedup simulation on GPU backend. (@erizmr) (#2523)
+* Speedup tiled hessian kernel by using direct lower-triangle indexing. (@hughperkins) (#2618)
+* Add broadphase all-vs-all to speedup simulation on GPU backend. (@hughperkins) (#2607)
+* Add GPU graph to decomposed solver to reduce kernel launch latency. (@hughperkins, @duburcqa) (#2621, #2635, #2636)
+* Add support of opt-in shared memory for tiled hessian to improve performance. (@duburcqa) (#2629)
+* Better parallelization of add collision constraints. (@hughperkins) (#2639)
+* Enable GPU-optimised decomposed constraints solver implementation on all GPU backends. (@duburcqa) (#2623)
+* Unify narrowphase codepath on all GPU backends. (@duburcqa) (#2637)
+* Automatically select optimal H264 codec for Video recorder. (@duburcqa) (#2657)
+* Update all RL examples. (@duburcqa) (#2644, #2657)
+* Update docker container. (@duburcqa) (#2643)
+
 ## 0.4.4
 
 ### Breaking changes
