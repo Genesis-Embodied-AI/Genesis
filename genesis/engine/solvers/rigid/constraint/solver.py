@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
+from quadrants.lang.simt.tile16 import Tile16
 import torch
 from frozendict import frozendict
 
@@ -1629,292 +1630,9 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
-# ---------------------------------------------------------------------------
-# 16x16 tile-level building blocks for blocked Cholesky (inlined via @qd.func)
-#
-# Each operates on a 16x16 tile held in 16 scalar registers (r0-r15 or q0-q15),
-# distributed one row per thread across 16 threads in a subgroup. Cross-thread
-# communication uses warp shuffles — no shared memory or synchronization.
-# ---------------------------------------------------------------------------
-
 _CHOL_TILE = 16
 
 
-@qd.func
-def _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
-    """Symmetric GEMM subtract for a single element: r_c -= v * shuffle(v, c)."""
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(0)); r0 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(1)); r1 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(2)); r2 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(3)); r3 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(4)); r4 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(5)); r5 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(6)); r6 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(7)); r7 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(8)); r8 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(9)); r9 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(10)); r10 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(11)); r11 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(12)); r12 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(13)); r13 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(14)); r14 -= v * vc
-    vc = qd.simt.subgroup.shuffle(v, qd.u32(15)); r15 -= v * vc
-    return r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15
-
-
-@qd.func
-def _tile_ger_sub_16(
-    v_own, v_diag, q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
-):
-    """Off-diagonal GEMM subtract: q_c -= v_own * shuffle(v_diag, c)."""
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(0)); q0 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(1)); q1 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(2)); q2 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(3)); q3 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(4)); q4 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(5)); q5 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(6)); q6 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(7)); q7 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(8)); q8 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(9)); q9 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(10)); q10 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(11)); q11 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(12)); q12 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(13)); q13 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(14)); q14 -= v_own * vc
-    vc = qd.simt.subgroup.shuffle(v_diag, qd.u32(15)); q15 -= v_own * vc
-    return q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
-
-
-@qd.func
-def _tile_potrf_16(tid, eps, r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15):
-    """In-register 16x16 Cholesky POTRF via warp shuffles."""
-    for k in range(_CHOL_TILE):
-        diag_val = gs.qd_float(0.0)
-        if tid == k:
-            s = gs.qd_float(0.0)
-            if k > 0: s += r0 * r0
-            if k > 1: s += r1 * r1
-            if k > 2: s += r2 * r2
-            if k > 3: s += r3 * r3
-            if k > 4: s += r4 * r4
-            if k > 5: s += r5 * r5
-            if k > 6: s += r6 * r6
-            if k > 7: s += r7 * r7
-            if k > 8: s += r8 * r8
-            if k > 9: s += r9 * r9
-            if k > 10: s += r10 * r10
-            if k > 11: s += r11 * r11
-            if k > 12: s += r12 * r12
-            if k > 13: s += r13 * r13
-            if k > 14: s += r14 * r14
-            cur = gs.qd_float(0.0)
-            if k == 0: cur = r0
-            if k == 1: cur = r1
-            if k == 2: cur = r2
-            if k == 3: cur = r3
-            if k == 4: cur = r4
-            if k == 5: cur = r5
-            if k == 6: cur = r6
-            if k == 7: cur = r7
-            if k == 8: cur = r8
-            if k == 9: cur = r9
-            if k == 10: cur = r10
-            if k == 11: cur = r11
-            if k == 12: cur = r12
-            if k == 13: cur = r13
-            if k == 14: cur = r14
-            if k == 15: cur = r15
-            diag_val = qd.sqrt(qd.max(cur - s, eps))
-            if k == 0: r0 = diag_val
-            if k == 1: r1 = diag_val
-            if k == 2: r2 = diag_val
-            if k == 3: r3 = diag_val
-            if k == 4: r4 = diag_val
-            if k == 5: r5 = diag_val
-            if k == 6: r6 = diag_val
-            if k == 7: r7 = diag_val
-            if k == 8: r8 = diag_val
-            if k == 9: r9 = diag_val
-            if k == 10: r10 = diag_val
-            if k == 11: r11 = diag_val
-            if k == 12: r12 = diag_val
-            if k == 13: r13 = diag_val
-            if k == 14: r14 = diag_val
-            if k == 15: r15 = diag_val
-
-        diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
-
-        dot = gs.qd_float(0.0)
-        if k > 0:
-            Lkj = qd.simt.subgroup.shuffle(r0, qd.u32(k)); dot += Lkj * r0
-        if k > 1:
-            Lkj = qd.simt.subgroup.shuffle(r1, qd.u32(k)); dot += Lkj * r1
-        if k > 2:
-            Lkj = qd.simt.subgroup.shuffle(r2, qd.u32(k)); dot += Lkj * r2
-        if k > 3:
-            Lkj = qd.simt.subgroup.shuffle(r3, qd.u32(k)); dot += Lkj * r3
-        if k > 4:
-            Lkj = qd.simt.subgroup.shuffle(r4, qd.u32(k)); dot += Lkj * r4
-        if k > 5:
-            Lkj = qd.simt.subgroup.shuffle(r5, qd.u32(k)); dot += Lkj * r5
-        if k > 6:
-            Lkj = qd.simt.subgroup.shuffle(r6, qd.u32(k)); dot += Lkj * r6
-        if k > 7:
-            Lkj = qd.simt.subgroup.shuffle(r7, qd.u32(k)); dot += Lkj * r7
-        if k > 8:
-            Lkj = qd.simt.subgroup.shuffle(r8, qd.u32(k)); dot += Lkj * r8
-        if k > 9:
-            Lkj = qd.simt.subgroup.shuffle(r9, qd.u32(k)); dot += Lkj * r9
-        if k > 10:
-            Lkj = qd.simt.subgroup.shuffle(r10, qd.u32(k)); dot += Lkj * r10
-        if k > 11:
-            Lkj = qd.simt.subgroup.shuffle(r11, qd.u32(k)); dot += Lkj * r11
-        if k > 12:
-            Lkj = qd.simt.subgroup.shuffle(r12, qd.u32(k)); dot += Lkj * r12
-        if k > 13:
-            Lkj = qd.simt.subgroup.shuffle(r13, qd.u32(k)); dot += Lkj * r13
-        if k > 14:
-            Lkj = qd.simt.subgroup.shuffle(r14, qd.u32(k)); dot += Lkj * r14
-
-        if tid > k:
-            cur = gs.qd_float(0.0)
-            if k == 0: cur = r0
-            if k == 1: cur = r1
-            if k == 2: cur = r2
-            if k == 3: cur = r3
-            if k == 4: cur = r4
-            if k == 5: cur = r5
-            if k == 6: cur = r6
-            if k == 7: cur = r7
-            if k == 8: cur = r8
-            if k == 9: cur = r9
-            if k == 10: cur = r10
-            if k == 11: cur = r11
-            if k == 12: cur = r12
-            if k == 13: cur = r13
-            if k == 14: cur = r14
-            if k == 15: cur = r15
-            new_val = (cur - dot) / diag_k
-            if k == 0: r0 = new_val
-            if k == 1: r1 = new_val
-            if k == 2: r2 = new_val
-            if k == 3: r3 = new_val
-            if k == 4: r4 = new_val
-            if k == 5: r5 = new_val
-            if k == 6: r6 = new_val
-            if k == 7: r7 = new_val
-            if k == 8: r8 = new_val
-            if k == 9: r9 = new_val
-            if k == 10: r10 = new_val
-            if k == 11: r11 = new_val
-            if k == 12: r12 = new_val
-            if k == 13: r13 = new_val
-            if k == 14: r14 = new_val
-            if k == 15: r15 = new_val
-
-    return r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15
-
-
-@qd.func
-def _tile_trsm_16(
-    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15,
-    q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15,
-):
-    """In-register 16x16 TRSM: solve L_kk @ X^T = Q^T.
-
-    r0-r15: factorized L_kk (read-only), q0-q15: block to solve.
-    """
-    for c in range(_CHOL_TILE):
-        dot = gs.qd_float(0.0)
-        if c > 0:
-            Lkj = qd.simt.subgroup.shuffle(r0, qd.u32(c)); dot += q0 * Lkj
-        if c > 1:
-            Lkj = qd.simt.subgroup.shuffle(r1, qd.u32(c)); dot += q1 * Lkj
-        if c > 2:
-            Lkj = qd.simt.subgroup.shuffle(r2, qd.u32(c)); dot += q2 * Lkj
-        if c > 3:
-            Lkj = qd.simt.subgroup.shuffle(r3, qd.u32(c)); dot += q3 * Lkj
-        if c > 4:
-            Lkj = qd.simt.subgroup.shuffle(r4, qd.u32(c)); dot += q4 * Lkj
-        if c > 5:
-            Lkj = qd.simt.subgroup.shuffle(r5, qd.u32(c)); dot += q5 * Lkj
-        if c > 6:
-            Lkj = qd.simt.subgroup.shuffle(r6, qd.u32(c)); dot += q6 * Lkj
-        if c > 7:
-            Lkj = qd.simt.subgroup.shuffle(r7, qd.u32(c)); dot += q7 * Lkj
-        if c > 8:
-            Lkj = qd.simt.subgroup.shuffle(r8, qd.u32(c)); dot += q8 * Lkj
-        if c > 9:
-            Lkj = qd.simt.subgroup.shuffle(r9, qd.u32(c)); dot += q9 * Lkj
-        if c > 10:
-            Lkj = qd.simt.subgroup.shuffle(r10, qd.u32(c)); dot += q10 * Lkj
-        if c > 11:
-            Lkj = qd.simt.subgroup.shuffle(r11, qd.u32(c)); dot += q11 * Lkj
-        if c > 12:
-            Lkj = qd.simt.subgroup.shuffle(r12, qd.u32(c)); dot += q12 * Lkj
-        if c > 13:
-            Lkj = qd.simt.subgroup.shuffle(r13, qd.u32(c)); dot += q13 * Lkj
-        if c > 14:
-            Lkj = qd.simt.subgroup.shuffle(r14, qd.u32(c)); dot += q14 * Lkj
-
-        diag_reg = gs.qd_float(0.0)
-        if c == 0: diag_reg = r0
-        if c == 1: diag_reg = r1
-        if c == 2: diag_reg = r2
-        if c == 3: diag_reg = r3
-        if c == 4: diag_reg = r4
-        if c == 5: diag_reg = r5
-        if c == 6: diag_reg = r6
-        if c == 7: diag_reg = r7
-        if c == 8: diag_reg = r8
-        if c == 9: diag_reg = r9
-        if c == 10: diag_reg = r10
-        if c == 11: diag_reg = r11
-        if c == 12: diag_reg = r12
-        if c == 13: diag_reg = r13
-        if c == 14: diag_reg = r14
-        if c == 15: diag_reg = r15
-        diag_c = qd.simt.subgroup.shuffle(diag_reg, qd.u32(c))
-
-        cur = gs.qd_float(0.0)
-        if c == 0: cur = q0
-        if c == 1: cur = q1
-        if c == 2: cur = q2
-        if c == 3: cur = q3
-        if c == 4: cur = q4
-        if c == 5: cur = q5
-        if c == 6: cur = q6
-        if c == 7: cur = q7
-        if c == 8: cur = q8
-        if c == 9: cur = q9
-        if c == 10: cur = q10
-        if c == 11: cur = q11
-        if c == 12: cur = q12
-        if c == 13: cur = q13
-        if c == 14: cur = q14
-        if c == 15: cur = q15
-
-        new_val = (cur - dot) / diag_c
-
-        if c == 0: q0 = new_val
-        if c == 1: q1 = new_val
-        if c == 2: q2 = new_val
-        if c == 3: q3 = new_val
-        if c == 4: q4 = new_val
-        if c == 5: q5 = new_val
-        if c == 6: q6 = new_val
-        if c == 7: q7 = new_val
-        if c == 8: q8 = new_val
-        if c == 9: q9 = new_val
-        if c == 10: q10 = new_val
-        if c == 11: q11 = new_val
-        if c == 12: q12 = new_val
-        if c == 13: q13 = new_val
-        if c == 14: q14 = new_val
-        if c == 15: q15 = new_val
-
-    return q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15
 
 
 @qd.func
@@ -1923,15 +1641,15 @@ def func_cholesky_factor_direct_tiled(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Blocked Cholesky factorization using register-resident 16x16 tiles with warp shuffles.
+    """Blocked Cholesky factorization using Tile16 register-resident tiles.
 
-    Uses a left-looking blocked algorithm with 4 tile-level primitives (POTRF, TRSM, GEMM, off-diagonal GEMM),
-    all operating entirely in registers via warp shuffle communication. No shared memory or block synchronization
-    is needed — occupancy is limited only by register pressure, enabling higher throughput than shared-memory
-    approaches.
+    Uses a left-looking blocked algorithm with Tile16 primitives (potrf, trsm,
+    syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
+    No shared memory or block synchronization needed.
 
-    When n_dofs is not a multiple of 16, partial tiles are padded with identity (diagonal=1, off-diagonal=0)
-    so the factorization is correct for the original n_dofs x n_dofs submatrix.
+    When n_dofs is not a multiple of 16, partial tiles are padded with identity
+    (diagonal=1, off-diagonal=0) so the factorization is correct for the
+    original n_dofs x n_dofs submatrix.
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -1951,88 +1669,29 @@ def func_cholesky_factor_direct_tiled(
         for kb in range(N_BLOCKS):
             k0 = kb * _CHOL_TILE
 
-            # Load diagonal block with identity padding for out-of-bounds
-            z = gs.qd_float(0.0)
-            r0 = z; r1 = z; r2 = z; r3 = z; r4 = z; r5 = z; r6 = z; r7 = z
-            r8 = z; r9 = z; r10 = z; r11 = z; r12 = z; r13 = z; r14 = z; r15 = z
+            L_kk = Tile16()
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: r0 = constraint_state.nt_H[i_b, k0 + tid, k0 + 0]
-                if k0 + 1 < n_dofs: r1 = constraint_state.nt_H[i_b, k0 + tid, k0 + 1]
-                if k0 + 2 < n_dofs: r2 = constraint_state.nt_H[i_b, k0 + tid, k0 + 2]
-                if k0 + 3 < n_dofs: r3 = constraint_state.nt_H[i_b, k0 + tid, k0 + 3]
-                if k0 + 4 < n_dofs: r4 = constraint_state.nt_H[i_b, k0 + tid, k0 + 4]
-                if k0 + 5 < n_dofs: r5 = constraint_state.nt_H[i_b, k0 + tid, k0 + 5]
-                if k0 + 6 < n_dofs: r6 = constraint_state.nt_H[i_b, k0 + tid, k0 + 6]
-                if k0 + 7 < n_dofs: r7 = constraint_state.nt_H[i_b, k0 + tid, k0 + 7]
-                if k0 + 8 < n_dofs: r8 = constraint_state.nt_H[i_b, k0 + tid, k0 + 8]
-                if k0 + 9 < n_dofs: r9 = constraint_state.nt_H[i_b, k0 + tid, k0 + 9]
-                if k0 + 10 < n_dofs: r10 = constraint_state.nt_H[i_b, k0 + tid, k0 + 10]
-                if k0 + 11 < n_dofs: r11 = constraint_state.nt_H[i_b, k0 + tid, k0 + 11]
-                if k0 + 12 < n_dofs: r12 = constraint_state.nt_H[i_b, k0 + tid, k0 + 12]
-                if k0 + 13 < n_dofs: r13 = constraint_state.nt_H[i_b, k0 + tid, k0 + 13]
-                if k0 + 14 < n_dofs: r14 = constraint_state.nt_H[i_b, k0 + tid, k0 + 14]
-                if k0 + 15 < n_dofs: r15 = constraint_state.nt_H[i_b, k0 + tid, k0 + 15]
+                L_kk.load3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
             else:
-                if tid == 0: r0 = gs.qd_float(1.0)
-                if tid == 1: r1 = gs.qd_float(1.0)
-                if tid == 2: r2 = gs.qd_float(1.0)
-                if tid == 3: r3 = gs.qd_float(1.0)
-                if tid == 4: r4 = gs.qd_float(1.0)
-                if tid == 5: r5 = gs.qd_float(1.0)
-                if tid == 6: r6 = gs.qd_float(1.0)
-                if tid == 7: r7 = gs.qd_float(1.0)
-                if tid == 8: r8 = gs.qd_float(1.0)
-                if tid == 9: r9 = gs.qd_float(1.0)
-                if tid == 10: r10 = gs.qd_float(1.0)
-                if tid == 11: r11 = gs.qd_float(1.0)
-                if tid == 12: r12 = gs.qd_float(1.0)
-                if tid == 13: r13 = gs.qd_float(1.0)
-                if tid == 14: r14 = gs.qd_float(1.0)
-                if tid == 15: r15 = gs.qd_float(1.0)
+                L_kk.set_identity(tid)
 
-            # Diagonal GEMM subtract: A_kk -= L_k* @ L_k*^T
             for jb in range(kb):
                 j0 = jb * _CHOL_TILE
                 for t in range(_CHOL_TILE):
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
                         v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
-                    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                        _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
-                                          r8, r9, r10, r11, r12, r13, r14, r15)
+                    L_kk.syr_sub(v)
 
-            # POTRF: factorize diagonal tile
-            r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                _tile_potrf_16(tid, EPS, r0, r1, r2, r3, r4, r5, r6, r7,
-                               r8, r9, r10, r11, r12, r13, r14, r15)
+            L_kk.potrf(tid, EPS)
 
-            # Off-diagonal blocks
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * _CHOL_TILE
 
-                # Load off-diagonal block with zero padding for out-of-bounds
-                z2 = gs.qd_float(0.0)
-                q0 = z2; q1 = z2; q2 = z2; q3 = z2; q4 = z2; q5 = z2; q6 = z2; q7 = z2
-                q8 = z2; q9 = z2; q10 = z2; q11 = z2; q12 = z2; q13 = z2; q14 = z2; q15 = z2
+                L_ik = Tile16()
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: q0 = constraint_state.nt_H[i_b, i0 + tid, k0 + 0]
-                    if k0 + 1 < n_dofs: q1 = constraint_state.nt_H[i_b, i0 + tid, k0 + 1]
-                    if k0 + 2 < n_dofs: q2 = constraint_state.nt_H[i_b, i0 + tid, k0 + 2]
-                    if k0 + 3 < n_dofs: q3 = constraint_state.nt_H[i_b, i0 + tid, k0 + 3]
-                    if k0 + 4 < n_dofs: q4 = constraint_state.nt_H[i_b, i0 + tid, k0 + 4]
-                    if k0 + 5 < n_dofs: q5 = constraint_state.nt_H[i_b, i0 + tid, k0 + 5]
-                    if k0 + 6 < n_dofs: q6 = constraint_state.nt_H[i_b, i0 + tid, k0 + 6]
-                    if k0 + 7 < n_dofs: q7 = constraint_state.nt_H[i_b, i0 + tid, k0 + 7]
-                    if k0 + 8 < n_dofs: q8 = constraint_state.nt_H[i_b, i0 + tid, k0 + 8]
-                    if k0 + 9 < n_dofs: q9 = constraint_state.nt_H[i_b, i0 + tid, k0 + 9]
-                    if k0 + 10 < n_dofs: q10 = constraint_state.nt_H[i_b, i0 + tid, k0 + 10]
-                    if k0 + 11 < n_dofs: q11 = constraint_state.nt_H[i_b, i0 + tid, k0 + 11]
-                    if k0 + 12 < n_dofs: q12 = constraint_state.nt_H[i_b, i0 + tid, k0 + 12]
-                    if k0 + 13 < n_dofs: q13 = constraint_state.nt_H[i_b, i0 + tid, k0 + 13]
-                    if k0 + 14 < n_dofs: q14 = constraint_state.nt_H[i_b, i0 + tid, k0 + 14]
-                    if k0 + 15 < n_dofs: q15 = constraint_state.nt_H[i_b, i0 + tid, k0 + 15]
+                    L_ik.load3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
 
-                # Off-diagonal GEMM subtract: A_ik -= L_i* @ L_k*^T
                 for jb in range(kb):
                     j0 = jb * _CHOL_TILE
                     for t in range(_CHOL_TILE):
@@ -2042,55 +1701,15 @@ def func_cholesky_factor_direct_tiled(
                             v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
                             v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
-                        q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                            _tile_ger_sub_16(v_own, v_diag,
-                                                      q0, q1, q2, q3, q4, q5, q6, q7,
-                                                      q8, q9, q10, q11, q12, q13, q14, q15)
+                        L_ik.ger_sub(v_own, v_diag)
 
-                # TRSM: solve L_kk @ X^T = Q^T
-                q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                    _tile_trsm_16(r0, r1, r2, r3, r4, r5, r6, r7,
-                                  r8, r9, r10, r11, r12, r13, r14, r15,
-                                  q0, q1, q2, q3, q4, q5, q6, q7,
-                                  q8, q9, q10, q11, q12, q13, q14, q15)
+                L_ik.trsm(L_kk)
 
-                # Store off-diagonal result (skip out-of-bounds)
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 0] = q0
-                    if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 1] = q1
-                    if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 2] = q2
-                    if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 3] = q3
-                    if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 4] = q4
-                    if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 5] = q5
-                    if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 6] = q6
-                    if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 7] = q7
-                    if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 8] = q8
-                    if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 9] = q9
-                    if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 10] = q10
-                    if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 11] = q11
-                    if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 12] = q12
-                    if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 13] = q13
-                    if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 14] = q14
-                    if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, i0 + tid, k0 + 15] = q15
+                    L_ik.store3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
 
-            # Store diagonal result (skip out-of-bounds)
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 0] = r0
-                if k0 + 1 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 1] = r1
-                if k0 + 2 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 2] = r2
-                if k0 + 3 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 3] = r3
-                if k0 + 4 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 4] = r4
-                if k0 + 5 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 5] = r5
-                if k0 + 6 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 6] = r6
-                if k0 + 7 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 7] = r7
-                if k0 + 8 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 8] = r8
-                if k0 + 9 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 9] = r9
-                if k0 + 10 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 10] = r10
-                if k0 + 11 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 11] = r11
-                if k0 + 12 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 12] = r12
-                if k0 + 13 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 13] = r13
-                if k0 + 14 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 14] = r14
-                if k0 + 15 < n_dofs: constraint_state.nt_H[i_b, k0 + tid, k0 + 15] = r15
+                L_kk.store3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
 
 
 @qd.func
@@ -2133,88 +1752,29 @@ def func_cholesky_and_solve_fused_tiled(
         for kb in range(N_BLOCKS):
             k0 = kb * _CHOL_TILE
 
-            # Load diagonal block from nt_H with identity padding
-            z = gs.qd_float(0.0)
-            r0 = z; r1 = z; r2 = z; r3 = z; r4 = z; r5 = z; r6 = z; r7 = z
-            r8 = z; r9 = z; r10 = z; r11 = z; r12 = z; r13 = z; r14 = z; r15 = z
+            L_kk = Tile16()
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: r0 = constraint_state.nt_H[i_b, k0 + tid, k0 + 0]
-                if k0 + 1 < n_dofs: r1 = constraint_state.nt_H[i_b, k0 + tid, k0 + 1]
-                if k0 + 2 < n_dofs: r2 = constraint_state.nt_H[i_b, k0 + tid, k0 + 2]
-                if k0 + 3 < n_dofs: r3 = constraint_state.nt_H[i_b, k0 + tid, k0 + 3]
-                if k0 + 4 < n_dofs: r4 = constraint_state.nt_H[i_b, k0 + tid, k0 + 4]
-                if k0 + 5 < n_dofs: r5 = constraint_state.nt_H[i_b, k0 + tid, k0 + 5]
-                if k0 + 6 < n_dofs: r6 = constraint_state.nt_H[i_b, k0 + tid, k0 + 6]
-                if k0 + 7 < n_dofs: r7 = constraint_state.nt_H[i_b, k0 + tid, k0 + 7]
-                if k0 + 8 < n_dofs: r8 = constraint_state.nt_H[i_b, k0 + tid, k0 + 8]
-                if k0 + 9 < n_dofs: r9 = constraint_state.nt_H[i_b, k0 + tid, k0 + 9]
-                if k0 + 10 < n_dofs: r10 = constraint_state.nt_H[i_b, k0 + tid, k0 + 10]
-                if k0 + 11 < n_dofs: r11 = constraint_state.nt_H[i_b, k0 + tid, k0 + 11]
-                if k0 + 12 < n_dofs: r12 = constraint_state.nt_H[i_b, k0 + tid, k0 + 12]
-                if k0 + 13 < n_dofs: r13 = constraint_state.nt_H[i_b, k0 + tid, k0 + 13]
-                if k0 + 14 < n_dofs: r14 = constraint_state.nt_H[i_b, k0 + tid, k0 + 14]
-                if k0 + 15 < n_dofs: r15 = constraint_state.nt_H[i_b, k0 + tid, k0 + 15]
+                L_kk.load3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
             else:
-                if tid == 0: r0 = gs.qd_float(1.0)
-                if tid == 1: r1 = gs.qd_float(1.0)
-                if tid == 2: r2 = gs.qd_float(1.0)
-                if tid == 3: r3 = gs.qd_float(1.0)
-                if tid == 4: r4 = gs.qd_float(1.0)
-                if tid == 5: r5 = gs.qd_float(1.0)
-                if tid == 6: r6 = gs.qd_float(1.0)
-                if tid == 7: r7 = gs.qd_float(1.0)
-                if tid == 8: r8 = gs.qd_float(1.0)
-                if tid == 9: r9 = gs.qd_float(1.0)
-                if tid == 10: r10 = gs.qd_float(1.0)
-                if tid == 11: r11 = gs.qd_float(1.0)
-                if tid == 12: r12 = gs.qd_float(1.0)
-                if tid == 13: r13 = gs.qd_float(1.0)
-                if tid == 14: r14 = gs.qd_float(1.0)
-                if tid == 15: r15 = gs.qd_float(1.0)
+                L_kk.set_identity(tid)
 
-            # Diagonal GEMM subtract: A_kk -= L_k* @ L_k*^T (lookback from shared memory)
             for jb in range(kb):
                 j0 = jb * _CHOL_TILE
                 for t in range(_CHOL_TILE):
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
                         v = L_sh[k0 + tid, j0 + t]
-                    r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                        _tile_syr_sub_16(v, r0, r1, r2, r3, r4, r5, r6, r7,
-                                          r8, r9, r10, r11, r12, r13, r14, r15)
+                    L_kk.syr_sub(v)
 
-            # POTRF: factorize diagonal tile
-            r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15 = \
-                _tile_potrf_16(tid, EPS, r0, r1, r2, r3, r4, r5, r6, r7,
-                               r8, r9, r10, r11, r12, r13, r14, r15)
+            L_kk.potrf(tid, EPS)
 
-            # Off-diagonal blocks
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * _CHOL_TILE
 
-                # Load off-diagonal block from nt_H with zero padding
-                z2 = gs.qd_float(0.0)
-                q0 = z2; q1 = z2; q2 = z2; q3 = z2; q4 = z2; q5 = z2; q6 = z2; q7 = z2
-                q8 = z2; q9 = z2; q10 = z2; q11 = z2; q12 = z2; q13 = z2; q14 = z2; q15 = z2
+                L_ik = Tile16()
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: q0 = constraint_state.nt_H[i_b, i0 + tid, k0 + 0]
-                    if k0 + 1 < n_dofs: q1 = constraint_state.nt_H[i_b, i0 + tid, k0 + 1]
-                    if k0 + 2 < n_dofs: q2 = constraint_state.nt_H[i_b, i0 + tid, k0 + 2]
-                    if k0 + 3 < n_dofs: q3 = constraint_state.nt_H[i_b, i0 + tid, k0 + 3]
-                    if k0 + 4 < n_dofs: q4 = constraint_state.nt_H[i_b, i0 + tid, k0 + 4]
-                    if k0 + 5 < n_dofs: q5 = constraint_state.nt_H[i_b, i0 + tid, k0 + 5]
-                    if k0 + 6 < n_dofs: q6 = constraint_state.nt_H[i_b, i0 + tid, k0 + 6]
-                    if k0 + 7 < n_dofs: q7 = constraint_state.nt_H[i_b, i0 + tid, k0 + 7]
-                    if k0 + 8 < n_dofs: q8 = constraint_state.nt_H[i_b, i0 + tid, k0 + 8]
-                    if k0 + 9 < n_dofs: q9 = constraint_state.nt_H[i_b, i0 + tid, k0 + 9]
-                    if k0 + 10 < n_dofs: q10 = constraint_state.nt_H[i_b, i0 + tid, k0 + 10]
-                    if k0 + 11 < n_dofs: q11 = constraint_state.nt_H[i_b, i0 + tid, k0 + 11]
-                    if k0 + 12 < n_dofs: q12 = constraint_state.nt_H[i_b, i0 + tid, k0 + 12]
-                    if k0 + 13 < n_dofs: q13 = constraint_state.nt_H[i_b, i0 + tid, k0 + 13]
-                    if k0 + 14 < n_dofs: q14 = constraint_state.nt_H[i_b, i0 + tid, k0 + 14]
-                    if k0 + 15 < n_dofs: q15 = constraint_state.nt_H[i_b, i0 + tid, k0 + 15]
+                    L_ik.load3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
 
-                # Off-diagonal GEMM subtract (lookback from shared memory)
                 for jb in range(kb):
                     j0 = jb * _CHOL_TILE
                     for t in range(_CHOL_TILE):
@@ -2224,55 +1784,15 @@ def func_cholesky_and_solve_fused_tiled(
                             v_own = L_sh[i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
                             v_diag = L_sh[k0 + tid, j0 + t]
-                        q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                            _tile_ger_sub_16(v_own, v_diag,
-                                                      q0, q1, q2, q3, q4, q5, q6, q7,
-                                                      q8, q9, q10, q11, q12, q13, q14, q15)
+                        L_ik.ger_sub(v_own, v_diag)
 
-                # TRSM: solve L_kk @ X^T = Q^T
-                q0, q1, q2, q3, q4, q5, q6, q7, q8, q9, q10, q11, q12, q13, q14, q15 = \
-                    _tile_trsm_16(r0, r1, r2, r3, r4, r5, r6, r7,
-                                  r8, r9, r10, r11, r12, r13, r14, r15,
-                                  q0, q1, q2, q3, q4, q5, q6, q7,
-                                  q8, q9, q10, q11, q12, q13, q14, q15)
+                L_ik.trsm(L_kk)
 
-                # Store off-diagonal result to shared memory
                 if i0 + tid < n_dofs:
-                    if k0 + 0 < n_dofs: L_sh[i0 + tid, k0 + 0] = q0
-                    if k0 + 1 < n_dofs: L_sh[i0 + tid, k0 + 1] = q1
-                    if k0 + 2 < n_dofs: L_sh[i0 + tid, k0 + 2] = q2
-                    if k0 + 3 < n_dofs: L_sh[i0 + tid, k0 + 3] = q3
-                    if k0 + 4 < n_dofs: L_sh[i0 + tid, k0 + 4] = q4
-                    if k0 + 5 < n_dofs: L_sh[i0 + tid, k0 + 5] = q5
-                    if k0 + 6 < n_dofs: L_sh[i0 + tid, k0 + 6] = q6
-                    if k0 + 7 < n_dofs: L_sh[i0 + tid, k0 + 7] = q7
-                    if k0 + 8 < n_dofs: L_sh[i0 + tid, k0 + 8] = q8
-                    if k0 + 9 < n_dofs: L_sh[i0 + tid, k0 + 9] = q9
-                    if k0 + 10 < n_dofs: L_sh[i0 + tid, k0 + 10] = q10
-                    if k0 + 11 < n_dofs: L_sh[i0 + tid, k0 + 11] = q11
-                    if k0 + 12 < n_dofs: L_sh[i0 + tid, k0 + 12] = q12
-                    if k0 + 13 < n_dofs: L_sh[i0 + tid, k0 + 13] = q13
-                    if k0 + 14 < n_dofs: L_sh[i0 + tid, k0 + 14] = q14
-                    if k0 + 15 < n_dofs: L_sh[i0 + tid, k0 + 15] = q15
+                    L_ik.store(L_sh, i0 + tid, k0, n_dofs)
 
-            # Store diagonal result to shared memory
             if k0 + tid < n_dofs:
-                if k0 + 0 < n_dofs: L_sh[k0 + tid, k0 + 0] = r0
-                if k0 + 1 < n_dofs: L_sh[k0 + tid, k0 + 1] = r1
-                if k0 + 2 < n_dofs: L_sh[k0 + tid, k0 + 2] = r2
-                if k0 + 3 < n_dofs: L_sh[k0 + tid, k0 + 3] = r3
-                if k0 + 4 < n_dofs: L_sh[k0 + tid, k0 + 4] = r4
-                if k0 + 5 < n_dofs: L_sh[k0 + tid, k0 + 5] = r5
-                if k0 + 6 < n_dofs: L_sh[k0 + tid, k0 + 6] = r6
-                if k0 + 7 < n_dofs: L_sh[k0 + tid, k0 + 7] = r7
-                if k0 + 8 < n_dofs: L_sh[k0 + tid, k0 + 8] = r8
-                if k0 + 9 < n_dofs: L_sh[k0 + tid, k0 + 9] = r9
-                if k0 + 10 < n_dofs: L_sh[k0 + tid, k0 + 10] = r10
-                if k0 + 11 < n_dofs: L_sh[k0 + tid, k0 + 11] = r11
-                if k0 + 12 < n_dofs: L_sh[k0 + tid, k0 + 12] = r12
-                if k0 + 13 < n_dofs: L_sh[k0 + tid, k0 + 13] = r13
-                if k0 + 14 < n_dofs: L_sh[k0 + tid, k0 + 14] = r14
-                if k0 + 15 < n_dofs: L_sh[k0 + tid, k0 + 15] = r15
+                L_kk.store(L_sh, k0 + tid, k0, n_dofs)
 
         # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
         # L is fully computed in L_sh. Load gradient into v_sh.
