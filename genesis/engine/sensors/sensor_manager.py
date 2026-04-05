@@ -26,7 +26,6 @@ class SensorManager:
         self._sensors_metadata: dict[type["Sensor"], SharedSensorMetadata | None] = {}
         self._ground_truth_cache: dict[type[torch.dtype], torch.Tensor] = {}
         self._cache: dict[type[torch.dtype], torch.Tensor] = {}
-        # Per-dtype GT timeline: read delay (_apply_delay_to_shared_cache) + read_ground_truth history.
         self._gt_timeline_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
         self._measured_history_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
         self._history_clone_cache: dict[tuple[bool, type[torch.dtype], int], torch.Tensor] = {}
@@ -228,29 +227,24 @@ class SensorManager:
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         dtype = sensor._get_cache_dtype()
-        h_len = sensor._history_length
-        if h_len > 0:
-            ring = self._gt_timeline_ring.get(dtype) if is_ground_truth else self._measured_history_ring.get(dtype)
-            if ring is None and not is_ground_truth:
-                ring = self._gt_timeline_ring.get(dtype)
-            if ring is None:
-                gs.raise_exception(
-                    f"Sensor history_length={h_len} requires a history ring buffer for dtype {dtype}; "
-                    "ensure the scene was built with sensors using this dtype."
-                )
-            hk = (is_ground_truth, dtype, sensor._cache_idx)
-            stacked = self._history_clone_cache.get(hk)
-            if stacked is None:
-                # Field-major layout must match Sensor._read_flat_slices: for each return field, concatenate
-                # H timesteps, then concatenate fields (not time-major full rows).
-                col_base = sensor._cache_idx
-                field_blocks = []
-                for rel_sl in sensor._cache_slices:
-                    abs_sl = slice(col_base + rel_sl.start, col_base + rel_sl.stop)
-                    parts = [ring.at(k, slice(None), abs_sl) for k in range(h_len)]
-                    field_blocks.append(torch.cat(parts, dim=1))
-                stacked = torch.cat(field_blocks, dim=1)
-                self._history_clone_cache[hk] = stacked
+        if sensor._history_length > 0:
+            ring = (
+                self._gt_timeline_ring.get(dtype)
+                if is_ground_truth
+                else (self._measured_history_ring.get(dtype) or self._gt_timeline_ring.get(dtype))
+            )
+            hist_cache_key = (is_ground_truth, dtype, sensor._cache_idx)
+            if (cached := self._history_clone_cache.get(hist_cache_key)) is not None:
+                return cached
+
+            hist_idx = torch.arange(sensor._history_length, device=ring.buffer.device, dtype=torch.int32)
+            blocks = []
+            for rel_slice in sensor._cache_slices:
+                abs_slice = slice(sensor._cache_idx + rel_slice.start, sensor._cache_idx + rel_slice.stop)
+                hist = ring.at(hist_idx, slice(None), abs_slice)
+                blocks.append(hist.transpose(0, 1).flatten(1, 2))
+            stacked = torch.cat(blocks, dim=1)
+            self._history_clone_cache[hist_cache_key] = stacked
             return stacked
 
         key = (is_ground_truth, dtype)
