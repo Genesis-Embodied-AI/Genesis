@@ -1682,7 +1682,7 @@ def func_cholesky_factor_direct_tiled(
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
-            L_kk = Tile16x16()
+            L_kk = Tile16x16.zeros()
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
@@ -1701,7 +1701,7 @@ def func_cholesky_factor_direct_tiled(
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * Tile16x16.SIZE
 
-                L_ik = Tile16x16()
+                L_ik = Tile16x16.zeros()
                 if i0 + tid < n_dofs:
                     L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + Tile16x16.SIZE, k0:n_dofs]
 
@@ -1762,7 +1762,7 @@ def func_cholesky_and_solve_fused_tiled(
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
-            L_kk = Tile16x16()
+            L_kk = Tile16x16.zeros()
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
@@ -1781,7 +1781,7 @@ def func_cholesky_and_solve_fused_tiled(
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * Tile16x16.SIZE
 
-                L_ik = Tile16x16()
+                L_ik = Tile16x16.zeros()
                 if i0 + tid < n_dofs:
                     L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + Tile16x16.SIZE, k0:n_dofs]
 
