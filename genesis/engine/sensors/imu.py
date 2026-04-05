@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
-from genesis.options.sensors import CrossCouplingAxisType, IMU as IMUOptions
+from genesis.options.sensors import IMU as IMUOptions
+from genesis.options.sensors import CrossCouplingAxisType
 from genesis.utils.geom import (
     inv_transform_by_quat,
     transform_by_quat,
@@ -152,8 +153,6 @@ class IMUSensor(
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
-
-        self._shared_metadata.update_ground_truth_only = False
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,), (3,)
