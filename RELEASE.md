@@ -2,6 +2,8 @@
 
 ## 0.4.5
 
+This release continues on the ongoing trend of rigid body simulation speed improvements. A few camera-related bugs and all known regression on Metal backend are now fixed.
+
 ### New Features
 
 * Add support of xacro URDF. (@duburcqa) (#2642)
@@ -32,6 +34,8 @@
 * Update docker container. (@duburcqa) (#2643)
 
 ## 0.4.4
+
+The numerical stability of the simulation for simple rigid objects has been greatly improved. Apart from that, rigid body simulation is now much faster for complex scenes with many entities. Finally, a significant number of bugs have been fixed.
 
 ### Breaking changes
 
