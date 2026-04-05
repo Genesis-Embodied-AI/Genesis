@@ -529,19 +529,18 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
 
     def _noisy_options_require_measured_cache(self) -> bool:
         """Analog-style options (beyond delay, which Sensor.build handles)."""
-        o = self._options
-        if o.jitter > gs.EPS:
+        if self._options.jitter > gs.EPS:
             return True
-        if o.interpolate and (self._delay_ts > 0 or o.jitter > gs.EPS):
+        if self._options.interpolate and (self._delay_ts > 0 or self._options.jitter > gs.EPS):
             return True
         to_t = partial(_to_tuple, length_per_value=self._cache_size)
-        if np.any(np.abs(to_t(o.resolution)) > gs.EPS):
+        if np.any(np.abs(to_t(self._options.resolution)) > gs.EPS):
             return True
-        if np.any(np.abs(to_t(o.bias)) > gs.EPS):
+        if np.any(np.abs(to_t(self._options.bias)) > gs.EPS):
             return True
-        if np.any(np.abs(to_t(o.noise)) > gs.EPS):
+        if np.any(np.abs(to_t(self._options.noise)) > gs.EPS):
             return True
-        if np.any(np.abs(to_t(o.random_walk)) > gs.EPS):
+        if np.any(np.abs(to_t(self._options.random_walk)) > gs.EPS):
             return True
         return False
 

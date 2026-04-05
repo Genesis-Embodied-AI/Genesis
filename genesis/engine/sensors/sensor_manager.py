@@ -212,6 +212,10 @@ class SensorManager:
                 )
                 if dtype in self._measured_history_ring:
                     self._measured_history_ring[dtype][:, cache_slice].set(self._cache[dtype][:, cache_slice])
+            else:
+                self._cache[dtype][:, cache_slice].copy_(gt_slice.T)
+                if dtype in self._measured_history_ring:
+                    self._measured_history_ring[dtype][:, cache_slice].set(self._cache[dtype][:, cache_slice])
             for is_ground_truth in (False, True):
                 key = (is_ground_truth, dtype)
                 self._is_last_cache_cloned[key] = False
