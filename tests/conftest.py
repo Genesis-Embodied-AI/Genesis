@@ -228,7 +228,12 @@ def _get_gpu_indices():
         try:
             return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
         except FileNotFoundError:
-            pass
+            warnings.warn(
+                f"'{nvidia_gpu_interface_path}' is not available. "
+                "Multi-GPU support will be disabled. "
+                "This is expected on WSL2 where the NVIDIA proc interface is not mounted.",
+                stacklevel=2,
+            )
 
     return (0,)
 
@@ -251,7 +256,12 @@ def _torch_get_gpu_idx(device):
                 if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
                     return device_idx
         except FileNotFoundError:
-            pass
+            warnings.warn(
+                f"'{nvidia_gpu_interface_path}' is not available. "
+                "Multi-GPU support will be disabled. "
+                "This is expected on WSL2 where the NVIDIA proc interface is not mounted.",
+                stacklevel=2,
+            )
 
     return -1
 
