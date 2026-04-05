@@ -32,12 +32,12 @@ from genesis.vis.rasterizer import Rasterizer
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
+    OptionsT,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
 )
-from .base_sensor import OptionsT
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -235,10 +235,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
     def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
         super().__init__(options, idx, manager)
         self._stale: bool = True
-
-    def build(self):
-        super().build()
-        self._shared_metadata.update_ground_truth_only = True
 
     # ========================== Cache Integration (shared) ==========================
 

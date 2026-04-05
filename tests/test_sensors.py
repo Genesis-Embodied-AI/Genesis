@@ -613,6 +613,42 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_contact_sensor_filter_link_idx(n_envs, show_viewer):
+    """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    floor = scene.add_entity(morph=gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    sensor_floor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=floor.idx,
+        )
+    )
+    sensor_filtered = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=floor.idx,
+            filter_link_idx=(box.link_start,),
+        )
+    )
+    scene.build(n_envs=n_envs)
+    for _ in range(20):
+        scene.step()
+    assert sensor_floor.read().all()
+    assert not sensor_filtered.read().any()
+
+
 # ------------------------------------------------------------------------------------------
 # ------------------------------------ Raycast Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
