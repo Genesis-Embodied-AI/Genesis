@@ -101,18 +101,21 @@ class IMUSensor(
 
     @gs.assert_built
     def set_acc_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3, :, :] = rot_matrix
 
     @gs.assert_built
     def set_gyro_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 1, :, :] = rot_matrix
 
     @gs.assert_built
     def set_mag_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
+        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 2, :, :] = rot_matrix
@@ -153,6 +156,13 @@ class IMUSensor(
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
+
+    def _options_require_measured_cache(self) -> bool:
+        return super()._options_require_measured_cache() or (
+            np.any(np.abs(self._options.acc_cross_axis_coupling) > gs.EPS)
+            or np.any(np.abs(self._options.gyro_cross_axis_coupling) > gs.EPS)
+            or np.any(np.abs(self._options.mag_cross_axis_coupling) > gs.EPS)
+        )
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,), (3,)
