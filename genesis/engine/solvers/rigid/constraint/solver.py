@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
-from quadrants.lang.simt.tile16 import Tile16
+from quadrants.lang.simt.tile16 import make_tile16
 import torch
 from frozendict import frozendict
 
@@ -1631,6 +1631,7 @@ def func_cholesky_factor_direct_batch(
 
 
 _CHOL_TILE = 16
+Tile16 = make_tile16(gs.qd_float)
 
 
 @qd.func
