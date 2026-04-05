@@ -1685,9 +1685,9 @@ def func_cholesky_factor_direct_tiled(
 
             L_kk = Tile16()
             if k0 + tid < n_dofs:
-                L_kk.load3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
+                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + _CHOL_TILE, k0:n_dofs]
             else:
-                L_kk.set_identity(tid)
+                L_kk.eye_()
 
             for jb in range(kb):
                 j0 = jb * _CHOL_TILE
@@ -1695,16 +1695,16 @@ def func_cholesky_factor_direct_tiled(
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
                         v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
-                    L_kk.syr_sub(v)
+                    L_kk -= qd.outer(v, v)
 
-            L_kk.potrf(tid, EPS)
+            L_kk.cholesky_(EPS)
 
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * _CHOL_TILE
 
                 L_ik = Tile16()
                 if i0 + tid < n_dofs:
-                    L_ik.load3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
+                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + _CHOL_TILE, k0:n_dofs]
 
                 for jb in range(kb):
                     j0 = jb * _CHOL_TILE
@@ -1715,15 +1715,15 @@ def func_cholesky_factor_direct_tiled(
                             v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
                             v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
-                        L_ik.ger_sub(v_own, v_diag)
+                        L_ik -= qd.outer(v_own, v_diag)
 
-                L_ik.trsm(L_kk)
+                L_kk.solve_triangular_(L_ik)
 
                 if i0 + tid < n_dofs:
-                    L_ik.store3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
+                    constraint_state.nt_H[i_b, i0 : i0 + _CHOL_TILE, k0:n_dofs] = L_ik
 
             if k0 + tid < n_dofs:
-                L_kk.store3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
+                constraint_state.nt_H[i_b, k0 : k0 + _CHOL_TILE, k0:n_dofs] = L_kk
 
 
 @qd.func
@@ -1765,9 +1765,9 @@ def func_cholesky_and_solve_fused_tiled(
 
             L_kk = Tile16()
             if k0 + tid < n_dofs:
-                L_kk.load3d(constraint_state.nt_H, i_b, k0 + tid, k0, n_dofs)
+                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + _CHOL_TILE, k0:n_dofs]
             else:
-                L_kk.set_identity(tid)
+                L_kk.eye_()
 
             for jb in range(kb):
                 j0 = jb * _CHOL_TILE
@@ -1775,16 +1775,16 @@ def func_cholesky_and_solve_fused_tiled(
                     v = gs.qd_float(0.0)
                     if k0 + tid < n_dofs:
                         v = L_sh[k0 + tid, j0 + t]
-                    L_kk.syr_sub(v)
+                    L_kk -= qd.outer(v, v)
 
-            L_kk.potrf(tid, EPS)
+            L_kk.cholesky_(EPS)
 
             for ib in range(kb + 1, N_BLOCKS):
                 i0 = ib * _CHOL_TILE
 
                 L_ik = Tile16()
                 if i0 + tid < n_dofs:
-                    L_ik.load3d(constraint_state.nt_H, i_b, i0 + tid, k0, n_dofs)
+                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + _CHOL_TILE, k0:n_dofs]
 
                 for jb in range(kb):
                     j0 = jb * _CHOL_TILE
@@ -1795,15 +1795,15 @@ def func_cholesky_and_solve_fused_tiled(
                             v_own = L_sh[i0 + tid, j0 + t]
                         if k0 + tid < n_dofs:
                             v_diag = L_sh[k0 + tid, j0 + t]
-                        L_ik.ger_sub(v_own, v_diag)
+                        L_ik -= qd.outer(v_own, v_diag)
 
-                L_ik.trsm(L_kk)
+                L_kk.solve_triangular_(L_ik)
 
                 if i0 + tid < n_dofs:
-                    L_ik.store(L_sh, i0 + tid, k0, n_dofs)
+                    L_ik.store(L_sh, i0, k0, n_dofs)
 
             if k0 + tid < n_dofs:
-                L_kk.store(L_sh, k0 + tid, k0, n_dofs)
+                L_kk.store(L_sh, k0, k0, n_dofs)
 
         # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
         # L is fully computed in L_sh. Load gradient into v_sh.
