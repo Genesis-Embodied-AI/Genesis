@@ -224,10 +224,15 @@ def _get_gpu_indices():
         return tuple(map(int, cuda_visible_devices.split(",")))
 
     if sys.platform == "linux":
-        nvidia_gpu_indices = []
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        if os.path.exists(nvidia_gpu_interface_path):
+        try:
             return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
+        except FileNotFoundError:
+            warnings.warn(
+                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
+                "on WSL2 where the NVIDIA proc interface is not mounted.",
+                stacklevel=2,
+            )
 
     return (0,)
 
@@ -243,11 +248,18 @@ def _torch_get_gpu_idx(device):
         device_uuid = str(device_property.uuid)
 
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-            with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                device_info = f.read()
-            if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return device_idx
+        try:
+            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
+                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                    device_info = f.read()
+                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
+                    return device_idx
+        except FileNotFoundError:
+            warnings.warn(
+                f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
+                "on WSL2 where the NVIDIA proc interface is not mounted.",
+                stacklevel=2,
+            )
 
     return -1
 
