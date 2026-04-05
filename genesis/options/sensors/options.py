@@ -57,6 +57,12 @@ class SensorOptions(Options, Generic[SensorT]):
 
     Parameters
     ----------
+    enabled : bool
+        Whether the sensor is actively updated each simulation step. When False, the sensor's ground truth and
+        measured caches are not updated, eliminating per-step overhead. Can be toggled at runtime via
+        ``sensor.enabled = True/False``. Note that all sensors of the same type share a batched update:
+        if *any* sensor of a given type is enabled, all sensors of that type are updated together.
+        Defaults to True.
     delay : float
         The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
     update_ground_truth_only : bool
@@ -65,6 +71,7 @@ class SensorOptions(Options, Generic[SensorT]):
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
+    enabled: StrictBool = True
     delay: NonNegativeFloat = 0.0
     update_ground_truth_only: StrictBool = False
     draw_debug: StrictBool = False

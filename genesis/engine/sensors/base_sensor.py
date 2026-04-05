@@ -120,6 +120,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadataT = sensor_manager._sensors_metadata[type(self)]
         self._is_built = False
+        self._enabled: bool = sensor_options.enabled
 
         self._dt = self._manager._sim.dt
         self._delay_ts = round(self._options.delay / self._dt)
@@ -254,6 +255,20 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
             The options for the recording.
         """
         return self._manager._sim._scene._recorder_manager.add_recorder(self.read, rec_options)
+
+    @property
+    def enabled(self) -> bool:
+        """Whether this sensor is actively updated each simulation step.
+
+        When disabled, the sensor's caches are not updated, eliminating per-step overhead. Note that all sensors of the
+        same type share a batched update: if *any* sensor of a given type is enabled, all sensors of that type are
+        updated together. Toggling this property takes effect on the next ``scene.step()`` call.
+        """
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        self._enabled = value
 
     @property
     def is_built(self) -> bool:

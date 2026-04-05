@@ -166,7 +166,10 @@ class SensorManager:
         for buffered_data in self._buffered_data.values():
             buffered_data.rotate()
 
-        for sensor_cls in self._sensors_by_type.keys():
+        for sensor_cls, sensors in self._sensors_by_type.items():
+            if not any(s._enabled for s in sensors):
+                continue
+
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             gt_slice = self._ground_truth_cache[dtype][cache_slice]

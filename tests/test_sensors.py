@@ -359,6 +359,87 @@ def test_imu_sensor(show_viewer, tol, n_envs):
 
 
 # ------------------------------------------------------------------------------------------
+# ------------------------------------ Sensor Enabled Flag ---------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sensor_enabled_flag(show_viewer, tol, n_envs):
+    """Test that the sensor `enabled` flag controls whether caches are updated each step."""
+    GRAVITY = -10.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=1e-2, substeps=1, gravity=(0.0, 0.0, GRAVITY)),
+        rigid_options=gs.options.RigidOptions(prefer_parallel_linesearch=False),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.2)))
+
+    # Create an IMU that starts disabled
+    imu_disabled = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, enabled=False))
+    # Create an enabled IMU for reference
+    imu_enabled = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx, enabled=True))
+
+    scene.build(n_envs=n_envs)
+
+    # Both sensors of same type: since imu_enabled is True, both get updated (batched design)
+    for _ in range(10):
+        scene.step()
+    # Box is in freefall: IMU should read ~0 lin_acc (no gravity in classical acceleration)
+    assert_allclose(imu_enabled.read().lin_acc, 0.0, tol=tol)
+    # imu_disabled also gets data because another sensor of same type IS enabled
+    assert_allclose(imu_disabled.read().lin_acc, 0.0, tol=tol)
+
+    # Now disable ALL IMU sensors
+    imu_enabled.enabled = False
+    imu_disabled.enabled = False
+
+    # Record the cache before stepping
+    acc_before = imu_enabled.read().lin_acc.clone()
+
+    # Let box settle on ground
+    for _ in range(80):
+        scene.step()
+
+    # Cache should be STALE (not updated) — still shows old data
+    acc_after_disabled = imu_enabled.read().lin_acc
+    assert_equal(acc_before, acc_after_disabled)
+
+    # Re-enable and step — cache should update
+    imu_enabled.enabled = True
+    scene.step()
+    acc_after_reenable = imu_enabled.read().lin_acc
+
+    # Box is resting on ground: should read (0, 0, -gravity)
+    assert_allclose(acc_after_reenable, (0.0, 0.0, -GRAVITY), tol=5e-3)
+
+
+@pytest.mark.required
+def test_sensor_enabled_default(show_viewer):
+    """Test that sensors are enabled by default."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=1e-2),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(morph=gs.morphs.Box(size=(0.1, 0.1, 0.1), pos=(0.0, 0.0, 0.2)))
+
+    imu = scene.add_sensor(gs.sensors.IMU(entity_idx=box.idx))
+    assert imu.enabled is True
+
+    imu.enabled = False
+    assert imu.enabled is False
+
+    imu.enabled = True
+    assert imu.enabled is True
+
+
+# ------------------------------------------------------------------------------------------
 # ------------------------------------ Contact Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
 
