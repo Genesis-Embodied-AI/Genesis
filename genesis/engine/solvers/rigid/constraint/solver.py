@@ -1639,15 +1639,20 @@ def func_cholesky_factor_direct_tiled(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Blocked Cholesky factorization using Tile16 register-resident tiles.
+    """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
-    Uses a left-looking blocked algorithm with Tile16 primitives (potrf, trsm,
-    syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
-    No shared memory or block synchronization needed.
+    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
+    with Tile16 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
+    No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
+    (func_cholesky_and_solve_fused_tiled) requires shared memory for L, so the caller gates both behind the same
+    shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
+    opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
-    When n_dofs is not a multiple of 16, partial tiles are padded with identity
-    (diagonal=1, off-diagonal=0) so the factorization is correct for the
-    original n_dofs x n_dofs submatrix.
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
+
+    Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    When n_dofs is not a multiple of 16, partial tiles are padded with identity (diagonal=1, off-diagonal=0) so the
+    factorization is correct for the original n_dofs x n_dofs submatrix.
     """
     EPS = rigid_global_info.EPS[None]
 
@@ -1718,15 +1723,12 @@ def func_cholesky_and_solve_fused_tiled(
 ):
     """Fused blocked Cholesky factorization + forward/backward solve.
 
-    Keeps L entirely in shared memory during factorization (for GEMM lookback)
-    and solve (for forward/backward substitution). Never writes L to global
-    memory, eliminating global-memory write-allocate overhead.
+    Keeps L entirely in shared memory during factorization (for GEMM lookback) and solve (for forward/backward
+    substitution). Never writes L to global memory, eliminating global-memory write-allocate overhead.
 
-    Uses the same register-resident 16x16 tile primitives as
-    func_cholesky_factor_direct_tiled, but copies completed L tiles to shared
-    memory instead of global memory. After factorization, reads the gradient vector,
-    performs Ly=g (forward) and L^Tx=y (backward) using L from shared memory,
-    and writes Mgrad = x to global memory.
+    Uses the same register-resident 16x16 tile primitives as func_cholesky_factor_direct_tiled, but copies completed
+    L tiles to shared memory instead of global memory. After factorization, reads the gradient vector, performs Ly=g
+    (forward) and L^Tx=y (backward) using L from shared memory, and writes Mgrad = x to global memory.
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
