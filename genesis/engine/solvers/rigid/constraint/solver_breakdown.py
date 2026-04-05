@@ -709,13 +709,118 @@ def _func_update_constraint_cost(
             constraint_state.cost[i_b] = cost_i
 
 
+# Number of full Hessian+Cholesky rebuilds at the start of the solver loop (after the init's iter-0 full rebuild).
+# 0 = all incremental, 2 = full for loop iters 0-1 then incremental, 999 = always full.
+@qd.func
+def _func_build_changed_and_decide_hessian_mode(
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Build changed-constraint lists and set per-env use_full_hessian flag.
+
+    Adaptive policy: use full rebuild if more than half the constraints changed,
+    otherwise patch. Init (iter 0) always does full rebuild via func_solve_init.
+    """
+    qd.loop_config(name="increment_iter_counter")
+    for _ in range(1):
+        constraint_state.solver_iter_counter[()] = constraint_state.solver_iter_counter[()] + 1
+
+    _B = constraint_state.grad.shape[1]
+    iter_count = constraint_state.solver_iter_counter[()]
+    qd.loop_config(name="build_changed_decide", block_dim=32)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            solver.func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
+            # First graph iteration must do full rebuild: nt_H contains L from
+            # func_solve_init's Cholesky, not H.  Patching L would be wrong.
+            if iter_count <= 1:
+                constraint_state.use_full_hessian[i_b] = 1
+            else:
+                n_changed = constraint_state.incr_n_changed[i_b]
+                n_total = constraint_state.n_constraints[i_b]
+                if n_changed * 2 > n_total:
+                    constraint_state.use_full_hessian[i_b] = 1
+                else:
+                    constraint_state.use_full_hessian[i_b] = 0
+
+
+@qd.func
+def _func_patch_hessian_delta(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Patch H with deltas from changed constraints for envs with use_full_hessian == 0.
+
+    For each constraint whose active state changed, adds or subtracts its J^T D J
+    contribution to the Hessian. Uses 1 block per env (same parallelism as
+    hessian_direct_tiled) to avoid launching excessive threads.
+    """
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    BLOCK_DIM = qd.static(128)
+
+    qd.loop_config(name="patch_hessian_delta", block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+        if constraint_state.use_full_hessian[i_b] != 0:
+            continue
+
+        n_changed = constraint_state.incr_n_changed[i_b]
+        if n_changed == 0:
+            continue
+
+        elem = tid
+        while elem < n_lower_tri:
+            i_d1, i_d2 = solver.linear_to_lower_tri(elem)
+
+            delta = gs.qd_float(0.0)
+            for idx in range(n_changed):
+                i_c = constraint_state.incr_changed_idx[idx, i_b]
+                Ji = constraint_state.jac[i_c, i_d1, i_b]
+                if Ji != 0.0:
+                    Jj = constraint_state.jac[i_c, i_d2, i_b]
+                    if Jj != 0.0:
+                        D = constraint_state.efc_D[i_c, i_b]
+                        if constraint_state.active[i_c, i_b]:
+                            delta = delta + D * Ji * Jj
+                        else:
+                            delta = delta - D * Ji * Jj
+
+            if delta != 0.0:
+                constraint_state.nt_H[i_b, i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2] + delta
+            elem = elem + BLOCK_DIM
+
+
 @qd.func
 def _func_newton_only_nt_hessian(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Full tiled Hessian rebuild for envs with use_full_hessian == 1 (skips others)."""
+    solver.func_hessian_direct_tiled(
+        constraint_state=constraint_state, rigid_global_info=rigid_global_info, check_full_hessian=True
+    )
+
+
+@qd.func
+def _func_newton_only_nt_hessian_and_cholesky(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Step 4: Newton Hessian update (Newton only)"""
+    """Full Hessian rebuild + Cholesky for ALL improved envs (non-fused path).
+
+    Matches origin/main behavior: H is rebuilt from scratch every iteration,
+    then Cholesky overwrites nt_H with L in-place.  H patching is not used
+    because the subsequent Cholesky would destroy H anyway.
+    """
     solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
     if qd.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
         solver.func_cholesky_factor_direct_tiled(
@@ -760,6 +865,39 @@ def _func_update_gradient(
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
             )
+
+
+@qd.func
+def _func_update_gradient_no_solve(
+    entities_info: array_class.EntitiesInfo,
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve."""
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.grad.shape[0]
+    qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
+
+
+@qd.func
+def _func_cholesky_and_solve_fused(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Fused Cholesky factorization + solve. L stays in shared memory."""
+    solver.func_cholesky_and_solve_fused_tiled(
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
 
 
 @qd.func
@@ -809,8 +947,8 @@ def _func_check_early_exit(
 # ============================================== Solve body dispatch ================================================
 
 
-@qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
-def _kernel_solve_gpu_graph(
+@qd.kernel(graph=True, fastcache=gs.use_fastcache)
+def _kernel_solve_graph(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -831,9 +969,29 @@ def _kernel_solve_gpu_graph(
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
         _func_update_constraint_qfrc(constraint_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
-        if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-            _func_newton_only_nt_hessian(constraint_state, rigid_global_info, static_rigid_sim_config)
-        _func_update_gradient(entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config)
+        if qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and static_rigid_sim_config.enable_tiled_cholesky_hessian
+        ):
+            # Fused path: H patching + fused Cholesky+Solve (L in shmem, H preserved in nt_H)
+            _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
+            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
+            _func_patch_hessian_delta(constraint_state, rigid_global_info)
+            _func_update_gradient_no_solve(
+                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            _func_cholesky_and_solve_fused(constraint_state, rigid_global_info, static_rigid_sim_config)
+        elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+            # Non-fused path: full H rebuild + separate Cholesky every iteration
+            # (Cholesky overwrites nt_H with L, so H patching is not possible)
+            _func_newton_only_nt_hessian_and_cholesky(constraint_state, rigid_global_info, static_rigid_sim_config)
+            _func_update_gradient(
+                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+        else:
+            _func_update_gradient(
+                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
+            )
         _func_update_search_direction(constraint_state, rigid_global_info, static_rigid_sim_config)
         _func_check_early_exit(constraint_state, graph_counter)
 
@@ -865,7 +1023,7 @@ def func_solve_decomposed(
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
-    _kernel_solve_gpu_graph(
+    _kernel_solve_graph(
         dofs_info,
         entities_info,
         dofs_state,

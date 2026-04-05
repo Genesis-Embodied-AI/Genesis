@@ -3733,13 +3733,13 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
         assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
 
-        scene.step()
+        for _ in range(10):
+            scene.step()
         assert not scene.rigid_solver.get_error_envs_mask().any()
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
-        nt_H = scene.rigid_solver.constraint_solver.constraint_state.nt_H.to_numpy()
-        assert (np.linalg.norm(nt_H.reshape((-1, 2)), axis=0) > 5.0).all()
-        values.append(nt_H)
+        qpos = gs_robot.get_qpos().cpu().numpy()
+        values.append(qpos)
 
     assert_allclose(*values, tol=tol)
 
