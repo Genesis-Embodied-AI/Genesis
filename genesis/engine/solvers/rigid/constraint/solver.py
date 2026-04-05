@@ -1633,8 +1633,6 @@ def func_cholesky_factor_direct_batch(
 _CHOL_TILE = 16
 
 
-
-
 @qd.func
 def func_cholesky_factor_direct_tiled(
     constraint_state: array_class.ConstraintState,

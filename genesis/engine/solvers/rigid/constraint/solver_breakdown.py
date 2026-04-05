@@ -798,7 +798,6 @@ def _func_patch_hessian_delta(
             elem = elem + BLOCK_DIM
 
 
-
 @qd.func
 def _func_newton_only_nt_hessian(
     constraint_state: array_class.ConstraintState,
@@ -879,15 +878,11 @@ def _func_update_gradient_no_solve(
     """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve."""
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
-    qd.loop_config(
-        name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
-    )
+    qd.loop_config(name="update_gradient_no_solve", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             constraint_state.grad[i_d, i_b] = (
-                constraint_state.Ma[i_d, i_b]
-                - dofs_state.force[i_d, i_b]
-                - constraint_state.qfrc_constraint[i_d, i_b]
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
             )
 
 
