@@ -219,7 +219,7 @@ class ContactForceSensor(
 
     def _options_require_measured_cache(self) -> bool:
         return super()._options_require_measured_cache() or (
-            np.any(self._options.min_force > gs.EPS) or np.any(np.isfinite(self._options.max_force))
+            np.any(np.array(self._options.min_force) > gs.EPS) or np.any(np.isfinite(self._options.max_force))
         )
 
     def _get_return_format(self) -> tuple[int, ...]:

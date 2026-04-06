@@ -161,7 +161,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     # =============================== methods to implement ===============================
 
     def _options_require_measured_cache(self):
-        return False
+        return np.any(np.abs(self._options.delay) > gs.EPS)
 
     def build(self):
         """
@@ -550,6 +550,8 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
             or np.any(np.abs(self._options.bias) > gs.EPS)
             or np.any(np.abs(self._options.noise) > gs.EPS)
             or np.any(np.abs(self._options.random_walk) > gs.EPS)
+            or np.any(np.abs(self._options.resolution) > gs.EPS)
+            or np.any(np.array(self._options.jitter) > gs.EPS)
         )
 
     @classmethod

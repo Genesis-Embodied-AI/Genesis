@@ -65,7 +65,7 @@ class BaseCameraOptions(RigidSensorOptionsMixin[SensorT]):
     offset_T: Matrix4x4Type | None = None
 
     def model_post_init(self, context: Any) -> None:
-        if self._history_length > 0:
+        if self.history_length > 0:
             gs.raise_exception("Camera sensors do not support history.")
 
 
