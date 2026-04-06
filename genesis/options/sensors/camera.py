@@ -64,6 +64,10 @@ class BaseCameraOptions(RigidSensorOptionsMixin[SensorT]):
     lights: list[dict[str, Any]] = []
     offset_T: Matrix4x4Type | None = None
 
+    def model_post_init(self, context: Any) -> None:
+        if self._history_length > 0:
+            gs.raise_exception("Camera sensors do not support history.")
+
 
 class RasterizerCameraOptions(BaseCameraOptions["RasterizerCameraSensor"]):
     """
