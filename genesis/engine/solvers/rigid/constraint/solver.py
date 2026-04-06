@@ -1679,7 +1679,7 @@ def func_cholesky_factor_direct_tiled(
 
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
-        # are independent (they only depend on the diagonal).
+        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
@@ -1770,7 +1770,7 @@ def func_cholesky_and_solve_fused_tiled(
         # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
-        # are independent (they only depend on the diagonal).
+        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
