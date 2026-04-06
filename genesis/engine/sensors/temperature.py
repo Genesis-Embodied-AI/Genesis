@@ -220,7 +220,7 @@ def _qd_polygon_area_from_points_3d(
     return area
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -297,7 +297,7 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
     return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
