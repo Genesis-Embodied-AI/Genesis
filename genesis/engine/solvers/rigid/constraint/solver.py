@@ -1693,9 +1693,7 @@ def func_cholesky_factor_direct_tiled(
             for jb in range(kb):
                 j0 = jb * Tile16x16.SIZE
                 for t in range(Tile16x16.SIZE):
-                    v = gs.qd_float(0.0)
-                    if k0 + tid < n_dofs:
-                        v = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
+                    v = constraint_state.nt_H[i_b, k0:n_dofs, j0 + t]
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
@@ -1714,12 +1712,8 @@ def func_cholesky_factor_direct_tiled(
                 for jb in range(kb):
                     j0 = jb * Tile16x16.SIZE
                     for t in range(Tile16x16.SIZE):
-                        v_own = gs.qd_float(0.0)
-                        v_diag = gs.qd_float(0.0)
-                        if i0 + tid < n_dofs:
-                            v_own = constraint_state.nt_H[i_b, i0 + tid, j0 + t]
-                        if k0 + tid < n_dofs:
-                            v_diag = constraint_state.nt_H[i_b, k0 + tid, j0 + t]
+                        v_own = constraint_state.nt_H[i_b, i0:n_dofs, j0 + t]
+                        v_diag = constraint_state.nt_H[i_b, k0:n_dofs, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
@@ -1784,9 +1778,7 @@ def func_cholesky_and_solve_fused_tiled(
             for jb in range(kb):
                 j0 = jb * Tile16x16.SIZE
                 for t in range(Tile16x16.SIZE):
-                    v = gs.qd_float(0.0)
-                    if k0 + tid < n_dofs:
-                        v = L_sh[k0 + tid, j0 + t]
+                    v = L_sh[k0:n_dofs, j0 + t]
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
@@ -1805,12 +1797,8 @@ def func_cholesky_and_solve_fused_tiled(
                 for jb in range(kb):
                     j0 = jb * Tile16x16.SIZE
                     for t in range(Tile16x16.SIZE):
-                        v_own = gs.qd_float(0.0)
-                        v_diag = gs.qd_float(0.0)
-                        if i0 + tid < n_dofs:
-                            v_own = L_sh[i0 + tid, j0 + t]
-                        if k0 + tid < n_dofs:
-                            v_diag = L_sh[k0 + tid, j0 + t]
+                        v_own = L_sh[i0:n_dofs, j0 + t]
+                        v_diag = L_sh[k0:n_dofs, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
