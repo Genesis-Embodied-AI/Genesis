@@ -1358,7 +1358,9 @@ class Scene(RBC):
         Parameters
         ----------
         objs : tuple of genesis.ext.pyrender.mesh.Mesh
-            The debug objects to update (returned by ``draw_debug_sphere``, ``draw_debug_frame``, ``draw_debug_mesh``, or ``draw_debug_arrow``).
+            The debug objects to update, i.e. visualizer nodes returned by ``draw_debug_*`` methods. Currently only
+            individual sphere, frame, mesh, and arrow objects (returned by ``draw_debug_sphere``, ``draw_debug_frame``,
+            ``draw_debug_mesh``, and ``draw_debug_arrow`` respectively) are supported.
         poses : tuple of array_like, each of shape (4, 4)
             The new transformation matrices for each debug object.
         """
@@ -1368,7 +1370,7 @@ class Scene(RBC):
     @gs.assert_built
     def clear_debug_object(self, obj):
         """
-        Clears all the debug objects in the scene.
+        Clears the specified debug object from the scene.
         """
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_object(obj)
