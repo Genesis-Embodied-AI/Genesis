@@ -1163,8 +1163,9 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot):
+def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_snapshot):
     """Test that draw_debug_frustum and draw_debug_trajectory render visible content in the viewer."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -1208,7 +1209,7 @@ def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot
         GUI=False,
     )
 
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     scene.step()
 
@@ -1243,7 +1244,7 @@ def test_draw_debug_frustum_and_trajectory(renderer_type, renderer, png_snapshot
         glinfo = pyrender_viewer.context.get_info()
         renderer = glinfo.get_renderer()
         if renderer == "Apple Software Renderer":
-            pytest.xfail("Flaky on Apple Software Renderer.")
+            pytest.xfail("Debug frustum/trajectory colors are not rendered correctly on Apple Software Renderer.")
 
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 

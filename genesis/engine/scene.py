@@ -3,6 +3,7 @@ import os
 import pickle
 import sys
 import time
+import trimesh
 import weakref
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
@@ -13,6 +14,7 @@ from quadrants.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
@@ -42,7 +44,6 @@ from genesis.utils.tools import FPSTracker
 from genesis.utils.misc import tensor_to_array, sanitize_index
 from genesis.vis import Visualizer
 from genesis.utils.warnings import warn_once
-import genesis.utils.mesh as mu
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
@@ -1289,15 +1290,18 @@ class Scene(RBC):
 
         Returns
         -------
-        nodes : list
-            List of created debug line objects.
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object (a single merged mesh of all segments).
         """
-        nodes = []
+
+        poss = np.asarray(poss)
+        if len(poss) < 2:
+            return None
+
+        segments = [mu.create_line(poss[i], poss[i + 1], radius, color) for i in range(len(poss) - 1)]
+        merged = trimesh.util.concatenate(segments)
         with self._visualizer.viewer_lock:
-            for i in range(len(poss) - 1):
-                node = self._visualizer.context.draw_debug_line(poss[i], poss[i + 1], radius, color)
-                nodes.append(node)
-        return nodes
+            return self._visualizer.context.draw_debug_mesh(merged)
 
     @gs.assert_built
     def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):
