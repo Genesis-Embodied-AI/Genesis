@@ -3742,10 +3742,12 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert np.linalg.norm(Mgrad) > 5.0
         values.append(Mgrad)
 
-    # Analysis for choice of tol. 'main' here represents 'Cholesky shared
-    # memory implementation', which was what was in place at commit 7bf5f6a7.
-    # 'Branch' here represents the shuffle based fused Cholesky and patched-H
-    # implementation.
+    # Analysis for choice of tol.
+    # 'main' here represents 'Cholesky shared memory implementation', which was what was in place at commit 7bf5f6a7.
+    # 'Branch' here represents the shuffle based fused Cholesky and patched-H implementation.
+    #
+    # Created using https://github.com/Genesis-Embodied-AI/perso_hugh/blob/main/demos/test_cholesky_tiled.py
+    #
     # ========================================================================
     # Cholesky Tiled vs Non-Tiled: Numerical Accuracy Comparison
     # ========================================================================
