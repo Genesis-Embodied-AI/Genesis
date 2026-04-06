@@ -1470,8 +1470,8 @@ def func_hessian_direct_tiled(
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
 
-    When check_full_hessian is True (used with H patching), skips envs where
-    use_full_hessian == 0 (those get patched instead of rebuilt).
+    When check_full_hessian is True (used with H patching), skips envs where use_full_hessian == 0 (those get patched
+    instead of rebuilt).
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
@@ -1731,9 +1731,9 @@ def func_cholesky_and_solve_fused_tiled(
 ):
     """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
 
-    Factorizes H = L L^T using register-resident 16x16 tiles, storing completed L tiles
-    in shared memory. Then solves L L^T x = g (forward + backward substitution) in-place
-    and writes the result to Mgrad, without ever writing L to global memory.
+    Factorizes H = L L^T using register-resident 16x16 tiles, storing completed L tiles in shared memory. Then solves
+    L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
+    global memory.
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
