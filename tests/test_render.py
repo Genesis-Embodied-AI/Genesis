@@ -1213,7 +1213,7 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
 
     scene.step()
 
-    scene.draw_debug_frustum(sensor_cam, color=(0.0, 1.0, 0.0, 1.0))
+    scene.draw_debug_frustum(sensor_cam, color=(0.0, 1.0, 0.0, 0.3))
 
     t = np.linspace(0, 2 * np.pi, 50)
     positions = np.column_stack(
