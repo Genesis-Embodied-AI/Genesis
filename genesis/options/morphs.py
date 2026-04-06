@@ -37,7 +37,7 @@ URDF_FORMAT = ".urdf"
 XACRO_FORMAT = ".xacro"
 MJCF_FORMAT = ".xml"
 GLTF_FORMATS = (".glb", ".gltf")
-MESH_FORMATS = (".obj", ".stl", *GLTF_FORMATS)
+MESH_FORMATS = (".obj", ".stl", ".dae", *GLTF_FORMATS)
 USD_FORMATS = (".usd", ".usda", ".usdc", ".usdz")
 
 
