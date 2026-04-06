@@ -749,10 +749,10 @@ def _func_patch_hessian_delta(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Patch H with deltas from changed constraints for envs with use_full_hessian == 0.
+    """Incrementally update H with delta contributions from changed constraints.
 
-    For each constraint whose active state changed, adds or subtracts its J^T D J contribution to the Hessian. Uses 1
-    block per env (same parallelism as hessian_direct_tiled) to avoid launching excessive threads.
+    Adds or subtracts each changed constraint's J^T D J contribution depending on whether it became active or inactive.
+    Only runs on envs where use_full_hessian == 0 (others get a full rebuild instead).
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
