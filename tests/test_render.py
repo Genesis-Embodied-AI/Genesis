@@ -1191,7 +1191,7 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
     # Add a semi-transparent box inside the sensor camera frustum to verify transparency rendering
     scene.add_entity(
         gs.morphs.Box(
-            size=(0.05, 0.05, 0.05),
+            size=(0.1, 0.1, 0.1),
             pos=(0.4, 0.0, 0.4),
             fixed=True,
         ),
