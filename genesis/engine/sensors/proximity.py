@@ -274,7 +274,7 @@ class ProximitySensor(
         link_pos = self._link.get_pos(env_idx).squeeze()
         link_quat = self._link.get_quat(env_idx).squeeze()
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
-        points = self.nearest_points[env_idx]
+        points = tensor_to_array(self.nearest_points[env_idx])
 
         self._debug_objects.append(
             context.draw_debug_spheres(
