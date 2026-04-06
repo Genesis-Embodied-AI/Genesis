@@ -1636,10 +1636,8 @@ Tile16x16 = make_tile16x16(gs.qd_float)
 @qd.func
 def _butterfly_reduce_16(val, tid):
     """Sum val across 16 threads using butterfly reduction via subgroup shuffles (4 rounds)."""
-    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 8))
-    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 4))
-    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 2))
-    val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ 1))
+    for i in qd.static(range(4)):
+        val = val + qd.simt.subgroup.shuffle(val, qd.u32(tid ^ (8 >> i)))
     return val
 
 
