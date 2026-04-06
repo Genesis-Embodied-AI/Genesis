@@ -57,6 +57,7 @@ RenderFlags_FLIP_WIREFRAME = RenderFlags.FLIP_WIREFRAME
 RenderFlags_ALL_WIREFRAME = RenderFlags.ALL_WIREFRAME
 RenderFlags_SKIP_CULL_FACES = RenderFlags.SKIP_CULL_FACES
 RenderFlags_SHADOWS_DIRECTIONAL = RenderFlags.SHADOWS_DIRECTIONAL
+RenderFlags_SHADOWS_SPOT = RenderFlags.SHADOWS_SPOT
 RenderFlags_SHADOWS_POINT = RenderFlags.SHADOWS_POINT
 RenderFlags_SKIP_FLOOR = RenderFlags.SKIP_FLOOR
 RenderFlags_OFFSCREEN = RenderFlags.OFFSCREEN
@@ -369,7 +370,14 @@ class JITRenderer:
         if (flags, program_flags) not in self.program_id:
             program_id = np.zeros_like(self.vao_id)
             for i, primitive in enumerate(self.primitive_list):
-                program = renderer._get_primitive_program(primitive, flags, program_flags)
+                prim_flags = flags
+                # Markers are excluded from scene bounds, so shadow maps may not cover them. Disable shadow
+                # reception while keeping full lighting.
+                if self.render_flags[i, 6]:
+                    prim_flags &= ~(
+                        RenderFlags.SHADOWS_DIRECTIONAL | RenderFlags.SHADOWS_SPOT | RenderFlags.SHADOWS_POINT
+                    )
+                program = renderer._get_primitive_program(primitive, prim_flags, program_flags)
                 program_id[i] = program._program_id
             self.program_id[(flags, program_flags)] = program_id
 
@@ -457,7 +465,15 @@ class JITRenderer:
                 if pid != last_pid:
                     gl.glUseProgram(pid)
                     if is_rgba and not flags & RenderFlags_FLAT:
-                        lighting_texture = bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl)
+                        # Strip shadow flags for markers — their programs have no shadow uniforms
+                        light_flags = flags
+                        if render_flags[id, 6]:
+                            light_flags &= ~(
+                                RenderFlags_SHADOWS_DIRECTIONAL | RenderFlags_SHADOWS_SPOT | RenderFlags_SHADOWS_POINT
+                            )
+                        lighting_texture = bind_lighting(
+                            pid, light_flags, light, shadow_map, light_matrix, ambient_light, gl
+                        )
                         set_uniform_3fv(pid, "cam_pos", cam_pos, gl)
                         set_uniform_matrix_4fv(pid, "reflection_mat", reflection_mat, gl)
 

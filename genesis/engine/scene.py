@@ -1090,7 +1090,7 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
 
     @gs.assert_built
-    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         """
         Draws a 3-axis coordinate frame in the scene for visualization.
 
@@ -1104,6 +1104,8 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
+        color : array_like, shape (4,), optional
+            Uniform RGBA color override for the entire frame. If None, uses standard RGB axis coloring.
 
         Returns
         -------
@@ -1111,10 +1113,10 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius, color)
 
     @gs.assert_built
-    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         """
         Draws 3-axis coordinate frames in the scene for visualization.
 
@@ -1128,6 +1130,8 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
+        color : array_like, shape (4,), optional
+            Uniform RGBA color override for the entire frame. If None, uses standard RGB axis coloring.
 
         Returns
         -------
@@ -1135,7 +1139,7 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius, color)
 
     @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
@@ -1347,9 +1351,26 @@ class Scene(RBC):
         return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
+    def update_debug_objects(self, objs, poses):
+        """
+        Updates the poses of debug objects previously created by ``draw_debug_*`` methods.
+
+        Parameters
+        ----------
+        objs : tuple of genesis.ext.pyrender.mesh.Mesh
+            The debug objects to update, i.e. visualizer nodes returned by ``draw_debug_*`` methods. Currently only
+            individual sphere, frame, mesh, and arrow objects (returned by ``draw_debug_sphere``, ``draw_debug_frame``,
+            ``draw_debug_mesh``, and ``draw_debug_arrow`` respectively) are supported.
+        poses : tuple of array_like, each of shape (4, 4)
+            The new transformation matrices for each debug object.
+        """
+        with self._visualizer.viewer_lock:
+            self._visualizer.context.update_debug_objects(objs, poses)
+
+    @gs.assert_built
     def clear_debug_object(self, obj):
         """
-        Clears all the debug objects in the scene.
+        Clears the specified debug object from the scene.
         """
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_object(obj)
