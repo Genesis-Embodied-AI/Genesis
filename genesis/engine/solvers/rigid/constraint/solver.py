@@ -1760,7 +1760,8 @@ def func_cholesky_and_solve_fused_tiled(
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
-        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS), gs.qd_float)
+        # +1 padding avoids shared memory bank conflicts on column-wise access (backward substitution, factorization)
+        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
         v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
 
         # --- Blocked Cholesky factorization: same algorithm as func_cholesky_factor_direct_tiled ---
