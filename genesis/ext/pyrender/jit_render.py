@@ -858,6 +858,7 @@ class JITRenderer:
         reflection_mat=np.identity(4, np.float32),
         floor_tex=0,
         env_idx=-1,
+        markers_only=False,
     ):
         self.load_programs(renderer, flags, program_flags)
         if self._forward_pass is None:
@@ -868,6 +869,11 @@ class JITRenderer:
             marker_mask = self.render_flags[:, 6].astype(bool)
             saved_n_indices = self.n_indices[marker_mask].copy()
             self.n_indices[marker_mask] = 0
+        # Hide everything except markers for the X-ray pass
+        if markers_only:
+            non_marker_mask = ~self.render_flags[:, 6].astype(bool)
+            saved_non_marker_indices = self.n_indices[non_marker_mask].copy()
+            self.n_indices[non_marker_mask] = 0
         self._forward_pass(
             self.vao_id,
             self.program_id[(flags, program_flags)],
@@ -898,6 +904,8 @@ class JITRenderer:
         )
         if flags & RenderFlags.SKIP_MARKERS:
             self.n_indices[marker_mask] = saved_n_indices
+        if markers_only:
+            self.n_indices[non_marker_mask] = saved_non_marker_indices
 
     def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
