@@ -4,7 +4,6 @@ import numpy as np
 import quadrants as qd
 import torch
 from frozendict import frozendict
-from quadrants.lang.simt.tile16 import make_tile16x16
 
 import genesis as gs
 
@@ -1630,7 +1629,7 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
-Tile16x16 = make_tile16x16(gs.qd_float)
+Tile16x16 = qd.types.Tile16x16(dtype=gs.qd_float)
 
 
 @qd.func
