@@ -1799,10 +1799,10 @@ def func_cholesky_and_solve_fused_tiled(
                 L_kk.solve_triangular_(L_ik)
 
                 if i0 + tid < n_dofs:
-                    L_ik.store(L_sh, i0, k0, n_dofs)
+                    L_sh[i0 : i0 + Tile16x16.SIZE, k0:n_dofs] = L_ik
 
             if k0 + tid < n_dofs:
-                L_kk.store(L_sh, k0, k0, n_dofs)
+                L_sh[k0 : k0 + Tile16x16.SIZE, k0:n_dofs] = L_kk
 
         # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
         # L is fully computed in L_sh. Load gradient into v_sh.
