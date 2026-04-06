@@ -880,8 +880,12 @@ class RasterizerContext:
                 self.add_dynamic_node(None, node)
             return node
 
-    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
+        if color is not None:
+            visual = trimesh.visual.ColorVisuals()
+            visual._data["vertex_colors"] = np.tile(mu.color_f32_to_u8(color), (len(mesh.vertices), 1))
+            mesh.visual = visual
 
         n_envs = len(self.rendered_envs_idx)
         poses = tensor_to_array(T)
@@ -893,8 +897,12 @@ class RasterizerContext:
         self.add_external_node(node)
         return node
 
-    def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frames(self, poses, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         mesh = trimesh.creation.axis(origin_size=origin_size, axis_radius=axis_radius, axis_length=axis_length)
+        if color is not None:
+            visual = trimesh.visual.ColorVisuals()
+            visual._data["vertex_colors"] = np.tile(mu.color_f32_to_u8(color), (len(mesh.vertices), 1))
+            mesh.visual = visual
         node = pyrender.Mesh.from_trimesh(mesh, name=f"debug_frame_{gs.UID()}", poses=poses, is_marker=True)
         self.add_external_node(node)
         return node
