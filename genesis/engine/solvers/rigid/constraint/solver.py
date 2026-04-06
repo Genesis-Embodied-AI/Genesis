@@ -1677,6 +1677,9 @@ def func_cholesky_factor_direct_tiled(
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
+        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
+        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
+        # are independent (they only depend on the diagonal).
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
@@ -1764,7 +1767,10 @@ def func_cholesky_and_solve_fused_tiled(
         L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
         v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
 
-        # --- Blocked Cholesky factorization: same algorithm as func_cholesky_factor_direct_tiled ---
+        # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
+        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
+        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
+        # are independent (they only depend on the diagonal).
         for kb in range(N_BLOCKS):
             k0 = kb * Tile16x16.SIZE
 
