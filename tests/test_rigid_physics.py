@@ -3725,7 +3725,7 @@ def test_cholesky_tiling(monkeypatch, tol):
             show_FPS=False,
         )
         scene.add_entity(gs.morphs.Plane())
-        scene.add_entity(
+        gs_robot = scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
             ),
@@ -3739,6 +3739,7 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
         Mgrad = scene.rigid_solver.constraint_solver.constraint_state.Mgrad.to_numpy()
+        assert np.linalg.norm(Mgrad) > 0.0
         values.append(Mgrad)
 
     assert_allclose(*values, tol=tol)
