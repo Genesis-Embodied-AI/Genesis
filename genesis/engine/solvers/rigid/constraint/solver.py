@@ -1729,14 +1729,11 @@ def func_cholesky_and_solve_fused_tiled(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Fused blocked Cholesky factorization + forward/backward solve.
+    """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
 
-    Keeps L entirely in shared memory during factorization (for GEMM lookback) and solve (for forward/backward
-    substitution). Never writes L to global memory, eliminating global-memory write-allocate overhead.
-
-    Uses the same register-resident 16x16 tile primitives as func_cholesky_factor_direct_tiled, but copies completed
-    L tiles to shared memory instead of global memory. After factorization, reads the gradient vector, performs Ly=g
-    (forward) and L^Tx=y (backward) using L from shared memory, and writes Mgrad = x to global memory.
+    Factorizes H = L L^T using register-resident 16x16 tiles, storing completed L tiles
+    in shared memory. Then solves L L^T x = g (forward + backward substitution) in-place
+    and writes the result to Mgrad, without ever writing L to global memory.
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
