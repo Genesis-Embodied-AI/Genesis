@@ -358,6 +358,99 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
+    """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
+    GRAVITY = -10.0
+    DT = 1e-2
+    HISTORY_LEN = 4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+
+    contact_h = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_h = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_ref = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def _expected_shape_with_history(shape: tuple[int, ...]):
+        return (HISTORY_LEN, *shape) if n_envs == 0 else (n_envs, HISTORY_LEN, *shape)
+
+    prev_c = None
+    prev_i = None
+    for _ in range(HISTORY_LEN * 2):
+        scene.step()
+        cg = contact_h.read_ground_truth()
+        assert cg.shape == _expected_shape_with_history((1,))
+        ig = imu_h.read_ground_truth()
+        assert ig.lin_acc.shape == _expected_shape_with_history((3,))
+        assert ig.ang_vel.shape == _expected_shape_with_history((3,))
+        assert ig.mag.shape == _expected_shape_with_history((3,))
+
+        assert_equal(contact_h.read(), cg)
+
+        assert_allclose(
+            ig.lin_acc[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().lin_acc, tol=tol
+        )
+        assert_allclose(
+            ig.ang_vel[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().ang_vel, tol=tol
+        )
+        assert_allclose(ig.mag[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().mag, tol=tol)
+
+        if prev_c is not None:
+            assert_equal(
+                cg[1 if n_envs == 0 else (slice(None), 1)],
+                prev_c[0 if n_envs == 0 else (slice(None), 0)],
+            )
+        if prev_i is not None:
+            assert_allclose(
+                ig.lin_acc[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.lin_acc[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+            assert_allclose(
+                ig.ang_vel[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.ang_vel[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+            assert_allclose(
+                ig.mag[1 if n_envs == 0 else (slice(None), 1)],
+                prev_i.mag[0 if n_envs == 0 else (slice(None), 0)],
+                tol=tol,
+            )
+        prev_c = cg
+        prev_i = ig
+
+
 # ------------------------------------------------------------------------------------------
 # ------------------------------------ Contact Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
@@ -518,6 +611,42 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
 
     assert_allclose(force_sensor_noisy.read()[..., :2], BIAS[:2], tol=NOISE * 3)
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_contact_sensor_filter_link_idx(n_envs, show_viewer):
+    """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    floor = scene.add_entity(morph=gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    sensor_floor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=floor.idx,
+        )
+    )
+    sensor_filtered = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=floor.idx,
+            filter_link_idx=(box.link_start,),
+        )
+    )
+    scene.build(n_envs=n_envs)
+    for _ in range(20):
+        scene.step()
+    assert sensor_floor.read().all()
+    assert not sensor_filtered.read().any()
 
 
 # ------------------------------------------------------------------------------------------

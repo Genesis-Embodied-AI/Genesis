@@ -220,7 +220,7 @@ def _qd_polygon_area_from_points_3d(
     return area
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -297,7 +297,7 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
     return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel(fastcache=gs.use_fastcache)
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -676,6 +676,9 @@ class TemperatureGridSensor(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
+    def _options_require_measured_cache(self) -> bool:
+        return super()._options_require_measured_cache() or (self._options.sensor_time_constant > gs.EPS)
+
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._options.grid_size,)
 
@@ -791,7 +794,6 @@ class TemperatureGridSensor(
         buffered_data: "TensorRingBuffer",
     ):
         dt = shared_metadata.solver._sim.dt
-        buffered_data.set(shared_ground_truth_cache)
         _apply_T_measured_filter(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,

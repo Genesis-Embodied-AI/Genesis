@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, NamedTuple, TypeVar
+from typing import TYPE_CHECKING, Annotated, Any, Generic, NamedTuple, TypeVar
 
 import numpy as np
 from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_validator
@@ -11,10 +11,13 @@ from genesis.typing import (
     LaxVec3FType,
     NonNegativeFloat,
     NonNegativeInt,
+    OptionalIArrayType,
     PositiveFloat,
+    PositiveVec3IType,
     RotationMatrixType,
     UnitIntervalVec3Type,
     UnitIntervalVec4Type,
+    Vec2FType,
     Vec3FArrayType,
     Vec3FType,
     Vec4FType,
@@ -57,16 +60,16 @@ class SensorOptions(Options, Generic[SensorT]):
 
     Parameters
     ----------
+    history_length: NonNegativeInt
+        The length of the history to store. Defaults to 0 (no history).
     delay : float
         The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
-    update_ground_truth_only : bool
-        If True, the sensor will only update the ground truth data, and not the measured data. Defaults to False.
     draw_debug : bool
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
+    history_length: NonNegativeInt = 0
     delay: NonNegativeFloat = 0.0
-    update_ground_truth_only: StrictBool = False
     draw_debug: StrictBool = False
 
     def validate_scene(self, scene: "Scene"):
@@ -162,14 +165,27 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
 
     Parameters
     ----------
+    filter_link_idx : array-like[int], optional
+        Global rigid link indices (solver link space). Contacts with the sensor link where the other
+        participant is one of these links are ignored. Default is empty (no filtering).
     debug_sphere_radius : float, optional
         The radius of the debug sphere. Defaults to 0.05.
     debug_color : array-like[float, float, float, float], optional
         The rgba color of the debug sphere. Defaults to (1.0, 0.0, 1.0, 0.5).
     """
 
+    filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
     debug_sphere_radius: PositiveFloat = 0.05
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
+
+    def validate_scene(self, scene: "Scene"):
+        super().validate_scene(scene)
+        if self.filter_link_idx:
+            n_links = scene.sim.rigid_solver.n_links
+            if np.any(np.array(self.filter_link_idx) < 0) or np.any(np.array(self.filter_link_idx) >= n_links):
+                gs.raise_exception(
+                    f"Contact sensor filter_link_idx should be in range [0, {n_links}). Got {self.filter_link_idx}"
+                )
 
 
 class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], NoisySensorOptionsMixin["ContactForceSensor"]):
@@ -268,12 +284,11 @@ class TemperatureGrid(
     convection_coefficient: float | None = None
     simulate_all_link_temperatures: bool = False
 
-    grid_size: tuple[int, int, int] = (1, 1, 1)
+    grid_size: PositiveVec3IType = (1, 1, 1)
     heat_generation: Grid3DFloatType | None = None
-    sensor_time_constant: float = 0.01
-    contact_depth_weight: float = 1.0
-
-    debug_temperature_range: tuple[float, float] = (0.0, 100.0)
+    sensor_time_constant: NonNegativeFloat = 0.0
+    contact_depth_weight: NonNegativeFloat = 1.0
+    debug_temperature_range: Vec2FType = (0.0, 100.0)
 
 
 class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSensor"]):
@@ -348,7 +363,7 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSens
     gyro_bias: LaxVec3FType = 0.0
     gyro_random_walk: LaxVec3FType = 0.0
 
-    # Magnetometer (New)
+    # Magnetometer
     mag_resolution: LaxVec3FType = 0.0
     mag_cross_axis_coupling: CrossCouplingAxisType = 0.0
     mag_noise: LaxVec3FType = 0.0

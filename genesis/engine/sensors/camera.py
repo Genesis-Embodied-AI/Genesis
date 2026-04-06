@@ -32,12 +32,12 @@ from genesis.vis.rasterizer import Rasterizer
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
+    OptionsT,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
 )
-from .base_sensor import OptionsT
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer

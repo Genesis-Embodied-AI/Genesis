@@ -2,15 +2,14 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, Type, TypeVar, get_args, get_origin
 
-from typing_extensions import TypeVar as TypeVarWithDefault
-
 import numpy as np
 import quadrants as qd
 import torch
+from typing_extensions import TypeVar as TypeVarWithDefault
 
 import genesis as gs
-from genesis.typing import NumArrayType, NumericType
 from genesis.repr_base import RBC
+from genesis.typing import NumArrayType, NumericType
 from genesis.utils.geom import euler_to_quat
 from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor_field
 
@@ -48,6 +47,10 @@ class SharedSensorMetadata:
 
     cache_sizes: list[int] = field(default_factory=list)
     delays_ts: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    history_lengths: list[int] = field(default_factory=list)
+    # If True, skip _update_shared_cache for this sensor class. Defaults True; concrete sensors set False when they
+    # need per-step measured-cache updates (cameras set True in BaseCameraSensor.build for lazy render-on-read).
+    update_ground_truth_only: bool = True
 
     def __del__(self):
         try:
@@ -120,6 +123,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         self._manager: "SensorManager" = sensor_manager
         self._shared_metadata: SharedSensorMetadataT = sensor_manager._sensors_metadata[type(self)]
         self._is_built = False
+        self._history_length: int = self._options.history_length
 
         self._dt = self._manager._sim.dt
         self._delay_ts = round(self._options.delay / self._dt)
@@ -127,19 +131,37 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         self._cache_slices: list[slice] = []
         return_format = self._get_return_format()
         assert len(return_format) > 0
-        if isinstance(return_format[0], int):
-            return_format = (return_format,)
-        self._return_shapes: tuple[tuple[int, ...], ...] = return_format
+        intrinsic_shapes: tuple[tuple[int, ...], ...] = (
+            (return_format,) if isinstance(return_format[0], int) else return_format
+        )
+        self._intrinsic_return_shapes: tuple[tuple[int, ...], ...] = intrinsic_shapes
 
         self._cache_size = 0
-        for shape in self._return_shapes:
-            data_size = np.prod(shape)
+        for shape in intrinsic_shapes:
+            data_size = int(np.prod(shape))
             self._cache_slices.append(slice(self._cache_size, self._cache_size + data_size))
             self._cache_size += data_size
+
+        # Slices into the per-sensor tensor from get_cloned_from_cache (history stacks H frames on dim 1).
+        self._read_flat_slices: list[slice] = []
+        read_off = 0
+        for shape in intrinsic_shapes:
+            p = int(np.prod(shape))
+            span = p * self._history_length if self._history_length > 0 else p
+            self._read_flat_slices.append(slice(read_off, read_off + span))
+            read_off += span
+
+        if self._history_length > 0:
+            self._return_shapes = tuple((self._history_length, *s) for s in intrinsic_shapes)
+        else:
+            self._return_shapes = intrinsic_shapes
 
         self._cache_idx: int = -1  # initialized by SensorManager during build
 
     # =============================== methods to implement ===============================
+
+    def _options_require_measured_cache(self):
+        return False
 
     def build(self):
         """
@@ -148,6 +170,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         This method is called by SensorManager during the scene build phase.
         This is where any shared metadata should be initialized.
         """
+        if self._options_require_measured_cache():
+            self._shared_metadata.update_ground_truth_only = False
+
         self._shared_metadata.delays_ts = concat_with_tensor(
             self._shared_metadata.delays_ts,
             self._delay_ts,
@@ -155,6 +180,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
             dim=1,
         )
         self._shared_metadata.cache_sizes.append(self._cache_size)
+        self._shared_metadata.history_lengths.append(self._options.history_length)
+        if self._delay_ts > 0:
+            self._shared_metadata.update_ground_truth_only = False
 
     @classmethod
     def reset(cls, shared_metadata: SharedSensorMetadataT, shared_ground_truth_cache: torch.Tensor, envs_idx):
@@ -207,7 +235,9 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         Update the shared sensor cache for all sensors of this class using metadata in SensorManager.
 
         The information in shared_cache should be the final measured sensor data after all noise and post-processing.
-        NOTE: The implementation should include applying the delay using the `_apply_delay_to_shared_cache()` method.
+        ``buffered_data`` is a sliced view of the per-dtype ground-truth ring: SensorManager has already written this
+        step's GT into the current slot; use ``_apply_delay_to_shared_cache(..., buffered_data, ...)`` for read delay
+        (do not call ``set`` on it for that GT block).
         """
         raise NotImplementedError(f"{cls.__name__} has not implemented `update_shared_cache()`.")
 
@@ -282,7 +312,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         shared_cache : torch.Tensor
             The shared cache tensor.
         buffered_data : TensorRingBuffer
-            The buffered data tensor.
+            Ground-truth timeline ring for this sensor class slice (current step already written by SensorManager).
         cur_jitter_ts : torch.Tensor | None
             The current jitter in timesteps (divided by simulation dt) before the sensor data is read.
         interpolate : Sequence[bool] | None
@@ -327,7 +357,12 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         tensor_chunk = tensor[envs_idx].reshape((len(envs_idx), -1))
 
         for i, shape in enumerate(self._return_shapes):
-            field_data = tensor_chunk[..., self._cache_slices[i]].reshape((len(envs_idx), *shape))
+            sl = self._read_flat_slices[i]
+            if self._history_length > 0:
+                intrinsic_shape = self._intrinsic_return_shapes[i]
+                field_data = tensor_chunk[..., sl].reshape((len(envs_idx), self._history_length, *intrinsic_shape))
+            else:
+                field_data = tensor_chunk[..., sl].reshape((len(envs_idx), *shape))
             if self._manager._sim.n_envs == 0:
                 field_data = field_data[0]
             return_values.append(field_data)
@@ -442,29 +477,41 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
     Base sensor class for analog sensors that are attached to a RigidEntity.
     """
 
+    def _assert_measured_cache_will_update(self):
+        assert self._shared_metadata.update_ground_truth_only is False, (
+            "Tried to update noise option but update_ground_truth_only is True. "
+            "Set a noisy option to nonzero value so that the measured cache will be updated."
+        )
+
     @gs.assert_built
     def set_resolution(self, resolution, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(resolution, self._shared_metadata.resolution, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_bias(self, bias, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_random_walk(self, random_walk, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(random_walk, self._shared_metadata.random_walk, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_noise(self, noise, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_size, envs_idx)
 
     @gs.assert_built
     def set_jitter(self, jitter, envs_idx=None):
+        self._assert_measured_cache_will_update()
         jitter_ts = np.asarray(jitter, dtype=gs.np_float) / self._dt
         self._set_metadata_field(jitter_ts, self._shared_metadata.jitter_ts, 1, envs_idx)
 
     @gs.assert_built
     def set_delay(self, delay, envs_idx=None):
+        self._assert_measured_cache_will_update()
         self._set_metadata_field(delay, self._shared_metadata.delay_in_steps, 1, envs_idx)
 
     def build(self):
@@ -495,6 +542,15 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
         )
         self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         self._shared_metadata.interpolate.append(self._options.interpolate)
+
+    def _options_require_measured_cache(self) -> bool:
+        return super()._options_require_measured_cache() or (
+            self._options.jitter > gs.EPS
+            or (self._options.interpolate and (self._delay_ts > 0 or self._options.jitter > gs.EPS))
+            or np.any(np.abs(self._options.bias) > gs.EPS)
+            or np.any(np.abs(self._options.noise) > gs.EPS)
+            or np.any(np.abs(self._options.random_walk) > gs.EPS)
+        )
 
     @classmethod
     def reset(cls, shared_metadata: NoisySensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):
