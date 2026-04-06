@@ -8,7 +8,7 @@ import OpenGL.constant as GL_constant
 
 from .material import MetallicRoughnessMaterial, SpecularGlossinessMaterial
 from .light import DirectionalLight, PointLight
-from .constants import RenderFlags, MAX_N_LIGHTS
+from .constants import RenderFlags, ProgramFlags, MAX_N_LIGHTS
 from .numba_gl_wrapper import GLWrapper
 
 
@@ -369,7 +369,14 @@ class JITRenderer:
         if (flags, program_flags) not in self.program_id:
             program_id = np.zeros_like(self.vao_id)
             for i, primitive in enumerate(self.primitive_list):
-                program = renderer._get_primitive_program(primitive, flags, program_flags)
+                prim_flags = flags
+                # Markers are excluded from scene bounds, so shadow maps may not cover them. Strip shadow flags to avoid
+                # sampling invalid regions while keeping full lighting for depth cues.
+                if self.render_flags[i, 6]:
+                    prim_flags &= ~(
+                        RenderFlags.SHADOWS_DIRECTIONAL | RenderFlags.SHADOWS_SPOT | RenderFlags.SHADOWS_POINT
+                    )
+                program = renderer._get_primitive_program(primitive, prim_flags, program_flags)
                 program_id[i] = program._program_id
             self.program_id[(flags, program_flags)] = program_id
 

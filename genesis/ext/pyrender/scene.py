@@ -225,6 +225,8 @@ class Scene(object):
             corners = []
             for mesh_node in self.mesh_nodes:
                 mesh = mesh_node.mesh
+                if mesh.is_marker:
+                    continue
                 if any(primitive.is_floor for primitive in mesh.primitives):
                     # Only take into account the centroid for floor plane
                     corners_local = mesh.centroid[np.newaxis]
