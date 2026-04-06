@@ -364,6 +364,18 @@ class RigidSolver(KinematicSolver):
             return gs.broadphase_traversal.SAP
         return gs.broadphase_traversal.ALL_VS_ALL
 
+    def _should_use_parallel_init(self):
+        """Use parallel init (ndrange over constraints+envs) when envs alone don't saturate the GPU."""
+        if gs.backend == gs.cpu or self.sim.options.requires_grad:
+            return False
+        import torch
+
+        if not torch.cuda.is_available():
+            return False
+        props = torch.cuda.get_device_properties(torch.cuda.current_device())
+        gpu_max_warps = props.multi_processor_count * props.max_threads_per_multi_processor // props.warp_size
+        return self.n_envs <= gpu_max_warps
+
     def _build_static_config(self):
         prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
         # FIXME: Enable gs.metal once Quadrants supports shared memory atomics on Apple Metal.
@@ -389,6 +401,7 @@ class RigidSolver(KinematicSolver):
             solver_type=self._options.constraint_solver,
             prefer_parallel_linesearch={None: -1, False: 0, True: 1}[prefer_parallel_linesearch],
             broadphase_traversal=self._resolve_broadphase_traversal(),
+            parallel_init=self._should_use_parallel_init(),
         )
 
         if self.is_active:
