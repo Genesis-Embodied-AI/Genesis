@@ -2,9 +2,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
-from quadrants.lang.simt.tile16 import make_tile16x16
 import torch
 from frozendict import frozendict
+from quadrants.lang.simt.tile16 import make_tile16x16
 
 import genesis as gs
 
