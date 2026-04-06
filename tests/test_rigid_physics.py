@@ -3739,7 +3739,7 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
         Mgrad = scene.rigid_solver.constraint_solver.constraint_state.Mgrad.to_numpy()
-        assert np.linalg.norm(Mgrad) > 0.0
+        assert np.linalg.norm(Mgrad) > 5.0
         values.append(Mgrad)
 
     assert_allclose(*values, tol=tol)
