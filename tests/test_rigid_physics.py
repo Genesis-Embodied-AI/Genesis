@@ -3719,12 +3719,13 @@ def test_cholesky_tiling(monkeypatch, tol):
             rigid_options=gs.options.RigidOptions(
                 constraint_solver=gs.constraint_solver.Newton,
                 sparse_solve=False,
+                iterations=1,
             ),
             show_viewer=False,
             show_FPS=False,
         )
         scene.add_entity(gs.morphs.Plane())
-        gs_robot = scene.add_entity(
+        scene.add_entity(
             gs.morphs.URDF(
                 file="urdf/go2/urdf/go2.urdf",
             ),
@@ -3733,13 +3734,12 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_mass_matrix == enable_tiled_cholesky
         assert scene.rigid_solver._static_rigid_sim_config.enable_tiled_cholesky_hessian == enable_tiled_cholesky
 
-        for _ in range(10):
-            scene.step()
+        scene.step()
         assert not scene.rigid_solver.get_error_envs_mask().any()
         assert (scene.rigid_solver.constraint_solver.constraint_state.n_constraints.to_numpy() > 0).all()
 
-        qpos = gs_robot.get_qpos().cpu().numpy()
-        values.append(qpos)
+        Mgrad = scene.rigid_solver.constraint_solver.constraint_state.Mgrad.to_numpy()
+        values.append(Mgrad)
 
     assert_allclose(*values, tol=tol)
 
