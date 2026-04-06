@@ -6,6 +6,7 @@ including broad-phase (sweep-and-prune), narrow-phase (convex-convex, SDF-based,
 terrain), and contact management.
 """
 
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -30,6 +31,8 @@ from .broadphase import (
     func_check_collision_valid,
     func_collision_clear,
     func_broad_phase,
+    _func_broad_phase_sap,
+    _func_broad_phase_all_vs_all,
 )
 
 from .contact import (
@@ -88,7 +91,7 @@ class Collider:
 
         self._init_static_config()
         self._use_split_narrowphase = (
-            self._collider_static_config.has_non_box_plane_convex_convex and gs.device.type == "cuda"
+            self._collider_static_config.has_non_box_plane_convex_convex and gs.backend != gs.cpu
         )
         self._init_collision_fields()
 
@@ -150,6 +153,7 @@ class Collider:
         (
             self._n_possible_pairs,
             self._collision_pair_idx,
+            self._valid_collision_pairs,
             has_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -171,12 +175,14 @@ class Collider:
         # Pre-compute fields, as they are needed to initialize the collider state and info.
         vert_neighbors, vert_neighbor_start, vert_n_neighbors = self._compute_verts_connectivity()
         n_vert_neighbors = len(vert_neighbors)
+        n_valid_pairs = len(self._valid_collision_pairs)
 
         # Initialize [info], which stores every data that must be considered mutable from Quadrants's perspective,
         # i.e. unknown at compile time, but IMMUTABLE from Genesis scene's perspective after build.
         self._collider_info = array_class.get_collider_info(
             self._solver,
             n_vert_neighbors,
+            n_valid_pairs,
             self._collider_static_config,
             mc_perturbation=self._mc_perturbation,
             mc_tolerance=self._mc_tolerance,
@@ -185,6 +191,7 @@ class Collider:
             diff_normal_tolerance=self._diff_normal_tolerance,
         )
         self._init_collision_pair_idx(self._collision_pair_idx)
+        self._init_valid_pairs()
         self._init_verts_connectivity(vert_neighbors, vert_neighbor_start, vert_n_neighbors)
         self._init_max_contact_pairs(self._n_possible_pairs)
         self._init_terrain_state()
@@ -203,23 +210,39 @@ class Collider:
         # 'contact_data_cache' is not used in Quadrants kernels, so keep it outside of the collider state / info
         self._contact_data_cache: dict[tuple[bool, bool], dict[str, torch.Tensor | tuple[torch.Tensor]]] = {}
 
-        # Contact0 & multicontact scratch states only needed when split narrowphase is active
+        # Contact0 & multicontact scratch states only needed when split narrowphase is active.
+        # FIXME: Quadrants should expose a unified API to query GPU core count across all backends.
+        # Falling back to upper bound for backends where torch.cuda is unavailable (e.g., CPU-only torch). Benchmarks
+        # on RTX 6000 Blackwell (Genesis-Embodied-AI/Genesis#2616) showed that switching from hardcoded 40000 threads
+        # to hardware-derived 21760 had marginal performance impact, so it should be fine.
         if self._use_split_narrowphase:
-            gpu_props = torch.cuda.get_device_properties(gs.device)
-            gpu_cuda_cores = gpu_props.multi_processor_count * 128
-            self._contact0_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
+            if torch.cuda.is_available():
+                gpu_props = torch.cuda.get_device_properties(torch.cuda.current_device())
+                # NVIDIA: 128 CUDA cores per SM. AMD/ROCm: 64 stream processors per CU.
+                cores_per_unit = 64 if torch.version.hip else 128
+                gpu_cores = gpu_props.multi_processor_count * cores_per_unit
+            elif gs.backend == gs.metal:
+                # Upper-bound estimate for Apple Silicon: 40 GPU cores, each GPU core having 128 ALUs
+                cores_per_unit = 128
+                gpu_cores = 5120
+            else:
+                # Using AMD GPU as a baseline. AMD MI350X has 256 SM (so-called Compute Units) with 64 cores each.
+                # See: https://www.amd.com/en/products/accelerators/instinct/mi350/mi350x.html
+                # For comparison, RTX6000 Blackwell boasts 188 SMs, compared to 170 SMs for RTX5090 with 128 cores each.
+                cores_per_unit = 64
+                gpu_cores = 16384
+            self._contact0_n_chunks = max(1, math.ceil(gpu_cores / self._solver._B))
             self._contact0_grid_size = self._solver._B * self._contact0_n_chunks
             self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)
             self._contact0_gjk_state = array_class.get_gjk_state_contact_only(self._contact0_grid_size)
 
-            gjk_only = self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
-            if gjk_only:
-                self._multicontact_n_gjk_threads = gpu_cuda_cores
-                self._multicontact_n_total_threads = self._multicontact_n_gjk_threads
+            if self._collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK):
+                self._multicontact_n_gjk_threads = gpu_cores
             else:
-                self._multicontact_n_gjk_threads = 4000
-                self._multicontact_n_total_threads = 40000
-            self._multicontact_max_items_per_thread = 128
+                # Heuristic to distribute the workflow between GJK and MPR
+                self._multicontact_n_gjk_threads = math.ceil((gpu_cores // 32) / 64) * 64
+            self._multicontact_n_total_threads = gpu_cores
+            self._multicontact_max_items_per_thread = cores_per_unit
             self._multicontact_mpr_state = array_class.get_mpr_state(self._multicontact_n_total_threads)
 
     def _init_multicontact_gjk_state(self):
@@ -252,7 +275,8 @@ class Collider:
         geoms = self._solver.geoms
 
         if n_geoms == 0:
-            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), False, False, False, False
+            empty_pairs = np.empty((0, 2), dtype=gs.np_int)
+            return 0, np.full((0, 0), fill_value=-1, dtype=gs.np_int), empty_pairs, False, False, False, False
 
         # Links delegated to IPC coupler (skip pair only when BOTH are IPC-handled)
         ipc_delegated_link_idxs = set()
@@ -405,11 +429,13 @@ class Collider:
                 "This behavior can be disabled by setting Morph option 'enable_neutral_collision=True'."
             )
 
-        # --- Build collision_pair_idx and count ---
+        # --- Build collision_pair_idx, valid pairs list, and count ---
         valid_indices = np.where(valid)[0]
         n_possible_pairs = len(valid_indices)
         collision_pair_idx = np.full((n_geoms, n_geoms), fill_value=-1, dtype=gs.np_int)
         collision_pair_idx[row[valid_indices], col[valid_indices]] = np.arange(n_possible_pairs, dtype=gs.np_int)
+
+        valid_collision_pairs = np.stack([row[valid_indices], col[valid_indices]], axis=1).astype(gs.np_int)
 
         # --- Compute algorithm flags from valid pairs ---
         valid_type_a = geom_type[row[valid_indices]]
@@ -458,6 +484,7 @@ class Collider:
         return (
             n_possible_pairs,
             collision_pair_idx,
+            valid_collision_pairs,
             has_any_vs_terrain,
             has_non_box_plane_convex_convex,
             has_convex_specialization,
@@ -490,6 +517,10 @@ class Collider:
             self._collider_info.collision_pair_idx.fill(-1)
             return
         self._collider_info.collision_pair_idx.from_numpy(collision_pair_idx)
+
+    def _init_valid_pairs(self):
+        if len(self._valid_collision_pairs) > 0:
+            self._collider_info.valid_collision_pairs.from_numpy(self._valid_collision_pairs)
 
     def _init_verts_connectivity(self, vert_neighbors, vert_neighbor_start, vert_n_neighbors):
         if self._solver.n_verts > 0:

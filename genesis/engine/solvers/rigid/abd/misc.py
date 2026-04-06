@@ -135,8 +135,8 @@ def kernel_init_dof_fields(
     dofs_damping: qd.types.ndarray(),
     dofs_frictionloss: qd.types.ndarray(),
     dofs_armature: qd.types.ndarray(),
-    dofs_kp: qd.types.ndarray(),
-    dofs_kv: qd.types.ndarray(),
+    dofs_act_gain: qd.types.ndarray(),
+    dofs_act_bias: qd.types.ndarray(),
     dofs_force_range: qd.types.ndarray(),
     # Quadrants variables
     dofs_info: array_class.DofsInfo,
@@ -153,6 +153,7 @@ def kernel_init_dof_fields(
         for j in qd.static(range(3)):
             dofs_info.motion_ang[I_d][j] = dofs_motion_ang[i_d, j]
             dofs_info.motion_vel[I_d][j] = dofs_motion_vel[i_d, j]
+            dofs_info.act_bias[I_d][j] = dofs_act_bias[i_d, j]
 
         for j in qd.static(range(2)):
             dofs_info.limit[I_d][j] = dofs_limit[i_d, j]
@@ -163,8 +164,7 @@ def kernel_init_dof_fields(
         dofs_info.stiffness[I_d] = dofs_stiffness[i_d]
         dofs_info.damping[I_d] = dofs_damping[i_d]
         dofs_info.frictionloss[I_d] = dofs_frictionloss[i_d]
-        dofs_info.kp[I_d] = dofs_kp[i_d]
-        dofs_info.kv[I_d] = dofs_kv[i_d]
+        dofs_info.act_gain[I_d] = dofs_act_gain[i_d]
         dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))

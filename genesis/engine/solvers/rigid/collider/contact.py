@@ -52,7 +52,7 @@ def collider_kernel_reset(
 
 @qd.func
 def func_collider_clear_env(
-    i_b: gs.qd_int,
+    i_b,
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     static_rigid_sim_config: qd.template(),

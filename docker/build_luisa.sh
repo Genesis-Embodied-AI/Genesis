@@ -13,6 +13,7 @@ git submodule update --init --recursive && \
 mkdir -p build && \
 cmake -S . -B build \
     -D CMAKE_BUILD_TYPE=Release \
+    -D CMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -D PYTHON_VERSIONS=$PYTHON_VERSION \
     -D LUISA_COMPUTE_DOWNLOAD_NVCOMP=ON \
     -D LUISA_COMPUTE_DOWNLOAD_OIDN=ON \

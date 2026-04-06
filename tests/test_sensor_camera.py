@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.utils.misc import tensor_to_array
-from genesis.utils.geom import trans_to_T
+from genesis.utils.geom import pos_lookat_up_to_T, trans_quat_to_T, trans_to_T
 
 from .conftest import SKIP_NO_LUISA, SKIP_NO_MADRONA
 from .utils import assert_allclose, assert_equal, rgb_array_to_png_bytes
@@ -217,7 +217,9 @@ def test_rasterizer_batched(show_viewer, png_snapshot):
 
 
 @pytest.mark.required
-def test_rasterizer_attached_batched(show_viewer, png_snapshot):
+def test_rasterizer_attached_batched(show_viewer, png_snapshot, tol):
+    png_snapshot.extension._std_err_threshold = 1.1
+
     scene = gs.Scene(show_viewer=show_viewer)
 
     # Add a plane
@@ -236,15 +238,20 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
         ),
     )
 
-    options = gs.sensors.RasterizerCameraOptions(
-        res=(64, 64),
-        pos=(-0.4, 0.1, 2.0),
-        lookat=(-0.6, 0.4, 1.0),
-        fov=60.0,
-        entity_idx=sphere.idx,
-        draw_debug=show_viewer,
+    cam_pos = (-0.4, 0.1, 2.0)
+    cam_lookat = (-0.6, 0.4, 1.0)
+    cam_up = (0.0, 0.0, 1.0)
+    camera = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(64, 64),
+            pos=cam_pos,
+            lookat=cam_lookat,
+            up=cam_up,
+            fov=60.0,
+            entity_idx=sphere.idx,
+            draw_debug=show_viewer,
+        )
     )
-    camera = scene.add_sensor(options)
 
     scene.build(n_envs=2)
 
@@ -252,6 +259,8 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
     camera._shared_metadata.context.shadow = False
 
     sphere.set_pos([[0.0, 0.0, 1.0], [0.2, 0.0, 0.5]])
+    # 45° around Z for env 0, 30° around X for env 1
+    sphere.set_quat([[1.0, 0.0, 0.0, 0.4], [1.0, 0.3, 0.0, 0.0]])
     scene.step()
 
     data = camera.read()
@@ -265,8 +274,28 @@ def test_rasterizer_attached_batched(show_viewer, png_snapshot):
             pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
         raise
 
+    # Verify camera pose matches the analytical formula
+    offset_T = pos_lookat_up_to_T(
+        np.array(cam_pos, dtype=np.float32),
+        np.array(cam_lookat, dtype=np.float32),
+        np.array(cam_up, dtype=np.float32),
+    )
+    sphere_pos = tensor_to_array(sphere.get_pos())
+    sphere_quat = tensor_to_array(sphere.get_quat())
+    link_T = trans_quat_to_T(sphere_pos, sphere_quat)
+    expected_T = link_T @ offset_T
+
+    camera_node = camera._shared_metadata.renderer._camera_nodes[camera._idx]
+    actual_pose = camera._shared_metadata.context._scene.get_pose(camera_node)
+    assert_allclose(actual_pose, expected_T, tol=tol)
+
     for i in range(scene.n_envs):
-        assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+        try:
+            assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered.")
+            raise
 
 
 @pytest.mark.required
@@ -438,13 +467,14 @@ def test_raytracer_attached_without_offset_T():
     pose and attachment, to make sure both camera APIs produce matching output.
     """
     CAM_RES = (128, 64)
-    CAM_POS = (0.0, 0.0, 2.0)
+    CAM_POS = (1.0, 0.5, 2.0)
 
     scene = gs.Scene(renderer=gs.renderers.RayTracer())
     scene.add_entity(morph=gs.morphs.Plane())
     sphere = scene.add_entity(morph=gs.morphs.Sphere())
 
-    # Sensor camera attached WITHOUT offset_T - should use pos as offset
+    # Sensor camera attached WITHOUT offset_T - should use pos as offset.
+    # The off-axis pos/lookat produce a non-identity rotation in the offset transform.
     camera_common_options = dict(
         res=CAM_RES,
         lookat=(0.0, 0.0, 0.0),
@@ -469,7 +499,12 @@ def test_raytracer_attached_without_offset_T():
     scene.build()
 
     # Attach scene-level camera with equivalent offset_T
-    scene_camera.attach(sphere.base_link, offset_T=trans_to_T(np.array(CAM_POS)))
+    cam_lookat = np.array(camera_common_options["lookat"], dtype=np.float32)
+    cam_up = np.array(camera_common_options["up"], dtype=np.float32)
+    scene_camera.attach(
+        sphere.base_link,
+        offset_T=pos_lookat_up_to_T(np.array(CAM_POS, dtype=np.float32), cam_lookat, cam_up),
+    )
 
     scene.step()
 
@@ -565,3 +600,68 @@ def test_raytracer(n_envs, png_snapshot):
                 assert rgb_array_to_png_bytes(data.rgb[i]) == png_snapshot
         else:
             assert rgb_array_to_png_bytes(data.rgb) == png_snapshot
+
+
+@pytest.mark.required
+def test_camera_lookat_entity(show_viewer, png_snapshot):
+    scene = gs.Scene(show_viewer=show_viewer)
+
+    scene.add_entity(morph=gs.morphs.Plane())
+
+    # Colored spheres at distinct locations so each camera sees different content
+    attach_sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=0.5,
+            pos=(0.0, 0.0, 0.5),
+        ),
+        surface=gs.surfaces.Smooth(
+            color=(1.0, 0.2, 0.2),
+        ),
+    )
+    for pos, color in (
+        ((2.0, 0.0, 0.5), (0.2, 1.0, 0.2)),
+        ((0.0, 1.5, 0.5), (0.3, 0.3, 1.0)),
+        ((0.0, -1.5, 0.5), (1.0, 1.0, 0.0)),
+    ):
+        scene.add_entity(
+            morph=gs.morphs.Sphere(
+                radius=0.5,
+                pos=pos,
+            ),
+            surface=gs.surfaces.Smooth(
+                color=color,
+            ),
+        )
+
+    cameras = []
+    for camera_options in (
+        # Attached cameras: same offset position, different lookat targets
+        dict(pos=(0.0, 0.0, 1.5), lookat=(0.0, 1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
+        dict(pos=(0.0, 0.0, 1.5), lookat=(0.0, -1.5, 0.5), fov=70.0, entity_idx=attach_sphere.idx, link_idx_local=0),
+        # Detached cameras: same position, different lookat targets
+        dict(pos=(0.0, 0.0, 2.5), lookat=(0.0, 0.0, 0.5), fov=60.0),
+        dict(pos=(0.0, 0.0, 2.5), lookat=(2.0, 0.0, 0.5), fov=60.0),
+    ):
+        camera = scene.add_sensor(
+            gs.sensors.RasterizerCameraOptions(
+                res=(64, 64),
+                up=(0.0, 0.0, 1.0),
+                **camera_options,
+            ),
+        )
+        cameras.append(camera)
+
+    scene.build()
+
+    # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+    for camera in cameras:
+        camera._shared_metadata.context.shadow = False
+
+    # Snapshot check for every camera
+    for camera in cameras:
+        try:
+            assert rgb_array_to_png_bytes(camera.read().rgb) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered.")
+            raise

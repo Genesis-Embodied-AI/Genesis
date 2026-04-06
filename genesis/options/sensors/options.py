@@ -18,7 +18,7 @@ from genesis.typing import (
     Vec3FArrayType,
     Vec3FType,
     Vec4FType,
-    _is_sequence,
+    is_sequence,
 )
 
 from ..options import Options
@@ -38,7 +38,7 @@ else:
     NonNegativeUnboundedFloat = Annotated[float, Field(ge=0, strict=False)]
     LaxNonNegativeUnboundedVec3FType = Annotated[
         tuple[NonNegativeUnboundedFloat, NonNegativeUnboundedFloat, NonNegativeUnboundedFloat],
-        BeforeValidator(lambda v: v if _is_sequence(v) else (v,) * 3),
+        BeforeValidator(lambda v: v if is_sequence(v) else (v,) * 3),
         Field(strict=False),
     ]
 CrossCouplingAxisType = RotationMatrixType | UnitIntervalVec3Type | float
@@ -440,7 +440,7 @@ class Raycaster(RigidSensorOptionsMixin["RaycasterSensor"]):
     pattern: RaycastPattern
     min_range: NonNegativeFloat = 0.0
     max_range: PositiveFloat = 20.0
-    no_hit_value: float
+    no_hit_value: float = float("nan")
     return_world_frame: StrictBool = False
 
     debug_sphere_radius: PositiveFloat = 0.02

@@ -178,10 +178,9 @@ def test_video_writer(tmp_path):
     video_rgb_path = tmp_path / "test_rgb.mp4"
     scene.start_recording(
         data_func=lambda: camera.render(rgb=True, depth=False, segmentation=False, normal=False)[0],
+        # No explicit codec — exercises automatic codec selection
         rec_options=gs.recorders.VideoFile(
             filename=video_rgb_path,
-            codec="libx264",
-            codec_options={"preset": "veryfast", "tune": "zerolatency"},
         ),
     )
     video_depth_path = tmp_path / "test_depth.mp4"

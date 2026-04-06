@@ -209,14 +209,13 @@ class KinematicEntity(Entity):
                     self._add_heterogeneous_variant(link, cg_infos, vg_infos)
                     self._on_heterogeneous_scene_variant_loaded(link, morph, v_l_info)
 
-            elif isinstance(morph, gs.morphs.Mesh):
-                g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
-                cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
-                self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
-                init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
-                self._variant_init_qpos.append(init_qpos)
-            elif isinstance(morph, gs.morphs.Primitive):
-                g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+            elif isinstance(morph, (gs.morphs.Mesh, gs.morphs.Primitive)):
+                if isinstance(morph, gs.morphs.Mesh):
+                    g_infos = self._load_mesh(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                else:
+                    g_infos = self._load_primitive(morph, self._surface, load_geom_only_for_heterogeneous=True)
+                if morph.fixed != self._morph.fixed:
+                    gs.raise_exception("Mixing fixed and non-fixed morphs in heterogeneous entities is not supported.")
                 cg_infos, vg_infos = self._postprocess_geoms_info(morph, g_infos, is_robot=False)
                 self._add_heterogeneous_variant(self._links[0], cg_infos, vg_infos)
                 init_qpos = np.array((*morph.pos, *morph.quat) if not morph.fixed else (), dtype=gs.np_float)
@@ -545,7 +544,7 @@ class KinematicEntity(Entity):
                 for j_info_gs in chain.from_iterable(links_j_infos):
                     for j_info_mj in chain.from_iterable(links_j_infos_mj):
                         if j_info_mj["name"] == j_info_gs["name"]:
-                            for name in ("dofs_force_range", "dofs_armature", "dofs_kp", "dofs_kv"):
+                            for name in ("dofs_force_range", "dofs_armature", "dofs_act_gain", "dofs_act_bias"):
                                 j_info_mj[name] = j_info_gs[name]
                             break
                 links_j_infos = links_j_infos_mj
@@ -678,8 +677,8 @@ class KinematicEntity(Entity):
                 mass_tot = sum(l_info.get("inertial_mass") or 0.0 for l_info in l_infos)
                 j_info["dofs_damping"][3:] = mass_tot * morph.default_base_ang_damping_scale
             j_info["dofs_armature"] = np.zeros(6)
-            j_info["dofs_kp"] = np.zeros((6,), dtype=gs.np_float)
-            j_info["dofs_kv"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_act_gain"] = np.zeros((6,), dtype=gs.np_float)
+            j_info["dofs_act_bias"] = np.zeros((6, 3), dtype=gs.np_float)
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (6, 1))
             links_j_infos[0] = [j_info]
 
@@ -849,8 +848,8 @@ class KinematicEntity(Entity):
                 dofs_stiffness=j_info.get("dofs_stiffness", np.zeros(n_dofs)),
                 dofs_damping=j_info.get("dofs_damping", np.zeros(n_dofs)),
                 dofs_armature=j_info.get("dofs_armature", np.zeros(n_dofs)),
-                dofs_kp=j_info.get("dofs_kp", np.zeros(n_dofs)),
-                dofs_kv=j_info.get("dofs_kv", np.zeros(n_dofs)),
+                dofs_act_gain=j_info.get("dofs_act_gain", np.zeros(n_dofs)),
+                dofs_act_bias=j_info.get("dofs_act_bias", np.zeros((n_dofs, 3))),
                 dofs_force_range=j_info.get("dofs_force_range", np.tile([[-np.inf, np.inf]], [n_dofs, 1])),
             )
             joints.append(joint)
@@ -1515,7 +1514,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=False, relative=False):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=False, relative=False, skip_forward=False):
         """
         Set position of the entity's base link.
 
@@ -1530,13 +1529,15 @@ class KinematicEntity(Entity):
         relative : bool, optional
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting position. Defaults to False.
         """
         # Throw exception in entity no longer has a "true" base link becaused it has attached
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
-        self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative)
+        self._solver.set_base_links_pos(pos, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
@@ -1544,7 +1545,7 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=False, relative=True, skip_forward=False):
         """
         Set quaternion of the entity's base link.
 
@@ -1559,12 +1560,16 @@ class KinematicEntity(Entity):
         relative : bool, optional
             True the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
         if self._is_attached:
             gs.raise_exception("Impossible to set position of an entity that has been attached.")
         if zero_velocity:
             self.zero_all_dofs_velocity(envs_idx=envs_idx, skip_forward=True)
-        self._solver.set_base_links_quat(quat, self.base_link_idx, envs_idx, relative=relative)
+        self._solver.set_base_links_quat(
+            quat, self.base_link_idx, envs_idx, relative=relative, skip_forward=skip_forward
+        )
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
@@ -3240,7 +3245,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_pos(self, pos, envs_idx=None, *, zero_velocity=True, relative=False, skip_forward=False):
         """
         Set position of the entity's base link.
 
@@ -3256,6 +3261,8 @@ class RigidEntity(KinematicEntity):
         relative : bool, optional
             Whether the position to set is absolute or relative to the initial (not current!) position. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting position. Defaults to False.
         """
         from genesis.engine.couplers import IPCCoupler
 
@@ -3263,7 +3270,7 @@ class RigidEntity(KinematicEntity):
             gs.raise_exception(
                 "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
             )
-        super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative)
+        super().set_pos(pos, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_pos_grad(self, envs_idx, relative, pos_grad):
@@ -3271,7 +3278,7 @@ class RigidEntity(KinematicEntity):
 
     @gs.assert_built
     @tracked
-    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False):
+    def set_quat(self, quat, envs_idx=None, *, zero_velocity=True, relative=False, skip_forward=False):
         """
         Set quaternion of the entity's base link.
 
@@ -3287,6 +3294,8 @@ class RigidEntity(KinematicEntity):
         relative : bool, optional
             Whether the quaternion to set is absolute or relative to the initial (not current!) quaternion. Defaults to
             False.
+        skip_forward : bool, optional
+            Whether to skip forward kinematics after setting quaternion. Defaults to False.
         """
         from genesis.engine.couplers import IPCCoupler
 
@@ -3294,7 +3303,7 @@ class RigidEntity(KinematicEntity):
             gs.raise_exception(
                 "This method is only supported by `RigidMaterial.coup_type=None` for fixed-based rigid entities."
             )
-        super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative)
+        super().set_quat(quat, envs_idx, zero_velocity=zero_velocity, relative=relative, skip_forward=skip_forward)
 
     @gs.assert_built
     def set_quat_grad(self, envs_idx, relative, quat_grad):
@@ -3392,6 +3401,44 @@ class RigidEntity(KinematicEntity):
         """
         dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
         self._solver.set_dofs_kv(kv, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_act_gain(self, act_gain, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the actuator gain for the entity's dofs. Invalidates PD-reducibility.
+
+        Parameters
+        ----------
+        act_gain : array_like
+            The actuator gain values.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_act_gain(act_gain, dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def set_dofs_act_bias(self, bias0, bias1, bias2, dofs_idx_local=None, envs_idx=None):
+        """
+        Set the actuator bias for the entity's dofs.
+
+        Parameters
+        ----------
+        bias0 : array_like
+            Constant bias term.
+        bias1 : array_like
+            Position coefficient.
+        bias2 : array_like
+            Velocity coefficient.
+        dofs_idx_local : None | array_like, optional
+            The indices of the dofs. Defaults to None.
+        envs_idx : None | array_like, optional
+            The indices of the environments. Defaults to None.
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        self._solver.set_dofs_act_bias(bias0, bias1, bias2, dofs_idx, envs_idx)
 
     @gs.assert_built
     def set_dofs_force_range(self, lower, upper, dofs_idx_local=None, envs_idx=None):
@@ -3668,6 +3715,30 @@ class RigidEntity(KinematicEntity):
         return self._solver.get_dofs_kv(dofs_idx, envs_idx)
 
     @gs.assert_built
+    def get_dofs_act_gain(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the actuator gain for the entity's dofs.
+
+        Returns
+        -------
+        act_gain : torch.Tensor, shape (n_dofs,) or (n_envs, n_dofs)
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_act_gain(dofs_idx, envs_idx)
+
+    @gs.assert_built
+    def get_dofs_act_bias(self, dofs_idx_local=None, envs_idx=None):
+        """
+        Get the actuator bias [constant, pos_coeff, vel_coeff] for the entity's dofs.
+
+        Returns
+        -------
+        bias0, bias1, bias2 : tuple of torch.Tensor
+        """
+        dofs_idx = self._get_global_idx(dofs_idx_local, self.n_dofs, self._dof_start, unsafe=True)
+        return self._solver.get_dofs_act_bias(dofs_idx, envs_idx)
+
+    @gs.assert_built
     def get_dofs_force_range(self, dofs_idx_local=None, envs_idx=None):
         """
         Get the force range (min and max limits) for the entity's dofs.
@@ -3737,6 +3808,88 @@ class RigidEntity(KinematicEntity):
     def get_mass_mat(self, envs_idx=None, decompose=False):
         dofs_idx = self._get_global_idx(None, self.n_dofs, self._dof_start, unsafe=True)
         return self._solver.get_mass_mat(dofs_idx, envs_idx, decompose)
+
+    @gs.assert_built
+    def get_kinetic_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total kinetic energy of the entity in Joules [J] (translational + rotational).
+
+        Computed using the joint-space mass matrix: ``KE = 0.5 * dq^T * M(q) * dq``.
+        The mass matrix is recomputed to include motor armature on the diagonal.
+
+        Note
+        ----
+        When the ``approximate_implicitfast`` integrator is used, this method forces recomputation of the
+        mass matrix to exclude implicit damping terms added during integration. Other integrators do not
+        require this recomputation.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        kinetic_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        if self._solver._static_rigid_sim_config.integrator == gs.integrator.approximate_implicitfast:
+            from genesis.engine.solvers.rigid.abd.forward_dynamics import kernel_compute_mass_matrix
+
+            kernel_compute_mass_matrix(
+                links_state=self._solver.links_state,
+                links_info=self._solver.links_info,
+                dofs_state=self._solver.dofs_state,
+                dofs_info=self._solver.dofs_info,
+                entities_info=self._solver.entities_info,
+                rigid_global_info=self._solver._rigid_global_info,
+                static_rigid_sim_config=self._solver._static_rigid_sim_config,
+                decompose=False,
+            )
+        mass_mat = self.get_mass_mat(envs_idx=envs_idx)
+        dofs_vel = self.get_dofs_velocity(envs_idx=envs_idx)
+        Mv = torch.matmul(mass_mat, dofs_vel.unsqueeze(-1)).squeeze(-1)
+        return 0.5 * torch.sum(dofs_vel * Mv, dim=-1)
+
+    @gs.assert_built
+    def get_potential_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total gravitational potential energy of the entity in Joules [J].
+
+        Computed as the sum over all links: ``PE = sum_i(m_i * g^T * p_i)``, where ``p_i`` is the
+        center-of-mass position of link *i* and ``g`` is the gravity vector obtained from the solver.
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        potential_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        gravity = self._solver.get_gravity(envs_idx=envs_idx)  # (3,) or (n_envs, 3)
+        links_pos = self.get_links_pos(envs_idx=envs_idx, ref="link_com")  # (..., n_links, 3)
+        # Link masses are static properties (not batched per environment),
+        # so always fetch without envs_idx to avoid indexing conflicts.
+        links_mass = self.get_links_inertial_mass()  # (n_links,)
+
+        # PE_i = m_i * g^T * p_i => PE = sum_i(m_i * (g . p_i))
+        # g is (..., 3), links_pos is (..., n_links, 3) -> broadcast g to (..., 1, 3)
+        g_dot_p = torch.sum(gravity.unsqueeze(-2) * links_pos, dim=-1)  # (..., n_links)
+        return -torch.sum(links_mass * g_dot_p, dim=-1)
+
+    @gs.assert_built
+    def get_total_energy(self, envs_idx=None) -> torch.Tensor:
+        """Get the total mechanical energy of the entity in Joules [J] (kinetic + potential).
+
+        Parameters
+        ----------
+        envs_idx : None | array_like, optional
+            The indices of the environments. If None, all environments will be considered. Defaults to None.
+
+        Returns
+        -------
+        total_energy : torch.Tensor, shape () or (n_envs,)
+        """
+        return self.get_kinetic_energy(envs_idx=envs_idx) + self.get_potential_energy(envs_idx=envs_idx)
 
     @gs.assert_built
     def detect_collision(self, env_idx=0):

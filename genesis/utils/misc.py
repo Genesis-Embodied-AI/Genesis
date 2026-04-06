@@ -8,6 +8,7 @@ import numbers
 import os
 import random
 import sys
+from collections.abc import Callable
 from dataclasses import field
 from itertools import combinations
 from typing import Any, NoReturn, Optional, Sequence
@@ -332,7 +333,7 @@ def concat_with_tensor(
     return torch.cat([tensor, value], dim=dim)
 
 
-def make_tensor_field(shape: tuple[int, ...] = (), dtype: torch.dtype | None = None):
+def make_tensor_field(shape: tuple[int, ...] = (), dtype_factory: Callable[[], torch.dtype] | None = None):
     """
     Helper method to create a tensor field for dataclasses.
 
@@ -340,14 +341,16 @@ def make_tensor_field(shape: tuple[int, ...] = (), dtype: torch.dtype | None = N
     ----------
     shape : tuple
         The shape of the tensor field. It must have zero elements, otherwise it will trigger an exception.
-    dtype : torch.dtype, optional
-        Data type of the tensor field. Default is gs.tc_float.
+    dtype_factory : Callable[[], torch.dtype], optional
+        The factory function to create the dtype of the tensor field. Default is gs.tc_float.
+        A factory is used because gs types may not be available at the time of field creation.
     """
     assert not shape or math.prod(shape) == 0
 
     def _default_factory():
-        nonlocal shape, dtype
-        return torch.empty(shape, dtype=dtype or gs.tc_float, device=gs.device)
+        nonlocal shape, dtype_factory
+        dtype = dtype_factory() if dtype_factory is not None else gs.tc_float
+        return torch.empty(shape, dtype=dtype, device=gs.device)
 
     return field(default_factory=_default_factory)
 
@@ -470,13 +473,18 @@ def qd_to_python(
                     value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
 
-        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
+        # Quadrants and PyTorch MPS use separate Metal command queues, so `qd.sync()` only guarantees Quadrants
+        # writes are complete. A subsequent `.clone()` is queued on the MPS stream and may execute *after* the next
+        # Quadrants kernel overwrites the source buffer. We must also synchronize MPS after cloning.
         if gs.backend == gs.metal:
             qd.sync()
 
         if copy:
             if to_torch:
                 out = out.clone()
+                if gs.backend == gs.metal:
+                    torch.mps.synchronize()
             elif gs.backend != gs.cpu:
                 out = tensor_to_array(out)
             else:
@@ -634,11 +642,14 @@ def qd_to_torch(
     if gs.use_zerocopy:
         try:
             tensor = value._T_tc if transpose else value._tc
-            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
+            # See comment in `qd_to_python` for details on the MPS command queue race condition.
             if gs.backend == gs.metal:
                 qd.sync()
             if copy:
                 tensor = tensor.clone()
+                if gs.backend == gs.metal:
+                    torch.mps.synchronize()
         except AttributeError:
             tensor = qd_to_python(value, transpose, copy=copy, to_torch=True)
     else:

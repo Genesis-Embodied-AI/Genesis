@@ -74,6 +74,9 @@ class Rasterizer(RBC):
 
         rgb_arr, depth_arr, seg_idxc_arr, normal_arr = None, None, None, None
         skip_markers = not camera.debug if isinstance(camera, Camera) else True
+        # Force env-separate rendering when the camera has a per-env pose (attached camera in batched scene)
+        camera_node = self._camera_nodes[camera.uid]
+        env_separate_rigid = self._context.env_separate_rigid or camera_node.matrix.ndim == 3
         if self._offscreen:
             # Set the context
             self._renderer.make_current()
@@ -87,7 +90,7 @@ class Rasterizer(RBC):
                         self._context._scene,
                         self._camera_targets[camera.uid],
                         camera_node=self._camera_nodes[camera.uid],
-                        env_separate_rigid=self._context.env_separate_rigid,
+                        env_separate_rigid=env_separate_rigid,
                         rgb=rgb,
                         normal=normal,
                         seg=False,
@@ -102,7 +105,7 @@ class Rasterizer(RBC):
                         self._context._scene,
                         self._camera_targets[camera.uid],
                         camera_node=self._camera_nodes[camera.uid],
-                        env_separate_rigid=self._context.env_separate_rigid,
+                        env_separate_rigid=env_separate_rigid,
                         rgb=False,
                         normal=False,
                         seg=True,
@@ -125,6 +128,7 @@ class Rasterizer(RBC):
                     normal=normal,
                     seg=False,
                     skip_markers=skip_markers,
+                    env_separate_rigid=env_separate_rigid,
                 )
 
             if segmentation:
@@ -136,6 +140,7 @@ class Rasterizer(RBC):
                     normal=False,
                     seg=True,
                     skip_markers=skip_markers,
+                    env_separate_rigid=env_separate_rigid,
                 )
 
         if segmentation:

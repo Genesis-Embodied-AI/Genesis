@@ -141,8 +141,8 @@ def compare_joints(compared_joints, usd_joints, tol):
             assert_allclose(compared_joint.dofs_armature, usd_joint.dofs_armature, tol=tol, err_msg=err_msg)
 
             # Compare dof control properties
-            assert_allclose(compared_joint.dofs_kp, usd_joint.dofs_kp, tol=tol, err_msg=err_msg)
-            assert_allclose(compared_joint.dofs_kv, usd_joint.dofs_kv, tol=tol, err_msg=err_msg)
+            assert_allclose(compared_joint.dofs_act_gain, usd_joint.dofs_act_gain, tol=tol, err_msg=err_msg)
+            assert_allclose(compared_joint.dofs_act_bias, usd_joint.dofs_act_bias, tol=tol, err_msg=err_msg)
             assert_allclose(compared_joint.dofs_force_range, usd_joint.dofs_force_range, tol=tol, err_msg=err_msg)
 
 

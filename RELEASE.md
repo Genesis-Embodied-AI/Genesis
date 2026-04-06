@@ -1,5 +1,84 @@
 # Genesis Release Note
 
+## 0.4.5
+
+This release continues on the ongoing trend of rigid body simulation speed improvements. A few camera-related bugs and all known regression on Metal backend are now fixed.
+
+### New Features
+
+* Add support of xacro URDF. (@duburcqa) (#2642)
+* Add public API to RigidEntity for kinematic and potential energy. (@Lidang-Jiang) (#2613)
+* Add support of Mujoco general actuator model. (@duburcqa) (#2641)
+* Add support of zerocopy to set_pos/set_quat. (@duburcqa) (#2657)
+
+### Bug Fixes
+
+* Guard gradient computation not supported on Metal backend with dynamic array mode. (@duburcqa) (#2628)
+* Fix plotter video export race condition. (@duburcqa) (#2647)
+* Fix sensor camera 'lookat' being ignored when 'entity_idx' is set. (@Lidang-Jiang) (#2614)
+* Fix various regressions on Metal backend. (@duburcqa) (#2651, #2624, #2657)
+* Fix camera sensor per-env rendering with Rasterizer. (@duburcqa) (#2657)
+
+### Miscellaneous
+
+* Add parallel linesearch for constraint solver to speedup simulation on GPU backend. (@erizmr) (#2523)
+* Speedup tiled hessian kernel by using direct lower-triangle indexing. (@hughperkins) (#2618)
+* Add broadphase all-vs-all to speedup simulation on GPU backend. (@hughperkins) (#2607)
+* Add GPU graph to decomposed solver to reduce kernel launch latency. (@hughperkins, @duburcqa) (#2621, #2635, #2636)
+* Add support of opt-in shared memory for tiled hessian to improve performance. (@duburcqa) (#2629)
+* Better parallelization of add collision constraints. (@hughperkins) (#2639)
+* Enable GPU-optimised decomposed constraints solver implementation on all GPU backends. (@duburcqa) (#2623)
+* Unify narrowphase codepath on all GPU backends. (@duburcqa) (#2637)
+* Automatically select optimal H264 codec for Video recorder. (@duburcqa) (#2657)
+* Update all RL examples. (@duburcqa) (#2644, #2657)
+* Update docker container. (@duburcqa) (#2643)
+
+## 0.4.4
+
+The numerical stability of the simulation for simple rigid objects has been greatly improved. Apart from that, rigid body simulation is now much faster for complex scenes with many entities. Finally, a significant number of bugs have been fixed.
+
+### Breaking changes
+
+* [FEATURE] Improve numerical stability of simulation by aligning inertial axes of free joints. (@duburcqa) (#2569, #2571, #2573, #2575)
+* [BUG FIX] Fix default armature incorrectly applied on free joints for MJCF. (@duburcqa) (#2584)
+* [MISC] Set 'RigidEntity.set_quat(..., relative=True)' by default. (@duburcqa) (#2592)
+* [MISC] More realistic default material density for Rigid. (@duburcqa) (#2378)
+
+### New Features
+
+* Support batched camera for Rasterizer. (@duburcqa) (#2564)
+* Add MacOS support for separated envs rendering with Rasterizer. (@duburcqa) (#2560)
+
+### Bug Fixes
+
+* Fix flickering issue for temperature sensor debug draw. (@duburcqa) (#2557)
+* Fix batched env separated rendering with Rasterizer.
+* Fix interactive viewer race condition when running background thread. (@duburcqa) (#2585)
+* Fix color overwrite for MJCF without visuals. (@duburcqa) (#2586)
+* Fix batched sensor read when combining multiple sensor types. (@Milotrince) (#2581)
+* Fix USD parsing. (@duburcqa) (#2594)
+* Fix GPU synchronization issue on Apple Metal. (@duburcqa) (#2600)
+* Fix degenerated invweight computation. (@duburcqa) (#2598)
+* Fix viewer plugin registration after build. (@duburcqa) (#2601)
+* Fix motion planning crashing for short path < 3 nodes. (@Lidang-Jiang) (#2610)
+* Fix mouse interaction void ray casting. (@duburcqa) (#2611)
+* Fix IK solver using wrong entity's DOFs for multi-robot scenes. (@Lidang-Jiang) (#2612)
+
+### Miscellaneous
+
+* Improve mouse interaction visualization. (@duburcqa) (#2574)
+* Add support of batching to 'RigidLink.set_mass'. (@duburcqa) (#2578)
+* Refactor rigid benchmarks into reusable scene factories. (@hughperkins) (#2577)
+* Re-raise viewer exception running in background thread. (@duburcqa) (#2583)
+* Support non-blocking scene reset for rigid solver. (@duburcqa) (#2580)
+* Support more recent GPU devices by migrating Quadrants to LLVM 22. (@hughperkins) (#2595)
+* Migrate materials to new pydantic based options with strict validation. (@duburcqa) (#2597)
+* Disable perf dispatch re-benchmarking to reduce performance penalty. (@erizmr) (#2599)
+* Tune kernel dispatch heuristics to reduce wrong selection. (@erizmr) (#2605)
+* Rename 'Drone.set_propellels_rpm' in 'Drone.set_propellers_rpm'. (@Lidang-Jiang) (#2609)
+* Speed up simulation by tuning tiled Hessian block size. (@hughperkins) (#2617)
+* Optimize performance of collision detection using hardware-derived thread count. (@hughperkins) (#2616)
+
 ## 0.4.3
 
 This release introduces more sensors while significantly speeding up collision detection on GPU (up to 30%). As usual, a few bugs have been fixed.

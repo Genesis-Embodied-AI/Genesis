@@ -15,8 +15,10 @@ from pydantic import Field, StrictBool, StrictInt, model_validator
 import genesis as gs
 import genesis.utils.geom as gu
 import genesis.utils.misc as mu
+import genesis.utils.urdf as uu
 import genesis.ext.urdfpy as urdfpy
 from genesis.typing import (
+    FrozenDictType,
     NonNegativeInt,
     PositiveFloat,
     PositiveInt,
@@ -32,6 +34,7 @@ from .misc import CoacdOptions
 from .options import Options
 
 URDF_FORMAT = ".urdf"
+XACRO_FORMAT = ".xacro"
 MJCF_FORMAT = ".xml"
 GLTF_FORMATS = (".glb", ".gltf")
 MESH_FORMATS = (".obj", ".stl", *GLTF_FORMATS)
@@ -912,8 +915,13 @@ class MJCF(FileMorph):
 
 class URDF(FileMorph):
     """
-    Morph loaded from a URDF file. This morph only supports `RigidEntity`.
+    Morph loaded from a URDF or XACRO file. This morph only supports `RigidEntity`.
     If you need to create a `Drone` entity, use `gs.morphs.Drone` instead.
+
+    XACRO files (``.urdf.xacro`` or ``.xacro``) are automatically preprocessed into plain URDF using the ``xacro``
+    package. All standard xacro features (macros, properties, includes, conditionals, substitution args) are supported.
+    Use ``xacro_args`` to override ``xacro:arg`` declarations at load time. The only limitation is that
+    ``$(find package_name)`` substitutions require ROS's ``ament_index_python``; without ROS, these will raise an error.
 
     Note
     ----
@@ -1005,6 +1013,9 @@ class URDF(FileMorph):
     default_armature : float, optional
         Default rotor inertia of the actuators. In practice it is applied to all joints regardless of whether they are
         actuated. None to disable. Default to 0.1.
+    xacro_args : dict, optional
+        Key-value pairs to override ``xacro:arg`` declarations in the xacro file
+        (e.g. ``{"use_sim": "true", "arm_length": "0.5"}``). Only used for ``.xacro`` files. Defaults to ``{}``.
     """
 
     fixed: StrictBool = False
@@ -1013,6 +1024,7 @@ class URDF(FileMorph):
     merge_fixed_links: StrictBool = True
     links_to_keep: StrArrayType = ()
     default_armature: float | None = Field(default=0.1, ge=0)
+    xacro_args: FrozenDictType[str, str] = {}
 
     @model_validator(mode="before")
     @classmethod
@@ -1025,12 +1037,14 @@ class URDF(FileMorph):
         return data
 
     def model_post_init(self, context: Any) -> None:
-        if not self.is_format(URDF_FORMAT):
-            gs.raise_exception(f"Expected `{URDF_FORMAT}` extension for URDF file: {self.file}")
+        if self.is_format(XACRO_FORMAT):
+            self.file = uu.load_xacro(self.file, self.xacro_args)
+        elif not self.is_format(URDF_FORMAT):
+            gs.raise_exception(f"Expected `{URDF_FORMAT}` or `{XACRO_FORMAT}` extension for URDF file: {self.file}")
 
     def is_format(self, format):
         if isinstance(self.file, urdfpy.URDF):
-            return True
+            return format == URDF_FORMAT
         return super().is_format(format)
 
 
