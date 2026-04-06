@@ -3742,7 +3742,35 @@ def test_cholesky_tiling(monkeypatch, tol):
         assert np.linalg.norm(Mgrad) > 5.0
         values.append(Mgrad)
 
-    assert_allclose(*values, tol=tol)
+    # Analysis for choice of tol. 'main' here represents 'Cholesky shared
+    # memory implementation', which was what was in place at commit 7bf5f6a7.
+    # 'Branch' here represents the shuffle based fused Cholesky and patched-H
+    # implementation.
+    # ========================================================================
+    # Cholesky Tiled vs Non-Tiled: Numerical Accuracy Comparison
+    # ========================================================================
+    # Main commit:   7bf5f6a7
+    # Branch commit: 6f90d8a8 (hp/incremental-hessian-fuse-chol-tiles-api)
+    # Quadrants:     38f16c77b (hp/tile16-tiles-only)
+
+    # Metric                               Main          Branch
+    # ---------------------------------------------------------
+    # max_abs_diff               2.825928e-02    1.220703e-03
+    # max_rel_diff               2.477033e-02    1.056026e-02
+    # norm_tiled                 1.236271e+03    1.346164e+03
+    # norm_notiled               1.236246e+03    1.346164e+03
+
+    # Tolerance                          Main          Branch
+    # -------------------------------------------------------
+    # tol=1e-03                         PASS            PASS
+    # tol=5e-04                         FAIL            PASS
+    # tol=2e-04                         FAIL            PASS
+    # tol=1e-04                         FAIL            FAIL
+    # tol=5e-05                         FAIL            FAIL
+    # tol=1e-05                         FAIL            FAIL
+
+    # ========================================================================
+    assert_allclose(*values, tol=5e-4)
 
 
 @pytest.mark.precision("32")
