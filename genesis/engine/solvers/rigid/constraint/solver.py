@@ -1812,7 +1812,11 @@ def func_cholesky_and_solve_fused_tiled(
             if k0 + tid < n_dofs:
                 L_sh[k0 : k0 + Tile16x16.SIZE, k0:n_dofs] = L_kk
 
-        # --- Fused solve: Ly = grad (forward), L^T x = y (backward) ---
+        # --- Scalar triangular solve using L from shared memory ---
+        # No longer using 16x16 tiles; the 16 threads parallelize each row's
+        # dot product by striping across columns, then butterfly-reduce to
+        # sum the partial products. Thread 0 writes each solved element.
+
         # Load gradient into v_sh
         k = tid
         while k < n_dofs:
