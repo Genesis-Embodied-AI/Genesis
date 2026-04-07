@@ -3142,16 +3142,7 @@ def func_solve_iter(
                 # Bypass incremental Cholesky when sparse_solve=True.
                 # The incremental rank-1 update assumes globally descending DOF order
                 # in jac_relevant_dofs, which doesn't hold for cross-entity constraints.
-                # Fall back to direct Hessian rebuild which uses the max/min fix.
-                is_degenerated = True
-            else:
-                is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
-                    i_b,
-                    constraint_state=constraint_state,
-                    rigid_global_info=rigid_global_info,
-                    static_rigid_sim_config=static_rigid_sim_config,
-                )
-            if is_degenerated:
+                # Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     entities_info=entities_info,
@@ -3159,6 +3150,21 @@ def func_solve_iter(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
+            else:
+                is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
+                    i_b,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if is_degenerated:
+                    func_hessian_and_cholesky_factor_direct_batch(
+                        i_b,
+                        entities_info=entities_info,
+                        constraint_state=constraint_state,
+                        rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                    )
 
         func_update_gradient_batch(
             i_b,
