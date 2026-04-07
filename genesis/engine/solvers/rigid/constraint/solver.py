@@ -16,6 +16,28 @@ from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
+
+@qd.func
+def _sort_relevant_dofs_descending(
+    constraint_state: array_class.ConstraintState,
+    i_con: qd.int32,
+    n: qd.int32,
+    i_b: qd.int32,
+):
+    """Insertion sort jac_relevant_dofs[i_con, :n, i_b] in descending order.
+
+    Called after populating relevant DOFs for a constraint that may involve
+    multiple entities. The array is typically <= 14 elements, so O(n^2) is fine.
+    """
+    for i in range(1, n):
+        key = constraint_state.jac_relevant_dofs[i_con, i, i_b]
+        j = i - 1
+        while j >= 0 and constraint_state.jac_relevant_dofs[i_con, j, i_b] < key:
+            constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = constraint_state.jac_relevant_dofs[i_con, j, i_b]
+            j -= 1
+        constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = key
+
+
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
@@ -668,6 +690,7 @@ def add_collision_constraints(
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -784,6 +807,7 @@ def func_equality_connect(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -875,6 +899,16 @@ def func_equality_joint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        con_n_relevant_dofs = 0
+        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof1
+        con_n_relevant_dofs += 1
+        if i_dof2 != i_dof1:
+            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof2
+            con_n_relevant_dofs += 1
+        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -1108,6 +1142,7 @@ def func_equality_weld(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -1163,6 +1198,7 @@ def func_equality_weld(
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_con in range(n_con, n_con + 3):
             constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
+            _sort_relevant_dofs_descending(constraint_state, i_con, con_n_relevant_dofs, i_b)
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
@@ -1284,6 +1320,10 @@ def add_frictionloss_constraints(
                         for i_d2 in range(n_dofs):
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
                         constraint_state.jac[i_con, i_d, i_b] = jac
+
+                        if qd.static(static_rigid_sim_config.sparse_solve):
+                            constraint_state.jac_relevant_dofs[i_con, 0, i_b] = i_d
+                            constraint_state.jac_n_relevant_dofs[i_con, i_b] = 1
 
 
 # ====================================== Runtime User-Specified Weld Constraints ======================================
@@ -1423,11 +1463,16 @@ def func_hessian_direct_batch(
                 i_d1 = constraint_state.jac_relevant_dofs[i_c, i_d1_, i_b]
                 if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
-                        i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
-                        constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                            constraint_state.nt_H[i_b, i_d1, i_d2]
-                            + constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.jac[i_c, i_d1, i_b]
+                        i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]
+                        # Ensure lower triangle: row >= col.
+                        # jac_relevant_dofs is descending within each entity but
+                        # can have cross-entity pairs where i_d2 > i_d1.
+                        row = qd.max(i_d1, i_d2)
+                        col = qd.min(i_d1, i_d2)
+                        constraint_state.nt_H[i_b, row, col] = (
+                            constraint_state.nt_H[i_b, row, col]
+                            + constraint_state.jac[i_c, col, i_b]
+                            * constraint_state.jac[i_c, row, i_b]
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
@@ -3107,13 +3152,11 @@ def func_solve_iter(
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-            is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
-                i_b,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            if is_degenerated:
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                # Bypass incremental Cholesky when sparse_solve=True.
+                # The incremental rank-1 update assumes globally descending DOF order
+                # in jac_relevant_dofs, which doesn't hold for cross-entity constraints.
+                # Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     entities_info=entities_info,
@@ -3121,6 +3164,21 @@ def func_solve_iter(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
+            else:
+                is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
+                    i_b,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if is_degenerated:
+                    func_hessian_and_cholesky_factor_direct_batch(
+                        i_b,
+                        entities_info=entities_info,
+                        constraint_state=constraint_state,
+                        rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                    )
 
         func_update_gradient_batch(
             i_b,
