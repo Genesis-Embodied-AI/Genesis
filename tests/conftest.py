@@ -217,6 +217,14 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["NUMEXPR_NUM_THREADS"] = num_cpu_per_worker
         os.environ["NUMBA_NUM_THREADS"] = num_cpu_per_worker
 
+        # Avoid numba cache collision between workers.
+        # Must be set before numba is imported, so it cannot live in a fixture.
+        # `config.option.basetemp` is already worker-specific — xdist's main process creates a
+        # subdirectory per worker (e.g. `basetemp/popen-gw0`) and passes it via `setup_config`.
+        # `_tmp_path_factory` is not available here because `pytest_configure` has not run yet.
+        if config.option.basetemp:
+            os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(config.option.basetemp) / "numba-cache"))
+
 
 def _get_gpu_indices():
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -669,9 +677,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
-
-    # Avoid numba cache collision
-    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / ".cache" / "numba"))
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
     monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
