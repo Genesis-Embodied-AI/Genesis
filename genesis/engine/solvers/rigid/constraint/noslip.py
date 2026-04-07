@@ -32,23 +32,45 @@ def kernel_build_efc_AR_b(
             for i_d in range(n_dofs):
                 constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
-            rigid_solver.func_solve_mass_batch(
-                i_b,
-                constraint_state.Mgrad,
-                constraint_state.Mgrad,
-                array_class.PLACEHOLDER,
-                entities_info=entities_info,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-                is_backward=False,
-            )
+            # M⁻¹ solve — skip entities whose DOFs are all zero in J[row]
+            for i_0 in (
+                range(rigid_global_info.n_awake_entities[i_b])
+                if qd.static(static_rigid_sim_config.use_hibernation)
+                else range(entities_info.n_links.shape[0])
+            ):
+                i_e = (
+                    rigid_global_info.awake_entities[i_0, i_b]
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else i_0
+                )
+                if rigid_global_info.mass_mat_mask[i_e, i_b]:
+                    dof_start = entities_info.dof_start[i_e]
+                    dof_end = entities_info.dof_end[i_e]
+                    entity_has_nonzero = False
+                    for i_d in range(dof_start, dof_end):
+                        if constraint_state.Mgrad[i_d, i_b] != gs.qd_float(0.0):
+                            entity_has_nonzero = True
+                            break
+                    if entity_has_nonzero:
+                        rigid_solver.func_solve_mass_entity(
+                            i_e,
+                            i_b,
+                            constraint_state.Mgrad,
+                            constraint_state.Mgrad,
+                            array_class.PLACEHOLDER,
+                            entities_info=entities_info,
+                            rigid_global_info=rigid_global_info,
+                            static_rigid_sim_config=static_rigid_sim_config,
+                            is_backward=False,
+                        )
 
-            # AR[r, c] = J[c, :] * tmp
-            for i_col in range(nefc):
+            # AR[r, c] = J[c, :] · Mgrad — exploit symmetry: only lower triangle
+            for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
                 for i_d in range(n_dofs):
                     s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[i_row, i_col, i_b] = s
+                constraint_state.efc_AR[i_col, i_row, i_b] = s
 
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
