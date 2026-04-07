@@ -18,8 +18,8 @@ from typing import Literal, Sequence
 
 import cpuinfo
 import mujoco
-import numpy as np
 import pytest
+import numpy as np
 import torch
 from httpcore import TimeoutException as HTTPTimeoutException
 from httpx import HTTPError as HTTPXError
