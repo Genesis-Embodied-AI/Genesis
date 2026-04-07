@@ -47,6 +47,7 @@ def test_imgui_overlay_screenshot(png_snapshot):
     """Verify that the ImGui overlay renders visibly on top of the scene."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
+            res=(960, 720),
             camera_pos=(2.0, 2.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
             run_in_thread=(sys.platform == "linux"),
