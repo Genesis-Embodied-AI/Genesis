@@ -4,6 +4,7 @@ import gc
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import warnings
@@ -183,6 +184,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         if config.option.numprocesses > max_workers:
             raise ValueError(f"The number of workers cannot exceed '{max_workers}' on this machine.")
 
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    config = session.config
+
     # Properly configure Quadrants std out stream right away to avoid significant performance penalty (~10%)
     # Note that this variable must be set in the main thread BEFORE spawning the distributed workers, otherwise
     # the variable will be set incorrectly. Although, Genesis is already setting this env variable properly at import,
@@ -202,6 +207,8 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             os.environ["QD_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
+        expr = Expression.compile(config.option.markexpr)
+        is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
         if is_benchmarks:
             # FIXME: Enabling multi-threading in benchmark is making compile time estimation unreliable
             num_cpu_per_worker = "1"
@@ -217,13 +224,10 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["NUMEXPR_NUM_THREADS"] = num_cpu_per_worker
         os.environ["NUMBA_NUM_THREADS"] = num_cpu_per_worker
 
-        # Avoid numba cache collision between workers.
-        # Must be set before numba is imported, so it cannot live in a fixture.
-        # `config.option.basetemp` is already worker-specific — xdist's main process creates a
-        # subdirectory per worker (e.g. `basetemp/popen-gw0`) and passes it via `setup_config`.
-        # `_tmp_path_factory` is not available here because `pytest_configure` has not run yet.
-        if config.option.basetemp:
-            os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(config.option.basetemp) / "numba-cache"))
+    # Avoid numba cache collision between sessions and workers.
+    # Must be set before numba is imported, so it cannot live in a fixture.
+    basetemp = config._tmp_path_factory.getbasetemp()
+    os.environ["NUMBA_CACHE_DIR"] = str(basetemp / "numba-cache")
 
 
 def _get_gpu_indices():
@@ -467,7 +471,7 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.skipped and isinstance(report.longrepr, tuple):
         _, _, reason = report.longrepr
-        # pytest may prefix the reason with "Skipped: " — strip it for matching
+        # pytest may prefix the reason with "Skipped: " - strip it for matching
         bare_reason = reason.removeprefix("Skipped: ")
         lineno = _CANONICAL_SKIP_LINES.get(bare_reason)
         if (
@@ -620,16 +624,16 @@ def dof_damping(request):
 
 
 @pytest.fixture
-def disable_cache(request):
-    disable_cache = None
-    for mark in request.node.iter_markers("disable_cache"):
+def cache(request):
+    cache = None
+    for mark in request.node.iter_markers("cache"):
         if mark.args:
-            if disable_cache is not None:
-                pytest.fail("'disable_cache' can only be specified once.")
-            (disable_cache,) = mark.args
-    if disable_cache is None:
-        disable_cache = True
-    return disable_cache
+            if cache is not None:
+                pytest.fail("'cache' can only be specified once.")
+            (cache,) = mark.args
+    if cache is None:
+        cache = True
+    return cache
 
 
 @pytest.fixture
@@ -655,7 +659,7 @@ def debug(request):
 
 
 @pytest.fixture(scope="function", autouse=True)
-def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, disable_cache):
+def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, performance_mode, debug, cache):
     import genesis as gs
 
     # Early return if backend is None
@@ -671,12 +675,18 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
     if debug is None:
         debug = request.config.getoption("--dev")
 
-    if not disable_cache:
+    if not cache:
         monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
         monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
+
+        # Wipe worker-specific cache entirely since there is no way to disable it
+        numba_cache_dir = Path(os.environ["NUMBA_CACHE_DIR"])
+        basetemp = request.config._tmp_path_factory.getbasetemp()
+        assert numba_cache_dir.is_relative_to(basetemp)
+        shutil.rmtree(numba_cache_dir, ignore_errors=True)
 
     # Redirect name terrain cache directory to some test-local temporary location to avoid conflict and persistence
     monkeypatch.setattr("genesis.utils.misc.get_gnd_cache_dir", lambda: str(tmp_path / ".cache" / "terrain"))
