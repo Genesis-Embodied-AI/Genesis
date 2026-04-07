@@ -160,7 +160,7 @@ if __name__ == "__main__":
     def reset_robot():
         target_pos[:], target_quat[:] = target_init_pos, target_init_quat
         pose = gu.trans_quat_to_T(target_pos, target_quat)
-        scene.visualizer.context.update_debug_objects((target_ik,), (pose,))
+        scene.update_debug_objects((target_ik,), (pose,))
 
         qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         franka.set_qpos(qpos[motor_dofs_idx], motor_dofs_idx)
@@ -197,7 +197,7 @@ if __name__ == "__main__":
         while is_running:
             # Update target entity visualization
             pose = gu.trans_quat_to_T(target_pos, target_quat)
-            scene.visualizer.context.update_debug_objects((target_ik,), (pose,))
+            scene.update_debug_objects((target_ik,), (pose,))
 
             # Control arm with inverse kinematics
             qpos = franka.inverse_kinematics(

@@ -30,6 +30,10 @@ from .utils import format_color_vector
 from .texture import Texture
 
 
+MARKER_XRAY_DIM_FACTOR = 0.3
+MARKER_XRAY_ALPHA = 0.4
+
+
 class Renderer(object):
     """Class for handling all rendering operations on a scene.
 
@@ -418,9 +422,43 @@ class Renderer(object):
                 self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, floor_tex=floor_tex, env_idx=env_idx
             )
 
+        # Render occluded markers as darkened ghosts for depth cues
+        if flags & RenderFlags.MARKER_XRAY and not (
+            flags & (RenderFlags.SEG | RenderFlags.DEPTH_ONLY | RenderFlags.SKIP_MARKERS)
+        ):
+            self._marker_xray_pass(V, P, cam_pos, flags, screen_size, env_idx)
+
         # If doing offscreen render, copy result from framebuffer and return
         if flags & RenderFlags.OFFSCREEN:
             return self._read_main_framebuffer(scene, flags)
+
+    def _marker_xray_pass(self, V, P, cam_pos, flags, screen_size, env_idx):
+        """Render markers behind geometry with darkened transparency (X-ray effect)."""
+        marker_mask = self.jit.render_flags[:, 6].astype(bool)
+        if not np.any(marker_mask):
+            return
+
+        # Save and dim marker colors, force alpha blending
+        saved_pbr_mat = self.jit.pbr_mat[marker_mask].copy()
+        saved_blend_flags = self.jit.render_flags[marker_mask, 0].copy()
+        self.jit.pbr_mat[marker_mask, 0:3] *= MARKER_XRAY_DIM_FACTOR
+        self.jit.pbr_mat[marker_mask, 3] = MARKER_XRAY_ALPHA
+        self.jit.render_flags[marker_mask, 0] = 1
+
+        # Draw only occluded fragments, without touching the depth buffer
+        glDepthFunc(GL_GREATER)
+        glDepthMask(GL_FALSE)
+
+        xray_flags = flags & ~(RenderFlags.SHADOWS_DIRECTIONAL | RenderFlags.SHADOWS_SPOT | RenderFlags.SHADOWS_POINT)
+        self.jit.forward_pass(
+            self, V, P, cam_pos, xray_flags, ProgramFlags.USE_MATERIAL, screen_size, env_idx=env_idx, markers_only=True
+        )
+
+        # Restore GL state and marker data
+        glDepthFunc(GL_LESS)
+        glDepthMask(GL_TRUE)
+        self.jit.pbr_mat[marker_mask] = saved_pbr_mat
+        self.jit.render_flags[marker_mask, 0] = saved_blend_flags
 
     def _point_shadow_mapping_pass(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light

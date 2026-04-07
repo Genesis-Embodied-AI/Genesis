@@ -1029,7 +1029,7 @@ def test_draw_debug(renderer, show_viewer):
     poses = gu.trans_to_T(np.zeros((2, 2, 3)))
     for i in range(2):
         poses[:, i] = gu.trans_quat_to_T(2.0 * (np.random.rand(2, 3) - 0.5), np.random.rand(2, 4))
-        scene.visualizer.context.update_debug_objects([frame_obj, sphere_obj], poses)
+        scene.update_debug_objects([frame_obj, sphere_obj], poses)
         scene.visualizer.update()
         rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
         rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
