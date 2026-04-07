@@ -57,14 +57,14 @@ def rebuild_scene(plugin):
     scene.build()
 
     # Re-register plugin on new viewer
-    scene.viewer._pyrender_viewer.register_plugin(plugin)
+    scene.viewer.add_plugin(plugin)
 
     # Restore camera
     scene.viewer.set_camera_pose(pos=cam_pos, lookat=cam_lookat)
 
 
 plugin = ImGuiOverlayPlugin(rebuild_fn=rebuild_scene)
-scene.viewer._pyrender_viewer.register_plugin(plugin)
+scene.viewer.add_plugin(plugin)
 
 
 def custom_panel(imgui):

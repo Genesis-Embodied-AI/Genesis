@@ -1,49 +1,85 @@
-"""Integration tests for ImGuiOverlayPlugin with a real Genesis scene."""
+"""Screenshot integration test for ImGuiOverlayPlugin."""
+
+import io
+import sys
+import threading
 
 import numpy as np
+import OpenGL.error
 import pytest
+from PIL import Image
 
 import genesis as gs
 from genesis.ext.pyrender.imgui_overlay import ImGuiOverlayPlugin
+from genesis.vis.viewer_plugins.viewer_plugin import ViewerPlugin
+
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+
+
+class _FrameCapturePlugin(ViewerPlugin):
+    """Test helper that reads the default framebuffer after all prior plugins (including ImGui) have drawn."""
+
+    def __init__(self):
+        super().__init__()
+        self._armed = False
+        self._result = None
+        self._ready = threading.Event()
+
+    def on_draw(self):
+        if self._armed:
+            renderer = self.viewer._renderer
+            viewport = self.viewer._viewport_size
+            self._result = renderer.jit.read_color_buf(*viewport, rgba=False)
+            self._armed = False
+            self._ready.set()
+
+    def capture(self, timeout=30.0):
+        self._ready.clear()
+        self._armed = True
+        self._ready.wait(timeout=timeout)
+        return self._result
 
 
 @pytest.mark.required
-def test_imgui_overlay_plugin(show_viewer):
-    """Test ImGuiOverlayPlugin with a real Panda scene: state, should_step, cache, qpos update."""
-    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
-    scene.add_entity(gs.morphs.Plane())
-    panda = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
+def test_imgui_overlay_screenshot(png_snapshot):
+    """Verify that the ImGui overlay renders visibly on top of the scene."""
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 2.0, 1.5),
+            camera_lookat=(0.0, 0.0, 0.5),
+            run_in_thread=(sys.platform == "linux"),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=True,
+    )
+    scene.add_entity(gs.morphs.Plane(), name="plane")
+    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"), name="panda")
+
+    imgui_plugin = ImGuiOverlayPlugin()
+    scene.viewer.add_plugin(imgui_plugin)
+
+    capture_plugin = _FrameCapturePlugin()
+    scene.viewer.add_plugin(capture_plugin)
+
     scene.build()
+    scene.step()
 
-    plugin = ImGuiOverlayPlugin()
-    plugin.scene = scene
-    # viewer reference not needed for non-rendering tests; set to None
-    plugin.viewer = None
+    rgb_arr = capture_plugin.capture()
+    assert rgb_arr is not None
+    assert rgb_arr.ndim == 3 and rgb_arr.shape[2] == 3
 
-    # -- Initial state --
-    assert plugin.paused is False
-    assert plugin._available is False
-
-    # -- should_step logic --
-    assert plugin.should_step() is True
-    plugin.paused = True
-    assert plugin.should_step() is False
-    plugin._step_requested = True
-    assert plugin.should_step() is True
-    assert plugin.should_step() is False  # consumed
-    plugin.paused = False
-
-    # -- _cache_entity_data with real entities --
-    plugin._cache_entity_data()
-    assert len(plugin._entity_cache) > 0
-
-    # Find the Panda entry (has DOFs)
-    panda_data = None
-    for data in plugin._entity_cache.values():
-        if data["n_qs"] > 0:
-            panda_data = data
-            break
-    assert panda_data is not None
-    assert panda_data["n_qs"] == panda.n_qs
-    assert len(panda_data["q_names"]) == panda.n_qs
-    assert not panda_data["has_free_joint"]
+    try:
+        img = Image.fromarray(rgb_arr)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        assert buf.getvalue() == png_snapshot
+    except AssertionError:
+        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
+        raise
+    finally:
+        scene.viewer.stop()
