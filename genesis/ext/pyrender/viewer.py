@@ -1046,6 +1046,8 @@ class Viewer(pyglet.window.Window):
             flags |= RenderFlags.OFFSCREEN
         if self.render_flags.get("skip_markers", False):
             flags |= RenderFlags.SKIP_MARKERS
+        else:
+            flags |= RenderFlags.MARKER_XRAY
 
         seg_node_map = None
         if self.render_flags["seg"]:
