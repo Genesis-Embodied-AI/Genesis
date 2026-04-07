@@ -1,12 +1,12 @@
-ARG CUDA_VERSION=12.1
+ARG CUDA_VERSION=12.8
 
 # ===============================================================
 # Stage 1: Build LuisaRender
 # ===============================================================
-FROM pytorch/pytorch:2.5.1-cuda${CUDA_VERSION}-cudnn9-devel AS builder
+FROM pytorch/pytorch:2.11.0-cuda${CUDA_VERSION}-cudnn9-devel AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 # Install necessary packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,10 +38,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN pip install "pybind11[global]"
 
 # Install CMake
-RUN wget https://github.com/Kitware/CMake/releases/download/v3.31.0-rc2/cmake-3.31.0-rc2-linux-x86_64.sh && \
-    chmod +x cmake-3.31.0-rc2-linux-x86_64.sh && \
-    ./cmake-3.31.0-rc2-linux-x86_64.sh --skip-license --prefix=/usr/local && \
-    rm cmake-3.31.0-rc2-linux-x86_64.sh
+RUN pip install --no-cache-dir cmake==3.31.6
 
 # Build LuisaRender
 WORKDIR /workspace
@@ -54,9 +51,10 @@ RUN chmod +x ./build_luisa.sh && ./build_luisa.sh ${PYTHON_VERSION}
 # ===============================================================
 # Stage 2: Runtime Environment
 # ===============================================================
-FROM pytorch/pytorch:2.5.1-cuda${CUDA_VERSION}-cudnn9-devel
+FROM pytorch/pytorch:2.11.0-cuda${CUDA_VERSION}-cudnn9-devel
 
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
+ENV PYTHON_VERSION=${PYTHON_VERSION}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NVIDIA_DRIVER_CAPABILITIES=all
 
@@ -98,12 +96,12 @@ RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
 
 # -------------------- Surface Reconstruction --------------------
 # Set the LD_LIBRARY_PATH directly in the environment
-COPY --from=builder /workspace/Genesis/genesis/ext/ParticleMesher/ParticleMesherPy /opt/conda/lib/python3.11/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy
-ENV LD_LIBRARY_PATH=/opt/conda/lib/python3.11/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy:$LD_LIBRARY_PATH
+COPY --from=builder /workspace/Genesis/genesis/ext/ParticleMesher/ParticleMesherPy /opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy
+ENV LD_LIBRARY_PATH=/opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/ParticleMesher/ParticleMesherPy:$LD_LIBRARY_PATH
 
 # --------------------- Ray Tracing Renderer ---------------------
 # Copy LuisaRender build artifacts from the builder stage
-COPY --from=builder /workspace/Genesis/genesis/ext/LuisaRender/build/bin /opt/conda/lib/python3.11/site-packages/genesis/ext/LuisaRender/build/bin
+COPY --from=builder /workspace/Genesis/genesis/ext/LuisaRender/build/bin /opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/build/bin
 # fix GLIBCXX_3.4.30 not found
 # Remove this — it's dangerous and broke cmake
 # RUN cd /opt/conda/lib && \
@@ -120,7 +118,7 @@ RUN echo '#!/bin/bash\n\
 if [ -n "${LOCAL_USER_ID}" ]; then\n\
   echo "Starting with UID: $LOCAL_USER_ID"\n\
   usermod -u $LOCAL_USER_ID user\n\
-  chown -R user:user /opt/conda/lib/python3.11/site-packages/genesis/ext/LuisaRender/\n\
+  chown -R user:user /opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/\n\
 fi\n\
 exec /bin/bash' > /entrypoint.sh && \
 chmod +x /entrypoint.sh

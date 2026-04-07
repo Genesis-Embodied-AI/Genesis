@@ -4,7 +4,7 @@ import pickle
 import sys
 import time
 import weakref
-from typing import TYPE_CHECKING, Callable, Iterable, Literal
+from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ from quadrants.lang import impl
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.engine.force_fields import ForceField
-from genesis.engine.materials.base import Material
+from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
 from genesis.options import (
     KinematicOptions,
@@ -45,8 +45,10 @@ from genesis.utils.warnings import warn_once
 
 if TYPE_CHECKING:
     from genesis.engine.entities.base_entity import Entity
+    from genesis.engine.entities.rigid_entity import RigidEntity
+    from genesis.engine.sensors.base_sensor import Sensor
     from genesis.recorders import Recorder
-    from genesis.options.sensors import SensorOptions
+    from genesis.options.sensors.options import SensorOptions, SensorT
 
 
 @gs.assert_initialized
@@ -149,29 +151,19 @@ class Scene(RBC):
 
         self.sim_options = sim_options
         self.coupler_options = coupler_options
-        self.tool_options = tool_options
-        self.rigid_options = rigid_options
-        self.kinematic_options = kinematic_options
-        self.mpm_options = mpm_options
-        self.sph_options = sph_options
-        self.fem_options = fem_options
-        self.sf_options = sf_options
-        self.pbd_options = pbd_options
+        self.tool_options = tool_options.model_copy_from(sim_options)
+        self.rigid_options = rigid_options.model_copy_from(sim_options)
+        self.kinematic_options = kinematic_options.model_copy_from(sim_options)
+        self.mpm_options = mpm_options.model_copy_from(sim_options)
+        self.sph_options = sph_options.model_copy_from(sim_options)
+        self.fem_options = fem_options.model_copy_from(sim_options)
+        self.sf_options = sf_options.model_copy_from(sim_options)
+        self.pbd_options = pbd_options.model_copy_from(sim_options)
         self.profiling_options = profiling_options
 
         self.vis_options = vis_options
         self.viewer_options = viewer_options
         self.renderer_options = renderer
-
-        # merge options
-        self.tool_options.copy_attributes_from(self.sim_options)
-        self.rigid_options.copy_attributes_from(self.sim_options)
-        self.kinematic_options.copy_attributes_from(self.sim_options)
-        self.mpm_options.copy_attributes_from(self.sim_options)
-        self.sph_options.copy_attributes_from(self.sim_options)
-        self.fem_options.copy_attributes_from(self.sim_options)
-        self.sf_options.copy_attributes_from(self.sim_options)
-        self.pbd_options.copy_attributes_from(self.sim_options)
 
         # simulator
         self._sim = Simulator(
@@ -283,8 +275,13 @@ class Scene(RBC):
                 )
         else:
             if sim_options.requires_grad and gs.use_ndarray:
+                if gs.backend == gs.metal:
+                    gs.raise_exception(
+                        "Metal backend does not support gradient computation with Quadrants dynamic array mode. "
+                        "Please use field mode instead, i.e. 'gs.init(..., performance_mode=True)'."
+                    )
                 gs.logger.info(
-                    "Use Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
+                    "Using Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
                 )
         if rigid_options.box_box_detection is None:
@@ -325,6 +322,28 @@ class Scene(RBC):
             # This scene may have been destroyed previously
             pass
 
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: None = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> "RigidEntity": ...
+
+    @overload
+    def add_entity(
+        self,
+        morph: Morph | Iterable[Morph],
+        material: Material[EntityT] = ...,
+        surface: Surface | None = ...,
+        visualize_contact: bool = ...,
+        vis_mode: str | None = ...,
+        name: str | None = ...,
+    ) -> EntityT: ...
+
     @gs.assert_unbuilt
     def add_entity(
         self,
@@ -334,7 +353,7 @@ class Scene(RBC):
         visualize_contact: bool = False,
         vis_mode: str | None = None,
         name: str | None = None,
-    ):
+    ) -> "Entity":
         """
         Add an entity to the scene.
 
@@ -375,20 +394,26 @@ class Scene(RBC):
         if is_heterogeneous:
             morph = tuple(morph)
             morph_for_checks = morph[0]
-            if not isinstance(material, gs.materials.Rigid):
-                gs.raise_exception("Heterogeneous morphs (iterable of morphs) are only supported for Rigid materials.")
-            for m in morph:
-                if not isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh)):
-                    gs.raise_exception(
-                        f"Heterogeneous morphs only support Primitive and Mesh types, got: {type(m).__name__}."
-                    )
+            if not isinstance(material, (gs.materials.Rigid, gs.materials.Kinematic)):
+                gs.raise_exception(
+                    "Heterogeneous morphs (iterable of morphs) are only supported for Rigid and Kinematic materials."
+                )
+            if not all(
+                isinstance(m, (gs.morphs.Primitive, gs.morphs.Mesh, gs.morphs.URDF, gs.morphs.MJCF)) for m in morph
+            ):
+                gs.raise_exception("Heterogeneous morphs only support Primitive, Mesh, URDF and MJCF types.")
+            if len(set(isinstance(m, (gs.morphs.URDF, gs.morphs.MJCF)) for m in morph)) > 1:
+                gs.raise_exception(
+                    "Heterogeneous morphs must be consistent: either all articulated robots (ie URDF, MJCF) or all "
+                    "basic objects (ie Primitive, Mesh)."
+                )
         else:
             morph_for_checks = morph
 
         if isinstance(material, gs.materials.Rigid):
             # small sdf res is sufficient for primitives regardless of size
             if isinstance(morph_for_checks, gs.morphs.Primitive):
-                material._sdf_max_res = 32
+                material.sdf_max_res = 32
 
         # some morph should not smooth surface normal
         if isinstance(morph_for_checks, (gs.morphs.Box, gs.morphs.Cylinder, gs.morphs.Terrain)):
@@ -473,10 +498,12 @@ class Scene(RBC):
             gs.raise_exception()
 
         # Set material-dependent default options
-        if isinstance(morph, gs.morphs.FileMorph):
-            # Rigid entities will convexify geom by default
-            if morph.convexify is None:
-                morph.convexify = isinstance(material, gs.materials.Rigid)
+        morphs_to_configure = morph if is_heterogeneous else (morph,)
+        for morph_variant in morphs_to_configure:
+            if isinstance(morph_variant, gs.morphs.FileMorph):
+                # Rigid entities will convexify geom by default
+                if morph_variant.convexify is None:
+                    morph_variant.convexify = isinstance(material, gs.materials.Rigid)
 
         entity = self._sim._add_entity(morph, material, surface, visualize_contact, name)
 
@@ -610,7 +637,7 @@ class Scene(RBC):
         self.visualizer.add_light(pos, dir, color, intensity, directional, castshadow, cutoff, attenuation)
 
     @gs.assert_unbuilt
-    def add_sensor(self, sensor_options: "SensorOptions"):
+    def add_sensor(self, sensor_options: "SensorOptions[SensorT]") -> "SensorT":
         """
         Add a sensor to the scene.
 
@@ -1063,7 +1090,7 @@ class Scene(RBC):
             return self._visualizer.context.draw_debug_arrow(pos, vec, radius, color)
 
     @gs.assert_built
-    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frame(self, T, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         """
         Draws a 3-axis coordinate frame in the scene for visualization.
 
@@ -1077,6 +1104,8 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
+        color : array_like, shape (4,), optional
+            Uniform RGBA color override for the entire frame. If None, uses standard RGB axis coloring.
 
         Returns
         -------
@@ -1084,10 +1113,10 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frame(T, axis_length, origin_size, axis_radius, color)
 
     @gs.assert_built
-    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01):
+    def draw_debug_frames(self, Ts, axis_length=1.0, origin_size=0.015, axis_radius=0.01, color=None):
         """
         Draws 3-axis coordinate frames in the scene for visualization.
 
@@ -1101,6 +1130,8 @@ class Scene(RBC):
             The size of the origin point (represented as a sphere).
         axis_radius : float, optional
             The radius of the axes (represented as cylinders).
+        color : array_like, shape (4,), optional
+            Uniform RGBA color override for the entire frame. If None, uses standard RGB axis coloring.
 
         Returns
         -------
@@ -1108,7 +1139,7 @@ class Scene(RBC):
             The created debug object.
         """
         with self._visualizer.viewer_lock:
-            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius)
+            return self._visualizer.context.draw_debug_frames(Ts, axis_length, origin_size, axis_radius, color)
 
     @gs.assert_built
     def draw_debug_mesh(self, mesh, pos=np.zeros(3), T=None):
@@ -1320,9 +1351,26 @@ class Scene(RBC):
         return rgb_out, depth_out, seg_out, normal_out
 
     @gs.assert_built
+    def update_debug_objects(self, objs, poses):
+        """
+        Updates the poses of debug objects previously created by ``draw_debug_*`` methods.
+
+        Parameters
+        ----------
+        objs : tuple of genesis.ext.pyrender.mesh.Mesh
+            The debug objects to update, i.e. visualizer nodes returned by ``draw_debug_*`` methods. Currently only
+            individual sphere, frame, mesh, and arrow objects (returned by ``draw_debug_sphere``, ``draw_debug_frame``,
+            ``draw_debug_mesh``, and ``draw_debug_arrow`` respectively) are supported.
+        poses : tuple of array_like, each of shape (4, 4)
+            The new transformation matrices for each debug object.
+        """
+        with self._visualizer.viewer_lock:
+            self._visualizer.context.update_debug_objects(objs, poses)
+
+    @gs.assert_built
     def clear_debug_object(self, obj):
         """
-        Clears all the debug objects in the scene.
+        Clears the specified debug object from the scene.
         """
         with self._visualizer.viewer_lock:
             self._visualizer.context.clear_debug_object(obj)

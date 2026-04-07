@@ -57,6 +57,7 @@ RenderFlags_FLIP_WIREFRAME = RenderFlags.FLIP_WIREFRAME
 RenderFlags_ALL_WIREFRAME = RenderFlags.ALL_WIREFRAME
 RenderFlags_SKIP_CULL_FACES = RenderFlags.SKIP_CULL_FACES
 RenderFlags_SHADOWS_DIRECTIONAL = RenderFlags.SHADOWS_DIRECTIONAL
+RenderFlags_SHADOWS_SPOT = RenderFlags.SHADOWS_SPOT
 RenderFlags_SHADOWS_POINT = RenderFlags.SHADOWS_POINT
 RenderFlags_SKIP_FLOOR = RenderFlags.SKIP_FLOOR
 RenderFlags_OFFSCREEN = RenderFlags.OFFSCREEN
@@ -307,6 +308,8 @@ class JITRenderer:
         self.mode = np.zeros(n, np.int32)
         self.n_instances = np.zeros(n, np.int32)
         self.n_indices = np.zeros(n, np.int32)  # positive: indices, negative: positions
+        self.model_buffer_id = np.zeros(n, np.int32)
+        self.inst_attr_start = np.zeros(n, np.int32)
 
         floor_existed = False
 
@@ -360,12 +363,21 @@ class JITRenderer:
             self.mode[i] = primitive.mode
             self.n_instances[i] = len(primitive.poses) if primitive.poses is not None else 1
             self.n_indices[i] = primitive.indices.size if primitive.indices is not None else -len(primitive.positions)
+            self.model_buffer_id[i] = primitive._buffers.get("model", 0)
+            self.inst_attr_start[i] = getattr(primitive, "_inst_attr_start", 0)
 
     def load_programs(self, renderer, flags, program_flags):
         if (flags, program_flags) not in self.program_id:
             program_id = np.zeros_like(self.vao_id)
             for i, primitive in enumerate(self.primitive_list):
-                program = renderer._get_primitive_program(primitive, flags, program_flags)
+                prim_flags = flags
+                # Markers are excluded from scene bounds, so shadow maps may not cover them. Disable shadow
+                # reception while keeping full lighting.
+                if self.render_flags[i, 6]:
+                    prim_flags &= ~(
+                        RenderFlags.SHADOWS_DIRECTIONAL | RenderFlags.SHADOWS_SPOT | RenderFlags.SHADOWS_POINT
+                    )
+                program = renderer._get_primitive_program(primitive, prim_flags, program_flags)
                 program_id[i] = program._program_id
             self.program_id[(flags, program_flags)] = program_id
 
@@ -373,7 +385,6 @@ class JITRenderer:
         self.gl = GLWrapper()
 
         IS_OPENGL_42_AVAILABLE = hasattr(self.gl.wrapper_instance, "glDrawElementsInstancedBaseInstance")
-        OPENGL_42_ERROR_MSG = "Separated env rendering not supported because OpenGL 4.2 not available on this machine."
 
         @nb.jit(
             nb.none(
@@ -400,6 +411,8 @@ class JITRenderer:
                 nb.int32,
                 nb.float32[:],
                 nb.int32,
+                nb.int32[:],
+                nb.int32[:],
                 self.gl.wrapper_type,
             ),
             cache=True,
@@ -428,6 +441,8 @@ class JITRenderer:
             floor_tex,
             screen_size,
             env_idx,
+            model_buffer_id,
+            inst_attr_start,
             gl,
         ):
             is_rgba = not (flags & RenderFlags_DEPTH_ONLY or flags & RenderFlags_SEG)
@@ -450,7 +465,15 @@ class JITRenderer:
                 if pid != last_pid:
                     gl.glUseProgram(pid)
                     if is_rgba and not flags & RenderFlags_FLAT:
-                        lighting_texture = bind_lighting(pid, flags, light, shadow_map, light_matrix, ambient_light, gl)
+                        # Strip shadow flags for markers — their programs have no shadow uniforms
+                        light_flags = flags
+                        if render_flags[id, 6]:
+                            light_flags &= ~(
+                                RenderFlags_SHADOWS_DIRECTIONAL | RenderFlags_SHADOWS_SPOT | RenderFlags_SHADOWS_POINT
+                            )
+                        lighting_texture = bind_lighting(
+                            pid, light_flags, light, shadow_map, light_matrix, ambient_light, gl
+                        )
                         set_uniform_3fv(pid, "cam_pos", cam_pos, gl)
                         set_uniform_matrix_4fv(pid, "reflection_mat", reflection_mat, gl)
 
@@ -555,7 +578,19 @@ class JITRenderer:
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
                 else:
-                    raise RuntimeError(OPENGL_42_ERROR_MSG)
+                    # OpenGL 4.1 fallback: rebind instance attributes with offset
+                    gl.glBindBuffer(GL_ARRAY_BUFFER, model_buffer_id[id])
+                    for j in range(4):
+                        gl.glVertexAttribPointer(
+                            inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(env_idx * 64 + j * 16)
+                        )
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1)
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], 1)
+                    # Restore default attribute pointer (offset 0) to avoid corrupting VAO state
+                    for j in range(4):
+                        gl.glVertexAttribPointer(inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(j * 16))
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -573,12 +608,26 @@ class JITRenderer:
                 nb.float32[:, :],
                 nb.int8[:, :],
                 nb.int32,
+                nb.int32[:],
+                nb.int32[:],
                 self.gl.wrapper_type,
             ),
             cache=True,
         )
         def shadow_mapping_pass(
-            vao_id, program_id, pose, mode, n_instances, n_indices, mat_V, mat_P, render_flags, env_idx, gl
+            vao_id,
+            program_id,
+            pose,
+            mode,
+            n_instances,
+            n_indices,
+            mat_V,
+            mat_P,
+            render_flags,
+            env_idx,
+            model_buffer_id,
+            inst_attr_start,
+            gl,
         ):
             last_pid = -1
             for id in range(len(vao_id)):
@@ -620,7 +669,18 @@ class JITRenderer:
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
                 else:
-                    raise RuntimeError(OPENGL_42_ERROR_MSG)
+                    gl.glBindBuffer(GL_ARRAY_BUFFER, model_buffer_id[id])
+                    for j in range(4):
+                        gl.glVertexAttribPointer(
+                            inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(env_idx * 64 + j * 16)
+                        )
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1)
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], 1)
+                    # Restore default attribute pointer (offset 0) to avoid corrupting VAO state
+                    for j in range(4):
+                        gl.glVertexAttribPointer(inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(j * 16))
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -638,12 +698,26 @@ class JITRenderer:
                 nb.float32[:],
                 nb.int8[:, :],
                 nb.int32,
+                nb.int32[:],
+                nb.int32[:],
                 self.gl.wrapper_type,
             ),
             cache=True,
         )
         def point_shadow_mapping_pass(
-            vao_id, program_id, pose, mode, n_instances, n_indices, light_matrix, light_pos, render_flags, env_idx, gl
+            vao_id,
+            program_id,
+            pose,
+            mode,
+            n_instances,
+            n_indices,
+            light_matrix,
+            light_pos,
+            render_flags,
+            env_idx,
+            model_buffer_id,
+            inst_attr_start,
+            gl,
         ):
             last_pid = -1
             for id in range(len(vao_id)):
@@ -686,7 +760,18 @@ class JITRenderer:
                     else:
                         gl.glDrawArraysInstancedBaseInstance(mode[id], 0, -n_indices[id], 1, env_idx)
                 else:
-                    raise RuntimeError(OPENGL_42_ERROR_MSG)
+                    gl.glBindBuffer(GL_ARRAY_BUFFER, model_buffer_id[id])
+                    for j in range(4):
+                        gl.glVertexAttribPointer(
+                            inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(env_idx * 64 + j * 16)
+                        )
+                    if n_indices[id] > 0:
+                        gl.glDrawElementsInstanced(mode[id], n_indices[id], GL_UNSIGNED_INT, address_to_ptr(0), 1)
+                    else:
+                        gl.glDrawArraysInstanced(mode[id], 0, -n_indices[id], 1)
+                    # Restore default attribute pointer (offset 0) to avoid corrupting VAO state
+                    for j in range(4):
+                        gl.glVertexAttribPointer(inst_attr_start[id] + j, 4, GL_FLOAT, 0, 64, address_to_ptr(j * 16))
 
                 gl.glBindVertexArray(0)
             gl.glUseProgram(0)
@@ -773,10 +858,22 @@ class JITRenderer:
         reflection_mat=np.identity(4, np.float32),
         floor_tex=0,
         env_idx=-1,
+        markers_only=False,
     ):
         self.load_programs(renderer, flags, program_flags)
         if self._forward_pass is None:
             self.gen_func_ptr()
+        # Temporarily hide markers for non-debug offscreen cameras by setting their
+        # index count to 0, so draw calls render nothing for these nodes.
+        if flags & RenderFlags.SKIP_MARKERS:
+            marker_mask = self.render_flags[:, 6].astype(bool)
+            saved_n_indices = self.n_indices[marker_mask].copy()
+            self.n_indices[marker_mask] = 0
+        # Hide everything except markers for the X-ray pass
+        if markers_only:
+            non_marker_mask = ~self.render_flags[:, 6].astype(bool)
+            saved_non_marker_indices = self.n_indices[non_marker_mask].copy()
+            self.n_indices[non_marker_mask] = 0
         self._forward_pass(
             self.vao_id,
             self.program_id[(flags, program_flags)],
@@ -801,8 +898,14 @@ class JITRenderer:
             floor_tex,
             screen_size,
             env_idx,
+            self.model_buffer_id,
+            self.inst_attr_start,
             self.gl.wrapper_instance,
         )
+        if flags & RenderFlags.SKIP_MARKERS:
+            self.n_indices[marker_mask] = saved_n_indices
+        if markers_only:
+            self.n_indices[non_marker_mask] = saved_non_marker_indices
 
     def shadow_mapping_pass(self, renderer, V, P, flags, program_flags, env_idx=-1):
         self.load_programs(renderer, flags, program_flags)
@@ -819,6 +922,8 @@ class JITRenderer:
             np.ascontiguousarray(P, dtype=np.float32),
             self.render_flags,
             env_idx,
+            self.model_buffer_id,
+            self.inst_attr_start,
             self.gl.wrapper_instance,
         )
 
@@ -837,6 +942,8 @@ class JITRenderer:
             np.ascontiguousarray(light_pos, dtype=np.float32),
             self.render_flags,
             env_idx,
+            self.model_buffer_id,
+            self.inst_attr_start,
             self.gl.wrapper_instance,
         )
 
@@ -844,6 +951,7 @@ class JITRenderer:
         primitive = node.mesh.primitives[0]
         if primitive.normals is None:
             return None
+        vertices = np.ascontiguousarray(vertices, dtype=np.float32)
         if primitive.indices is not None:
             if self._update_normal_smooth is None:
                 self.gen_func_ptr()

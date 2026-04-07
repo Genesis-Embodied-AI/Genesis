@@ -47,8 +47,10 @@ if __name__ == "__main__":
             camera_fov=50,
             max_FPS=60,
         ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=True,
-        show_FPS=False,
     )
 
     ########################## entities ##########################
@@ -97,7 +99,7 @@ if __name__ == "__main__":
 
     # Initialize target pose
     target_pos = robot_init_pos.copy()
-    target_quat = [robot_init_quat.copy()]  # Use list to make it mutable in closures
+    target_quat = robot_init_quat.copy()
 
     # Control parameters
     dpos = 0.002
@@ -107,9 +109,9 @@ if __name__ == "__main__":
     def reset_robot():
         """Reset robot and cube to initial positions."""
         target_pos[:] = robot_init_pos.copy()
-        target_quat[0] = robot_init_quat.copy()
-        target.set_qpos(np.concatenate([target_pos, target_quat[0]]))
-        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat[0])
+        target_quat[:] = robot_init_quat.copy()
+        target.set_qpos(np.concatenate([target_pos, target_quat]))
+        q = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat)
         robot.set_qpos(q[:-2], motors_dof)
 
         # Randomize cube position
@@ -126,7 +128,7 @@ if __name__ == "__main__":
 
     def rotate(drot: float):
         drot_quat = gu.xyz_to_quat(np.array([0, 0, drot]))
-        target_quat[0] = gu.transform_quat_by_quat(target_quat[0], drot_quat)
+        target_quat[:] = gu.transform_quat_by_quat(target_quat, drot_quat)
 
     def toggle_gripper(close: bool = True):
         pos = -1.0 if close else 1.0
@@ -144,24 +146,24 @@ if __name__ == "__main__":
         Keybind("move_back", Key.DOWN, KeyAction.HOLD, callback=move, args=((dpos, 0, 0),)),
         Keybind("move_left", Key.LEFT, KeyAction.HOLD, callback=move, args=((0, -dpos, 0),)),
         Keybind("move_right", Key.RIGHT, KeyAction.HOLD, callback=move, args=((0, dpos, 0),)),
-        Keybind("move_up", Key.N, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
-        Keybind("move_down", Key.M, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
-        Keybind("rotate_ccw", Key.J, KeyAction.HOLD, callback=rotate, args=(drot,)),
-        Keybind("rotate_cw", Key.K, KeyAction.HOLD, callback=rotate, args=(-drot,)),
-        Keybind("reset_scene", Key.U, KeyAction.HOLD, callback=reset_robot),
+        Keybind("move_up", Key.K, KeyAction.HOLD, callback=move, args=((0, 0, dpos),)),
+        Keybind("move_down", Key.J, KeyAction.HOLD, callback=move, args=((0, 0, -dpos),)),
+        Keybind("rotate_ccw", Key.N, KeyAction.HOLD, callback=rotate, args=(drot,)),
+        Keybind("rotate_cw", Key.M, KeyAction.HOLD, callback=rotate, args=(-drot,)),
+        Keybind("reset_scene", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_robot),
         Keybind("close_gripper", Key.SPACE, KeyAction.PRESS, callback=toggle_gripper, args=(True,)),
         Keybind("open_gripper", Key.SPACE, KeyAction.RELEASE, callback=toggle_gripper, args=(False,)),
-        Keybind("quit", Key.ESCAPE, KeyAction.PRESS, callback=stop),
+        Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
     )
 
     ########################## run simulation ##########################
     try:
         while is_running:
             # Update target entity visualization
-            target.set_qpos(np.concatenate([target_pos, target_quat[0]]))
+            target.set_qpos(np.concatenate([target_pos, target_quat]))
 
             # Control arm with inverse kinematics
-            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat[0], return_error=True)
+            q, err = robot.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, return_error=True)
             robot.control_dofs_position(q[:-2], motors_dof)
 
             scene.step()

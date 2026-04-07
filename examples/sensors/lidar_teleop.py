@@ -161,7 +161,7 @@ def main():
         Keybind("pitch_down", Key.PERIOD, KeyAction.HOLD, callback=rotate, args=(1, True)),
         Keybind("yaw_ccw", Key.O, KeyAction.HOLD, callback=rotate, args=(2, False)),
         Keybind("yaw_cw", Key.P, KeyAction.HOLD, callback=rotate, args=(2, True)),
-        Keybind("reset", Key.BACKSLASH, KeyAction.HOLD, callback=reset_pose),
+        Keybind("reset", Key.BACKSLASH, KeyAction.RELEASE, callback=reset_pose),
         overwrite=True,
     )
 

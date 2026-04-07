@@ -1,4 +1,5 @@
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
@@ -18,6 +19,9 @@ from genesis.utils.array_class import LinksState
 from genesis.utils.geom import SpatialHasher
 
 from .base_solver import Solver
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import PBD2DEntity, PBD3DEntity, PBDFreeParticleEntity, PBDParticleEntity
 
 
 @qd.data_oriented
@@ -239,7 +243,9 @@ class PBDSolver(Solver):
     def is_active(self):
         return self.n_particles > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(
+        self, idx, material, morph, surface, name: str | None = None
+    ) -> "PBD2DEntity | PBD3DEntity | PBDParticleEntity | PBDFreeParticleEntity":
         if isinstance(material, gs.materials.PBD.Cloth):
             entity = PBD2DEntity(
                 scene=self.scene,

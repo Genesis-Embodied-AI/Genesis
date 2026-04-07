@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
+import xacro
+
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
 from genesis.ext import urdfpy
@@ -47,6 +49,42 @@ def get_robot_name(file_path):
             return name
         raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
     raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
+
+
+def load_xacro(path, mappings):
+    """Load a XACRO file into a ``urdfpy.URDF`` object with absolute mesh paths.
+
+    Expands all xacro macros, properties, includes, and conditionals in-memory using the ``xacro`` package, then
+    parses the resulting URDF XML into a ``urdfpy.URDF`` object. All relative mesh filenames are resolved to absolute
+    paths so that downstream consumers do not need access to the original source directory.
+
+    Note
+    ----
+    ``$(find package_name)`` substitutions require ROS's ``ament_index_python`` package.
+
+    Parameters
+    ----------
+    path : str
+        Absolute path to the ``.xacro`` or ``.urdf.xacro`` file.
+    mappings : dict
+        Key-value pairs to override ``xacro:arg`` declarations.
+
+    Returns
+    -------
+    urdfpy.URDF
+        The parsed URDF with absolute mesh paths.
+    """
+    doc = xacro.process_file(path, mappings=dict(mappings))
+    node = ET.fromstring(doc.toxml())
+    source_dir = os.path.dirname(path)
+    robot = urdfpy.URDF._from_xml(node, node, source_dir)
+    for link in robot.links:
+        for geom_prop in (*link.collisions, *link.visuals):
+            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
+                geom_prop.geometry.geometry.filename = urdfpy.utils.get_filename(
+                    source_dir, geom_prop.geometry.geometry.filename
+                )
+    return robot
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):
@@ -201,7 +239,7 @@ def parse_urdf(morph, surface):
                 if geom_is_col:
                     geom_surface = gs.surfaces.Collision()
                 elif (
-                    surface.color is None
+                    surface.texture is None
                     and getattr(geom_prop, "material") is not None
                     and geom_prop.material.color is not None
                     and (morph.prioritize_urdf_material or not tmesh.visual.defined)
@@ -334,13 +372,15 @@ def parse_urdf(morph, surface):
         if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
             j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
 
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
+        kp = gu.default_dofs_kp(j_info["n_dofs"])
+        kv = gu.default_dofs_kv(j_info["n_dofs"])
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:
-                j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
+                kp = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
             if joint.safety_controller.k_velocity is not None:
-                j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+                kv = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+        j_info["dofs_act_gain"] = kp
+        j_info["dofs_act_bias"] = np.column_stack([np.zeros_like(kp), -kp, -kv])
 
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
         if joint.limit is not None and joint.limit.effort is not None:
@@ -444,6 +484,63 @@ def translate_inertia(I, m, dist):
 def rotate_inertia(I, R):
     """Rotate inertia tensor I by rotation matrix R."""
     return R @ I @ R.T
+
+
+def principal_axes_rot(I, tol=1e-3):
+    """Return rotation matrix R whose columns are the (unsorted) principal axes of inertia I."""
+    I = 0.5 * (I + I.T)
+    eigvals, eigvecs = np.linalg.eigh(I)
+
+    if 1.0 - np.mean(np.abs(eigvecs).max(axis=1)) < tol:
+        return np.eye(3)
+
+    # Find degenerate groups
+    groups, i = [], 0
+    while i < 3:
+        j = i + 1
+        while j < 3 and eigvals[j] - eigvals[i] < tol * eigvals[-1]:
+            j += 1
+        groups.append(list(range(i, j)))
+        i = j
+
+    # Assign unique eigenvectors to their closest coordinate axis first
+    out_cols = [None, None, None]
+    used_axes = set()
+    for g in groups:
+        if len(g) == 1:
+            col = g[0]
+            for ax in np.argsort(np.abs(eigvecs[:, col]))[::-1]:
+                if ax not in used_axes:
+                    out_cols[ax] = col
+                    used_axes.add(ax)
+                    break
+
+    # Fill remaining axes with degenerate group columns
+    remaining_axes = [ax for ax in range(3) if ax not in used_axes]
+    remaining_cols = [c for g in groups if len(g) > 1 for c in g]
+    for ax, col in zip(remaining_axes, remaining_cols):
+        out_cols[ax] = col
+
+    R = eigvecs[:, out_cols]
+
+    # Procrustes on the degenerate axes (which may be non-contiguous after reordering)
+    if remaining_axes:
+        U = R[:, remaining_axes]
+        T = np.eye(3)[:, remaining_axes]
+        Usvd, _, Vt = np.linalg.svd(U.T @ T)
+        Q = Usvd @ Vt
+        if np.linalg.det(Q) < 0:
+            Usvd[:, -1] *= -1
+            Q = Usvd @ Vt
+        R[:, remaining_axes] = U @ Q
+
+    # Canonicalize sign: largest-magnitude element of each column should be positive
+    R *= np.sign(R[np.argmax(np.abs(R), axis=0), np.arange(3)])
+
+    # Make sure the matrix is a pure rotation
+    if np.linalg.det(R) < 0:
+        R[:, 0] = -R[:, 0]
+    return R
 
 
 def compose_inertial_properties(mass1, com1, inertia1, mass2, com2, inertia2):

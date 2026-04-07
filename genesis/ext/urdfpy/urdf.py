@@ -1257,7 +1257,7 @@ class Inertial(URDFType):
     inertia : (3,3) float
         The 3x3 symmetric rotational inertia matrix.
     origin : (4,4) float, optional
-        The pose of the inertials relative to the link frame.
+        The pose of the inertial relative to the link frame.
         Defaults to identity if not specified.
     """
 
@@ -1275,7 +1275,7 @@ class Inertial(URDFType):
 
     @mass.setter
     def mass(self, value):
-        self._mass = float(value)
+        self._mass = float(value) if value is not None else None
 
     @property
     def inertia(self):
@@ -1301,7 +1301,7 @@ class Inertial(URDFType):
     @classmethod
     def _from_xml(cls, node, root, path):
         origin = parse_origin(node, default=False)
-        mass = float(node.find("mass").attrib["value"])
+        mass = float(n.attrib["value"]) if (n := node.find("mass")) is not None else None
         n = node.find("inertia")
         xx = float(n.attrib["ixx"])
         xy = float(n.attrib["ixy"])
@@ -1316,9 +1316,10 @@ class Inertial(URDFType):
         node = ET.Element("inertial")
         if self.origin is not None:
             node.append(unparse_origin(self.origin))
-        mass = ET.Element("mass")
-        mass.attrib["value"] = str(self.mass)
-        node.append(mass)
+        if self.mass is not None:
+            mass = ET.Element("mass")
+            mass.attrib["value"] = str(self.mass)
+            node.append(mass)
         inertia = ET.Element("inertia")
         inertia.attrib["ixx"] = str(self.inertia[0, 0])
         inertia.attrib["ixy"] = str(self.inertia[0, 1])
@@ -2659,11 +2660,15 @@ class Link(URDFType):
                     scale = np.repeat(scale, 3)
                 sm[:3, :3] = np.diag(scale)
                 cm = self.collision_mesh.copy()
-                cm.density = self.inertial.mass / cm.volume
+                volume_orig = cm.volume
                 cm.apply_transform(sm)
+                volume_scaled = cm.volume
                 cmm = np.eye(4)
                 cmm[:3, 3] = cm.center_mass
-                inertial = Inertial(mass=cm.mass, inertia=cm.moment_inertia, origin=cmm)
+                mass = None
+                if self.inertial.mass is not None:
+                    mass = self.inertial.mass * (volume_scaled / volume_orig)
+                inertial = Inertial(mass=mass, inertia=cm.moment_inertia, origin=cmm)
 
         visuals = None
         if not collision_only:

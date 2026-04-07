@@ -17,7 +17,7 @@ from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key
 
-from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
 from .utils import assert_allclose, assert_equal, get_hf_dataset, rgb_array_to_png_bytes
 
 IMG_STD_ERR_THR = 1.0
@@ -69,13 +69,13 @@ def backend(pytestconfig, renderer_type):
 @pytest.fixture(scope="function", autouse=True)
 def skip_if_not_installed(renderer_type):
     if renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER):
-        pytest.importorskip("gs_madrona", reason="Python module 'gs-madrona' not installed.")
+        pytest.importorskip("gs_madrona", reason=SKIP_NO_MADRONA)
     if renderer_type == RENDERER_TYPE.RAYTRACER:
         # Cannot rely on 'pytest.importorskip' because LuisaRenderPy is not cleanly installed
         try:
             import LuisaRenderPy
         except ImportError:
-            pytest.skip("Python module 'LuisaRenderPy' not installed.")
+            pytest.skip(SKIP_NO_LUISA)
 
 
 @pytest.mark.required
@@ -150,7 +150,7 @@ def test_render_api(show_viewer, renderer_type, renderer):
         msaa_mask = [0, 1, 2, 4, 5, 6] if renderer_type == RENDERER_TYPE.RASTERIZER else slice(None)
         assert_allclose(np.diff(depth_arrs, axis=0)[msaa_mask], 0.0, tol=gs.EPS)
     except AssertionError:
-        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
             pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
         raise
 
@@ -335,7 +335,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                     assert rgb_std > 10.0
                 except AssertionError:
                     if rgb_std < gs.EPS:
-                        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                        if sys.platform == "darwin" and scene.visualizer.is_software:
                             pytest.xfail(
                                 "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
                             )
@@ -347,7 +347,7 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             for i in range(3):
                 assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
         except AssertionError:
-            if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
                 pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures do not match.")
             raise
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
@@ -360,6 +360,9 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
 )
 @pytest.mark.parametrize("n_envs", [0, 4])
 def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, renderer_type, renderer):
+    # Small discrepancies between different hardware due the different physics integration
+    png_snapshot.extension._std_err_threshold = 1.2
+
     CAM_RES = (256, 256)
     DIFF_TOL = 0.01
     NUM_STEPS = 5
@@ -392,6 +395,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             file="urdf/go2/urdf/go2.urdf",
             merge_fixed_links=False,
         ),
+        material=gs.materials.Rigid(rho=200.0),
     )
     cam_debug = scene.add_camera(
         res=(640, 480),
@@ -555,7 +559,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
                     img_diff = np.abs(img_data_prev - img_data)
                     assert np.sum(img_diff > np.finfo(np.float32).eps) > DIFF_TOL * img_data.size
             except AssertionError:
-                if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+                if sys.platform == "darwin" and scene.visualizer.is_software:
                     pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures are too close.")
                 raise
         frames_prev = frame_data
@@ -574,7 +578,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             with open(image_file, "rb") as f:
                 assert f.read() == png_snapshot
     except AssertionError:
-        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
+        if sys.platform == "darwin" and scene.visualizer.is_software:
             pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
         raise
 
@@ -978,6 +982,7 @@ def test_draw_debug(renderer, show_viewer):
         up=(0.0, 0.0, 1.0),
         res=(640, 640),
         env_idx=2,
+        debug=True,
         GUI=show_viewer,
     )
     scene.build(n_envs=3)
@@ -1024,7 +1029,7 @@ def test_draw_debug(renderer, show_viewer):
     poses = gu.trans_to_T(np.zeros((2, 2, 3)))
     for i in range(2):
         poses[:, i] = gu.trans_quat_to_T(2.0 * (np.random.rand(2, 3) - 0.5), np.random.rand(2, 4))
-        scene.visualizer.context.update_debug_objects([frame_obj, sphere_obj], poses)
+        scene.update_debug_objects([frame_obj, sphere_obj], poses)
         scene.visualizer.update()
         rgb_array, *_ = cam.render(rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False)
         rgb_array_flat = rgb_array.reshape((-1, 3)).astype(np.int32)
@@ -1037,18 +1042,19 @@ def test_draw_debug(renderer, show_viewer):
     assert_allclose(np.std(rgb_array.reshape((-1, 3)), axis=0), 0.0, tol=gs.EPS)
 
 
+@pytest.mark.slow  # ~150s
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     """Test that sensor debug drawing works correctly and renders visible debug elements."""
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            camera_pos=(2.0, 2.0, 2.0),
+            camera_pos=(1.2, 1.2, 1.2),
             camera_lookat=(0.0, 0.0, 0.2),
             # Force screen-independent low-quality resolution when running unit tests for consistency
-            res=(480, 320),
+            res=(320, 320),
             # Enable running in background thread if supported by the platform
             run_in_thread=(sys.platform == "linux"),
         ),
@@ -1084,7 +1090,10 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
         gs.morphs.Box(
             size=(0.4, 0.2, 0.1),
             pos=(-0.25, 0.0, 0.05),
-        )
+        ),
+        material=gs.materials.Rigid(
+            rho=200.0,
+        ),
     )
     scene.add_sensor(
         gs.sensors.Contact(
@@ -1138,12 +1147,7 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
-        pyrender_viewer._camera_node,
-        pyrender_viewer._renderer,
-        rgb=True,
-        depth=False,
-        seg=False,
-        normal=False,
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
 
     if sys.platform == "darwin":
@@ -1157,7 +1161,7 @@ def test_sensors_draw_debug(n_envs, renderer_type, renderer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, renderer, png_snapshot):
     IMAGE_FILENAME = tmp_path / "screenshot.png"
 
@@ -1167,18 +1171,18 @@ def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, rend
 
     monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer._get_save_filename", get_save_filename)
 
-    # Mock 'on_key_press' to determine whether requests have been processed
+    # Mock 'on_key_release' to determine whether requests have been processed
     is_done = False
-    on_key_press_orig = gs.ext.pyrender.viewer.Viewer.on_key_press
+    on_key_release_orig = gs.ext.pyrender.viewer.Viewer.on_key_release
 
-    def on_key_press(self, symbol: int, modifiers: int):
+    def on_key_release(self, symbol: int, modifiers: int):
         nonlocal is_done
         assert not is_done
-        ret = on_key_press_orig(self, symbol, modifiers)
+        ret = on_key_release_orig(self, symbol, modifiers)
         is_done = True
         return ret
 
-    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_press", on_key_press)
+    monkeypatch.setattr("genesis.ext.pyrender.viewer.Viewer.on_key_release", on_key_release)
 
     # Create a scene
     scene = gs.Scene(
@@ -1211,7 +1215,7 @@ def test_interactive_viewer_key_press(renderer_type, tmp_path, monkeypatch, rend
     assert pyrender_viewer.is_active
 
     # Try saving the current frame
-    pyrender_viewer.dispatch_event("on_key_press", Key.S, 0)
+    pyrender_viewer.dispatch_event("on_key_release", Key.S, 0)
 
     # Waiting for request completion
     if pyrender_viewer.run_in_thread:
@@ -1350,7 +1354,7 @@ def test_render_planes(tmp_path, png_snapshot, renderer_type, renderer):
 @pytest.mark.slow  # ~500s
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_batch_deformable_render(monkeypatch, png_snapshot):
     # Having many particles in the scene creates artifacts that are not deterministic between different hardware
     png_snapshot.extension._std_err_threshold = 2.0
@@ -1464,7 +1468,7 @@ def test_batch_deformable_render(monkeypatch, png_snapshot):
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not available")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.parametrize("add_box", [False, True])
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
 def test_add_camera_vs_interactive_viewer_consistency(add_box, renderer_type, show_viewer):
@@ -1627,7 +1631,7 @@ def test_deformable_uv_textures(renderer, show_viewer, png_snapshot):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_rasterizer_camera_sensor_with_viewer(renderer):
     """Test that RasterizerCameraSensor works correctly when interactive viewer is enabled.
 
@@ -1661,3 +1665,226 @@ def test_rasterizer_camera_sensor_with_viewer(renderer):
 
     data = camera_sensor.read()
     assert data.rgb.float().std() > 1.0, "RGB std too low, image may be blank"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("force_show_viewer", [False, True])
+def test_rasterizer_env_separate(renderer, png_snapshot, show_viewer, force_show_viewer):
+    if force_show_viewer and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip(SKIP_NO_VIEWER)
+
+    CAM_RES = (256, 256)
+    RENDERED_ENVS = (1, 2)
+
+    # FIXME: Small discrepancies between different hardware due to contact visualization with onscreen viewer
+    STD_ERR_THR_MARKERS_OFF, STD_ERR_THR_MARKERS_ON = 1.0, 3.0 if force_show_viewer else 1.05
+
+    scene = gs.Scene(
+        vis_options=gs.options.VisOptions(
+            rendered_envs_idx=RENDERED_ENVS,
+            env_separate_rigid=True,
+            show_world_frame=True,
+            show_link_frame=True,
+            # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
+            shadow=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 0.2, 1.5),
+            camera_lookat=(0.0, 0.0, 0.4),
+            res=CAM_RES,
+            run_in_thread=False,
+            enable_default_keybinds=False,
+            enable_help_text=False,
+        ),
+        renderer=renderer,
+        show_viewer=force_show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    franka = scene.add_entity(
+        gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+            # Add small negative offset to force contact with the ground
+            pos=(0.0, 0.0, -0.01),
+        ),
+        visualize_contact=True,
+    )
+
+    cam = scene.add_camera(
+        res=CAM_RES,
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=30,
+        GUI=show_viewer,
+    )
+    cam_debug = scene.add_camera(
+        res=CAM_RES,
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+        fov=30,
+        debug=True,
+        GUI=show_viewer,
+    )
+    scene.build(n_envs=4, env_spacing=(0.3, 0.3))
+
+    # Hardcoded joint positions from a converged 200-step simulation with randomized initial states.
+    # Each env has a distinct pose so per-env renders differ visually.
+    franka.set_dofs_position(
+        [
+            [0.199, 1.763, -0.148, -0.224, -0.790, 0.822, 0.051, 0.002, 0.002],
+            [0.372, 1.763, 0.172, -0.369, 1.498, -0.018, -0.040, 0.000, 0.000],
+            [-0.114, -1.763, -2.885, -0.234, -1.195, 0.159, 0.316, 0.000, 0.000],
+            [-0.254, -1.763, 2.193, -0.217, 1.109, 0.501, 0.727, 0.001, 0.001],
+        ]
+    )
+    scene.step()
+
+    # Capture viewer screenshot when the interactive viewer is enabled
+    if force_show_viewer:
+        pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+        assert pyrender_viewer.is_active
+        pyrender_viewer.switch_to()
+        pyrender_viewer.on_draw()
+        viewer_rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+
+        try:
+            png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
+            assert rgb_array_to_png_bytes(viewer_rgb) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            raise
+
+    # Render both cameras
+    rgb, *_ = cam.render(rgb=True)
+    rgb_debug, *_ = cam_debug.render(rgb=True)
+    assert rgb is not None and rgb_debug is not None
+
+    # With env_separate_rigid, renders are batched: (n_rendered_envs, H, W, 3)
+    assert rgb.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+    assert rgb_debug.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # Batched set_pose: keep side view for env 0, switch to top-down view for env 1
+    rgb_before = rgb.copy()
+    cam.set_pose(
+        pos=[(3.5, 0.0, 2.5), (0.0, 0.0, 4.0)],
+        lookat=[(0.0, 0.0, 0.5), (0.0, 0.0, 0.0)],
+        up=[(0.0, 0.0, 1.0), (0.0, 1.0, 0.0)],
+    )
+    rgb_after, *_ = cam.render(rgb=True)
+    assert rgb_after is not None
+    assert rgb_after.shape == (len(RENDERED_ENVS), *CAM_RES, 3)
+
+    # First env kept same pose — render should match; second env uses top-down view — render must differ
+    assert np.abs(rgb_after[0].astype(np.float32) - rgb_before[0].astype(np.float32)).mean() < 1.0
+    assert np.abs(rgb_after[1].astype(np.float32) - rgb_before[1].astype(np.float32)).mean() > 5.0
+
+    # Restore original camera pose for snapshot comparisons
+    cam.set_pose(
+        pos=(3.5, 0.0, 2.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    rgb, *_ = cam.render(rgb=True)
+    assert rgb is not None
+
+    # Non-debug camera should NOT show markers — snapshot per env validates only robots are visible
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_OFF
+    for rgb_i in rgb:
+        try:
+            assert rgb_array_to_png_bytes(rgb_i) == png_snapshot
+        except AssertionError:
+            if sys.platform == "darwin" and scene.visualizer.is_software:
+                pytest.xfail("Flaky on MacOS with Apple Software Renderer.")
+            raise
+
+    # Debug camera SHOULD show markers (frames, contact arrows) — snapshot per env validates markers
+    png_snapshot.extension._std_err_threshold = STD_ERR_THR_MARKERS_ON
+    for rgb_debug_i in rgb_debug:
+        assert rgb_array_to_png_bytes(rgb_debug_i) == png_snapshot
+
+    # Debug and non-debug must differ: markers add pixels that change between the two
+    for i, (rgb_i, rgb_debug_i) in enumerate(zip(rgb, rgb_debug)):
+        marker_diff = np.abs(rgb_i.astype(np.float32) - rgb_debug_i.astype(np.float32))
+        n_diff_pixels = np.sum(marker_diff.max(axis=-1) > 0)
+        assert n_diff_pixels > 100, (
+            f"Debug and non-debug too similar for env {i} ({n_diff_pixels} pixels differ) — markers not visible"
+        )
+
+    # Per-env renders must differ since robots have different joint configurations
+    for env_rgb in (rgb, rgb_debug):
+        env_diff = np.abs(env_rgb[0].astype(np.float32) - env_rgb[1].astype(np.float32))
+        assert env_diff.mean() > 5.0, "Per-env renders are too similar — env isolation may be broken"
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("context_mode", ["sensor_only", "with_scene_camera", "with_viewer"])
+def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
+    if context_mode == "with_viewer" and not IS_INTERACTIVE_VIEWER_AVAILABLE:
+        pytest.skip(SKIP_NO_VIEWER)
+
+    CAM_RES = (128, 128)
+    N_ENVS = 4
+
+    def build_scene(env_spacing):
+        show_viewer = context_mode == "with_viewer"
+        viewer_options = (
+            gs.options.ViewerOptions(
+                res=CAM_RES,
+                run_in_thread=False,
+            )
+            if show_viewer
+            else None
+        )
+        scene = gs.Scene(
+            vis_options=gs.options.VisOptions(
+                env_separate_rigid=True,
+                shadow=False,
+            ),
+            viewer_options=viewer_options,
+            renderer=renderer,
+            show_viewer=show_viewer,
+            show_FPS=False,
+        )
+        scene.add_entity(
+            gs.morphs.Box(
+                size=(0.2, 0.2, 0.2),
+                pos=(0.5, 0.0, 0.1),
+            )
+        )
+        cam = scene.add_sensor(
+            RasterizerCameraOptions(
+                res=CAM_RES,
+                pos=(1.5, 0.0, 0.5),
+                lookat=(0.5, 0.0, 0.1),
+                fov=60,
+            )
+        )
+        if context_mode == "with_scene_camera":
+            scene.add_camera(
+                res=CAM_RES,
+                pos=(2.0, 0.0, 1.0),
+                lookat=(0.0, 0.0, 0.0),
+                fov=60,
+                GUI=False,
+            )
+        build_kwargs = {"n_envs": N_ENVS}
+        if env_spacing is not None:
+            build_kwargs["env_spacing"] = env_spacing
+        scene.build(**build_kwargs)
+        return scene, cam
+
+    # Reference: no spacing
+    scene_ref, cam_ref = build_scene(env_spacing=None)
+    img_ref = tensor_to_array(cam_ref.read(envs_idx=0).rgb)
+    scene_ref.destroy()
+
+    # Test: with spacing
+    scene_test, cam_test = build_scene(env_spacing=(2.0, 2.0))
+    img_test = tensor_to_array(cam_test.read(envs_idx=0).rgb)
+    scene_test.destroy()
+
+    # Per-env sensor images must be invariant to env_spacing — the offset is purely for
+    # visual separation in the interactive viewer and must be transparent to sensors.
+    assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0

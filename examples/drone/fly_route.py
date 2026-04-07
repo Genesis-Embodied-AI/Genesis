@@ -16,7 +16,7 @@ max_rpm = 1.5 * base_rpm
 
 
 def hover(drone: "DroneEntity"):
-    drone.set_propellels_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
+    drone.set_propellers_rpm([base_rpm, base_rpm, base_rpm, base_rpm])
 
 
 def clamp(rpm):
@@ -38,7 +38,7 @@ def fly_to_point(target, controller: "DronePIDController", scene: gs.Scene, cam:
         M2 = clamp(M2)
         M3 = clamp(M3)
         M4 = clamp(M4)
-        drone.set_propellels_rpm([M1, M2, M3, M4])
+        drone.set_propellers_rpm([M1, M2, M3, M4])
         scene.step()
         cam.render()
         # print("point =", drone.get_pos())

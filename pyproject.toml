@@ -4,18 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.4.1"
+version = "0.4.5"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "quadrants==0.4.3",
+    "quadrants==0.5.2",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
     "trimesh",
-    "libigl",
+    # Used for preprocessing .urdf.xacro files into plain URDF
+    "xacro",
+    # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
+    "libigl!=2.6.2",
     # Cross-platform library to get various kind of CPU information such as model name
     "py-cpuinfo",
     "mujoco>=3.2.5",
@@ -85,7 +88,8 @@ dev = [
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
-    "mujoco>=3.3.6,<3.4.0",
+    # * Mujoco 3.5.0 fixed computation of link invweight when degenerated.
+    "mujoco>=3.5.0,<3.7.0",
     # Used internally by 'MPLPlotter'
     # * 3.7.0: introduces Button blitting and 'outside' keyword legend location
     "matplotlib>=3.7.0",
@@ -164,6 +168,8 @@ ignore = [
 
 [tool.pytest.ini_options]
 addopts = [
+    "--verbose",
+    "-r", "a",
     "--color=yes",
     "--import-mode=importlib",
     "--pdbcls=IPython.terminal.debugger:TerminalPdb",

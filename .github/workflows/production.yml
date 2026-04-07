@@ -47,6 +47,8 @@ jobs:
       - name: Spawn Slurm job
         if: github.event_name == 'pull_request'
         run: |
+          set -e
+
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
           SRUN_CONTAINER_OPTS="\
@@ -66,7 +68,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=rtx-high --nodes=1 --gpus=8 --exclusive \
+                 --partition=rtx-high --nodes=1 --mem=768G --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")
@@ -153,7 +155,7 @@ jobs:
           [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
           mkfifo "$JOBID_FIFO"
           salloc --job-name="${SLURM_JOB_NAME}" \
-                 --partition=rtx-high --nodes=1 --gpus=8 --exclusive \
+                 --partition=rtx-high --nodes=1 --mem=768G --gpus=8 --exclusive \
                  --time="${TIMEOUT_MINUTES}" \
                  bash -c "echo \$SLURM_JOB_ID > $JOBID_FIFO; sleep ${TIMEOUT_MINUTES}m" &
           SLURM_JOB_ID=$(cat "$JOBID_FIFO")

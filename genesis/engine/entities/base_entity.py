@@ -45,7 +45,7 @@ class Entity(RBC):
             self._name = f"{morph_name}_{uid.short()}"
 
         gs.logger.info(
-            f"Adding ~<{self._repr_type()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
+            f"Adding ~<{self.__repr_name__()}>~. idx: ~<{self._idx}>~, uid: ~~~<{self._uid}>~~~, morph: ~<{morph}>~, material: ~<{self._material}>~."
         )
 
     # ------------------------------------------------------------------------------------

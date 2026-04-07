@@ -1,4 +1,10 @@
+from typing import Any
+
 import quadrants as qd
+from pydantic import Field, PrivateAttr
+
+from genesis.typing import PositiveInt, ValidFloat
+
 from .elastic import Elastic
 
 
@@ -9,51 +15,35 @@ class Muscle(Elastic):
 
     Parameters
     ----------
-    E: float, optional
+    E : float, optional
         Young's modulus, which controls stiffness. Default is 1e6.
-    nu: float, optional
-        Poisson ratio, describing the material's volume change under stress. Default is 0.2.
-    rho: float, optional
-        Material density (kg/m^3). Default is 1000.
-    model: str, optional
-        Constitutive model to use for stress computation. Options are:
-        - 'linear': Linear elasticity model
-        - 'stable_neohookean': A numerically stable Neo-Hookean model
-        Default is 'linear'.
-    n_groups: int, optional
+    nu : float, optional
+        Poisson ratio. Default is 0.2.
+    rho : float, optional
+        Material density (kg/m³). Default is 1000.
+    model : str, optional
+        Constitutive model ('linear' or 'stable_neohookean'). Default is 'linear'.
+    n_groups : int, optional
         Number of muscle groups. Default is 1.
-    friction_mu: float, optional
-        Contact friction coefficient for IPC/SAP coupling. Default is 0.1.
-    contact_resistance: float | None, optional
-        IPC contact resistance/stiffness override. ``None`` uses the coupler global
-        default. Default is None.
+    friction_mu : float, optional
+        Contact friction coefficient. Default is 0.1.
+    contact_resistance : float | None, optional
+        IPC contact resistance/stiffness override. Default is None.
     """
 
-    def __init__(
-        self,
-        E=1e6,  # Young's modulus
-        nu=0.2,  # Poisson's ratio
-        rho=1000.0,  # density (kg/m^3)
-        model="linear",
-        n_groups=1,  # number of muscle group
-        friction_mu=0.1,
-        contact_resistance=None,
-    ):
-        super().__init__(
-            E=E,
-            nu=nu,
-            rho=rho,
-            friction_mu=friction_mu,
-            contact_resistance=contact_resistance,
-            model=model,
-        )
+    n_groups: PositiveInt = 1
 
-        # inherit from Elastic
+    # Auto-generated — equals E.
+    stiffness: ValidFloat = Field(default=0.0, exclude=True)
+
+    _update_stress_without_actuation: Any = PrivateAttr(default=None)
+
+    def model_post_init(self, context: Any) -> None:
+        super().model_post_init(context)
+
+        self.stiffness = self.E
         self._update_stress_without_actuation = self.update_stress
         self.update_stress = self._update_stress_with_actuation
-
-        self._stiffness = E  # NOTE: use Young's modulus as muscle stiffness
-        self._n_groups = n_groups
 
     @qd.func
     def _update_stress_with_actuation(self, mu, lam, J, F, actu, m_dir):
@@ -61,16 +51,6 @@ class Muscle(Elastic):
 
         l = (F @ m_dir).norm(1e-12)
         mmT = m_dir.outer_product(m_dir)
-        stress += self._stiffness * (actu / l) * F @ mmT
+        stress += self.stiffness * (actu / l) * F @ mmT
 
         return stress
-
-    @property
-    def stiffness(self):
-        """Muscle stiffness. Equivalent to Young's modulus."""
-        return self._stiffness
-
-    @property
-    def n_groups(self):
-        """Number of muscle groups."""
-        return self._n_groups

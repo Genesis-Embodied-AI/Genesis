@@ -1,14 +1,14 @@
 import math
 from typing import Literal
 
-import numpy as np
 import numba as nb
+import numpy as np
+import quadrants as qd
 import torch
 import torch.nn.functional as F
 
-import quadrants as qd
-
 import genesis as gs
+from genesis.typing import Vec3FType
 
 # ------------------------------------------------------------------------------------
 # ------------------------------------- Quadrants ----------------------------------------
@@ -387,6 +387,8 @@ def motion_cross_motion(s_ang, s_vel, m_ang, m_vel):
 def qd_orthogonals(a):
     """
     Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
+
+    Note that `a` is assumed to be normalized.
     """
     b = qd.Vector.zero(gs.qd_float, 3)
     if qd.abs(a[1]) < 0.5:
@@ -398,7 +400,7 @@ def qd_orthogonals(a):
         b[1] = -a[1] * a[2]
         b[2] = 1.0 - a[2] ** 2
     b = b.normalized()
-    return b, a.cross(b)
+    return b.cross(a), b
 
 
 @qd.func
@@ -930,8 +932,10 @@ def trans_quat_to_T(trans=None, quat=None, *, out=None):
         if T is None:
             T = torch.zeros((*B, 4, 4), dtype=trans.dtype, device=trans.device)
     elif is_numpy:
+        dtype = np.result_type(trans, quat)
+        trans, quat = trans.astype(dtype), quat.astype(dtype)
         if T is None:
-            T = np.zeros((*B, 4, 4), dtype=trans.dtype)
+            T = np.zeros((*B, 4, 4), dtype=dtype)
     else:
         gs.raise_exception(
             f"both of the inputs must be torch.Tensor or np.ndarray. got: {type(trans)=} and {type(quat)=}"
@@ -1436,12 +1440,12 @@ def _np_polar(A: np.ndarray, pure_rotation: bool, side: Literal["right", "left"]
 
     if is_batched:
         # Pre-allocate output arrays
-        batch_shape = A.shape[:-2]
-        U_out = np.empty((*batch_shape, M, N), dtype=A.dtype)
+        B = A.shape[:-2]
+        U_out = np.empty((*B, M, N), dtype=A.dtype)
         if side == "right":
-            P_out = np.empty((*batch_shape, N, N), dtype=A.dtype)
+            P_out = np.empty((*B, N, N), dtype=A.dtype)
         else:
-            P_out = np.empty((*batch_shape, M, M), dtype=A.dtype)
+            P_out = np.empty((*B, M, M), dtype=A.dtype)
 
         # Call batched numba function
         _np_polar_core_batched(A, pure_rotation, side_int, U_out, P_out)
@@ -2008,6 +2012,56 @@ def random_quaternion(batch_size):
     return np.stack((q1, q2, q3, q4), axis=1)
 
 
+def generate_grid_points_on_plane(lo: Vec3FType, hi: Vec3FType, normal: Vec3FType, nx: int, ny: int) -> np.ndarray:
+    """
+    Build an nx-by-ny grid of points on the plane defined by the bounds and normal.
+
+    Parameters
+    ----------
+    lo: array-like[float, float, float]
+        Lower bound of the plane
+    hi: array-like[float, float, float]
+        Upper bound of the plane
+    normal: array-like[float, float, float]
+        Normal of the plane
+    nx: int
+        Number of grid points in x direction
+    ny: int
+        Number of grid points in y direction
+
+    Returns
+    -------
+    grid: np.ndarray, shape (ny, nx, 3)
+        Grid points on the plane
+    """
+    # Compute tangent axes
+    normal = np.asarray(normal, dtype=gs.np_float)
+    n_norm = np.linalg.norm(normal)
+    if n_norm < gs.EPS:
+        gs.raise_exception(f"normal must be non-zero, got: {normal}")
+    normal = normal / n_norm
+    t0, t1 = orthogonals(normal)
+
+    # Compute lower and upper bounds in local basis
+    rot = np.stack((t0, t1, normal), axis=0, dtype=gs.np_float)
+    bounds = np.stack((lo, hi), axis=1, dtype=gs.np_float)
+    (lo_u, hi_u), (lo_v, hi_v), (lo_w, hi_w) = rot @ bounds
+
+    # Make sure that bounds are orthogonal to plane normal
+    extent_w = abs(hi_w - lo_w)
+    if extent_w > gs.EPS:
+        gs.logger.warning(f"Bounds does not lie on a plane orthogonal to normal (normal-axis mismatch={extent_w:.6e}).")
+    plane_w = 0.5 * (lo_w + hi_w)
+
+    # Sample point grid on plane
+    u_vals = np.linspace(lo_u, hi_u, num=nx, dtype=gs.np_float)
+    v_vals = np.linspace(lo_v, hi_v, num=ny, dtype=gs.np_float)
+    vv, uu = np.meshgrid(v_vals, u_vals, indexing="ij")
+    grid = t0 * np.expand_dims(uu, axis=-1) + t1 * np.expand_dims(vv, axis=-1) + normal * plane_w
+
+    return grid
+
+
 # ------------------------------------------------------------------------------------
 # ------------------------------------- misc ----------------------------------------
 # ------------------------------------------------------------------------------------
@@ -2036,7 +2090,19 @@ def nowhere():
 
 def default_solver_params():
     """
-    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
+    Default constraint solver parameters ``(timeconst, dampratio, dmin, dmax, width, mid, power)``.
+
+    The constraint reference acceleration is computed as ``aref = -b * vel - k * imp * pos``, where:
+
+    - ``b = 2 / (dmax * timeconst)`` controls velocity damping (energy-dissipating). Depends only on ``timeconst``.
+    - ``k = 1 / (dmax² * timeconst² * dampratio²)`` controls position stiffness (energy-conserving elastic spring).
+
+    Despite its name, ``dampratio`` does **not** control damping — it scales the spring stiffness ``k``. Smaller
+    ``dampratio`` yields a stiffer spring (more elastic bounce), while larger values yield a softer, more compliant
+    contact. Setting ``dampratio`` to zero is forbidden as it removes the elastic restoring force entirely. Use a
+    small positive value (e.g. ``0.01``) with a large ``timeconst`` (e.g. ``1.0``) for nearly undamped elastic contact.
+
+    The impedance parameters ``(dmin, dmax, width, mid, power)`` control the depth-dependent constraint rigidity.
 
     Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
     """
@@ -2237,3 +2303,23 @@ def cubic_spline_1d(x, y, xv):
     ix = np.clip(np.searchsorted(x[1:], xv), 0, n - 2)
     dx = (xv - x[ix])[:, None]
     return y_2d[ix] + b[ix] * dx + c[ix] * dx**2 + d[ix] * dx**3
+
+
+@nb.jit(nopython=True, cache=True)
+def orthogonals(a) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Returns orthogonal vectors `b` and `c`, given a normal vector `a`.
+
+    Note that `a` is assumed to be normalized.
+    """
+    B = a.shape[:-1]
+
+    a_1d = a.reshape((-1, 3))
+    a_x, a_y, a_z = a_1d[:, 0], a_1d[:, 1], a_1d[:, 2]
+
+    b1 = np.stack((-a_x * a_y, 1.0 - a_y**2, -a_z * a_y), axis=-1)
+    b2 = np.stack((-a_x * a_z, -a_y * a_z, 1.0 - a_z**2), axis=-1)
+    b_1d = np.where(np.abs(a_y).reshape((-1, 1)) < 0.5, b1, b2)
+    b_1d /= np.sqrt(np.sum(np.square(b_1d), -1)).reshape((-1, 1))
+
+    return np.cross(b_1d, a_1d).reshape((*B, 3)), b_1d.reshape((*B, 3))

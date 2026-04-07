@@ -21,7 +21,6 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.engine.solvers import RigidSolver
@@ -42,7 +41,7 @@ def _kernel_get_contacts_forces(
     sensors_link_idx: qd.types.ndarray(),
     output: qd.types.ndarray(),
 ):
-    for i_b, i_c, i_s in qd.ndrange(output.shape[0], link_a.shape[-1], sensors_link_idx.shape[-1]):
+    for i_c, i_s, i_b in qd.ndrange(link_a.shape[-1], sensors_link_idx.shape[-1], output.shape[-1]):
         contact_data_link_a = link_a[i_b, i_c]
         contact_data_link_b = link_b[i_b, i_c]
         if contact_data_link_a == sensors_link_idx[i_s] or contact_data_link_b == sensors_link_idx[i_s]:
@@ -63,10 +62,10 @@ def _kernel_get_contacts_forces(
 
             if contact_data_link_a == sensors_link_idx[i_s]:
                 for j in qd.static(range(3)):
-                    output[i_b, j_s + j] += force_a[j]
+                    output[j_s + j, i_b] += force_a[j]
             if contact_data_link_b == sensors_link_idx[i_s]:
                 for j in qd.static(range(3)):
-                    output[i_b, j_s + j] += force_b[j]
+                    output[j_s + j, i_b] += force_b[j]
 
 
 @dataclass
@@ -76,29 +75,23 @@ class ContactSensorMetadata(SharedSensorMetadata):
     """
 
     solver: "RigidSolver | None" = None
-    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
-@register_sensor(ContactSensorOptions, ContactSensorMetadata, tuple)
-class ContactSensor(Sensor):
+class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
     """
 
-    def __init__(
-        self,
-        sensor_options: ContactSensorOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, sensor_options: ContactSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._link: "RigidLink | None" = None
         self.debug_object: "Mesh | None" = None
 
     def build(self):
         super().build()
+
         if self._shared_metadata.solver is None:
             self._shared_metadata.solver = self._manager._sim.rigid_solver
 
@@ -124,9 +117,14 @@ class ContactSensor(Sensor):
         assert shared_metadata.solver is not None
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         link_a, link_b = all_contacts["link_a"], all_contacts["link_b"]
+        if link_a.shape[-1] == 0:
+            shared_ground_truth_cache.zero_()
+            return
+        if shared_metadata.solver.n_envs == 0:
+            link_a, link_b = link_a[None], link_b[None]
         is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
         is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        shared_ground_truth_cache[:] = is_contact_a | is_contact_b
+        shared_ground_truth_cache[:] = (is_contact_a | is_contact_b).T
 
     @classmethod
     def _update_shared_cache(
@@ -173,31 +171,21 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
     max_force: torch.Tensor = make_tensor_field((0, 3))
 
 
-@register_sensor(ContactForceSensorOptions, ContactForceSensorMetadata, tuple)
 class ContactForceSensor(
     RigidSensorMixin[ContactForceSensorMetadata],
     NoisySensorMixin[ContactForceSensorMetadata],
-    Sensor[ContactForceSensorMetadata],
+    Sensor[ContactForceSensorOptions, ContactForceSensorMetadata],
 ):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
     """
 
-    def __init__(
-        self,
-        sensor_options: ContactForceSensorOptions,
-        sensor_idx: int,
-        data_cls: Type[tuple],
-        sensor_manager: "SensorManager",
-    ):
-        super().__init__(sensor_options, sensor_idx, data_cls, sensor_manager)
+    def __init__(self, options: ContactForceSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(options, sensor_idx, sensor_manager)
 
         self.debug_object: "Mesh" | None = None
 
     def build(self):
-        if not (isinstance(self._options.resolution, tuple) and len(self._options.resolution) == 3):
-            self._options.resolution = tuple([self._options.resolution] * 3)
-
         super().build()
 
         if self._shared_metadata.solver is None:
@@ -245,22 +233,20 @@ class ContactForceSensor(
             force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
             sensors_force = (force_mask[..., None] * force[:, None]).sum(dim=2)
             sensors_quat = links_quat[:, shared_metadata.links_idx]
-            output_forces = shared_ground_truth_cache.reshape((max(shared_metadata.solver.n_envs, 1), -1, 3))
-            output_forces[:] = inv_transform_by_quat(sensors_force, sensors_quat)
+            n_envs = max(shared_metadata.solver.n_envs, 1)
+            result = inv_transform_by_quat(sensors_force, sensors_quat)  # (B, n_sensors, 3)
+            shared_ground_truth_cache[:] = result.permute(1, 2, 0).reshape(-1, n_envs)
             return
 
-        output_forces = shared_ground_truth_cache.contiguous()
-        output_forces.zero_()
+        shared_ground_truth_cache.zero_()
         _kernel_get_contacts_forces(
             force.contiguous(),
             link_a.contiguous(),
             link_b.contiguous(),
             links_quat.contiguous(),
             shared_metadata.links_idx,
-            output_forces,
+            shared_ground_truth_cache,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output_forces)
 
     @classmethod
     def _update_shared_cache(

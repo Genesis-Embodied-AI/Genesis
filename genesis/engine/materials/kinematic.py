@@ -1,7 +1,7 @@
-from .base import Material
+from .base import EntityT, Material
 
 
-class Kinematic(Material):
+class Kinematic(Material[EntityT]):
     """
     Visualization-only material for ghost/reference entities.
 

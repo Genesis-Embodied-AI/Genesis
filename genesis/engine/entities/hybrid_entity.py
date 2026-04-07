@@ -73,10 +73,10 @@ class HybridEntity(Entity):
             # set up rigid part
             if material.use_default_coupling:
                 gs.logger.info("Use default coupling in hybrid. Overwrite `needs_coup` in rigid material to True")
-                material_rigid._needs_coup = True
+                material_rigid.needs_coup = True
             else:
                 gs.logger.info("Use default coupling in hybrid. Overwrite `needs_coup` in rigid material to False")
-                material_rigid._needs_coup = False
+                material_rigid.needs_coup = False
 
             part_rigid = scene.add_entity(
                 material=material_rigid,
@@ -89,7 +89,7 @@ class HybridEntity(Entity):
 
             # set soft parts based on rigid links
             func_instantiate_soft_from_rigid = (
-                material._func_instantiate_soft_from_rigid or default_func_instantiate_soft_from_rigid
+                material.func_instantiate_soft_from_rigid or default_func_instantiate_soft_from_rigid
             )
             part_soft = func_instantiate_soft_from_rigid(
                 scene=scene,
@@ -111,10 +111,10 @@ class HybridEntity(Entity):
             mesh = load_mesh(morph.file)
 
             # instantiate rigid part
-            if material._func_instantiate_rigid_from_soft is None:
+            if material.func_instantiate_rigid_from_soft is None:
                 func_instantiate_rigid_from_soft = default_func_instantiate_rigid_from_soft
             else:
-                func_instantiate_rigid_from_soft = material._func_instantiate_rigid_from_soft
+                func_instantiate_rigid_from_soft = material.func_instantiate_rigid_from_soft
             part_rigid = func_instantiate_rigid_from_soft(
                 scene=scene,
                 mesh=mesh,
@@ -129,13 +129,13 @@ class HybridEntity(Entity):
 
         if not material.use_default_coupling:
             # get rigid-soft association function
-            if material._func_instantiate_rigid_soft_association is None:
+            if material.func_instantiate_rigid_soft_association is None:
                 if isinstance(morph, gs.morphs.URDF):
                     func_instantiate_rigid_soft_association = default_func_instantiate_rigid_soft_association_from_rigid
                 elif isinstance(morph, gs.morphs.Mesh):
                     func_instantiate_rigid_soft_association = default_func_instantiate_rigid_soft_association_from_soft
             else:
-                func_instantiate_rigid_soft_association = material._func_instantiate_rigid_soft_association
+                func_instantiate_rigid_soft_association = material.func_instantiate_rigid_soft_association
             muscle_group, link_idcs, geom_idcs, trans_local_to_global, quat_local_to_global = (
                 func_instantiate_rigid_soft_association(
                     part_rigid=part_rigid,
@@ -146,7 +146,7 @@ class HybridEntity(Entity):
                 muscle_group = muscle_group.astype(gs.np_int, copy=False)
 
             # set muscle group
-            material_soft._n_groups = len(link_idcs)
+            material_soft.n_groups = len(link_idcs)
             self._muscle_group_cache = muscle_group
 
             # set up info in Quadrants field

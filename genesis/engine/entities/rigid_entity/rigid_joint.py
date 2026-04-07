@@ -35,8 +35,8 @@ class RigidJoint(RBC):
         dofs_stiffness,
         dofs_damping,
         dofs_armature,
-        dofs_kp,
-        dofs_kv,
+        dofs_act_gain,
+        dofs_act_bias,
         dofs_force_range,
     ):
         self._name = name
@@ -64,8 +64,8 @@ class RigidJoint(RBC):
         self._dofs_stiffness = dofs_stiffness
         self._dofs_damping = dofs_damping
         self._dofs_armature = dofs_armature
-        self._dofs_kp = dofs_kp
-        self._dofs_kv = dofs_kv
+        self._dofs_act_gain = dofs_act_gain
+        self._dofs_act_bias = dofs_act_bias
         self._dofs_force_range = dofs_force_range
 
     def __getattr__(self, name):
@@ -406,18 +406,18 @@ class RigidJoint(RBC):
         return self._dofs_armature
 
     @property
-    def dofs_kp(self):
+    def dofs_act_gain(self):
         """
-        Returns the kp (positional gain) of the dofs of the joint.
+        Returns the actuator gain of the dofs of the joint.
         """
-        return self._dofs_kp
+        return self._dofs_act_gain
 
     @property
-    def dofs_kv(self):
+    def dofs_act_bias(self):
         """
-        Returns the kv (velocity gain) of the dofs of the joint.
+        Returns the actuator bias [constant, pos_coeff, vel_coeff] of the dofs of the joint.
         """
-        return self._dofs_kv
+        return self._dofs_act_bias
 
     @property
     def dofs_force_range(self):
@@ -438,7 +438,7 @@ class RigidJoint(RBC):
     # ------------------------------------------------------------------------------------
 
     def _repr_brief(self):
-        return f"{(self._repr_type())}: {self._uid}, name: '{self._name}', idx: {self._idx}, type: {self._type}"
+        return f"{(self.__repr_name__())}: {self._uid}, name: '{self._name}', idx: {self._idx}, type: {self._type}"
 
 
 @qd.kernel

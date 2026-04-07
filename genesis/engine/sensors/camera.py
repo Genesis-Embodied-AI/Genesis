@@ -10,43 +10,43 @@ import numpy as np
 import torch
 
 import genesis as gs
+from genesis.options.renderers import BatchRenderer as BatchRendererOptions
 from genesis.options.sensors import (
+    BatchRendererCameraOptions,
     RasterizerCameraOptions,
     RaytracerCameraOptions,
-    BatchRendererCameraOptions,
     SensorOptions,
 )
-
+from genesis.options.vis import VisOptions
 from genesis.utils.geom import (
-    pos_lookat_up_to_T,
-    T_to_trans,
     T_to_quat,
-    trans_to_T,
+    T_to_trans,
+    pos_lookat_up_to_T,
     trans_quat_to_T,
     transform_by_quat,
     transform_by_trans_quat,
 )
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.batch_renderer import BatchRenderer
-from genesis.options.renderers import BatchRenderer as BatchRendererOptions
-from genesis.options.vis import VisOptions
 from genesis.vis.rasterizer import Rasterizer
 from genesis.vis.rasterizer_context import RasterizerContext
+
 from .base_sensor import (
+    RigidSensorMetadataMixin,
+    RigidSensorMixin,
     Sensor,
     SharedSensorMetadata,
-    RigidSensorMixin,
-    RigidSensorMetadataMixin,
 )
-from .sensor_manager import register_sensor
-
+from .base_sensor import OptionsT
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
+    from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.rasterizer import Rasterizer
     from genesis.vis.rasterizer_context import RasterizerContext
-    from genesis.vis.batch_renderer import BatchRenderer
     from genesis.vis.raytracer import Raytracer
+
+    from .sensor_manager import SensorManager
 
 
 # ========================== Data Class ==========================
@@ -106,7 +106,6 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
     def __init__(self, sensor: "BatchRendererCameraSensor"):
         super().__init__(sensor)
         self.idx = len(sensor._shared_metadata.sensors)  # Camera index in batch
-        self.debug = False
         self.model = sensor._options.model
 
         # Initial pose
@@ -222,7 +221,7 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
+class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
@@ -233,14 +232,8 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
     - Shared read() method returning torch tensors
     """
 
-    def __init__(
-        self,
-        options: "SensorOptions",
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._stale: bool = True
 
     # ========================== Cache Integration (shared) ==========================
@@ -292,7 +285,9 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
             offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
         else:
             pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-            offset_T = trans_to_T(pos)
+            lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+            up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+            offset_T = pos_lookat_up_to_T(pos, lookat, up)
 
         link_pos = self._link.get_pos()
         link_quat = self._link.get_quat()
@@ -361,11 +356,6 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[SharedSensorMetadata]):
         cached_image = self._get_image_cache_entry()
         return _camera_read_from_image_cache(self, cached_image, envs_idx, to_numpy=False)
 
-    @classmethod
-    def reset(cls, shared_metadata, envs_idx):
-        """Reset camera sensor (no state to reset)."""
-        pass
-
 
 # ========================== Camera Sensor Helpers ==========================
 def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: bool) -> CameraData:
@@ -397,8 +387,9 @@ def _camera_read_from_image_cache(sensor, cached_image, envs_idx, *, to_numpy: b
 # ========================== Rasterizer Camera Sensor ==========================
 
 
-@register_sensor(RasterizerCameraOptions, RasterizerCameraSharedMetadata, CameraData)
-class RasterizerCameraSensor(BaseCameraSensor):
+class RasterizerCameraSensor(
+    BaseCameraSensor, Sensor[RasterizerCameraOptions, RasterizerCameraSharedMetadata, CameraData]
+):
     """
     Rasterizer camera sensor using OpenGL-based rendering.
 
@@ -406,14 +397,8 @@ class RasterizerCameraSensor(BaseCameraSensor):
     but operates independently from the scene visualizer.
     """
 
-    def __init__(
-        self,
-        options: RasterizerCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: RasterizerCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: RasterizerCameraOptions
         self._camera_node = None
         self._camera_target = None
@@ -446,6 +431,12 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
         self._shared_metadata.sensors.append(self)
 
+        if self._manager._sim.n_envs > 1 and not self._shared_metadata.context.env_separate_rigid:
+            gs.raise_exception(
+                "RasterizerCameraSensor with n_envs > 1 requires 'env_separate_rigid=True' in VisOptions "
+                "for correct per-environment rendering."
+            )
+
         # Register camera now if standalone (offscreen), or defer to first render if using visualizer's rasterizer
         # (visualizer isn't built yet at sensor.build() time)
         if self._shared_metadata.renderer.offscreen:
@@ -476,18 +467,11 @@ class RasterizerCameraSensor(BaseCameraSensor):
         """Create a simplified RasterizerContext for camera sensors."""
         if not scene.sim._rigid_only and scene.n_envs > 1:
             gs.raise_exception("Rasterizer with n_envs > 1, does not work when using non rigid simulation")
-        if sys.platform == "darwin":
-            if scene.n_envs > 1:
-                gs.raise_exception(
-                    "Rasterizer with n_envs > 1, does not work on Metal because it doesn't support OpenGL 4.2"
-                )
-            env_separate_rigid = False
-        else:
-            if scene.n_envs > 1:
-                gs.logger.warning(
-                    "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
-                )
-            env_separate_rigid = True
+        if scene.n_envs > 1:
+            gs.logger.warning(
+                "Rasterizer with n_envs > 1 is slow as it doesn't do batched rendering consider using BatchRenderer instead."
+            )
+        env_separate_rigid = True
         vis_options = VisOptions(
             show_world_frame=False,
             show_link_frame=False,
@@ -501,22 +485,21 @@ class RasterizerCameraSensor(BaseCameraSensor):
         context.reset()
         return context
 
-    def _convert_light_config_to_rasterizer(self, light_config):
-        """Convert a light config dict to rasterizer format."""
-        # Default values for rasterizer
+    @staticmethod
+    def _convert_light_config_to_rasterizer(light_config):
+        """Convert a light config dict to a typed light options object for the rasterizer."""
+        from genesis.options.vis import DirectionalLight, PointLight
+
         light_type = light_config.get("type", "directional")
-        pos = light_config.get("pos", (0.0, 0.0, 5.0))
-        dir = light_config.get("dir", (0.0, 0.0, -1.0))
         color = light_config.get("color", (1.0, 1.0, 1.0))
         intensity = light_config.get("intensity", 1.0)
 
-        return {
-            "type": light_type,
-            "pos": pos,
-            "dir": dir,
-            "color": tuple(np.array(color) * intensity),
-            "intensity": intensity,
-        }
+        if light_type == "point":
+            pos = light_config.get("pos", (0.0, 0.0, 5.0))
+            return PointLight(pos=pos, color=color, intensity=intensity)
+        else:
+            dir = light_config.get("dir", (0.0, 0.0, -1.0))
+            return DirectionalLight(dir=dir, color=color, intensity=intensity)
 
     def _update_camera_pose(self):
         """Update camera pose based on options."""
@@ -552,7 +535,31 @@ class RasterizerCameraSensor(BaseCameraSensor):
         """Perform the actual render for the current state."""
         self._ensure_camera_registered()
 
-        self._shared_metadata.context.update(force_render=True)
+        context = self._shared_metadata.context
+
+        # When env_separate_rigid is enabled, geometry render transforms include env_spacing
+        # offsets (baked in by kernel_update_geoms_render_T). For per-env sensor rendering,
+        # these offsets must be temporarily removed so each env's geometry renders at local
+        # origin relative to the camera. The offsets are restored after rendering to preserve
+        # the correct layout for the interactive viewer which shares the same context.
+        context.update(force_render=True)
+
+        # When env_separate_rigid is enabled, geometry render transforms include env_spacing
+        # offsets (baked in by kernel_update_geoms_render_T). For per-env sensor rendering,
+        # these offsets must be temporarily removed so each env's geometry renders at local
+        # origin relative to the camera. The offsets are restored after rendering to preserve
+        # the correct layout for the interactive viewer which shares the same context.
+        envs_offset = context.scene.envs_offset
+        saved_poses = {}
+        if context.env_separate_rigid and (envs_offset != 0).any():
+            for node_uid, node in context.rigid_nodes.items():
+                poses = node.mesh.primitives[0].poses
+                if poses is not None and len(poses) > 1:
+                    saved_poses[node_uid] = poses.copy()
+                    poses[:, :3, 3] -= envs_offset[context.rendered_envs_idx]
+                    buf_id = context._scene.get_buffer_id(node, "model")
+                    if buf_id >= 0:
+                        context.buffer[buf_id] = poses.transpose((0, 2, 1))
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._camera_wrapper,
@@ -561,6 +568,14 @@ class RasterizerCameraSensor(BaseCameraSensor):
             segmentation=False,
             normal=False,
         )
+
+        # Restore original geometry transforms with offsets for the interactive viewer
+        for node_uid, poses in saved_poses.items():
+            node = context.rigid_nodes[node_uid]
+            node.mesh.primitives[0].poses = poses
+            buf_id = context._scene.get_buffer_id(node, "model")
+            if buf_id >= 0:
+                context.buffer[buf_id] = poses.transpose((0, 2, 1))
 
         # Ensure contiguous layout because the rendered array may have negative strides.
         rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)
@@ -572,20 +587,15 @@ class RasterizerCameraSensor(BaseCameraSensor):
 
 
 # ========================== Raytracer Camera Sensor ==========================
-@register_sensor(RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData)
-class RaytracerCameraSensor(BaseCameraSensor):
+class RaytracerCameraSensor(
+    BaseCameraSensor, Sensor[RaytracerCameraOptions, RaytracerCameraSharedMetadata, CameraData]
+):
     """
     Raytracer camera sensor using LuisaRender path tracing.
     """
 
-    def __init__(
-        self,
-        options: RaytracerCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: RaytracerCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: RaytracerCameraOptions
         self._camera_obj = None
 
@@ -669,7 +679,9 @@ class RaytracerCameraSensor(BaseCameraSensor):
                 offset_T = torch.tensor(self._options.offset_T, dtype=gs.tc_float, device=gs.device)
             else:
                 pos = torch.tensor(self._options.pos, dtype=gs.tc_float, device=gs.device)
-                offset_T = trans_to_T(pos)
+                lookat = torch.tensor(self._options.lookat, dtype=gs.tc_float, device=gs.device)
+                up = torch.tensor(self._options.up, dtype=gs.tc_float, device=gs.device)
+                offset_T = pos_lookat_up_to_T(pos, lookat, up)
             self._camera_obj.attach(self._link, offset_T)
 
         _B = max(n_envs, 1)
@@ -725,22 +737,17 @@ class RaytracerCameraSensor(BaseCameraSensor):
 # ========================== Batch Renderer Camera Sensor ==========================
 
 
-@register_sensor(BatchRendererCameraOptions, BatchRendererCameraSharedMetadata, CameraData)
-class BatchRendererCameraSensor(BaseCameraSensor):
+class BatchRendererCameraSensor(
+    BaseCameraSensor, Sensor[BatchRendererCameraOptions, BatchRendererCameraSharedMetadata, CameraData]
+):
     """
     Batch renderer camera sensor using Madrona GPU batch rendering.
 
     Note: All batch renderer cameras must have the same resolution.
     """
 
-    def __init__(
-        self,
-        options: BatchRendererCameraOptions,
-        idx: int,
-        data_cls: Type[CameraData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, idx, data_cls, manager)
+    def __init__(self, options: BatchRendererCameraOptions, idx: int, manager: "SensorManager"):
+        super().__init__(options, idx, manager)
         self._options: BatchRendererCameraOptions
         self._camera_obj = None
 

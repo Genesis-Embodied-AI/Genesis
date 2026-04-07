@@ -278,6 +278,11 @@ class PathPlanner(ABC):
         iterations: int
             the number of refine iterations
         """
+        # Need at least 3 waypoints to shortcut (multinomial samples 2 indices,
+        # and the shortcut only applies when their gap > 1).
+        if path.shape[0] < 3:
+            return path
+
         for i in range(iterations):
             ind = torch.multinomial(path_mask.T, 2).sort().values.to(gs.tc_int)  # B, 2
             ind_mask = (ind[:, 1] - ind[:, 0]) > 1

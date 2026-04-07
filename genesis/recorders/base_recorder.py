@@ -1,16 +1,31 @@
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING, Callable, Generic, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, Mapping, TypeVar
+
+import torch
 
 import genesis as gs
 from genesis.options.recorders import RecorderOptions
+from genesis.typing import is_sequence
+from genesis.utils import tensor_to_array
 
 if TYPE_CHECKING:
     from .recorder_manager import RecorderManager
 
 
 T = TypeVar("T")
+
+
+def _detach_data(data):
+    """Move all GPU tensors to CPU numpy arrays so the data is safe for background thread processing."""
+    if isinstance(data, torch.Tensor):
+        return tensor_to_array(data)
+    if isinstance(data, Mapping):
+        return {k: _detach_data(v) for k, v in data.items()}
+    if is_sequence(data):
+        return type(data)(_detach_data(v) for v in data)
+    return data
 
 
 class Recorder(Generic[T]):
@@ -120,18 +135,16 @@ class Recorder(Generic[T]):
     def start(self):
         """Start the recording thread if run_in_thread is True."""
         self._is_recording = True
-
         if self.run_in_thread:
             self.start_thread()
 
     @gs.assert_built
     def stop(self):
         """Stop the recording thread and cleanup resources."""
-        if self._is_recording:
-            self._is_recording = False
-            if self.run_in_thread:
-                self.join_thread()
-            self.cleanup()
+        self._is_recording = False
+        if self.run_in_thread:
+            self.join_thread()
+        self.cleanup()
 
     @gs.assert_built
     def join_thread(self):
@@ -140,8 +153,6 @@ class Recorder(Generic[T]):
             self._processor_thread.join()
             self._processor_thread = None
             self._data_queue = None
-        else:
-            gs.logger.warning(f"[{type(self).__name__}] join_thread(): No processor thread to join.")
 
     @gs.assert_built
     def start_thread(self):
@@ -150,6 +161,12 @@ class Recorder(Generic[T]):
             self._data_queue = queue.Queue(maxsize=self._options.buffer_size)
             self._processor_thread = threading.Thread(target=self._process_data_loop)
             self._processor_thread.start()
+            try:
+                # Note that it is necessary to rely on private threading atexit because functions registered using
+                # 'atexit.register' are called AFTER 'threading._shutdown', causing deadlock for non-daemon threads.
+                threading._register_atexit(self.stop)
+            except AttributeError:
+                pass
         else:
             gs.logger.warning(f"[{type(self).__name__}] start_thread(): Processor thread already exists.")
 
@@ -193,6 +210,9 @@ class Recorder(Generic[T]):
             # non-threaded mode: process data synchronously
             self.process(data, global_time)
             return
+
+        # threaded mode: move GPU tensors to CPU before queuing to avoid cross-thread GPU access
+        data = _detach_data(data)
 
         # threaded mode: put data in queue
         try:

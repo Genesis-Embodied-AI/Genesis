@@ -1,9 +1,7 @@
-import quadrants as qd
-
-from ..base import Material
+from ..base import EntityT, Material
 
 
-class Base(Material):
+class Base(Material[EntityT]):
     """
     The base class of PBD materials.
 
@@ -11,5 +9,3 @@ class Base(Material):
     ----
     This class should *not* be instantiated directly.
     """
-
-    pass

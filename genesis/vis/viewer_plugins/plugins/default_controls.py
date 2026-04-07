@@ -25,19 +25,19 @@ class DefaultControlsPlugin(ViewerPlugin):
         super().build(viewer, camera, scene)
 
         self.viewer.register_keybinds(
-            Keybind("record_video", Key.R, callback=self._toggle_record_video),
-            Keybind("save_image", Key.S, callback=self._save_image),
-            Keybind("reset_camera", Key.Z, callback=self._reset_camera),
-            Keybind("camera_rotation", Key.A, callback=self._toggle_cam_rotation),
-            Keybind("shadow", Key.H, callback=self._toggle_shadow),
-            Keybind("face_normals", Key.F, callback=self._toggle_face_normals),
-            Keybind("vertex_normals", Key.V, callback=self._toggle_vertex_normals),
-            Keybind("world_frame", Key.W, callback=self._toggle_world_frame),
-            Keybind("link_frame", Key.L, callback=self._toggle_link_frame),
-            Keybind("wireframe", Key.D, callback=self._toggle_wireframe),
-            Keybind("camera_frustum", Key.C, callback=self._toggle_camera_frustum),
-            Keybind("reload_shader", Key.P, callback=self._reload_shader),
-            Keybind("fullscreen_mode", Key.F11, callback=self._toggle_fullscreen),
+            Keybind("record_video", Key.R, callback=self._toggle_record_video, allow_overload=True),
+            Keybind("save_image", Key.S, callback=self._save_image, allow_overload=True),
+            Keybind("reset_camera", Key.Z, callback=self._reset_camera, allow_overload=True),
+            Keybind("camera_rotation", Key.A, callback=self._toggle_cam_rotation, allow_overload=True),
+            Keybind("shadow", Key.H, callback=self._toggle_shadow, allow_overload=True),
+            Keybind("face_normals", Key.F, callback=self._toggle_face_normals, allow_overload=True),
+            Keybind("vertex_normals", Key.V, callback=self._toggle_vertex_normals, allow_overload=True),
+            Keybind("world_frame", Key.W, callback=self._toggle_world_frame, allow_overload=True),
+            Keybind("link_frame", Key.L, callback=self._toggle_link_frame, allow_overload=True),
+            Keybind("wireframe", Key.D, callback=self._toggle_wireframe, allow_overload=True),
+            Keybind("camera_frustum", Key.C, callback=self._toggle_camera_frustum, allow_overload=True),
+            Keybind("reload_shader", Key.P, callback=self._reload_shader, allow_overload=True),
+            Keybind("fullscreen_mode", Key.F11, callback=self._toggle_fullscreen, allow_overload=True),
         )
 
     def _toggle_cam_rotation(self):

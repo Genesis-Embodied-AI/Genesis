@@ -2,8 +2,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -32,11 +32,12 @@ from .base_sensor import (
     Sensor,
     SharedSensorMetadata,
 )
-from .sensor_manager import register_sensor
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
+
+    from .sensor_manager import SensorManager
 
 
 @qd.kernel
@@ -58,19 +59,18 @@ def kernel_cast_rays(
     sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
     sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
     sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
-    output_hits: qd.types.ndarray(ndim=2),  # [n_env, total_cache_size]
-    eps: gs.qd_float,
+    output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
+    eps: float,
 ):
     """
     Quadrants kernel for ray casting, accelerated by a Bounding Volume Hierarchy (BVH).
 
-    The result `output_hits` will be a 2D array of shape (n_env, total_cache_size) where in the second dimension,
+    The result `output_hits` will be a 2D array of shape (total_cache_size, n_env) where in the first dimension,
     each sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
     """
 
     n_points = ray_starts.shape[0]
-    # batch, point
-    for i_b, i_p in qd.ndrange(output_hits.shape[0], n_points):
+    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
         i_s = points_to_sensor_idx[i_p]
 
         # --- 1. Setup Ray ---
@@ -83,7 +83,7 @@ def kernel_cast_rays(
         ray_start_world = qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
 
         ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
-        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), gs.EPS)
+        ray_direction_world = qd_normalize(qd_transform_by_quat(ray_dir_local, link_quat), eps)
 
         # --- 2. BVH Traversal for ray intersection ---
         max_range = max_ranges[i_s]
@@ -112,29 +112,29 @@ def kernel_cast_rays(
         if hit_face >= 0:
             dist = hit_distance
             # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
-            output_hits[i_b, i_p_dist] = dist
+            output_hits[i_p_dist, i_b] = dist
 
             if is_world_frame[i_s]:
                 hit_point = ray_start_world + dist * ray_direction_world
 
                 # Store points at: cache_offset + point_idx_in_sensor * 3
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
             else:
                 # Local frame output along provided local ray direction
                 hit_point = dist * qd_normalize(
-                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), gs.EPS
+                    qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2]), eps
                 )
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = hit_point.x
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = hit_point.y
-                output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = hit_point.z
+                output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+                output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+                output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
         else:
             # No hit
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 0] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 1] = 0.0
-            output_hits[i_b, i_p_offset + i_p_sensor * 3 + 2] = 0.0
-            output_hits[i_b, i_p_dist] = no_hit_values[i_s]
+            output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
+            output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
+            output_hits[i_p_dist, i_b] = no_hit_values[i_s]
 
 
 @dataclass
@@ -148,7 +148,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     min_ranges: torch.Tensor = make_tensor_field((0,))
     max_ranges: torch.Tensor = make_tensor_field((0,))
     no_hit_values: torch.Tensor = make_tensor_field((0,))
-    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_bool)
+    return_world_frame: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
 
     patterns: list[RaycastPattern] = field(default_factory=list)
     ray_dirs: torch.Tensor = make_tensor_field((0, 3))
@@ -156,10 +156,10 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     ray_starts_world: torch.Tensor = make_tensor_field((0, 3))
     ray_dirs_world: torch.Tensor = make_tensor_field((0, 3))
 
-    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
-    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype=gs.tc_int)
+    points_to_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_cache_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_offsets: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_point_counts: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class RaycasterData(NamedTuple):
@@ -167,16 +167,9 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-@register_sensor(RaycasterOptions, RaycasterSharedMetadata, RaycasterData)
-class RaycasterSensor(RigidSensorMixin, Sensor):
-    def __init__(
-        self,
-        options: RaycasterOptions,
-        shared_metadata: RaycasterSharedMetadata,
-        data_cls: Type[RaycasterData],
-        manager: "gs.SensorManager",
-    ):
-        super().__init__(options, shared_metadata, data_cls, manager)
+class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+    def __init__(self, options: RaycasterOptions, shared_metadata: RaycasterSharedMetadata, manager: "SensorManager"):
+        super().__init__(options, shared_metadata, manager)
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
@@ -197,7 +190,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         shared_metadata.bvh.build()
 
     def build(self):
-        super().build()  # set shared metadata from RigidSensorMixin
+        super().build()
 
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
@@ -254,8 +247,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, envs_idx):
-        super().reset(shared_metadata, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
@@ -278,7 +271,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             links_pos = links_pos[None]
             links_quat = links_quat[None]
 
-        output_hits = shared_ground_truth_cache.contiguous()
         kernel_cast_rays(
             shared_metadata.solver.fixed_verts_state,
             shared_metadata.solver.free_verts_state,
@@ -297,11 +289,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor):
             shared_metadata.sensor_cache_offsets,
             shared_metadata.sensor_point_offsets,
             shared_metadata.sensor_point_counts,
-            output_hits,
+            shared_ground_truth_cache,
             gs.EPS,
         )
-        if not shared_ground_truth_cache.is_contiguous():
-            shared_ground_truth_cache.copy_(output_hits)
 
     @classmethod
     def _update_shared_cache(

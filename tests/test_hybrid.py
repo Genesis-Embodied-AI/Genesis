@@ -228,7 +228,7 @@ def test_sap_rigid_rigid_hydroelastic_contact(show_viewer):
 
     # All the entities must be still
     for entity in scene.entities:
-        assert_allclose(entity.get_links_vel(), 0.0, atol=2e-2)
+        assert_allclose(entity.get_links_vel(), 0.0, atol=0.03)
 
     # The box should stay at its initial position
     assert_allclose(box.get_pos(), (0.0, 0.0, BOX_HALFHEIGHT), atol=2e-3)

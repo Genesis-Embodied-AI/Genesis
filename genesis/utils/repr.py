@@ -7,16 +7,16 @@ def brief(x):
         return x._repr_brief()
 
     elif isinstance(x, (int, float, dict, bool, list, tuple, np.integer, np.floating)):
-        return f"{_repr_type(x)}: {x}"
+        return f"{__repr_name__(x)}: {x}"
 
     elif isinstance(x, str):
-        return f"{_repr_type(x)}: '{x}'"
+        return f"{__repr_name__(x)}: '{x}'"
 
     elif isinstance(x, (np.ndarray, torch.Tensor)):
         if np.prod(x.shape) <= 20:
-            return f"{_repr_type(x)}: {x.__repr__()}"
+            return f"{__repr_name__(x)}: {x.__repr__()}"
         else:
-            return f"{_repr_type(x)}, shape: {x.shape}"
+            return f"{__repr_name__(x)}, shape: {x.shape}"
 
     # elif isinstance(x, (gs.IntEnum, gs.UID)):
     #     return x.__repr__()
@@ -25,10 +25,10 @@ def brief(x):
         return "None"
 
     else:
-        return _repr_type(x)
+        return __repr_name__(x)
 
 
-def _repr_type(x):
+def __repr_name__(x):
     """
     Only used for non-genesis object by `brief()`.
     To convert <class 'classname'> into <classname>.

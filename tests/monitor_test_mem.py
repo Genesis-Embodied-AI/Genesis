@@ -141,7 +141,13 @@ def main() -> None:
             last_output_line = potential_output_line
         old_mem_by_test = _mem_by_test
         time.sleep(CHECK_INTERVAL)
-    print("Test monitor exiting")
+    for _test in old_mem_by_test:
+        result_line = format_result_line(_test, max_mem_by_test[_test])
+        f.write(result_line + "\n")
+        num_results_written += 1
+    f.flush()
+    f.close()
+    print(f"Test monitor exiting ({num_results_written} results written)")
 
 
 if __name__ == "__main__":

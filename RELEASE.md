@@ -1,5 +1,136 @@
 # Genesis Release Note
 
+## 0.4.5
+
+This release continues on the ongoing trend of rigid body simulation speed improvements. A few camera-related bugs and all known regression on Metal backend are now fixed.
+
+### New Features
+
+* Add support of xacro URDF. (@duburcqa) (#2642)
+* Add public API to RigidEntity for kinematic and potential energy. (@Lidang-Jiang) (#2613)
+* Add support of Mujoco general actuator model. (@duburcqa) (#2641)
+* Add support of zerocopy to set_pos/set_quat. (@duburcqa) (#2657)
+
+### Bug Fixes
+
+* Guard gradient computation not supported on Metal backend with dynamic array mode. (@duburcqa) (#2628)
+* Fix plotter video export race condition. (@duburcqa) (#2647)
+* Fix sensor camera 'lookat' being ignored when 'entity_idx' is set. (@Lidang-Jiang) (#2614)
+* Fix various regressions on Metal backend. (@duburcqa) (#2651, #2624, #2657)
+* Fix camera sensor per-env rendering with Rasterizer. (@duburcqa) (#2657)
+
+### Miscellaneous
+
+* Add parallel linesearch for constraint solver to speedup simulation on GPU backend. (@erizmr) (#2523)
+* Speedup tiled hessian kernel by using direct lower-triangle indexing. (@hughperkins) (#2618)
+* Add broadphase all-vs-all to speedup simulation on GPU backend. (@hughperkins) (#2607)
+* Add GPU graph to decomposed solver to reduce kernel launch latency. (@hughperkins, @duburcqa) (#2621, #2635, #2636)
+* Add support of opt-in shared memory for tiled hessian to improve performance. (@duburcqa) (#2629)
+* Better parallelization of add collision constraints. (@hughperkins) (#2639)
+* Enable GPU-optimised decomposed constraints solver implementation on all GPU backends. (@duburcqa) (#2623)
+* Unify narrowphase codepath on all GPU backends. (@duburcqa) (#2637)
+* Automatically select optimal H264 codec for Video recorder. (@duburcqa) (#2657)
+* Update all RL examples. (@duburcqa) (#2644, #2657)
+* Update docker container. (@duburcqa) (#2643)
+
+## 0.4.4
+
+The numerical stability of the simulation for simple rigid objects has been greatly improved. Apart from that, rigid body simulation is now much faster for complex scenes with many entities. Finally, a significant number of bugs have been fixed.
+
+### Breaking changes
+
+* [FEATURE] Improve numerical stability of simulation by aligning inertial axes of free joints. (@duburcqa) (#2569, #2571, #2573, #2575)
+* [BUG FIX] Fix default armature incorrectly applied on free joints for MJCF. (@duburcqa) (#2584)
+* [MISC] Set 'RigidEntity.set_quat(..., relative=True)' by default. (@duburcqa) (#2592)
+* [MISC] More realistic default material density for Rigid. (@duburcqa) (#2378)
+
+### New Features
+
+* Support batched camera for Rasterizer. (@duburcqa) (#2564)
+* Add MacOS support for separated envs rendering with Rasterizer. (@duburcqa) (#2560)
+
+### Bug Fixes
+
+* Fix flickering issue for temperature sensor debug draw. (@duburcqa) (#2557)
+* Fix batched env separated rendering with Rasterizer.
+* Fix interactive viewer race condition when running background thread. (@duburcqa) (#2585)
+* Fix color overwrite for MJCF without visuals. (@duburcqa) (#2586)
+* Fix batched sensor read when combining multiple sensor types. (@Milotrince) (#2581)
+* Fix USD parsing. (@duburcqa) (#2594)
+* Fix GPU synchronization issue on Apple Metal. (@duburcqa) (#2600)
+* Fix degenerated invweight computation. (@duburcqa) (#2598)
+* Fix viewer plugin registration after build. (@duburcqa) (#2601)
+* Fix motion planning crashing for short path < 3 nodes. (@Lidang-Jiang) (#2610)
+* Fix mouse interaction void ray casting. (@duburcqa) (#2611)
+* Fix IK solver using wrong entity's DOFs for multi-robot scenes. (@Lidang-Jiang) (#2612)
+
+### Miscellaneous
+
+* Improve mouse interaction visualization. (@duburcqa) (#2574)
+* Add support of batching to 'RigidLink.set_mass'. (@duburcqa) (#2578)
+* Refactor rigid benchmarks into reusable scene factories. (@hughperkins) (#2577)
+* Re-raise viewer exception running in background thread. (@duburcqa) (#2583)
+* Support non-blocking scene reset for rigid solver. (@duburcqa) (#2580)
+* Support more recent GPU devices by migrating Quadrants to LLVM 22. (@hughperkins) (#2595)
+* Migrate materials to new pydantic based options with strict validation. (@duburcqa) (#2597)
+* Disable perf dispatch re-benchmarking to reduce performance penalty. (@erizmr) (#2599)
+* Tune kernel dispatch heuristics to reduce wrong selection. (@erizmr) (#2605)
+* Rename 'Drone.set_propellels_rpm' in 'Drone.set_propellers_rpm'. (@Lidang-Jiang) (#2609)
+* Speed up simulation by tuning tiled Hessian block size. (@hughperkins) (#2617)
+* Optimize performance of collision detection using hardware-derived thread count. (@hughperkins) (#2616)
+
+## 0.4.3
+
+This release introduces more sensors while significantly speeding up collision detection on GPU (up to 30%). As usual, a few bugs have been fixed.
+
+### New Features
+
+* Add ProximitySensor. (@Milotrince) (#2550)
+* Add TemperatureGridSensor. (@Milotrince) (#2457)
+
+### Bug Fixes
+
+* Fix rendering FEM vertex normals in interactive viewer. (@duburcqa) (#2555)
+* Fix support of ellipsoid geometry. (@duburcqa) (#2554)
+* Fix mujoco compatible URDF parsing. (@duburcqa) (#2547)
+* Fix typing, validation, and compatibility issues with structured options. (@duburcqa) (#2548)
+
+### Miscellaneous
+
+* Speed up rigid collision detection on GPU for generic convex meshes. (@hughperkins) (#2527)
+* Fix spurious Quadrants compilation warnings. (@duburcqa) (#2546)
+* Improve typing of 'add_entity', 'add_sensor'. (@duburcqa) (#2552)
+* Add init/destroy registration mechanism for external modules. (@duburcqa) (#2551)
+* More flexible and reliable sensor plugin registration mechanism. (@duburcqa) (#2553)
+
+## 0.4.2
+
+This release introduces a new type of tactile sensors based on [FOTS](https://arxiv.org/pdf/2404.19217), and add support of parallel simulation of heterogeneous articulated robots. Beyond that, the performance of the simulation has been significantly improved, especially when rigid option 'noslip' is enabled.
+
+### New Features
+
+* Add ElastomerDisplacementSensor. (@Milotrince) (#2447)
+* Support articulated assets in heterogeneous parallel simulation. (@Kashu7100, @ACMLCZH) (#2472, #2535)
+
+### Bug Fixes
+
+* Fix GJK multi-contact in mujoco-compatibility mode. (@SonSang, @duburcqa) (#2514, #2516)
+* Add support of morph option "fixed" for USD without explicit root and filter out invisible geometries from collision. (@ACMLCZH) (#2528)
+* More robust collision detection on 32bits precision. (@SonSang) (#2525)
+* Fix parsing of URDF with undefined inertial properties. (@duburcqa) (#2544)
+
+### Miscellaneous
+
+* Propagate interactive viewer exceptions when running in thread. (@duburcqa) (#2510)
+* More robust and versatile interactive viewer keybinding. (@duburcqa) (#2512)
+* Migrate 'gs view' to kinematic entity to reduce compile time. (@duburcqa) (#2522)
+* Fix Python-scope field read to avoid GPU-CPU sync. (@erizmr) (#2518)
+* Faster initialisation of collision pairs validity mask. (@ACMLCZH) (#2534)
+* Introduce structured options with validation. (@duburcqa) (#2536)
+* Accelerate noslip simulation on GPU backend. (@erizmr) (#2532)
+* Speedup rigid constraint solver. (@erizmr) (#2524)
+* Add dexterous hand benchmark. (@hughperkins) (#2500)
+
 ## 0.4.1
 
 This release mainly improves experimental IPC coupler integration. Avatar entity has been re-introduced after being broken for months. Finally, Quadrants' dynamic arrays are now support on Apple Metal to avoid systematic scene compilation.
@@ -38,7 +169,7 @@ This release mainly improves experimental IPC coupler integration. Avatar entity
 * More comprehensive performance benchmarks. (@hughperkins) (#2470)
 * Aggregate speed benchmark wandb uploads into a single run. (@hughperkins) (#2482)
 
-## 0.4.1
+## 0.4.0
 
 This release polishes our newly introduced USD parser and external interactive viewer plugin mechanism. Beyond that, the performance of the simulation has been significantly improved for collision-heavy scenes (up to 30%) and robots using capsule/sphere collision geometries (up to 20%).
 

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Callable, Type
+from typing import TYPE_CHECKING, Any, Callable
 
 import genesis as gs
 
@@ -95,8 +95,8 @@ class RecorderManager:
         return self._is_built
 
 
-def register_recording(options_cls: Type["RecorderOptions"]):
-    def _impl(recorder_cls: Type["Recorder"]):
+def register_recording(options_cls: type["RecorderOptions"]):
+    def _impl(recorder_cls: type["Recorder"]):
         RecorderManager.RECORDER_TYPES_MAP[options_cls] = recorder_cls
         return recorder_cls
 

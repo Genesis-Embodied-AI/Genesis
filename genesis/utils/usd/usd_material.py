@@ -74,7 +74,7 @@ def parse_preview_surface(prim: Usd.Prim, output_name):
 
         # parse emissive
         emissive_texture, emissive_uvname = parse_component(shader, "emissiveColor", "srgb")
-        if emissive_texture is not None and emissive_texture.is_black():
+        if emissive_texture is not None and emissive_texture.is_black:
             emissive_texture = None
         if emissive_uvname is not None and uvname is None:
             uvname = emissive_uvname

@@ -1,14 +1,19 @@
 import math
-from typing import Optional
+from typing import ClassVar, Literal
+from typing_extensions import Self
 
 import numpy as np
+from pydantic import Field, StrictBool, model_validator
 
 import genesis as gs
+from genesis.typing import FArrayType, UnitInterval, ValidFloat
 from genesis.utils import mesh as mu
 
 from .misc import FoamOptions
 from .options import Options
 from .textures import Texture, ColorTexture, ImageTexture, BatchTexture
+
+MetalType = Literal["aluminium", "gold", "copper", "brass", "iron", "titanium", "vanadium", "lithium"]
 
 
 ############################ Base ############################
@@ -17,13 +22,12 @@ class Surface(Options):
     Base class for all surfaces types in Genesis.
 
     A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links,
-    geoms, ...). The surface contains different types textures: diffuse_texture, specular_texture, roughness_texture,
-    metallic_texture, transmission_texture, normal_texture, and emissive_texture. Each one of them is a
-    `gs.textures.Texture` object.
+    geoms, ...). The surface contains different types of textures depending on the surface type (e.g. diffuse, specular,
+    roughness, metallic, normal, emissive). Each one of them is a `gs.textures.Texture` object.
 
     Tip
     ---
-    If any of the textures only has single value (instead of a map), you can use the shortcut attribute (e.g., `color`,
+    If any of the textures only has single value (instead of a map), you can use the shortcut parameter (e.g., `color`,
     `roughness`, `metallic`, `emissive`) instead of creating a texture object.
 
     Note
@@ -33,27 +37,17 @@ class Surface(Options):
     Parameters
     ----------
     color : tuple | None, optional
-        Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
+        Color of the surface. Shortcut for the primary texture with a single color.
     opacity : float | None, optional
         Opacity of the surface. Shortcut for `opacity_texture` with a single value.
     roughness : float | None, optional
         Roughness of the surface. Shortcut for `roughness_texture` with a single value.
     metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
+        Metalness of the surface. Shortcut for `metallic_texture` with a single value.
     emissive : tuple | None, optional
         Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
         Index of Refraction.
-    opacity_texture : gs.textures.Texture | None, optional
-        Opacity texture of the surface.
-    roughness_texture : gs.textures.Texture | None, optional
-        Roughness texture of the surface.
-    metallic_texture : gs.textures.Texture | None, optional
-        Metallic texture of the surface.
-    normal_texture : gs.textures.Texture | None, optional
-        Normal texture of the surface.
-    emissive_texture : gs.textures.Texture | None, optional
-        Emissive texture of the surface.
     default_roughness : float, optional
         Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults
         to 1.0.
@@ -81,128 +75,98 @@ class Surface(Options):
         Options for foam generation.
     """
 
-    # shortcuts
-    color: Optional[tuple] = None
-    opacity: Optional[float] = None
-    roughness: Optional[float] = None
-    metallic: Optional[float] = None
-    emissive: Optional[tuple] = None
-    ior: Optional[float] = None
+    _color_target: ClassVar[str] = "diffuse_texture"
 
-    # textures (can be either ColorTexture or ImageTexture)
-    opacity_texture: Optional[Texture] = None
-    roughness_texture: Optional[Texture] = None
-    metallic_texture: Optional[Texture] = None
-    normal_texture: Optional[Texture] = None
-    emissive_texture: Optional[Texture] = None
+    # Shortcut fields — resolved to texture fields by _resolve_shortcuts, excluded from serialization.
+    color: FArrayType | None = Field(default=None, exclude=True, repr=False)
+    opacity: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    roughness: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    metallic: UnitInterval | None = Field(default=None, exclude=True, repr=False)
+    emissive: FArrayType | None = Field(default=None, exclude=True, repr=False)
 
-    default_roughness: float = 1.0
-
-    vis_mode: Optional[str] = None
-    smooth: bool = True
-    double_sided: Optional[bool] = None
+    ior: float | None = None
+    default_roughness: UnitInterval = 1.0
+    vis_mode: Literal["visual", "collision", "particle", "sdf", "recon"] | None = None
+    smooth: StrictBool = True
+    double_sided: StrictBool | None = None
     cutoff: float = 180.0
     normal_diff_clamp: float = 180.0
-    recon_backend: str = "splashsurf"
-    generate_foam: bool = False
-    foam_options: Optional[FoamOptions] = None
+    recon_backend: Literal["splashsurf", "openvdb"] = "splashsurf"
+    generate_foam: StrictBool = False
+    foam_options: FoamOptions = Field(default_factory=FoamOptions)
 
-    @staticmethod
-    def shortcut_info(name, map_name):
-        return f"`{name}` is a shortcut for texture. When {name} is set, {map_name} setting is not allowed."
-
-    def __init__(self, **data):
-        super().__init__(**data)
-
-        if self.foam_options is None:
-            self.foam_options = FoamOptions()
-
+    @model_validator(mode="after")
+    def _resolve_shortcuts(self) -> Self:
+        color_target = type(self)._color_target
         if self.color is not None:
-            if self.get_texture() is not None:
-                gs.raise_exception(self.shortcut_info("color", "texture"))
-            self.set_texture(ColorTexture(color=self.color))
+            if getattr(self, color_target) is not None:
+                gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
+            setattr(self, color_target, ColorTexture(color=tuple(self.color)))
 
-        if self.opacity is not None:
-            if self.opacity_texture is not None:
-                gs.raise_exception(self.shortcut_info("opacity", "opacity_texture"))
-            self.opacity_texture = ColorTexture(color=(self.opacity,))
-
-        if self.roughness is not None:
-            if self.roughness_texture is not None:
-                gs.raise_exception(self.shortcut_info("roughness", "roughness_texture"))
-            self.roughness_texture = ColorTexture(color=(self.roughness,))
-
-        if self.metallic is not None:
-            if self.metallic_texture is not None:
-                gs.raise_exception(self.shortcut_info("metallic", "metallic_texture"))
-            self.metallic_texture = ColorTexture(color=(self.metallic,))
+        for shortcut, texture_field in (
+            ("opacity", "opacity_texture"),
+            ("roughness", "roughness_texture"),
+            ("metallic", "metallic_texture"),
+        ):
+            value = getattr(self, shortcut, None)
+            if value is not None:
+                if texture_field in self.model_fields:
+                    if getattr(self, texture_field) is not None:
+                        gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
+                    setattr(self, texture_field, ColorTexture(color=(float(value),)))
 
         if self.emissive is not None:
-            if self.emissive_texture is not None:
-                gs.raise_exception(self.shortcut_info("emissive", "emissive_texture"))
-            self.emissive_texture = ColorTexture(color=self.emissive)
+            if "emissive_texture" in self.model_fields:
+                if self.emissive_texture is not None:
+                    gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
+                self.emissive_texture = ColorTexture(color=tuple(self.emissive))
 
-        color_texture = self.get_texture()
-        if color_texture is not None:
-            opacity_texture = color_texture.check_dim(3)
-            if self.opacity_texture is None:
-                self.opacity_texture = opacity_texture
-        if self.emissive_texture is not None:
-            opacity_texture = self.emissive_texture.check_dim(3)
-            if self.opacity_texture is None:
-                self.opacity_texture = opacity_texture
+        # Sync default_roughness with roughness shortcut unless explicitly set
+        if self.roughness is not None and "default_roughness" not in self.model_fields_set:
+            self.default_roughness = float(self.roughness)
+
+        return self
+
+    @property
+    def texture(self) -> Texture | None:
+        raise NotImplementedError
+
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        raise NotImplementedError
+
+    @property
+    def emission(self) -> Texture | None:
+        return None
+
+    @property
+    def requires_uv(self) -> bool:
+        return False
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        return self._make_rgba(self.texture, None, batch)
 
     def update_texture(
         self,
-        color_texture=None,
-        opacity_texture=None,
-        roughness_texture=None,
-        metallic_texture=None,
-        normal_texture=None,
-        emissive_texture=None,
-        ior=None,
-        double_sided=None,
-        force=False,
-    ):
+        *,
+        color_texture: Texture | None = None,
+        ior: float | None = None,
+        double_sided: bool | None = None,
+        force: bool = False,
+        **kwargs,
+    ) -> None:
         """
         Update the surface textures using given attributes.
-        Note that if the surface already contains corresponding textures, the existing one have a higher priority and won't be overridden. Force overriding can be enable by setting force=True,
+
+        If the surface already contains corresponding textures, the existing ones have higher priority and won't be
+        overridden. Force overriding can be enabled by setting force=True.
         """
-        # diffuse map (or specular for glass and emissive for emission)
-        if self.get_texture() is None or force:
+        # update primary texture
+        if self.texture is None or force:
             if color_texture is not None:
-                self.set_texture(color_texture)
+                self.texture = color_texture
             elif not force:
-                self.set_texture(ColorTexture())
-
-        # update opacity
-        if self.opacity_texture is None or force:
-            if opacity_texture is not None:
-                self.opacity_texture = opacity_texture
-            elif not force:
-                self.opacity_texture = ColorTexture(color=(1.0,))
-
-        # update roughness
-        if self.roughness_texture is None or force:
-            if roughness_texture is not None:
-                self.roughness_texture = roughness_texture
-            elif not force:
-                self.roughness_texture = ColorTexture(color=(self.default_roughness,))
-
-        # update metallic
-        if self.metallic_texture is None or force:
-            if metallic_texture is not None:
-                self.metallic_texture = metallic_texture
-
-        # update normal
-        if self.normal_texture is None or force:
-            if normal_texture is not None:
-                self.normal_texture = normal_texture
-
-        # update emissive
-        if self.emissive_texture is None or force:
-            if emissive_texture is not None:
-                self.emissive_texture = emissive_texture
+                self.texture = ColorTexture()
 
         # update ior
         if self.ior is None or force:
@@ -216,23 +180,37 @@ class Surface(Options):
             if double_sided is not None:
                 self.double_sided = double_sided
 
-    def requires_uv(self):
-        textures = (
-            self.get_texture(),
-            self.opacity_texture,
-            self.roughness_texture,
-            self.metallic_texture,
-            self.normal_texture,
-            self.emissive_texture,
-        )
-        return any(texture is not None and texture.requires_uv() for texture in textures)
+    @staticmethod
+    def _update_field(
+        current: Texture | None, new: Texture | None, default: Texture | None, force: bool
+    ) -> Texture | None:
+        if current is None or force:
+            if new is not None:
+                return new
+            elif not force and default is not None:
+                return default
+        return current
 
-    def get_rgba(self, batch=False):
+    @staticmethod
+    def _extract_opacity_from(
+        texture: Texture | None, emissive: Texture | None, opacity: Texture | None
+    ) -> Texture | None:
+        if texture is not None:
+            tex = texture.check_dim(3)
+            if opacity is None and tex is not None:
+                opacity = tex
+        if emissive is not None:
+            tex = emissive.check_dim(3)
+            if opacity is None and tex is not None:
+                opacity = tex
+        return opacity
+
+    @staticmethod
+    def _make_rgba(
+        color_texture: Texture | None, opacity_texture: Texture | None, batch: bool
+    ) -> BatchTexture | Texture:
         all_textures = []
-        for texture in (
-            self.get_texture() if self.emissive_texture is None else self.emissive_texture,
-            self.opacity_texture,
-        ):
+        for texture in (color_texture, opacity_texture):
             textures = texture.textures if isinstance(texture, BatchTexture) else [texture]
             all_textures.append(textures if batch else textures[:1])
         color_textures, opacity_textures = all_textures
@@ -288,113 +266,119 @@ class Surface(Options):
 
         return BatchTexture(textures=rgba_textures) if batch else rgba_textures[0]
 
-    def set_texture(self, texture):
-        raise NotImplementedError
 
-    def get_texture(self):
-        raise NotImplementedError
-
-    def get_emission(self):
-        return self.emissive_texture
-
-
-############################ Three surface types ############################
+############################ Surface types ############################
 class Glass(Surface):
     """
-    Base class for all surfaces types in Genesis.
-    A ``Surface`` object encapsulates all visual information used for rendering an entity or its sub-components (links, geoms, etc.)
-    The surface contains different types textures: diffuse_texture, specular_texture, roughness_texture, metallic_texture, normal_texture, and emissive_texture. Each one of them is a `gs.textures.Texture` object.
-
-    Tip
-    ---
-    If any of the textures only has single value (instead of a map), you can use the shortcut attribute (e.g., `color`, `roughness`, `metallic`, `emissive`) instead of creating a texture object.
-
-    Note
-    ----
-    This class should *not* be instantiated directly.
+    Glass surface with specular reflection and transmission.
 
     Parameters
     ----------
     color : tuple | None, optional
-        Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
-    roughness : float | None, optional
-        Roughness of the surface. Shortcut for `roughness_texture` with a single value.
+        Specular color of the surface. Shortcut for `specular_texture` with a single color.
+    roughness : float, optional
+        Roughness of the surface. Defaults to 0.0.
     ior : float, optional
-        Index of Refraction.
+        Index of Refraction. Defaults to 1.5.
     subsurface : bool
-        Whether apply a simple BSSRDF subsurface to the glass material.
+        Whether to apply a simple BSSRDF subsurface to the glass material.
     thickness : float | None, optional
-        The thickness of the top surface when 'subsurface' is set to True, that is, the maximum distance of subsurface scattering. Shortcut for `thickness_texture` with a single value.
-    metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
-    emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
+        The thickness of the top surface when 'subsurface' is set to True. Shortcut for `thickness_texture`.
     specular_texture : gs.textures.Texture | None, optional
         Specular texture of the surface.
+    diffuse_texture : gs.textures.Texture | None, optional
+        Diffuse texture of the surface.
     transmission_texture : gs.textures.Texture | None, optional
         Transmission texture of the surface.
-    opacity_texture : gs.textures.Texture | None, optional
-        Opacity texture of the surface.
+    thickness_texture : gs.textures.Texture | None, optional
+        The thickness texture of the top surface.
     roughness_texture : gs.textures.Texture | None, optional
         Roughness texture of the surface.
-    metallic_texture : gs.textures.Texture | None, optional
-        Metallic texture of the surface.
     normal_texture : gs.textures.Texture | None, optional
         Normal texture of the surface.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
-    thickness_texture : gs.textures.Texture | None, optional
-        The thickness of the top surface.
-    default_roughness : float, optional
-        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults to 1.0.
-    vis_mode : str | None, optional
-        How the entity should be visualized. Possible values are ['visual', 'particle', 'collision', 'sdf', 'recon'].
-
-        - 'visual': Render the entity's visual geometry.
-        - 'collision': Render the entity's collision geometry.
-        - 'particle': Render the entity's particle representation (if applicable).
-        - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
-        - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
-
-    smooth : bool, optional
-        Whether to smooth face normals by interpolating vertex normals.
-    double_sided : bool | None, optional
-        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth material and False for others.
-    normal_diff_clamp : float, optional
-        Controls the threshold for computing surface normals by interpolating vertex normals.
-    recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb'].
-    generate_foam : bool, optional
-        Whether to generate foam particles for visual effects for particle-based entities.
-    foam_options : gs.options.FoamOptions, optional
-        Options for foam generation.
     """
 
-    roughness: float = 0.0
-    ior: float = 1.5
-    subsurface: bool = False
-    thickness: Optional[float] = None
+    _color_target: ClassVar[str] = "specular_texture"
 
-    thickness_texture: Optional[Texture] = None
-    specular_texture: Optional[Texture] = None
-    diffuse_texture: Optional[Texture] = None
-    transmission_texture: Optional[Texture] = None
+    roughness: UnitInterval | None = Field(default=0.0, exclude=True, repr=False)
+    ior: float | None = 1.5
+    thickness: ValidFloat | None = Field(default=None, exclude=True, repr=False)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    subsurface: StrictBool = False
+    specular_texture: Texture | None = None
+    diffuse_texture: Texture | None = None
+    transmission_texture: Texture | None = None
+    thickness_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
 
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        # Handle thickness shortcut
         if self.thickness is not None:
             if self.thickness_texture is not None:
-                gs.raise_exception(self.shortcut_info("thickness", "thickness_texture"))
-            self.thickness_texture = ColorTexture(color=(self.thickness,))
+                gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
+            self.thickness_texture = ColorTexture(color=(float(self.thickness),))
 
-    def get_texture(self):
+        # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
+        if self.specular_texture is not None:
+            self.specular_texture.check_dim(3)
+        if self.emissive_texture is not None:
+            self.emissive_texture.check_dim(3)
+        if self.specular_texture is not None and self.transmission_texture is None:
+            self.transmission_texture = self.specular_texture
+        return self
+
+    @property
+    def texture(self) -> Texture | None:
         return self.specular_texture
 
-    def set_texture(self, texture):
-        # for simplicity, let's use the same texture for specular and transmission
-        self.specular_texture = texture
-        self.transmission_texture = texture
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        self.specular_texture = value
+        self.transmission_texture = value
+
+    @property
+    def emission(self) -> Texture | None:
+        return self.emissive_texture
+
+    @property
+    def requires_uv(self) -> bool:
+        return any(
+            t is not None and t.requires_uv
+            for t in (
+                self.specular_texture,
+                self.diffuse_texture,
+                self.transmission_texture,
+                self.thickness_texture,
+                self.roughness_texture,
+                self.normal_texture,
+                self.emissive_texture,
+            )
+        )
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        color = self.emissive_texture if self.emissive_texture is not None else self.specular_texture
+        return self._make_rgba(color, None, batch)
+
+    def update_texture(
+        self,
+        *,
+        roughness_texture: Texture | None = None,
+        normal_texture: Texture | None = None,
+        emissive_texture: Texture | None = None,
+        force: bool = False,
+        **kwargs,
+    ) -> None:
+        super().update_texture(force=force, **kwargs)
+        self.roughness_texture = self._update_field(
+            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
+        )
+        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
+        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Metal(Surface):
@@ -405,66 +389,85 @@ class Metal(Surface):
     ----------
     color : tuple | None, optional
         Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
-    roughness : float | None, optional
-        Roughness of the surface. Shortcut for `roughness_texture` with a single value.
-    metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
-    emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     metal_type : str, optional
-        Type of metal, indicating a specific index of refraction (IOR). Possible values are ['aluminium', 'gold', 'copper', 'brass', 'iron', 'titanium', 'vanadium', 'lithium'].
+        Type of metal, indicating a specific index of refraction (IOR). Possible values are ['aluminium', 'gold',
+        'copper', 'brass', 'iron', 'titanium', 'vanadium', 'lithium']. Defaults to 'iron'.
     diffuse_texture : gs.textures.Texture | None, optional
         Diffuse (basic color) texture of the surface.
     opacity_texture : gs.textures.Texture | None, optional
         Opacity texture of the surface.
     roughness_texture : gs.textures.Texture | None, optional
         Roughness texture of the surface.
-    metallic_texture : gs.textures.Texture | None, optional
-        Metallic texture of the surface.
     normal_texture : gs.textures.Texture | None, optional
         Normal texture of the surface.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
-    default_roughness : float, optional
-        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults to 1.0.
-    vis_mode : str | None, optional
-        How the entity should be visualized. Possible values are ['visual', 'particle', 'collision', 'sdf', 'recon'].
-
-        - 'visual': Render the entity's visual geometry.
-        - 'collision': Render the entity's collision geometry.
-        - 'particle': Render the entity's particle representation (if applicable).
-        - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
-        - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
-
-    smooth : bool, optional
-        Whether to smooth face normals by interpolating vertex normals.
-    double_sided : bool | None, optional
-        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth material and False for others.
-    normal_diff_clamp : float, optional
-        Controls the threshold for computing surface normals by interpolating vertex normals.
-    recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb'].
-    generate_foam : bool, optional
-        Whether to generate foam particles for visual effects for particle-based entities.
-    foam_options : gs.options.FoamOptions, optional
-        Options for foam generation.
     """
 
-    roughness: Optional[float] = 0.1
-    metal_type: Optional[str] = "iron"
-    diffuse_texture: Optional[Texture] = None
+    roughness: UnitInterval | None = Field(default=0.1, exclude=True, repr=False)
 
-    def __init__(self, **data):
-        super().__init__(**data)
+    metal_type: MetalType = "iron"
+    diffuse_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
 
-        if self.metal_type not in ["aluminium", "gold", "copper", "brass", "iron", "titanium", "vanadium", "lithium"]:
-            gs.raise_exception(f"Invalid metal metal_type: {self.metal_type}.")
-
-    def get_texture(self):
+    @property
+    def texture(self) -> Texture | None:
         return self.diffuse_texture
 
-    def set_texture(self, texture):
-        self.diffuse_texture = texture
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        self.diffuse_texture = value
+
+    @property
+    def emission(self) -> Texture | None:
+        return self.emissive_texture
+
+    @property
+    def requires_uv(self) -> bool:
+        return any(
+            t is not None and t.requires_uv
+            for t in (
+                self.diffuse_texture,
+                self.opacity_texture,
+                self.roughness_texture,
+                self.normal_texture,
+                self.emissive_texture,
+            )
+        )
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
+        return self._make_rgba(color, self.opacity_texture, batch)
+
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        self.opacity_texture = self._extract_opacity_from(
+            self.diffuse_texture, self.emissive_texture, self.opacity_texture
+        )
+        return self
+
+    def update_texture(
+        self,
+        *,
+        opacity_texture: Texture | None = None,
+        roughness_texture: Texture | None = None,
+        normal_texture: Texture | None = None,
+        emissive_texture: Texture | None = None,
+        force: bool = False,
+        **kwargs,
+    ) -> None:
+        super().update_texture(force=force, **kwargs)
+        self.opacity_texture = self._update_field(
+            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        )
+        self.roughness_texture = self._update_field(
+            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
+        )
+        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
+        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Plastic(Surface):
@@ -475,14 +478,8 @@ class Plastic(Surface):
     ----------
     color : tuple | None, optional
         Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
-    roughness : float | None, optional
-        Roughness of the surface. Shortcut for `roughness_texture` with a single value.
-    metallic : float | None, optional
-        Metalness of the surface. Shortcut for `metallic_texture` with a single value.
-    emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
-        Index of Refraction.
+        Index of Refraction. Defaults to 1.0.
     diffuse_texture : gs.textures.Texture | None, optional
         Diffuse (basic color) texture of the surface.
     specular_texture : gs.textures.Texture | None, optional
@@ -491,68 +488,95 @@ class Plastic(Surface):
         Opacity texture of the surface.
     roughness_texture : gs.textures.Texture | None, optional
         Roughness texture of the surface.
-    metallic_texture : gs.textures.Texture | None, optional
-        Metallic texture of the surface.
     normal_texture : gs.textures.Texture | None, optional
         Normal texture of the surface.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
-    default_roughness : float, optional
-        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults to 1.0.
-    vis_mode : str | None, optional
-        How the entity should be visualized. Possible values are ['visual', 'particle', 'collision', 'sdf', 'recon'].
-
-        - 'visual': Render the entity's visual geometry.
-        - 'collision': Render the entity's collision geometry.
-        - 'particle': Render the entity's particle representation (if applicable).
-        - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
-        - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
-
-    smooth : bool, optional
-        Whether to smooth face normals by interpolating vertex normals.
-    double_sided : bool | None, optional
-        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth material and False for others.
-    normal_diff_clamp : float, optional
-        Controls the threshold for computing surface normals by interpolating vertex normals.
-    recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb'].
-    generate_foam : bool, optional
-        Whether to generate foam particles for visual effects for particle-based entities.
-    foam_options : gs.options.FoamOptions, optional
-        Options for foam generation.
     """
 
-    ior: float = 1.0
-    diffuse_texture: Optional[Texture] = None
-    specular_texture: Optional[Texture] = None
+    ior: float | None = 1.0
 
-    def get_texture(self):
+    diffuse_texture: Texture | None = None
+    specular_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
+
+    @property
+    def texture(self) -> Texture | None:
         return self.diffuse_texture
 
-    def set_texture(self, texture):
-        self.diffuse_texture = texture
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        self.diffuse_texture = value
+
+    @property
+    def emission(self) -> Texture | None:
+        return self.emissive_texture
+
+    @property
+    def requires_uv(self) -> bool:
+        return any(
+            t is not None and t.requires_uv
+            for t in (
+                self.diffuse_texture,
+                self.specular_texture,
+                self.opacity_texture,
+                self.roughness_texture,
+                self.normal_texture,
+                self.emissive_texture,
+            )
+        )
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
+        return self._make_rgba(color, self.opacity_texture, batch)
+
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        self.opacity_texture = self._extract_opacity_from(
+            self.diffuse_texture, self.emissive_texture, self.opacity_texture
+        )
+        return self
+
+    def update_texture(
+        self,
+        *,
+        opacity_texture: Texture | None = None,
+        roughness_texture: Texture | None = None,
+        normal_texture: Texture | None = None,
+        emissive_texture: Texture | None = None,
+        force: bool = False,
+        **kwargs,
+    ) -> None:
+        super().update_texture(force=force, **kwargs)
+        self.opacity_texture = self._update_field(
+            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        )
+        self.roughness_texture = self._update_field(
+            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
+        )
+        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
+        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class BSDF(Surface):
     """
-    Plastic surface is the most basic type of surface.
+    Disney BSDF surface with principled shading.
 
     Parameters
     ----------
     color : tuple | None, optional
         Diffuse color of the surface. Shortcut for `diffuse_texture` with a single color.
-    roughness : float | None, optional
-        Roughness of the surface. Shortcut for `roughness_texture` with a single value.
-    metallic : float | None, optional
-        Metallicness of the surface. Shortcut for `metallic_texture` with a single value.
-    emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
     ior : float, optional
-        Index of Refraction.
+        Index of Refraction. Defaults to 1.0.
+    specular_trans : float, optional
+        Specular transmission. Defaults to 0.0.
+    diffuse_trans : float, optional
+        Diffuse transmission. Defaults to 0.0.
     diffuse_texture : gs.textures.Texture | None, optional
         Diffuse (basic color) texture of the surface.
-    specular_tint : gs.textures.Texture | None, optional
-        Specular texture of the surface.
     opacity_texture : gs.textures.Texture | None, optional
         Opacity texture of the surface.
     roughness_texture : gs.textures.Texture | None, optional
@@ -563,66 +587,132 @@ class BSDF(Surface):
         Normal texture of the surface.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
-    default_roughness : float, optional
-        Default roughness value when `roughness` is not set and the asset does not have a roughness texture. Defaults to 1.0.
-    vis_mode : str | None, optional
-        How the entity should be visualized. Possible values are ['visual', 'particle', 'collision', 'sdf', 'recon'].
-
-        - 'visual': Render the entity's visual geometry.
-        - 'collision': Render the entity's collision geometry.
-        - 'particle': Render the entity's particle representation (if applicable).
-        - 'sdf': Render the reconstructed surface mesh of the entity's sdf.
-        - 'recon': Render the reconstructed surface mesh of the entity's particle representation.
-
-    smooth : bool, optional
-        Whether to smooth face normals by interpolating vertex normals.
-    double_sided : bool | None, optional
-        Whether to render both sides of the surface. Useful for non-watertight 2D objects. Defaults to True for Cloth material and False for others.
-    normal_diff_clamp : float, optional
-        Controls the threshold for computing surface normals by interpolating vertex normals.
-    recon_backend : str, optional
-        Backend for surface reconstruction. Possible values are ['splashsurf', 'openvdb'].
-    generate_foam : bool, optional
-        Whether to generate foam particles for visual effects for particle-based entities.
-    foam_options : gs.options.FoamOptions, optional
-        Options for foam generation.
     """
 
-    diffuse_texture: Optional[Texture] = None
+    ior: float | None = 1.0
+
+    diffuse_texture: Texture | None = None
+    opacity_texture: Texture | None = None
+    roughness_texture: Texture | None = None
+    metallic_texture: Texture | None = None
+    normal_texture: Texture | None = None
+    emissive_texture: Texture | None = None
     specular_trans: float = 0.0
     diffuse_trans: float = 0.0
-    ior: float = 1.0
 
-    def get_texture(self):
+    @property
+    def texture(self) -> Texture | None:
         return self.diffuse_texture
 
-    def set_texture(self, texture):
-        self.diffuse_texture = texture
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        self.diffuse_texture = value
+
+    @property
+    def emission(self) -> Texture | None:
+        return self.emissive_texture
+
+    @property
+    def requires_uv(self) -> bool:
+        return any(
+            t is not None and t.requires_uv
+            for t in (
+                self.diffuse_texture,
+                self.opacity_texture,
+                self.roughness_texture,
+                self.metallic_texture,
+                self.normal_texture,
+                self.emissive_texture,
+            )
+        )
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        color = self.emissive_texture if self.emissive_texture is not None else self.diffuse_texture
+        return self._make_rgba(color, self.opacity_texture, batch)
+
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        self.opacity_texture = self._extract_opacity_from(
+            self.diffuse_texture, self.emissive_texture, self.opacity_texture
+        )
+        return self
+
+    def update_texture(
+        self,
+        *,
+        opacity_texture: Texture | None = None,
+        roughness_texture: Texture | None = None,
+        metallic_texture: Texture | None = None,
+        normal_texture: Texture | None = None,
+        emissive_texture: Texture | None = None,
+        force: bool = False,
+        **kwargs,
+    ) -> None:
+        super().update_texture(force=force, **kwargs)
+        self.opacity_texture = self._update_field(
+            self.opacity_texture, opacity_texture, ColorTexture(color=(1.0,)), force
+        )
+        self.roughness_texture = self._update_field(
+            self.roughness_texture, roughness_texture, ColorTexture(color=(self.default_roughness,)), force
+        )
+        self.metallic_texture = self._update_field(self.metallic_texture, metallic_texture, None, force)
+        self.normal_texture = self._update_field(self.normal_texture, normal_texture, None, force)
+        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 class Emission(Surface):
     """
-    Emission surface. This surface emits light. Note that in Genesis's ray tracing pipeline, lights are not a special type of objects, but simply entities with emission surfaces.
+    Emission surface. This surface emits light. Note that in Genesis's ray tracing pipeline, lights are not a special
+    type of objects, but simply entities with emission surfaces.
 
     Parameters
     ----------
+    color : tuple | None, optional
+        Emissive color. Shortcut for `emissive_texture` with a single color.
     emissive : tuple | None, optional
-        Emissive color of the surface. Shortcut for `emissive_texture` with a single color.
+        Emissive color. Shortcut for `emissive_texture` with a single color.
     emissive_texture : gs.textures.Texture | None, optional
         Emissive texture of the surface.
     """
 
-    def get_texture(self):
+    _color_target: ClassVar[str] = "emissive_texture"
+
+    emissive_texture: Texture | None = None
+
+    @property
+    def texture(self) -> Texture | None:
         return self.emissive_texture
 
-    def set_texture(self, texture):
-        self.emissive_texture = texture
+    @texture.setter
+    def texture(self, value: Texture | None) -> None:
+        self.emissive_texture = value
+
+    @property
+    def emission(self) -> Texture | None:
+        return self.emissive_texture
+
+    @property
+    def requires_uv(self) -> bool:
+        return self.emissive_texture is not None and self.emissive_texture.requires_uv
+
+    def get_rgba(self, batch: bool = False) -> BatchTexture | Texture:
+        return self._make_rgba(self.emissive_texture, None, batch)
+
+    @model_validator(mode="after")
+    def _post_init(self) -> Self:
+        if self.emissive_texture is not None:
+            self.emissive_texture.check_dim(3)
+        return self
+
+    def update_texture(self, *, emissive_texture: Texture | None = None, force: bool = False, **kwargs) -> None:
+        super().update_texture(force=force, **kwargs)
+        self.emissive_texture = self._update_field(self.emissive_texture, emissive_texture, None, force)
 
 
 ############################ Handy shortcuts ############################
 class Default(BSDF):
     """
-    The default surface type used in Genesis. This is just an alias for `Plastic`.
+    The default surface type used in Genesis. This is an alias for `BSDF`.
     """
 
     pass
@@ -633,8 +723,8 @@ class Rough(Plastic):
     Shortcut for a rough plastic surface.
     """
 
-    roughness: float = 1.0
-    ior: float = 1.5
+    roughness: UnitInterval | None = Field(default=1.0, exclude=True, repr=False)
+    ior: float | None = 1.5
 
 
 class Smooth(Plastic):
@@ -642,8 +732,8 @@ class Smooth(Plastic):
     Shortcut for a smooth plastic surface.
     """
 
-    roughness: float = 0.1
-    ior: float = 1.5
+    roughness: UnitInterval | None = Field(default=0.1, exclude=True, repr=False)
+    ior: float | None = 1.5
 
 
 class Reflective(Plastic):
@@ -651,8 +741,8 @@ class Reflective(Plastic):
     Shortcut for a reflective (smoother than `Smooth`) plastic surface.
     """
 
-    roughness: float = 0.01
-    ior: float = 2.0
+    roughness: UnitInterval | None = Field(default=0.01, exclude=True, repr=False)
+    ior: float | None = 2.0
 
 
 class Collision(Plastic):
@@ -660,11 +750,7 @@ class Collision(Plastic):
     Default surface type for collision geometry with a grey color by default.
     """
 
-    color: tuple = (0.5, 0.5, 0.5)
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        self.diffuse_texture = ColorTexture(color=self.color)
+    color: FArrayType | None = Field(default=(0.5, 0.5, 0.5), exclude=True, repr=False)
 
 
 class Water(Glass):
@@ -672,41 +758,38 @@ class Water(Glass):
     Shortcut for a water surface (using Glass surface with proper values).
     """
 
-    color: tuple = (0.61, 0.98, 0.93)
-    roughness: float = 0.2
-    ior: float = 1.2
-
-    def __init__(self, **data):
-        super().__init__(**data)
+    color: FArrayType | None = Field(default=(0.61, 0.98, 0.93), exclude=True, repr=False)
+    roughness: UnitInterval | None = Field(default=0.2, exclude=True, repr=False)
+    ior: float | None = 1.2
 
 
 class Iron(Metal):
     """
-    Shortcut for an metallic surface with `metal_type = 'iron'`.
+    Shortcut for a metallic surface with `metal_type = 'iron'`.
     """
 
-    metal_type: str = "iron"
+    pass
 
 
 class Aluminium(Metal):
     """
-    Shortcut for an metallic surface with `metal_type = 'aluminium'`.
+    Shortcut for a metallic surface with `metal_type = 'aluminium'`.
     """
 
-    metal_type: str = "aluminium"
+    metal_type: MetalType = "aluminium"
 
 
 class Copper(Metal):
     """
-    Shortcut for an metallic surface with `metal_type = 'copper'`.
+    Shortcut for a metallic surface with `metal_type = 'copper'`.
     """
 
-    metal_type: str = "copper"
+    metal_type: MetalType = "copper"
 
 
 class Gold(Metal):
     """
-    Shortcut for an metallic surface with `metal_type = 'gold'`.
+    Shortcut for a metallic surface with `metal_type = 'gold'`.
     """
 
-    metal_type: str = "gold"
+    metal_type: MetalType = "gold"

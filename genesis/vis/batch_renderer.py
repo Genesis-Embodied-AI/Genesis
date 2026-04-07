@@ -8,6 +8,7 @@ from genesis.repr_base import RBC
 from genesis.constants import IMAGE_TYPE
 from genesis.utils.misc import qd_to_torch
 
+from .camera import Camera
 from .rasterizer_context import SegmentationColorMap
 
 # Optional imports for platform-specific functionality
@@ -134,8 +135,8 @@ class GenesisGeomRetriever:
                             texture_indices[texture_id] = texture_idx
                         texture_widths.append(geom_texture.image_array.shape[1])
                         texture_heights.append(geom_texture.image_array.shape[0])
-                        assert geom_texture.channel() == 4
-                        texture_nchans.append(geom_texture.channel())
+                        assert geom_texture.channel == 4
+                        texture_nchans.append(geom_texture.channel)
                         texture_offsets.append(total_texture_size)
                         texture_data.append(geom_texture.image_array.flat)
                         num_textures += 1
@@ -278,7 +279,9 @@ class BatchRenderer(RBC):
         gpu_id = gs.device.index if gs.device.index is not None else 0
 
         # Extract the complete list of non-debug cameras
-        self._cameras = gs.List([camera for camera in self._visualizer._cameras if not camera.debug])
+        self._cameras = gs.List(
+            [camera for camera in self._visualizer._cameras if not isinstance(camera, Camera) or not camera.debug]
+        )
         if not self._cameras:
             gs.raise_exception("Please add at least one camera when using BatchRender.")
 

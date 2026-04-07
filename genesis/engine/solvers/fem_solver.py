@@ -1,5 +1,7 @@
 # pylint: disable=no-value-for-parameter
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import igl
 import quadrants as qd
@@ -14,6 +16,9 @@ from genesis.utils.misc import qd_to_torch
 from genesis.utils.geom import qd_transform_by_quat, qd_transform_quat_by_quat
 
 from .base_solver import Solver
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import FEMEntity
 
 
 @qd.data_oriented
@@ -378,18 +383,18 @@ class FEMSolver(Solver):
     def is_active(self):
         return self.n_elements_max > 0
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "FEMEntity":
         # add material's update methods if not matching any existing material
         exist = False
         for mat in self._mats:
             if material == mat:
-                material._idx = mat._idx
+                material.idx = mat.idx
                 exist = True
                 break
         self._mats.append(material)
         if not exist:
-            material._idx = len(self._mats_idx)
-            self._mats_idx.append(material._idx)
+            material.idx = len(self._mats_idx)
+            self._mats_idx.append(material.idx)
             self._mats_update_stress.append(material.update_stress)
             self._mats_compute_energy_gradient_hessian.append(material.compute_energy_gradient_hessian)
             self._mats_compute_energy.append(material.compute_energy)
@@ -538,7 +543,7 @@ class FEMSolver(Solver):
 
             for mat_idx in qd.static(self._mats_idx):
                 if self.elements_i[i_e].mat_idx == mat_idx:
-                    if self._mats[mat_idx].hessian_ready:
+                    if self._mats[mat_idx]._hessian_ready:
                         (
                             self.elements_el_energy[i_b, i_e].energy,
                             self.elements_el_energy[i_b, i_e].gradient,
@@ -930,7 +935,7 @@ class FEMSolver(Solver):
             # If the hessian is invariant, we only need to compute it once
             for mat_idx in self._mats_idx:
                 if self._mats[mat_idx].hessian_invariant:
-                    self._mats[mat_idx].hessian_ready = True
+                    self._mats[mat_idx]._hessian_ready = True
 
             # accumulate vertex force and preconditioner
             self.accumulate_vertex_force_preconditioner(f)

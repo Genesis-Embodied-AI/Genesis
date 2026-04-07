@@ -135,8 +135,8 @@ def kernel_init_dof_fields(
     dofs_damping: qd.types.ndarray(),
     dofs_frictionloss: qd.types.ndarray(),
     dofs_armature: qd.types.ndarray(),
-    dofs_kp: qd.types.ndarray(),
-    dofs_kv: qd.types.ndarray(),
+    dofs_act_gain: qd.types.ndarray(),
+    dofs_act_bias: qd.types.ndarray(),
     dofs_force_range: qd.types.ndarray(),
     # Quadrants variables
     dofs_info: array_class.DofsInfo,
@@ -153,6 +153,7 @@ def kernel_init_dof_fields(
         for j in qd.static(range(3)):
             dofs_info.motion_ang[I_d][j] = dofs_motion_ang[i_d, j]
             dofs_info.motion_vel[I_d][j] = dofs_motion_vel[i_d, j]
+            dofs_info.act_bias[I_d][j] = dofs_act_bias[i_d, j]
 
         for j in qd.static(range(2)):
             dofs_info.limit[I_d][j] = dofs_limit[i_d, j]
@@ -163,8 +164,7 @@ def kernel_init_dof_fields(
         dofs_info.stiffness[I_d] = dofs_stiffness[i_d]
         dofs_info.damping[I_d] = dofs_damping[i_d]
         dofs_info.frictionloss[I_d] = dofs_frictionloss[i_d]
-        dofs_info.kp[I_d] = dofs_kp[i_d]
-        dofs_info.kv[I_d] = dofs_kv[i_d]
+        dofs_info.act_gain[I_d] = dofs_act_gain[i_d]
         dofs_info.entity_idx[I_d] = entity_idx[i_d]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
@@ -300,6 +300,7 @@ def kernel_update_heterogeneous_link_info(
     links_vgeom_end: qd.types.ndarray(),
     links_inertial_mass: qd.types.ndarray(),
     links_inertial_pos: qd.types.ndarray(),
+    links_inertial_quat: qd.types.ndarray(),
     links_inertial_i: qd.types.ndarray(),
     # Quadrants variables
     links_info: array_class.LinksInfo,
@@ -316,6 +317,9 @@ def kernel_update_heterogeneous_link_info(
 
         for j in qd.static(range(3)):
             links_info.inertial_pos[i_l, i_b][j] = links_inertial_pos[i_b, j]
+
+        for j in qd.static(range(4)):
+            links_info.inertial_quat[i_l, i_b][j] = links_inertial_quat[i_b, j]
 
         for j1, j2 in qd.static(qd.ndrange(3, 3)):
             links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
@@ -530,28 +534,6 @@ def kernel_init_geom_fields(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def kernel_adjust_link_inertia(
-    link_idx: qd.i32,
-    ratio: qd.f32,
-    links_info: array_class.LinksInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    if qd.static(static_rigid_sim_config.batch_links_info):
-        for i_b in range(links_info.root_idx.shape[0]):
-            for j in qd.static(range(2)):
-                links_info.invweight[link_idx, i_b][j] /= ratio
-            links_info.inertial_mass[link_idx, i_b] *= ratio
-            for j1, j2 in qd.static(qd.ndrange(3, 3)):
-                links_info.inertial_i[link_idx, i_b][j1, j2] *= ratio
-    else:
-        for j in qd.static(range(2)):
-            links_info.invweight[link_idx][j] /= ratio
-        links_info.inertial_mass[link_idx] *= ratio
-        for j1, j2 in qd.static(qd.ndrange(3, 3)):
-            links_info.inertial_i[link_idx][j1, j2] *= ratio
-
-
-@qd.kernel(fastcache=gs.use_fastcache)
 def kernel_init_vgeom_fields(
     vgeoms_pos: qd.types.ndarray(),
     vgeoms_quat: qd.types.ndarray(),
@@ -718,11 +700,11 @@ def func_apply_link_external_force(
 ):
     torque = qd.Vector.zero(gs.qd_float, 3)
     if qd.static(ref == 1):  # link's CoM
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = links_state.i_pos[link_idx, env_idx].cross(force)
     if qd.static(ref == 2):  # link's origin
-        if qd.static(local == 1):
+        if qd.static(local):
             force = gu.qd_transform_by_quat(force, links_state.i_quat[link_idx, env_idx])
         torque = (links_state.pos[link_idx, env_idx] - links_state.root_COM[link_idx, env_idx]).cross(force)
 

@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 @qd.func
 def get_triangle_vertices(
-    i_f: gs.qd_int,
-    i_b: gs.qd_int,
+    i_f: int,
+    i_b: int,
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
@@ -45,17 +45,17 @@ def get_triangle_vertices(
 
 @qd.func
 def bvh_ray_cast(
-    ray_start: gs.qd_vec3,
-    ray_dir: gs.qd_vec3,
-    max_range: gs.qd_float,
-    i_b: gs.qd_int,
+    ray_start,
+    ray_dir,
+    max_range,
+    i_b,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
-    eps: gs.qd_float,
+    eps,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
@@ -128,7 +128,7 @@ def ray_triangle_intersection(
     v0: gs.qd_vec3,
     v1: gs.qd_vec3,
     v2: gs.qd_vec3,
-    eps: gs.qd_float,
+    eps: float,
 ):
     """
     Moller-Trumbore ray-triangle intersection.
@@ -162,7 +162,7 @@ def ray_triangle_intersection(
         valid = False
 
     if valid:
-        f = 1.0 / a
+        f = gs.qd_float(1.0) / a
         s = ray_start - v0
         u = f * s.dot(h)
 
@@ -185,7 +185,7 @@ def ray_triangle_intersection(
             valid = False
 
     if valid:
-        result = qd.math.vec4(t, u, v, 1.0)
+        result = qd.math.vec4(t, u, v, gs.qd_float(1.0))
 
     return result
 
@@ -196,7 +196,7 @@ def ray_aabb_intersection(
     ray_dir: gs.qd_vec3,
     aabb_min: gs.qd_vec3,
     aabb_max: gs.qd_vec3,
-    eps: gs.qd_float,
+    eps: float,
 ):
     """
     Fast ray-AABB intersection test.
@@ -215,7 +215,7 @@ def ray_aabb_intersection(
     tmin = qd.min(t1, t2)
     tmax = qd.max(t1, t2)
 
-    t_near = qd.max(tmin.x, tmin.y, tmin.z, 0.0)
+    t_near = qd.max(tmin.x, tmin.y, tmin.z, gs.qd_float(0.0))
     t_far = qd.min(tmax.x, tmax.y, tmax.z)
 
     # Check if ray intersects AABB
@@ -273,7 +273,8 @@ def kernel_update_verts_and_aabbs(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+# FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
+@qd.kernel(fastcache=False)
 def kernel_cast_ray(
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
@@ -283,10 +284,10 @@ def kernel_cast_ray(
     bvh_morton_codes: qd.template(),
     ray_start: qd.types.ndarray(ndim=1),  # (3,)
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
-    max_range: gs.qd_float,
+    max_range: float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
     result: array_class.RaycastResult,
-    eps: gs.qd_float,
+    eps: float,
 ):
     """
     Quadrants kernel for casting a single ray.

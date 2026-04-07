@@ -9,7 +9,7 @@ import genesis as gs
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.keybindings import Key, KeyAction, Keybind, KeyMod, MouseButton
 
-from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_VIEWER
 from .utils import assert_allclose
 
 CAM_RES = (480, 320)
@@ -31,7 +31,7 @@ def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 @pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
 def test_interactive_viewer_disable_viewer_defaults():
     """Test that keyboard shortcuts can be disabled in the interactive viewer."""
@@ -59,7 +59,7 @@ def test_interactive_viewer_disable_viewer_defaults():
 
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_default_viewer_plugin():
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -120,7 +120,7 @@ def test_default_viewer_plugin():
     # Press key with modifiers to toggle flag off
     pyrender_viewer.dispatch_event("on_key_press", Key._1, KeyMod.SHIFT | KeyMod.CTRL)
     # Press key toggle world frame
-    pyrender_viewer.dispatch_event("on_key_press", Key.W, 0)
+    pyrender_viewer.dispatch_event("on_key_release", Key.W, 0)
 
     wait_for_viewer_events(pyrender_viewer, lambda: flags[0] and flags[1])
 
@@ -157,9 +157,82 @@ def test_default_viewer_plugin():
         overwrite=True,
     )
 
+    # allow_overload=False: conflicts with any same-key binding; overwrite=True clears all siblings
+    scene.viewer.register_keybinds(
+        Keybind(name="key3_press", key=Key._3, key_action=KeyAction.PRESS, callback=lambda: None),
+        Keybind(name="key3_release", key=Key._3, key_action=KeyAction.RELEASE, callback=lambda: None),
+    )
+    with pytest.raises(ValueError):
+        scene.viewer.register_keybinds(
+            Keybind(
+                name="key3_exclusive",
+                key=Key._3,
+                key_action=KeyAction.HOLD,
+                allow_overload=False,
+                callback=lambda: None,
+            ),
+            overwrite=False,
+        )
+    scene.viewer.register_keybinds(
+        Keybind(
+            name="key3_exclusive",
+            key=Key._3,
+            key_action=KeyAction.PRESS,
+            allow_overload=False,
+            callback=lambda: None,
+        ),
+        overwrite=True,
+    )
+    assert pyrender_viewer._keybindings.get_by_name("key3_press") is None
+    assert pyrender_viewer._keybindings.get_by_name("key3_release") is None
+
 
 @pytest.mark.required
-@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_viewer_thread_crash_reports_traceback():
+    """Crash in the viewer must expose the original traceback, whether threaded or not."""
+
+    class CrashOnDrawPlugin(gs.vis.viewer_plugins.ViewerPlugin):
+        def __init__(self):
+            super().__init__()
+            self.should_crash = False
+
+        def on_draw(self):
+            if self.should_crash:
+                raise RuntimeError("Deliberate viewer thread crash.")
+
+    run_in_thread = sys.platform == "linux"
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(run_in_thread=run_in_thread),
+        show_viewer=True,
+    )
+    scene.add_entity(morph=gs.morphs.Plane())
+    crash_plugin = CrashOnDrawPlugin()
+    scene.viewer.add_plugin(crash_plugin)
+    scene.build()
+
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+
+    # Enable crashing only after init is complete to avoid corrupting the init path
+    crash_plugin.should_crash = True
+
+    if run_in_thread:
+        # Wait until the viewer thread has died, then check the traceback is preserved
+        wait_for_viewer_events(pyrender_viewer, lambda: not pyrender_viewer.is_active)
+        with pytest.raises(gs.GenesisException) as exc_info:
+            scene.step()
+        assert exc_info.type is gs.GenesisException
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert "Deliberate viewer thread crash." in str(exc_info.value.__cause__)
+    else:
+        # Non-threaded: exception propagates directly through scene.step()
+        with pytest.raises(RuntimeError, match="Deliberate viewer thread crash."):
+            scene.step()
+
+
+@pytest.mark.required
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
 def test_mouse_interaction_plugin():
     DT = 0.01
     MASS = 100.0
@@ -236,7 +309,7 @@ def test_mouse_interaction_plugin():
 
     assert_allclose(box.get_vel(), 0, tol=gs.EPS)
 
-    initial_pos = box.get_pos().clone()
+    initial_pos = box.get_pos()
 
     viewport_size = pyrender_viewer._viewport_size
     x, y = viewport_size[0] // 2, viewport_size[1] // 2

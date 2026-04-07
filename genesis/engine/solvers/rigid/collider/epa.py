@@ -1219,7 +1219,13 @@ def func_safe_epa_witness(
         max((v1 - v2).norm_sqr(), (v2 - v3).norm_sqr(), (v3 - v1).norm_sqr(), gjk_info.FLOAT_MIN_SQ[None])
     )
     rel_reprojection_error = reprojection_error * max_edge_len_inv
-    if rel_reprojection_error > gjk_info.polytope_max_reprojection_error[None]:
+    # For smooth geometries (e.g. spheres), polytope faces become extremely small near convergence,
+    # which amplifies the relative reprojection error even when the absolute error is negligible.
+    # To avoid false rejections, we check both relative and absolute reprojection errors.
+    if (
+        rel_reprojection_error > gjk_info.polytope_max_rel_reprojection_error[None]
+        and reprojection_error > gjk_info.polytope_max_abs_reprojection_error[None]
+    ):
         flag = RETURN_CODE.FAIL
 
     if flag == RETURN_CODE.SUCCESS:

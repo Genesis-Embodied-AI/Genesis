@@ -18,6 +18,7 @@ from typing import Literal, Sequence
 
 import cpuinfo
 import mujoco
+import pytest
 import numpy as np
 import torch
 from httpcore import TimeoutException as HTTPTimeoutException
@@ -36,7 +37,7 @@ from genesis.utils.misc import tensor_to_array
 REPOSITY_URL = "Genesis-Embodied-AI/Genesis"
 DEFAULT_BRANCH_NAME = "main"
 
-HUGGINGFACE_ASSETS_REVISION = "fcc8cfe8cc752b1426331f8be0b19647bf0be078"
+HUGGINGFACE_ASSETS_REVISION = "bca4acd56099684f2d82f94dd9e1814ffe56861c"
 HUGGINGFACE_SNAPSHOT_REVISION = "151d8a523d8b93ef089dbb61be9e66028b9c7018"
 
 MESH_EXTENSIONS = (".mtl", *MESH_FORMATS, *GLTF_FORMATS, *USD_FORMATS)
@@ -563,7 +564,7 @@ def build_genesis_sim(
         sim_options=gs.options.SimOptions(
             dt=mj_sim.model.opt.timestep,
             substeps=1,
-            gravity=mj_sim.model.opt.gravity.tolist(),
+            gravity=mj_sim.model.opt.gravity,
         ),
         rigid_options=gs.options.RigidOptions(
             integrator=gs_integrator,
@@ -593,6 +594,7 @@ def build_genesis_sim(
         convexify=True,
         decompose_robot_error_threshold=float("inf"),
         default_armature=None,
+        align=False,
     )
     if xml_path.endswith(".xml"):
         morph = gs.morphs.MJCF(**morph_kwargs)
@@ -700,7 +702,15 @@ def check_mujoco_model_consistency(
     for gs_i, mj_i in zip(gs_bodies_idx, mj_bodies_idx):
         gs_invweight_i = gs_sim.rigid_solver.links_info.invweight.to_numpy()[gs_i]
         mj_invweight_i = mj_sim.model.body(mj_i).invweight0
-        assert_allclose(gs_invweight_i, mj_invweight_i, tol=tol)
+        try:
+            assert_allclose(gs_invweight_i, mj_invweight_i, tol=tol)
+        except AssertionError:
+            if tuple(int(x) for x in mujoco.__version__.split(".")[:2]) < (3, 5):
+                pytest.skip(
+                    "MuJoCo < 3.5 lacks the degenerate invweight fix. "
+                    "See https://github.com/google-deepmind/mujoco/commit/1cda1e7a"
+                )
+            raise
         gs_inertia_i = gs_sim.rigid_solver.links_info.inertial_i.to_numpy()[gs_i, [0, 1, 2], [0, 1, 2]]
         mj_inertia_i = mj_sim.model.body(mj_i).inertia
         assert_allclose(gs_inertia_i, mj_inertia_i, tol=tol)
@@ -784,13 +794,14 @@ def check_mujoco_model_consistency(
     for v in mj_sim.model.actuator_biastype:
         assert v in (mujoco.mjtBias.mjBIAS_AFFINE, mujoco.mjtBias.mjBIAS_NONE)
 
-    # NOTE: not considering gear
-    gs_kp = gs_sim.rigid_solver.dofs_info.kp.to_numpy()
-    gs_kv = gs_sim.rigid_solver.dofs_info.kv.to_numpy()
-    mj_kp = -mj_sim.model.actuator_biasprm[:, 1]
-    mj_kv = -mj_sim.model.actuator_biasprm[:, 2]
-    assert_allclose(gs_kp[gs_motors_idx], mj_kp[mj_motors_idx], tol=tol)
-    assert_allclose(gs_kv[gs_motors_idx], mj_kv[mj_motors_idx], tol=tol)
+    # NOTE: not considering gear for biasprm (only relevant for AFFINE actuators where gear=1 in practice).
+    gs_act_gain = gs_sim.rigid_solver.dofs_info.act_gain.to_numpy()
+    gs_act_bias = gs_sim.rigid_solver.dofs_info.act_bias.to_numpy()
+    mj_gear = mj_sim.model.actuator_gear[:, 0]
+    mj_gainprm = mj_sim.model.actuator_gainprm[:, 0] * mj_gear
+    mj_biasprm = mj_sim.model.actuator_biasprm[:, :3] * mj_gear[:, None]
+    assert_allclose(gs_act_gain[gs_motors_idx], mj_gainprm[mj_motors_idx], tol=tol)
+    assert_allclose(gs_act_bias[gs_motors_idx], mj_biasprm[mj_motors_idx], tol=tol)
 
 
 def check_mujoco_data_consistency(

@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import quadrants as qd
 
 from genesis.engine.boundaries import FloorBoundary
@@ -6,6 +8,9 @@ from genesis.engine.entities.tool_entity.tool_entity import ToolEntity
 from genesis.utils.misc import *
 
 from .base_solver import Solver
+
+if TYPE_CHECKING:
+    from genesis.engine.entities import ToolEntity
 
 
 @qd.data_oriented
@@ -41,7 +46,7 @@ class ToolSolver(Solver):
     def setup_boundary(self):
         self.boundary = FloorBoundary(height=self.floor_height)
 
-    def add_entity(self, idx, material, morph, surface, name: str | None = None):
+    def add_entity(self, idx, material, morph, surface, name: str | None = None) -> "ToolEntity":
         entity = ToolEntity(
             scene=self._scene,
             idx=idx,
