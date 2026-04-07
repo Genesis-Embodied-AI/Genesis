@@ -90,7 +90,3 @@ def test_sparse_solve_matches_dense():
     for i in range(len(results[False])):
         diff = np.max(np.abs(results[False][i] - results[True][i]))
         assert diff < 0.1, f"box_{i} diverged too much: {diff:.4f}m (dense vs sparse)"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
