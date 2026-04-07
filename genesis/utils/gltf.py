@@ -334,8 +334,8 @@ def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
                 )
                 points = mesh_glb.points
                 triangles = mesh_glb.faces
-                normals = mesh_glb.normals if len(mesh_glb.normals) > 0 else None
-                uvs = mesh_glb.tex_coord if len(mesh_glb.tex_coord) > 0 else None
+                normals = mesh_glb.normals if mesh_glb.normals is not None and len(mesh_glb.normals) > 0 else None
+                uvs = mesh_glb.tex_coord if mesh_glb.tex_coord is not None and len(mesh_glb.tex_coord) > 0 else None
 
             else:
                 # "primitive.attributes" records accessor indices in "glb.accessors", like:
