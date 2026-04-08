@@ -2871,13 +2871,13 @@ def initialize_Jaref(
 ):
     if qd.static(static_rigid_sim_config.parallel_init):
         _initialize_Jaref_parallel(
-            qacc=constraint_state.qacc_ws,
+            qacc=qacc,
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
     else:
         _initialize_Jaref_per_env(
-            qacc=constraint_state.qacc_ws,
+            qacc=qacc,
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
