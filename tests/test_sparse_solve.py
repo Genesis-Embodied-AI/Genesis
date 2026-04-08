@@ -50,8 +50,8 @@ def _build_panda_table_scene(noslip_iterations=2, sparse_solve=False):
     return scene, boxes
 
 
-@pytest.mark.parametrize("backend", [gs.cpu])
-@pytest.mark.parametrize("precision", ["64"])
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+@pytest.mark.parametrize("precision", ["64", "32"])
 def test_sparse_solve_no_nan(backend, precision):
     """sparse_solve=True + noslip must not produce NaN over 200 steps.
 
