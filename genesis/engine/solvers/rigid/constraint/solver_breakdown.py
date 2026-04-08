@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import quadrants as qd
 
@@ -138,7 +140,7 @@ def _func_parallel_linesearch_p0(
     _B = constraint_state.grad.shape[1]
     _T = qd.static(_P0_BLOCK)
 
-    qd.loop_config(block_dim=_T)
+    qd.loop_config(name="parallel_linesearch_p0", block_dim=_T)
     for i_flat in range(_B * _T):
         tid = i_flat % _T
         i_b = i_flat // _T
@@ -353,7 +355,7 @@ def _func_parallel_linesearch_eval(
     _K = qd.static(LS_PARALLEL_K)
     _NC = qd.static(LS_N_CANDIDATES)
 
-    qd.loop_config(block_dim=_K)
+    qd.loop_config(name="parallel_linesearch_eval", block_dim=_K)
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
@@ -592,7 +594,9 @@ def _func_cg_only_save_prev_grad(
 ):
     """Save prev_grad and prev_Mgrad (CG only)"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(
+        name="cg_only_save_prev_grag", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+    )
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
@@ -607,6 +611,7 @@ def _func_update_constraint_forces(
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
+    qd.loop_config(name="update_constraint_forces")
     for i_c, i_b in qd.ndrange(len_constraints, _B):
         if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
             ne = constraint_state.n_constraints_equality[i_b]
@@ -643,6 +648,7 @@ def _func_update_constraint_qfrc(
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 
+    qd.loop_config(name="update_constraint_qfrc")
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_con = constraint_state.n_constraints[i_b]
@@ -661,7 +667,7 @@ def _func_update_constraint_cost(
     """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
     _B = constraint_state.grad.shape[1]
 
-    qd.loop_config(block_dim=32)
+    qd.loop_config(name="update_constraint_cost", block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             n_dofs = constraint_state.qfrc_constraint.shape[0]
@@ -721,7 +727,11 @@ def _func_newton_only_nt_hessian(
         )
     else:
         _B = constraint_state.jac.shape[2]
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+        qd.loop_config(
+            name="cholesky_factor_direct_batch",
+            serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL,
+            block_dim=32,
+        )
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
                 solver.func_cholesky_factor_direct_batch(
@@ -739,7 +749,9 @@ def _func_update_gradient(
 ):
     """Step 5: Update gradient"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(
+        name="update_gradient", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+    )
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_update_gradient_batch(
@@ -760,7 +772,9 @@ def _func_update_search_direction(
 ):
     """Step 6: Check convergence and update search direction"""
     _B = constraint_state.grad.shape[1]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
+    qd.loop_config(
+        name="update_search_direction", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32
+    )
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
             solver.func_terminate_or_update_descent_batch(
@@ -777,15 +791,18 @@ def _func_check_early_exit(
     graph_counter: qd.types.ndarray(qd.i32, ndim=0),
 ):
     """Decrement iteration counter and exit early if no batch element improved."""
+    qd.loop_config(name="check_early_exit_reset_flag")
     for _ in range(1):
         graph_counter[()] = graph_counter[()] - 1
         constraint_state.early_exit_flag[()] = 0
 
     _B = constraint_state.grad.shape[1]
+    qd.loop_config(name="check_early_exit_scan_values")
     for i_b in range(_B):
         if constraint_state.improved[i_b]:
             qd.atomic_max(constraint_state.early_exit_flag[()], 1)
 
+    qd.loop_config(name="check_early_exit_set_counter")
     for _ in range(1):
         if constraint_state.early_exit_flag[()] == 0:
             graph_counter[()] = 0
@@ -827,6 +844,8 @@ def _kernel_solve_gpu_graph(
     is_compatible=lambda *args, **kwargs: (
         not (static_rigid_sim_config := solver._get_static_config(*args, **kwargs)).requires_grad
         and static_rigid_sim_config.prefer_parallel_linesearch != 0
+        # FIXME: CUDA Graph is not supported on Windows for now due to faulty static linking on 'libcudadevrt.a'
+        and sys.platform != "win32"
     )
 )
 def func_solve_decomposed(

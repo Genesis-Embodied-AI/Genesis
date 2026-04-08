@@ -158,6 +158,8 @@ class OffscreenRenderer(object):
 
         if skip_markers:
             flags |= RenderFlags.SKIP_MARKERS
+        else:
+            flags |= RenderFlags.MARKER_XRAY
 
         if seg:
             seg_node_map = self._seg_node_map

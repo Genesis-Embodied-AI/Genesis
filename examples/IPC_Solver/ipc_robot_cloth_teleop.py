@@ -203,7 +203,7 @@ def main():
     def reset_scene():
         target_pos[:], target_quat[:] = target_init_pos, target_init_quat
         pose = gu.trans_quat_to_T(target_pos, target_quat)
-        scene.visualizer.context.update_debug_objects((target_ik,), (pose,))
+        scene.update_debug_objects((target_ik,), (pose,))
         qpos = franka.inverse_kinematics(link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx)
         franka.control_dofs_position(qpos[motor_dofs_idx], dofs_idx_local=motor_dofs_idx)
 
@@ -237,7 +237,7 @@ def main():
     try:
         while is_running and scene.viewer.is_alive():
             pose = gu.trans_quat_to_T(target_pos, target_quat)
-            scene.visualizer.context.update_debug_objects((target_ik,), (pose,))
+            scene.update_debug_objects((target_ik,), (pose,))
 
             qpos = franka.inverse_kinematics(
                 link=ee_link, pos=target_pos, quat=target_quat, dofs_idx_local=motor_dofs_idx

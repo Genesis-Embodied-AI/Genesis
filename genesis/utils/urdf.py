@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
+import xacro
+
 import genesis as gs
 import genesis.utils.gltf as gltf_utils
 from genesis.ext import urdfpy
@@ -47,6 +49,42 @@ def get_robot_name(file_path):
             return name
         raise ValueError(f"URDF file '{file_path}' is missing required 'name' attribute on <robot> element.")
     raise ValueError(f"Invalid URDF file '{file_path}'. Missing <robot> root element.")
+
+
+def load_xacro(path, mappings):
+    """Load a XACRO file into a ``urdfpy.URDF`` object with absolute mesh paths.
+
+    Expands all xacro macros, properties, includes, and conditionals in-memory using the ``xacro`` package, then
+    parses the resulting URDF XML into a ``urdfpy.URDF`` object. All relative mesh filenames are resolved to absolute
+    paths so that downstream consumers do not need access to the original source directory.
+
+    Note
+    ----
+    ``$(find package_name)`` substitutions require ROS's ``ament_index_python`` package.
+
+    Parameters
+    ----------
+    path : str
+        Absolute path to the ``.xacro`` or ``.urdf.xacro`` file.
+    mappings : dict
+        Key-value pairs to override ``xacro:arg`` declarations.
+
+    Returns
+    -------
+    urdfpy.URDF
+        The parsed URDF with absolute mesh paths.
+    """
+    doc = xacro.process_file(path, mappings=dict(mappings))
+    node = ET.fromstring(doc.toxml())
+    source_dir = os.path.dirname(path)
+    robot = urdfpy.URDF._from_xml(node, node, source_dir)
+    for link in robot.links:
+        for geom_prop in (*link.collisions, *link.visuals):
+            if isinstance(geom_prop.geometry.geometry, urdfpy.Mesh):
+                geom_prop.geometry.geometry.filename = urdfpy.utils.get_filename(
+                    source_dir, geom_prop.geometry.geometry.filename
+                )
+    return robot
 
 
 def _order_links(l_infos, j_infos, links_g_infos=None):
@@ -334,13 +372,15 @@ def parse_urdf(morph, surface):
         if joint.joint_type not in ("floating", "fixed") and morph.default_armature is not None:
             j_info["dofs_armature"] = np.full((j_info["n_dofs"],), morph.default_armature)
 
-        j_info["dofs_kp"] = gu.default_dofs_kp(j_info["n_dofs"])
-        j_info["dofs_kv"] = gu.default_dofs_kv(j_info["n_dofs"])
+        kp = gu.default_dofs_kp(j_info["n_dofs"])
+        kv = gu.default_dofs_kv(j_info["n_dofs"])
         if joint.safety_controller is not None:
             if joint.safety_controller.k_position is not None:
-                j_info["dofs_kp"] = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
+                kp = np.tile(joint.safety_controller.k_position, j_info["n_dofs"])
             if joint.safety_controller.k_velocity is not None:
-                j_info["dofs_kv"] = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+                kv = np.tile(joint.safety_controller.k_velocity, j_info["n_dofs"])
+        j_info["dofs_act_gain"] = kp
+        j_info["dofs_act_bias"] = np.column_stack([np.zeros_like(kp), -kp, -kv])
 
         j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (j_info["n_dofs"], 1))
         if joint.limit is not None and joint.limit.effort is not None:

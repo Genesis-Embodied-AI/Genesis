@@ -815,3 +815,58 @@ def test_sphere_sphere_gjk(tmp_path: Path, show_viewer: bool) -> None:
         contacts = scene.rigid_solver.collider.get_contacts(as_tensor=False, to_torch=False)
         assert len(contacts["geom_a"]) == should_collide
         _check_expected_values(contacts, description, exp_pen, exp_normal, "GJK", GJK_PEN_TOL, GJK_NORMAL_TOL)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.gpu])
+def test_split_vs_monolithic_narrowphase(monkeypatch, tmp_path: Path, show_viewer: bool, tol: float) -> None:
+    radius = 0.1
+    half_length = 0.25
+
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=True,
+        ),
+        show_viewer=show_viewer,
+    )
+    capsule_a = scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius)
+    capsule_b = scene_add_capsule(tmp_path, scene, half_length=half_length, radius=radius)
+    scene.build()
+
+    collider = scene.rigid_solver.collider
+    assert collider is not None
+    assert collider._use_split_narrowphase, "Expected split narrowphase on GPU backend"
+
+    test_configs = [
+        # (pos_a, euler_a, pos_b, euler_b)
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 90, 0)),
+        ((0, 0, 0), (0, 0, 0), (0.18, 0, 0), (0, 0, 0)),
+        ((0, 0, 0), (0, 0, 0), (0.15, 0, 0), (0, 0, 0)),
+        ((0, 0, 0), (0, 0, 0), (0, 0, 0), (90, 0, 0)),
+    ]
+
+    for pos_a, euler_a, pos_b, euler_b in test_configs:
+        quat_a = gs.utils.geom.xyz_to_quat(xyz=np.array(euler_a, dtype=gs.np_float), degrees=True)
+        quat_b = gs.utils.geom.xyz_to_quat(xyz=np.array(euler_b, dtype=gs.np_float), degrees=True)
+
+        # Run with split narrowphase (default on GPU)
+        capsule_a.set_qpos((*pos_a, *quat_a))
+        capsule_b.set_qpos((*pos_b, *quat_b))
+        scene.step()
+        contacts_split = collider.get_contacts(as_tensor=False, to_torch=False)
+
+        # Run with monolithic narrowphase
+        monkeypatch.setattr(collider, "_use_split_narrowphase", False)
+        capsule_a.set_qpos((*pos_a, *quat_a))
+        capsule_b.set_qpos((*pos_b, *quat_b))
+        scene.step()
+        contacts_mono = collider.get_contacts(as_tensor=False, to_torch=False)
+        monkeypatch.undo()
+
+        assert len(contacts_split["geom_a"]) == len(contacts_mono["geom_a"]), (
+            f"Contact count mismatch: split={len(contacts_split['geom_a'])}, mono={len(contacts_mono['geom_a'])}"
+        )
+        if len(contacts_split["geom_a"]) > 0:
+            assert_allclose(contacts_split["penetration"], contacts_mono["penetration"], tol=tol)
+            assert_allclose(contacts_split["position"], contacts_mono["position"], tol=tol)
+            assert_allclose(contacts_split["normal"], contacts_mono["normal"], tol=tol)

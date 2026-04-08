@@ -411,14 +411,16 @@ def _parse_link(
                 dofs_force_range.append([-max_force, max_force])
 
             # TODO: Implement target solving in rigid solver. (GetTargetPositionAttr())
-            j_info["dofs_kp"] = np.asarray(dofs_kp, dtype=gs.np_float)
-            j_info["dofs_kv"] = np.asarray(dofs_kv, dtype=gs.np_float)
+            kp = np.asarray(dofs_kp, dtype=gs.np_float)
+            kv = np.asarray(dofs_kv, dtype=gs.np_float)
+            j_info["dofs_act_gain"] = kp
+            j_info["dofs_act_bias"] = np.column_stack([np.zeros_like(kp), -kp, -kv])
             j_info["dofs_force_range"] = np.asarray(dofs_force_range, dtype=gs.np_float)
         else:
             j_info["dofs_frictionloss"] = np.zeros(n_dofs, dtype=gs.np_float)
             j_info["dofs_armature"] = np.zeros(n_dofs, dtype=gs.np_float)
-            j_info["dofs_kp"] = np.zeros(n_dofs, dtype=gs.np_float)
-            j_info["dofs_kv"] = np.zeros(n_dofs, dtype=gs.np_float)
+            j_info["dofs_act_gain"] = np.zeros(n_dofs, dtype=gs.np_float)
+            j_info["dofs_act_bias"] = np.zeros((n_dofs, 3), dtype=gs.np_float)
             j_info["dofs_force_range"] = np.tile([-np.inf, np.inf], (n_dofs, 1))
 
         j_infos.append(j_info)
@@ -435,8 +437,8 @@ def _parse_link(
         for j_info in j_infos:
             j_info["pos"] *= morph.scale
             # TODO: parse actuator in USD articulation, now all joints are considered to have actuators
-            j_info["dofs_kp"] *= morph.scale**3
-            j_info["dofs_kv"] *= morph.scale**3
+            j_info["dofs_act_gain"] *= morph.scale**3
+            j_info["dofs_act_bias"] *= morph.scale**3
             j_info["dofs_invweight"][:] = -1.0
 
     return l_info, j_infos

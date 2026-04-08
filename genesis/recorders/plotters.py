@@ -79,12 +79,16 @@ class BasePlotter(Recorder):
         if self._options.save_to_filename:
 
             def _get_video_frame_buffer(plotter):
-                # Make sure that all the data in the pipe has been processed before rendering anything
-                if not plotter._frames_buffer:
-                    if plotter._data_queue is not None and not plotter._data_queue.empty():
-                        while not plotter._frames_buffer:
-                            time.sleep(0.1)
-
+                # Wait for the plotter to produce a frame. When the plotter runs in a background thread,
+                # it may have already dequeued data but not yet appended the rendered frame to the buffer.
+                # When not threaded, frames are produced synchronously before this call, so an empty
+                # buffer means something went wrong — the None check handles that case too.
+                while not plotter._frames_buffer:
+                    if plotter._processor_thread is None or not plotter._processor_thread.is_alive():
+                        gs.raise_exception(
+                            f"[{type(plotter).__name__}] No frame available and plotter thread is not running."
+                        )
+                    time.sleep(0.01)
                 return plotter._frames_buffer.pop(0)
 
             self.video_writer = self._manager.add_recorder(

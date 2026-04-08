@@ -261,7 +261,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
     if filename_lower.endswith(morphs.USD_FORMATS):
         morph = gs.morphs.USD(file=filename, collision=collision, scale=scale)
         entities = scene.add_stage(morph=morph, vis_mode=surface.vis_mode)
-    elif filename_lower.endswith(morphs.URDF_FORMAT):
+    elif filename_lower.endswith((morphs.URDF_FORMAT, morphs.XACRO_FORMAT)):
         morph_cls = gs.morphs.URDF
         entities = [
             scene.add_entity(
@@ -290,7 +290,7 @@ def view(filename, collision, rotate, scale=1.0, show_link_frame=False):
         ]
     else:
         gs.raise_exception(
-            f"Unsupported file format for 'gs view'. Expected {morphs.URDF_FORMAT}, "
+            f"Unsupported file format for 'gs view'. Expected {morphs.URDF_FORMAT}, {morphs.XACRO_FORMAT}, "
             f"{morphs.MJCF_FORMAT}, {morphs.MESH_FORMATS}, or {morphs.USD_FORMATS}."
         )
 

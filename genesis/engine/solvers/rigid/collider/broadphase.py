@@ -79,7 +79,7 @@ def func_collision_clear(
 ):
     _B = collider_state.n_contacts.shape[0]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="collision_clear", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         if qd.static(static_rigid_sim_config.use_hibernation):
             collider_state.n_contacts_hibernated[i_b] = 0
@@ -420,11 +420,12 @@ def _func_broad_phase_all_vs_all(
     func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
 
     _B = collider_state.n_contacts.shape[0]
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(name="init_broad_pairs", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         collider_state.n_broad_pairs[i_b] = 0
 
     n_valid_pairs = collider_info.n_valid_pairs[None]
+    qd.loop_config(name="traverse_valid")
     for i_vp, i_b in qd.ndrange(n_valid_pairs, _B):
         pair = collider_info.valid_collision_pairs[i_vp]
         i_ga = pair[0]
