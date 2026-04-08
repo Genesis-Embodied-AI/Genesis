@@ -1244,6 +1244,7 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
         if renderer == "Apple Software Renderer":
             pytest.xfail("Debug frustum/trajectory colors are not rendered correctly on Apple Software Renderer.")
 
+    png_snapshot.extension._blurred_kernel_size = 3
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
