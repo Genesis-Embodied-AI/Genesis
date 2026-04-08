@@ -33,10 +33,8 @@ def _build_panda_table_scene(noslip_iterations=2, sparse_solve=False):
         show_viewer=False,
     )
 
-    scene.add_entity(morph=gs.morphs.URDF(
-        file="urdf/panda_bullet/panda.urdf", pos=(0, 0, TABLE_Z), fixed=True))
-    scene.add_entity(morph=gs.morphs.Box(
-        pos=(0.5, 0, TABLE_Z / 2), size=(0.8, 0.6, TABLE_Z / 2), fixed=True))
+    scene.add_entity(morph=gs.morphs.URDF(file="urdf/panda_bullet/panda.urdf", pos=(0, 0, TABLE_Z), fixed=True))
+    scene.add_entity(morph=gs.morphs.Box(pos=(0.5, 0, TABLE_Z / 2), size=(0.8, 0.6, TABLE_Z / 2), fixed=True))
 
     boxes = []
     for i in range(16):
