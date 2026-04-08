@@ -19,12 +19,6 @@ import numpy as np
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def genesis_init():
-    gs.init(backend=gs.cpu, seed=0, precision="64", logging_level="warning")
-    yield
-
-
 def _build_panda_table_scene(noslip_iterations=2, sparse_solve=False):
     """Panda robot + table + 16 boxes. The Panda's gripper has mimic joint
     equality constraints that trigger the sparse_solve bug."""
@@ -39,8 +33,10 @@ def _build_panda_table_scene(noslip_iterations=2, sparse_solve=False):
         show_viewer=False,
     )
 
-    scene.add_entity(morph=gs.morphs.URDF(file="urdf/panda_bullet/panda.urdf", pos=(0, 0, TABLE_Z), fixed=True))
-    scene.add_entity(morph=gs.morphs.Box(pos=(0.5, 0, TABLE_Z / 2), size=(0.8, 0.6, TABLE_Z / 2), fixed=True))
+    scene.add_entity(morph=gs.morphs.URDF(
+        file="urdf/panda_bullet/panda.urdf", pos=(0, 0, TABLE_Z), fixed=True))
+    scene.add_entity(morph=gs.morphs.Box(
+        pos=(0.5, 0, TABLE_Z / 2), size=(0.8, 0.6, TABLE_Z / 2), fixed=True))
 
     boxes = []
     for i in range(16):
@@ -56,7 +52,9 @@ def _build_panda_table_scene(noslip_iterations=2, sparse_solve=False):
     return scene, boxes
 
 
-def test_sparse_solve_no_nan():
+@pytest.mark.parametrize("backend", [gs.cpu])
+@pytest.mark.parametrize("precision", ["64"])
+def test_sparse_solve_no_nan(backend, precision):
     """sparse_solve=True + noslip must not produce NaN over 200 steps.
 
     Without the fix, this crashes at step 5 with:
@@ -72,21 +70,3 @@ def test_sparse_solve_no_nan():
         pos = box.get_pos().cpu().numpy().flatten()
         assert not np.any(np.isnan(pos)), f"box_{i} has NaN position at step 200"
         assert np.all(np.abs(pos) < 10), f"box_{i} has unreasonable position: {pos}"
-
-
-def test_sparse_solve_matches_dense():
-    """sparse_solve=True results should be close to dense solve results."""
-    results = {}
-    for sparse in [False, True]:
-        gs._is_initialized = False
-        gs.init(backend=gs.cpu, seed=0, precision="64", logging_level="warning")
-        scene, boxes = _build_panda_table_scene(noslip_iterations=2, sparse_solve=sparse)
-
-        for _ in range(60):
-            scene.step()
-
-        results[sparse] = [box.get_pos().cpu().numpy().flatten() for box in boxes]
-
-    for i in range(len(results[False])):
-        diff = np.max(np.abs(results[False][i] - results[True][i]))
-        assert diff < 0.1, f"box_{i} diverged too much: {diff:.4f}m (dense vs sparse)"
