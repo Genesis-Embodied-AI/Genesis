@@ -43,7 +43,7 @@ def kernel_build_efc_AR_b(
                 is_backward=False,
             )
 
-            # AR[r, c] = J[c, :] · Mgrad — exploit symmetry: only lower triangle
+            # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
             for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
                 for i_d in range(n_dofs):
