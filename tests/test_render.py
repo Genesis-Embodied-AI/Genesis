@@ -1172,7 +1172,7 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
             # Force screen-independent low-quality resolution when running unit tests for consistency
             res=(480, 320),
             # Enable running in background thread if supported by the platform
-            run_in_thread=(sys.platform == "linux"),
+            run_in_thread=False,
         ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
