@@ -82,6 +82,8 @@ Then, install Genesis via PyPI:
 pip install genesis-world  # Requires Python>=3.10,<3.14;
 ```
 
+**SM 9.0+ GPUs (Hopper, Blackwell, …):** for best performance, make sure the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) is installed at the default location, otherwise either `CUDA_HOME` or `CUDA_PATH` must be set to enable native graph conditionals. Without it Genesis still works but falls back to a slower host-side code path.
+
 For the latest version to date, make sure that `pip` is up-to-date via `pip install --upgrade pip`, then run command:
 ```bash
 pip install git+https://github.com/Genesis-Embodied-AI/Genesis.git
