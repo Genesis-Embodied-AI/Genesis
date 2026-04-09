@@ -1,6 +1,7 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
 import io
+import os
 import sys
 import threading
 
@@ -14,6 +15,8 @@ from genesis.ext.pyrender.imgui_overlay import ImGuiOverlayPlugin
 from genesis.vis.viewer_plugins.viewer_plugin import ViewerPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+
+SNAPSHOT_FAILURE_DIR = os.path.join(os.path.dirname(__file__), "__snapshot_failures__")
 
 
 class _FrameCapturePlugin(ViewerPlugin):
@@ -38,6 +41,25 @@ class _FrameCapturePlugin(ViewerPlugin):
         self._armed = True
         self._ready.wait(timeout=timeout)
         return self._result
+
+
+def _save_failure_images(received_arr, snapshot_data):
+    """Save received image and diff on snapshot mismatch for CI artifact upload."""
+    os.makedirs(SNAPSHOT_FAILURE_DIR, exist_ok=True)
+
+    received_img = Image.fromarray(received_arr)
+    received_img.save(os.path.join(SNAPSHOT_FAILURE_DIR, "received.png"))
+
+    try:
+        snapshot_img = Image.open(io.BytesIO(snapshot_data))
+        snapshot_arr = np.asarray(snapshot_img).astype(np.int16)
+        received_i16 = received_arr.astype(np.int16)
+        if snapshot_arr.shape == received_i16.shape:
+            diff = np.minimum(np.abs(snapshot_arr - received_i16), 255).astype(np.uint8)
+            Image.fromarray(diff).save(os.path.join(SNAPSHOT_FAILURE_DIR, "diff.png"))
+        snapshot_img.save(os.path.join(SNAPSHOT_FAILURE_DIR, "expected.png"))
+    except Exception:
+        pass
 
 
 @pytest.mark.required
@@ -77,8 +99,10 @@ def test_imgui_overlay_screenshot(png_snapshot):
         img = Image.fromarray(rgb_arr)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
-        assert buf.getvalue() == png_snapshot
+        received_bytes = buf.getvalue()
+        assert received_bytes == png_snapshot
     except AssertionError:
+        _save_failure_images(rgb_arr, png_snapshot if isinstance(png_snapshot, bytes) else b"")
         if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
             pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
         raise
