@@ -1,0 +1,39 @@
+# Based on https://github.com/ROCm/quadrants/blob/0.4.5.amd0/Dockerfile.rocm
+# Build the quandrants container first with (in the quadrants src dir):
+#   docker build -t quadrants:0.4.5.amd0 -f quadrants/Dockerfile.rocm quadrants/.
+# Then build the genesis container with (in the genesis src dir):
+#   docker build -t genesis:0.4.4.amd0 -f Dockerfile.rocm Genesis/.
+ARG BASE_IMAGE=quadrants:0.4.5.amd0
+FROM ${BASE_IMAGE}
+
+ENV HAS_ENABLE_SCRATCH_ASYNC_RECLAIM=0
+ENV HAS_NO_SCRATCH_RECLAIM=1
+ENV PYOPENGL_PLATFORM='egl'
+ENV EGL_PLATFORM='surfaceless'
+ENV PYGLET_HEADLESS='true'
+
+RUN apt update && \
+    apt install -y \
+    libegl1 \
+    libgl1 \
+    libgles2 \
+    libgl1-mesa-dri \
+    libxrender1 \
+    libxext6 \
+    libxi6 \
+    libxinerama1 \
+    libxcursor1 \
+    libxfixes3 \
+    libxrandr2 && \
+    apt clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . /src/Genesis
+WORKDIR /src/Genesis
+
+RUN git clone https://github.com/newton-physics/newton-assets.git
+
+# DO NOT CHECK IN
+COPY benchmark_scaling.py /src/Genesis/.
+
+RUN uv pip install -e ".[dev]"
