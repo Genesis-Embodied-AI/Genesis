@@ -339,6 +339,9 @@ def pytest_xdist_auto_num_workers(config):
                 text=True,
             )
             devices_vram_memory = tuple(int(e.strip()) for e in result.stdout.splitlines())
+        except ValueError:
+            # Unknown VRAM. Assuming unbounded.
+            vram_memory = float("inf")
         except (FileNotFoundError, subprocess.CalledProcessError):
             try:
                 result = subprocess.run(
@@ -433,6 +436,7 @@ def pytest_runtest_setup(item):
     warnings.filterwarnings(
         "default", message=r".*not currently supported on the MPS backend and will fall back to run on the CPU.*"
     )
+    warnings.filterwarnings("default", message=r"\s*.*cuda capability.*")
     warnings.filterwarnings("error", category=UserWarning, module="quadrants")
     warnings.filterwarnings("default", message=r".*cannot create weak reference to 'tuple' object.*")
 
