@@ -15,7 +15,7 @@ import tempfile
 
 _MARVIN_URDF = "simvla-genesis-test-scene/assets/robot/marvin_bimanual/urdf/marvin_pika.urdf"
 
-_BENCH_SCRIPT = '''
+_BENCH_SCRIPT = """
 import time
 import math
 import genesis as gs
@@ -79,24 +79,24 @@ env_steps = n_steps * max(n_envs, 1)
 fps = env_steps / elapsed
 ms = elapsed / n_steps * 1000
 print(f"BENCH {label} n_envs={n_envs}: {n_steps} steps in {elapsed:.1f}s, {fps:.0f} env-FPS, {ms:.2f} ms/step")
-'''
+"""
 
-_MARVIN_ROBOT = '''
+_MARVIN_ROBOT = """
 scene.add_entity(
     morph=gs.morphs.URDF(
         file="{urdf}",
         pos=(0, 0, 1.08), fixed=True, convexify=True, merge_fixed_links=False,
     ),
 )
-'''.replace("{urdf}", _MARVIN_URDF)
+""".replace("{urdf}", _MARVIN_URDF)
 
-_PANDA_ROBOTS = '''
+_PANDA_ROBOTS = """
 # Two Panda arms for more DOFs
 scene.add_entity(morph=gs.morphs.URDF(
     file="urdf/panda_bullet/panda.urdf", pos=(0, -0.2, TABLE_Z), fixed=True))
 scene.add_entity(morph=gs.morphs.URDF(
     file="urdf/panda_bullet/panda.urdf", pos=(0, 0.2, TABLE_Z), euler=(0,0,180), fixed=True))
-'''
+"""
 
 
 def run_bench(script_path, sparse, n_envs):
@@ -123,7 +123,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print("Benchmark: sparse_solve impact on noslip performance")
     print(f"Robot: {robot_name} + 16 boxes, noslip_iterations=2")
-    print(f"Warmup: 3s, Record: 5s per config")
+    print("Warmup: 3s, Record: 5s per config")
     print("=" * 65)
     print(f"{'n_envs':>7s}  {'dense (ms)':>10s}  {'sparse (ms)':>11s}  {'speedup':>8s}")
     print("-" * 42)
