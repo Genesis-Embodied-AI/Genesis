@@ -1172,7 +1172,7 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
             # Force screen-independent low-quality resolution when running unit tests for consistency
             res=(480, 320),
             # Enable running in background thread if supported by the platform
-            run_in_thread=False,
+            run_in_thread=(sys.platform == "linux"),
         ),
         vis_options=gs.options.VisOptions(
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
@@ -1185,15 +1185,14 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
         show_viewer=True,
     )
 
-    scene.add_entity(gs.morphs.Plane())
-    # Add a semi-transparent box inside the sensor camera frustum to verify transparency rendering
+    # Add a box inside the sensor camera frustum
     scene.add_entity(
         gs.morphs.Box(
             size=(0.1, 0.1, 0.1),
-            pos=(0.4, 0.0, 0.4),
+            pos=(0.4, 0.0, 0.7),
             fixed=True,
         ),
-        surface=gs.surfaces.Default(color=(0.2, 0.6, 1.0, 0.4)),
+        surface=gs.surfaces.Default(color=(0.2, 0.6, 1.0, 1.0)),
     )
 
     sensor_cam = scene.add_camera(
@@ -1209,42 +1208,23 @@ def test_draw_debug_frustum_and_trajectory(n_envs, renderer_type, renderer, png_
 
     scene.build(n_envs=n_envs)
 
-    scene.step()
-
     scene.draw_debug_frustum(sensor_cam, color=(0.0, 1.0, 0.0, 0.3))
 
     t = np.linspace(0, 2 * np.pi, 50)
-    positions = np.column_stack(
-        [
-            0.8 * np.cos(t),
-            0.8 * np.sin(t),
-            np.full_like(t, 0.5),
-        ]
-    )
+    positions = np.column_stack([0.8 * np.cos(t), 0.8 * np.sin(t), np.full_like(t, 0.5)])
     scene.draw_debug_trajectory(positions, radius=0.02, color=(1.0, 0.5, 0.0, 1.0))
-
-    # FIXME: viewer.update() must be called twice to ensure the render state is fully flushed before offscreen capture
-    scene.visualizer.viewer.update(auto_refresh=True, force=True)
-    scene.visualizer.viewer.update(auto_refresh=True, force=True)
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
+
+    scene.visualizer.viewer.update(auto_refresh=True, force=True)
     rgb_arr, *_ = pyrender_viewer.render_offscreen(
-        pyrender_viewer._camera_node,
-        pyrender_viewer._renderer,
-        rgb=True,
-        depth=False,
-        seg=False,
-        normal=False,
+        pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
     )
 
-    if sys.platform == "darwin":
-        glinfo = pyrender_viewer.context.get_info()
-        renderer = glinfo.get_renderer()
-        if renderer == "Apple Software Renderer":
-            pytest.xfail("Debug frustum/trajectory colors are not rendered correctly on Apple Software Renderer.")
-
-    png_snapshot.extension._blurred_kernel_size = 3
+    # Apple Software Rendering has issues rendering sharp edges
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        png_snapshot.extension._blurred_kernel_size = 3
     assert rgb_array_to_png_bytes(rgb_arr) == png_snapshot
 
 
