@@ -40,6 +40,8 @@ dependencies = [
     "pycollada",
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
+    # Used for decoding Draco-compressed `.glb` mesh files
+    "DracoPy",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen==0.8.2",
     # Used for some advanced mesh processing such as `skeletonization`
