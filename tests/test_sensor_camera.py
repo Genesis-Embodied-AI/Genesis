@@ -1,3 +1,4 @@
+import gc
 import sys
 import weakref
 
@@ -366,8 +367,6 @@ def test_destroy_unbuilt_scene_with_camera():
     scene.add_entity(morph=gs.morphs.Plane())
     scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
 
-    # Scene.__del__ calls destroy(), and a crash in destroy() would result in some
-    # logspam.
     scene.destroy()
 
 
@@ -381,8 +380,6 @@ def test_destroy_idempotent_with_camera():
     camera.read()
 
     scene.destroy()
-    # Scene.__del__ calls destroy(), which means it's expected that destroy() will
-    # be called twice. A crash in destroy() would result in some logspam.
     scene.destroy()
 
 
@@ -397,8 +394,9 @@ def test_rasterizer_destroy():
     cam2.read()
 
     offscreen_renderer_ref = weakref.ref(cam1._shared_metadata.renderer._renderer)
-
     scene.destroy()
+    gc.collect()
+
     assert offscreen_renderer_ref() is None
 
 
