@@ -1,5 +1,7 @@
 from io import BytesIO
 from urllib import request
+
+import DracoPy
 import numpy as np
 import pygltflib
 import trimesh
@@ -324,8 +326,6 @@ def parse_mesh_glb(path, group_by_material, scale, is_mesh_zup, surface):
 
             uvs = None
             if "KHR_draco_mesh_compression" in primitive.extensions:
-                import DracoPy
-
                 KHR_index = primitive.extensions["KHR_draco_mesh_compression"]["bufferView"]
                 mesh_buffer_view = glb.bufferViews[KHR_index]
                 mesh_data = get_glb_bufferview_data(glb, mesh_buffer_view)

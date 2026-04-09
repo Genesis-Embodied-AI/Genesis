@@ -451,6 +451,30 @@ def test_glb_parse_geometry(glb_file, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("glb_file", ["glb/tycoon_draco_no_normal.glb", "glb/tycoon_with_normal_draco.glb"])
+def test_glb_draco_missing_normals_texcoord(glb_file):
+    # Normals and tex_coord are not always present in GLB files, typically for Draco-compressed ones.
+    asset_path = get_hf_dataset(pattern=glb_file)
+    glb_path = os.path.join(asset_path, glb_file)
+    gs_meshes = gltf_utils.parse_mesh_glb(
+        glb_path,
+        group_by_material=False,
+        scale=None,
+        is_mesh_zup=True,
+        surface=gs.surfaces.Default(),
+    )
+
+    assert len(gs_meshes) > 0, "Expected at least one mesh"
+    for gs_mesh in gs_meshes:
+        verts = gs_mesh.trimesh.vertices
+        faces = gs_mesh.trimesh.faces
+        assert verts.shape[0] > 0, "Mesh has no vertices"
+        assert verts.shape[1] == 3, "Vertices should be 3D"
+        assert faces.shape[0] > 0, "Mesh has no faces"
+        assert faces.shape[1] == 3, "Faces should be triangles"
+
+
+@pytest.mark.required
 def test_urdf_mesh_processing(tmp_path, show_viewer):
     stl_file = "1707/base_link.stl"
     asset_path = get_hf_dataset(pattern=stl_file)
