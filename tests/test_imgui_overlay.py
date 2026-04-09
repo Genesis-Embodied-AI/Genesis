@@ -91,6 +91,9 @@ def test_imgui_overlay_screenshot(png_snapshot):
     scene.build()
     scene.step()
 
+    # Fix FPS display to a constant value so the screenshot is deterministic across machines
+    imgui_plugin._fps_history = [55.0]
+
     rgb_arr = capture_plugin.capture()
     assert rgb_arr is not None
     assert rgb_arr.ndim == 3 and rgb_arr.shape[2] == 3
