@@ -566,16 +566,19 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
     # Two shadow hands placed horizontally, palms facing down
-    scene.add_entity(morph=gs.morphs.URDF(
-        file="urdf/shadow_hand/shadow_hand.urdf",
-        pos=(-0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True))
-    scene.add_entity(morph=gs.morphs.URDF(
-        file="urdf/shadow_hand/shadow_hand.urdf",
-        pos=(0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True))
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf", pos=(-0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True
+        )
+    )
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf", pos=(0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True
+        )
+    )
 
     # Table
-    scene.add_entity(morph=gs.morphs.Box(
-        pos=(0, 0, TABLE_Z / 2), size=(0.5, 0.5, TABLE_Z / 2), fixed=True))
+    scene.add_entity(morph=gs.morphs.Box(pos=(0, 0, TABLE_Z / 2), size=(0.5, 0.5, TABLE_Z / 2), fixed=True))
 
     # 25 cubes in a 5x5 grid on the table
     for i in range(25):
