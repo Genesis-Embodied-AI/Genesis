@@ -123,6 +123,9 @@ render = [
     "pybind11[global]",
     "open3d",
 ]
+gui = [
+    "imgui-bundle",
+]
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",
