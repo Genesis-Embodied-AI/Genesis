@@ -568,25 +568,38 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, **scene_kwargs):
     # Two shadow hands placed horizontally, palms facing down
     scene.add_entity(
         morph=gs.morphs.URDF(
-            file="urdf/shadow_hand/shadow_hand.urdf", pos=(-0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True
+            file="urdf/shadow_hand/shadow_hand.urdf", 
+            pos=(-0.1, 0.30, 0.9 * TABLE_Z), 
+            euler=(90, 0, 0), 
+            fixed=True
         )
     )
     scene.add_entity(
         morph=gs.morphs.URDF(
-            file="urdf/shadow_hand/shadow_hand.urdf", pos=(0.1, 0.25, 0.9 * TABLE_Z), euler=(90, 0, 0), fixed=True
+            file="urdf/shadow_hand/shadow_hand.urdf", 
+            pos=(0.1, 0.30, 0.9 * TABLE_Z), 
+            euler=(90, 0, 0), 
+            fixed=True
         )
     )
 
     # Table
-    scene.add_entity(morph=gs.morphs.Box(pos=(0, 0, TABLE_Z / 2), size=(0.5, 0.5, TABLE_Z / 2), fixed=True))
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0, 0, TABLE_Z / 2), 
+            size=(0.5, 0.5, TABLE_Z / 2), 
+            fixed=True
+        )
+    )
 
     # 25 cubes in a 5x5 grid on the table
     for i in range(25):
         x = -0.10 + 0.05 * (i % 5)
-        y = -0.10 + 0.05 * (i // 5)
+        y = -0.05 + 0.05 * (i // 5)
         scene.add_entity(
             material=gs.materials.Rigid(friction=0.8),
-            morph=gs.morphs.Box(pos=(x, y, TABLE_Z + 0.01), size=(0.02, 0.02, 0.02)),
+            morph=gs.morphs.Box(pos=(x, y, TABLE_Z + 0.01), 
+            size=(0.02, 0.02, 0.02)),
         )
 
     time_start = time.time()
