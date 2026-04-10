@@ -33,7 +33,4 @@ WORKDIR /src/Genesis
 
 RUN git clone https://github.com/newton-physics/newton-assets.git
 
-# DO NOT CHECK IN
-COPY benchmark_scaling.py /src/Genesis/.
-
 RUN uv pip install -e ".[dev]"

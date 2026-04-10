@@ -142,13 +142,13 @@ def get_rigid_global_info(solver, kinematic_only):
     _B = solver._B
 
     mass_mat_shape = (solver.n_dofs_, solver.n_dofs_, _B)
-    if math.prod(mass_mat_shape) > np.iinfo(np.int32).max:
+    if math.prod(mass_mat_shape) > np.iinfo(np.int64).max:
         gs.raise_exception(
             f"Mass matrix shape (n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
     requires_grad = solver._requires_grad
     mass_mat_shape_bw = maybe_shape((2, *mass_mat_shape), requires_grad)
-    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int32).max:
+    if math.prod(mass_mat_shape_bw) > np.iinfo(np.int64).max:
         gs.raise_exception(
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
@@ -318,11 +318,11 @@ def get_constraint_state(constraint_solver, solver):
     jac_relevant_dofs_shape = maybe_shape(jac_shape, constraint_solver.sparse_solve)
     jac_n_relevant_dofs_shape = maybe_shape((len_constraints_, _B), constraint_solver.sparse_solve)
 
-    if math.prod(jac_shape) > np.iinfo(np.int32).max:
+    if math.prod(jac_shape) > np.iinfo(np.int64).max:
         gs.raise_exception(
             f"Jacobian shape (n_constraints={len_constraints_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
-    if math.prod(efc_AR_shape) > np.iinfo(np.int32).max:
+    if math.prod(efc_AR_shape) > np.iinfo(np.int64).max:
         gs.logger.warning(
             f"efc_AR shape (n_constraints={len_constraints_}, n_constraints={solver.n_dofs_}, n_envs={_B}) is too "
             "large. Consider manually setting a smaller 'max_collision_pairs' in RigidOptions to reduce the size of "
@@ -1299,7 +1299,7 @@ class StructSDFInfo(metaclass=BASE_METACLASS):
 
 
 def get_sdf_info(n_geoms, n_cells):
-    if math.prod((n_cells, 3)) > np.iinfo(np.int32).max:
+    if math.prod((n_cells, 3)) > np.iinfo(np.int64).max:
         gs.raise_exception(
             f"SDF Gradient shape (n_cells={n_cells}, 3) is too large. Consider manually setting larger "
             "'sdf_cell_size' in 'gs.materials.Rigid' options."
