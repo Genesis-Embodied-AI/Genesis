@@ -170,6 +170,7 @@ class OffscreenRenderer(object):
         if depth:
             flags |= RenderFlags.RET_DEPTH
 
+        first_pass_done = False
         if rgb or depth or seg:
             if self._platform.supports_framebuffers():
                 flags |= RenderFlags.OFFSCREEN
@@ -195,6 +196,7 @@ class OffscreenRenderer(object):
                     color_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
                     color_arr = renderer._resize_image(color_arr, antialias=not seg)
                     retval = (color_arr, depth_arr) if depth else (color_arr,)
+            first_pass_done = True
         else:
             retval = ()
 
@@ -224,11 +226,13 @@ class OffscreenRenderer(object):
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
             if self._platform.supports_framebuffers():
-                normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+                normal_arr, *_ = renderer.render(
+                    scene, flags, is_first_pass=not first_pass_done, force_skip_shadows=True
+                )
             else:
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
                 glReadBuffer(GL_FRONT)
-                renderer.render(scene, flags, is_first_pass=False, force_skip_shadows=True)
+                renderer.render(scene, flags, is_first_pass=not first_pass_done, force_skip_shadows=True)
                 normal_arr = renderer.jit.read_color_buf(self.viewport_height, self.viewport_width, rgba=False)
                 normal_arr = renderer._resize_image(normal_arr, antialias=not seg)
 

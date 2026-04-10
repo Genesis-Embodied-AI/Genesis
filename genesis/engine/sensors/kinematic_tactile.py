@@ -981,7 +981,7 @@ class KinematicContactProbe(
             shared_ground_truth_cache,
         )
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: data.penetration)
 
 
@@ -1173,5 +1173,5 @@ class ElastomerDisplacementSensor(
             shared_ground_truth_cache,
         )
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: torch.linalg.norm(data, dim=-1))
