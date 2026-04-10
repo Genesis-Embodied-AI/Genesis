@@ -1339,8 +1339,8 @@ class StructDofsInfo(metaclass=BASE_METACLASS):
     motion_ang: V_ANNOTATION
     motion_vel: V_ANNOTATION
     limit: V_ANNOTATION
-    kp: V_ANNOTATION
-    kv: V_ANNOTATION
+    act_gain: V_ANNOTATION
+    act_bias: V_ANNOTATION
     force_range: V_ANNOTATION
 
 
@@ -1357,8 +1357,8 @@ def get_dofs_info(solver):
         motion_ang=V(dtype=gs.qd_vec3, shape=shape),
         motion_vel=V(dtype=gs.qd_vec3, shape=shape),
         limit=V(dtype=gs.qd_vec2, shape=shape),
-        kp=V(dtype=gs.qd_float, shape=shape),
-        kv=V(dtype=gs.qd_float, shape=shape),
+        act_gain=V(dtype=gs.qd_float, shape=shape),
+        act_bias=V(dtype=gs.qd_vec3, shape=shape),
         force_range=V(dtype=gs.qd_vec2, shape=shape),
     )
 
@@ -2034,6 +2034,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     solver_type: int
     requires_grad: bool
     prefer_parallel_linesearch: int = -1  # -1 = None (auto), 0 = False, 1 = True
+    parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False

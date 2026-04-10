@@ -1,6 +1,8 @@
 import torch
 import math
 import copy
+from tensordict import TensorDict
+
 import genesis as gs
 from genesis.utils.geom import (
     quat_to_xyz,
@@ -18,9 +20,8 @@ class HoverEnv:
     def __init__(self, num_envs, env_cfg, obs_cfg, reward_cfg, command_cfg, show_viewer=False):
         self.num_envs = num_envs
         self.rendered_env_num = min(10, self.num_envs)
-        self.num_obs = obs_cfg["num_obs"]
-        self.num_privileged_obs = None
         self.num_actions = env_cfg["num_actions"]
+        self.cfg = env_cfg
         self.num_commands = command_cfg["num_commands"]
         self.device = gs.device
 
@@ -103,7 +104,6 @@ class HoverEnv:
             self.episode_sums[name] = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
 
         # initialize buffers
-        self.obs_buf = torch.zeros((self.num_envs, self.num_obs), device=gs.device, dtype=gs.tc_float)
         self.rew_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_float)
         self.reset_buf = torch.ones((self.num_envs,), device=gs.device, dtype=gs.tc_int)
         self.episode_length_buf = torch.zeros((self.num_envs,), device=gs.device, dtype=gs.tc_int)
@@ -119,7 +119,8 @@ class HoverEnv:
         self.last_base_pos = torch.zeros_like(self.base_pos)
 
         self.extras = dict()  # extra information for logging
-        self.extras["observations"] = dict()
+
+        self.reset()
 
     def _resample_commands(self, envs_idx):
         self.commands[envs_idx, 0] = gs_rand_float(*self.command_cfg["pos_x_range"], (len(envs_idx),), gs.device)
@@ -187,6 +188,13 @@ class HoverEnv:
             self.episode_sums[name] += rew
 
         # compute observations
+        self._update_observation()
+
+        self.last_actions[:] = self.actions[:]
+
+        return self.get_observations(), self.rew_buf, self.reset_buf, self.extras
+
+    def _update_observation(self):
         self.obs_buf = torch.cat(
             [
                 torch.clip(self.rel_pos * self.obs_scales["rel_pos"], -1, 1),
@@ -198,17 +206,8 @@ class HoverEnv:
             axis=-1,
         )
 
-        self.last_actions[:] = self.actions[:]
-        self.extras["observations"]["critic"] = self.obs_buf
-
-        return self.obs_buf, self.rew_buf, self.reset_buf, self.extras
-
     def get_observations(self):
-        self.extras["observations"]["critic"] = self.obs_buf
-        return self.obs_buf, self.extras
-
-    def get_privileged_observations(self):
-        return None
+        return TensorDict({"policy": self.obs_buf}, batch_size=[self.num_envs])
 
     def reset_idx(self, envs_idx):
         if len(envs_idx) == 0:
@@ -217,8 +216,6 @@ class HoverEnv:
         # reset base
         self.base_pos[envs_idx] = self.base_init_pos
         self.last_base_pos[envs_idx] = self.base_init_pos
-        self.rel_pos = self.commands - self.base_pos
-        self.last_rel_pos = self.commands - self.last_base_pos
         self.base_quat[envs_idx] = self.base_init_quat.reshape(1, -1)
         self.drone.set_pos(self.base_pos[envs_idx], zero_velocity=True, envs_idx=envs_idx)
         self.drone.set_quat(self.base_quat[envs_idx], zero_velocity=True, envs_idx=envs_idx)
@@ -240,11 +237,14 @@ class HoverEnv:
             self.episode_sums[key][envs_idx] = 0.0
 
         self._resample_commands(envs_idx)
+        self.rel_pos = self.commands - self.base_pos
+        self.last_rel_pos = self.commands - self.last_base_pos
 
     def reset(self):
         self.reset_buf[:] = True
         self.reset_idx(torch.arange(self.num_envs, device=gs.device))
-        return self.obs_buf, None
+        self._update_observation()
+        return self.get_observations()
 
     # ------------ reward functions----------------
     def _reward_target(self):

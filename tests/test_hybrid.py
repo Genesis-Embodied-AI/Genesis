@@ -1,3 +1,6 @@
+import platform
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -81,6 +84,10 @@ def test_rigid_mpm_muscle(show_viewer):
 
 @pytest.mark.slow  # ~700s
 @pytest.mark.required
+@pytest.mark.skipif(
+    sys.platform == "linux" and platform.machine() == "aarch64",
+    reason="pygel3d is not supported on Linux ARM (aarch64)",
+)
 def test_mesh_mpm_build(show_viewer):
     # FIXME: This test is crashing on Linux (x86 & aarch64) Github-hosted runners
 

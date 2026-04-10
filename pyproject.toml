@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.4.4"
+version = "0.4.5"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -14,7 +14,10 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
-    "trimesh",
+    # * 4.8.2 fixed linear/sRGB color conversion in `to_color()`.
+    "trimesh>=4.8.2",
+    # Used for preprocessing .urdf.xacro files into plain URDF
+    "xacro",
     # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
     "libigl!=2.6.2",
     # Cross-platform library to get various kind of CPU information such as model name
@@ -38,6 +41,8 @@ dependencies = [
     "pycollada",
     # Used for parsing `.glb` mesh files
     "pygltflib==1.16.0",
+    # Used for decoding Draco-compressed `.glb` mesh files
+    "DracoPy",
     # Use by `PBD3DEntity.sample` to tetrahedralize a mesh
     "tetgen==0.8.2",
     # Used for some advanced mesh processing such as `skeletonization`

@@ -30,7 +30,7 @@ SceneMeta = namedtuple(
 
 pytestmark = [
     pytest.mark.benchmarks,
-    pytest.mark.disable_cache(False),
+    pytest.mark.cache(False),
 ]
 
 
@@ -550,6 +550,79 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
+def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, **scene_kwargs):
+    _STEP_DT = 1.0 / 30
+    TABLE_Z = 0.762
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=_STEP_DT, substeps=4, gravity=(0, 0, -9.81)),
+        rigid_options=gs.options.RigidOptions(
+            noslip_iterations=2,
+            max_collision_pairs=256,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    # Two shadow hands placed horizontally, palms facing down
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+            pos=(-0.1, 0.30, 0.9 * TABLE_Z),
+            euler=(90, 0, 0),
+            fixed=True,
+        )
+    )
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+            pos=(0.1, 0.30, 0.9 * TABLE_Z),
+            euler=(90, 0, 0),
+            fixed=True,
+        )
+    )
+
+    # Table
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0, 0, TABLE_Z / 2),
+            size=(0.5, 0.5, TABLE_Z / 2),
+            fixed=True,
+        )
+    )
+
+    # 25 cubes in a 5x5 grid on the table
+    for i in range(25):
+        x = -0.10 + 0.05 * (i % 5)
+        y = -0.05 + 0.05 * (i // 5)
+        scene.add_entity(
+            material=gs.materials.Rigid(friction=0.8),
+            morph=gs.morphs.Box(
+                pos=(x, y, TABLE_Z + 0.01),
+                size=(0.02, 0.02, 0.02),
+            ),
+        )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    def step():
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=_STEP_DT,
+            duration_warmup=20.0,
+            duration_record=5.0,
+        ),
+    )
+
+
 def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
     shadow_hand_path = Path(get_hf_dataset(pattern="shadow_hand/*"))
     dex_path = Path(get_hf_dataset(pattern="dex/*"))
@@ -884,6 +957,12 @@ def g1_fall(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def shadow_hand_cubes(solver, n_envs, gjk):
+    _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def dex_hand(solver, n_envs, gjk):
     _, step_fn, meta = make_dex_hand(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -926,6 +1005,7 @@ def dex_hand(solver, n_envs, gjk):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("shadow_hand_cubes", None, None, 0, gs.cpu),
         ("dex_hand", None, None, 4096, gs.gpu),
     ],
 )

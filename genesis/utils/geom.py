@@ -2090,7 +2090,19 @@ def nowhere():
 
 def default_solver_params():
     """
-    Default solver parameters (timeconst, dampratio, dmin, dmax, width, mid, power).
+    Default constraint solver parameters ``(timeconst, dampratio, dmin, dmax, width, mid, power)``.
+
+    The constraint reference acceleration is computed as ``aref = -b * vel - k * imp * pos``, where:
+
+    - ``b = 2 / (dmax * timeconst)`` controls velocity damping (energy-dissipating). Depends only on ``timeconst``.
+    - ``k = 1 / (dmax² * timeconst² * dampratio²)`` controls position stiffness (energy-conserving elastic spring).
+
+    Despite its name, ``dampratio`` does **not** control damping — it scales the spring stiffness ``k``. Smaller
+    ``dampratio`` yields a stiffer spring (more elastic bounce), while larger values yield a softer, more compliant
+    contact. Setting ``dampratio`` to zero is forbidden as it removes the elastic restoring force entirely. Use a
+    small positive value (e.g. ``0.01``) with a large ``timeconst`` (e.g. ``1.0``) for nearly undamped elastic contact.
+
+    The impedance parameters ``(dmin, dmax, width, mid, power)`` control the depth-dependent constraint rigidity.
 
     Reference: https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters
     """
