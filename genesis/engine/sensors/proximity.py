@@ -266,7 +266,7 @@ class ProximitySensor(
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
         for obj in self._debug_objects:
             context.clear_debug_object(obj)

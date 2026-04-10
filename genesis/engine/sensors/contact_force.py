@@ -137,7 +137,7 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
         buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """
         Draw debug sphere when the sensor detects contact.
 
@@ -150,7 +150,7 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
 
         if self.debug_object is not None:
             context.clear_debug_object(self.debug_object)
-            self.debug_objects = None
+            self.debug_object = None
 
         if is_contact:
             self.debug_object = context.draw_debug_sphere(
@@ -273,7 +273,7 @@ class ContactForceSensor(
         shared_cache_per_sensor.masked_fill_(torch.abs(shared_cache_per_sensor) < shared_metadata.min_force, 0.0)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """
         Draw debug arrow representing the contact force.
 

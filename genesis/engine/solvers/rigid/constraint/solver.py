@@ -26,8 +26,8 @@ def _sort_relevant_dofs_descending(
 ):
     """Insertion sort jac_relevant_dofs[i_con, :n, i_b] in descending order.
 
-    Called after populating relevant DOFs for a constraint that may involve
-    multiple entities. The array is typically <= 14 elements, so O(n^2) is fine.
+    Called after populating relevant DOFs for a constraint that may involve multiple entities.
+    The array is typically <= 14 elements, so O(n^2) is fine.
     """
     for i in range(1, n):
         key = constraint_state.jac_relevant_dofs[i_con, i, i_b]
@@ -807,6 +807,8 @@ def func_equality_connect(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            # Sort needed: DOFs from two entities are only descending within each
+            # entity. Incremental Cholesky requires globally descending order.
             _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
@@ -899,6 +901,19 @@ def func_equality_joint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+
+    # Populate jac_relevant_dofs for this joint-equality constraint.
+    # Without this, sparse iterations see 0 relevant DOFs and produce
+    # zero forces, leading to NaN in the solver.
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        con_n_relevant_dofs = 0
+        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof1
+        con_n_relevant_dofs += 1
+        if i_dof2 != i_dof1:
+            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof2
+            con_n_relevant_dofs += 1
+        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -1311,6 +1326,10 @@ def add_frictionloss_constraints(
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
                         constraint_state.jac[i_con, i_d, i_b] = jac
 
+                        if qd.static(static_rigid_sim_config.sparse_solve):
+                            constraint_state.jac_relevant_dofs[i_con, 0, i_b] = i_d
+                            constraint_state.jac_n_relevant_dofs[i_con, i_b] = 1
+
 
 # ====================================== Runtime User-Specified Weld Constraints ======================================
 
@@ -1450,9 +1469,8 @@ def func_hessian_direct_batch(
                 if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
                         i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]
-                        # Ensure lower triangle: row >= col.
-                        # jac_relevant_dofs is descending within each entity but
-                        # can have cross-entity pairs where i_d2 > i_d1.
+                        # Ensure lower triangle: row >= col. jac_relevant_dofs is descending within
+                        # each entity but can have cross-entity pairs where i_d2 > i_d1.
                         row = qd.max(i_d1, i_d2)
                         col = qd.min(i_d1, i_d2)
                         constraint_state.nt_H[i_b, row, col] = (
@@ -2921,21 +2939,70 @@ def initialize_Jaref(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
+    if qd.static(static_rigid_sim_config.parallel_init):
+        _initialize_Jaref_parallel(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        _initialize_Jaref_per_env(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@qd.func
+def _initialize_Jaref_body(
+    i_c,
+    i_b,
+    n_dofs,
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    Jaref = -constraint_state.aref[i_c, i_b]
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    else:
+        for i_d in range(n_dofs):
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    constraint_state.Jaref[i_c, i_b] = Jaref
+
+
+@qd.func
+def _initialize_Jaref_per_env(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
     qd.loop_config(name="init_jaref", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
-            Jaref = -constraint_state.aref[i_c, i_b]
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            constraint_state.Jaref[i_c, i_b] = Jaref
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
+
+
+@qd.func
+def _initialize_Jaref_parallel(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone."""
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+    len_constraints = constraint_state.Jaref.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_c, i_b in qd.ndrange(len_constraints, _B):
+        if i_c < constraint_state.n_constraints[i_b]:
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -3139,10 +3206,9 @@ def func_solve_iter(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                # Bypass incremental Cholesky when sparse_solve=True.
-                # The incremental rank-1 update assumes globally descending DOF order
-                # in jac_relevant_dofs, which doesn't hold for cross-entity constraints.
-                # Always use direct Hessian rebuild which has the max/min fix.
+                # Bypass incremental Cholesky when sparse_solve=True. The incremental rank-1 update
+                # assumes globally descending DOF order in jac_relevant_dofs, which doesn't hold
+                # for cross-entity constraints. Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     entities_info=entities_info,

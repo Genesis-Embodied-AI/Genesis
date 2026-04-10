@@ -3,7 +3,6 @@ import pkgutil
 import sys
 from typing import TYPE_CHECKING, ForwardRef, get_args, get_origin
 
-import numpy as np
 import torch
 
 import genesis as gs
@@ -183,10 +182,10 @@ class SensorManager:
                 self._is_last_cache_cloned[key] = False
                 self._cloned_cache[key] = torch.tensor([], dtype=dtype, device=gs.device)
 
-    def draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def draw_debug(self, context: "RasterizerContext"):
         for sensor in self.sensors:
             if sensor._options.draw_debug:
-                sensor._draw_debug(context, buffer_updates)
+                sensor._draw_debug(context)
 
     def get_cloned_from_cache(self, sensor: "Sensor", is_ground_truth: bool = False) -> torch.Tensor:
         dtype = sensor._get_cache_dtype()

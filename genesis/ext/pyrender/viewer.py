@@ -754,8 +754,7 @@ class Viewer(pyglet.window.Window):
                 self._offscreen_pending_render = None
 
                 # Update context, just in case is not already done before
-                self._renderer.jit.update_buffer(self.gs_context.buffer)
-                self.gs_context.buffer.clear()
+                self.gs_context.update()
 
                 # Render current frame from camera viewpoint
                 self._offscreen_results = []
@@ -778,10 +777,6 @@ class Viewer(pyglet.window.Window):
         with self.render_lock if self._run_in_thread or not self.auto_start else nullcontext():
             # Make OpenGL context current
             self.switch_to()
-
-            # Update the context if not already done before
-            self._renderer.jit.update_buffer(self.gs_context.buffer)
-            self.gs_context.buffer.clear()
 
             # Render the scene
             self.clear()
@@ -1059,8 +1054,10 @@ class Viewer(pyglet.window.Window):
             if not (self.render_flags["rgb"] or self.render_flags["seg"]):
                 flags |= RenderFlags.DEPTH_ONLY
 
+        first_pass_done = False
         if self.render_flags["rgb"] or self.render_flags["depth"] or self.render_flags["seg"]:
             retval = renderer.render(self.scene, flags, seg_node_map=seg_node_map)
+            first_pass_done = True
         else:
             retval = ()
 
@@ -1088,7 +1085,7 @@ class Viewer(pyglet.window.Window):
             if self.render_flags.get("skip_markers", False):
                 flags |= RenderFlags.SKIP_MARKERS
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=False)
+            normal_arr, *_ = renderer.render(scene, flags, is_first_pass=not first_pass_done)
             retval = (*retval, normal_arr)
 
             renderer._program_cache = old_cache

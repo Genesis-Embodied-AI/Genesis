@@ -2034,6 +2034,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     solver_type: int
     requires_grad: bool
     prefer_parallel_linesearch: int = -1  # -1 = None (auto), 0 = False, 1 = True
+    parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False

@@ -804,7 +804,7 @@ class TemperatureGridSensor(
         cls._add_noise_drift_bias(shared_metadata, shared_cache)
         cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """
         Draw a single flat mesh colored by temperature (cool=blue, hot=red).
 
