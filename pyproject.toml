@@ -14,7 +14,8 @@ dependencies = [
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
-    "trimesh",
+    # * 4.8.2 fixed linear/sRGB color conversion in `to_color()`.
+    "trimesh>=4.8.2",
     # Used for preprocessing .urdf.xacro files into plain URDF
     "xacro",
     # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
