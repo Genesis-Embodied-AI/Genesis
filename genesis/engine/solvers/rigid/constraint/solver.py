@@ -2890,21 +2890,70 @@ def initialize_Jaref(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
+    if qd.static(static_rigid_sim_config.parallel_init):
+        _initialize_Jaref_parallel(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        _initialize_Jaref_per_env(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@qd.func
+def _initialize_Jaref_body(
+    i_c,
+    i_b,
+    n_dofs,
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    Jaref = -constraint_state.aref[i_c, i_b]
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    else:
+        for i_d in range(n_dofs):
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    constraint_state.Jaref[i_c, i_b] = Jaref
+
+
+@qd.func
+def _initialize_Jaref_per_env(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
     qd.loop_config(name="init_jaref", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
-            Jaref = -constraint_state.aref[i_c, i_b]
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            constraint_state.Jaref[i_c, i_b] = Jaref
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
+
+
+@qd.func
+def _initialize_Jaref_parallel(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone."""
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+    len_constraints = constraint_state.Jaref.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_c, i_b in qd.ndrange(len_constraints, _B):
+        if i_c < constraint_state.n_constraints[i_b]:
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
