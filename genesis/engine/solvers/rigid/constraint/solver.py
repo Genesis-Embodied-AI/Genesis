@@ -26,8 +26,8 @@ def _sort_relevant_dofs_descending(
 ):
     """Insertion sort jac_relevant_dofs[i_con, :n, i_b] in descending order.
 
-    Called after populating relevant DOFs for a constraint that may involve
-    multiple entities. The array is typically <= 14 elements, so O(n^2) is fine.
+    Called after populating relevant DOFs for a constraint that may involve multiple entities.
+    The array is typically <= 14 elements, so O(n^2) is fine.
     """
     for i in range(1, n):
         key = constraint_state.jac_relevant_dofs[i_con, i, i_b]
@@ -807,6 +807,8 @@ def func_equality_connect(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            # Sort needed: DOFs from two entities are only descending within each
+            # entity. Incremental Cholesky requires globally descending order.
             _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
@@ -900,6 +902,9 @@ def func_equality_joint(
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
 
+    # Populate jac_relevant_dofs for this joint-equality constraint.
+    # Without this, sparse iterations see 0 relevant DOFs and produce
+    # zero forces, leading to NaN in the solver.
     if qd.static(static_rigid_sim_config.sparse_solve):
         con_n_relevant_dofs = 0
         constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof1
@@ -1464,9 +1469,8 @@ def func_hessian_direct_batch(
                 if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
                         i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]
-                        # Ensure lower triangle: row >= col.
-                        # jac_relevant_dofs is descending within each entity but
-                        # can have cross-entity pairs where i_d2 > i_d1.
+                        # Ensure lower triangle: row >= col. jac_relevant_dofs is descending within
+                        # each entity but can have cross-entity pairs where i_d2 > i_d1.
                         row = qd.max(i_d1, i_d2)
                         col = qd.min(i_d1, i_d2)
                         constraint_state.nt_H[i_b, row, col] = (
@@ -3153,10 +3157,9 @@ def func_solve_iter(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
             if qd.static(static_rigid_sim_config.sparse_solve):
-                # Bypass incremental Cholesky when sparse_solve=True.
-                # The incremental rank-1 update assumes globally descending DOF order
-                # in jac_relevant_dofs, which doesn't hold for cross-entity constraints.
-                # Always use direct Hessian rebuild which has the max/min fix.
+                # Bypass incremental Cholesky when sparse_solve=True. The incremental rank-1 update
+                # assumes globally descending DOF order in jac_relevant_dofs, which doesn't hold
+                # for cross-entity constraints. Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     entities_info=entities_info,
