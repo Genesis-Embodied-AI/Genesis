@@ -2606,6 +2606,28 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_num_contact_overflow(show_viewer):
+    asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
+    scene = gs.Scene(show_viewer=show_viewer, renderer=gs.renderers.Rasterizer())
+    scene.add_entity(morph=gs.morphs.Plane())
+    for _ in range(4):
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=f"{asset_path}/glb/orange_plastic_bowl.glb",
+                pos=(0, 0, 0.5),
+                euler=(90, 0, 0),
+                convexify=True,
+                file_meshes_are_zup=True,
+            ),
+        )
+    scene.build()
+    with pytest.raises(gs.GenesisException, match="max number of contact pairs"):
+        for _ in range(20):
+            scene.step()
+
+
+@pytest.mark.required
 @pytest.mark.mujoco_compatibility(False)
 @pytest.mark.parametrize("mode", range(9))
 @pytest.mark.parametrize("model_name", ["collision_edge_cases"])

@@ -1014,8 +1014,9 @@ class RigidSolver(KinematicSolver):
         return qd_to_torch(self._errno) > 0
 
     def check_errno(self):
-        # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
-        if gs.use_zerocopy:
+        # FIXME: qd.atomic_or return value is broken on Metal — always returns 0.
+        # See repro_metal_kernel_return.py. Falling back to numpy reduction.
+        if gs.use_zerocopy or sys.platform == "darwin":
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
         else:
             errno = kernel_bit_reduction(self._errno)
