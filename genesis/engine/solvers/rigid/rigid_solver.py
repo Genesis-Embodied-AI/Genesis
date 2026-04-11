@@ -396,14 +396,7 @@ class RigidSolver(KinematicSolver):
 
     def _build_static_config(self):
         prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
-        # FIXME: Enable gs.metal once Quadrants supports shared memory atomics on Apple Metal.
-        # FIXME: CUDA Graph is not supported on Windows for now due to faulty static linking on 'libcudadevrt.a'.
-        if (
-            gs.backend in (gs.cpu, gs.metal)
-            or self._enable_mujoco_compatibility
-            or self.sim.options.requires_grad
-            or sys.platform == "win32"
-        ):
+        if gs.backend == gs.cpu or self._enable_mujoco_compatibility or self.sim.options.requires_grad:
             prefer_parallel_linesearch = False
 
         static_rigid_sim_config = dict(

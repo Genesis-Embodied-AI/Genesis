@@ -844,8 +844,6 @@ def _kernel_solve_graph(
     is_compatible=lambda *args, **kwargs: (
         not (static_rigid_sim_config := solver._get_static_config(*args, **kwargs)).requires_grad
         and static_rigid_sim_config.prefer_parallel_linesearch != 0
-        # FIXME: CUDA Graph is not supported on Windows for now due to faulty static linking on 'libcudadevrt.a'
-        and sys.platform != "win32"
     )
 )
 def func_solve_decomposed(
