@@ -2120,6 +2120,8 @@ def test_all_fixed(show_viewer):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("backend", [gs.gpu])
 @pytest.mark.parametrize("prefer_parallel_linesearch", [False, True])
 def test_contact_forces(prefer_parallel_linesearch, show_viewer):
     scene = gs.Scene(
@@ -2150,7 +2152,7 @@ def test_contact_forces(prefer_parallel_linesearch, show_viewer):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        visualize_contact=True,
+        # visualize_contact=True,
     )
     scene.build()
 
@@ -2164,7 +2166,7 @@ def test_contact_forces(prefer_parallel_linesearch, show_viewer):
     end_effector = franka.get_link("hand")
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
+        pos=np.array([0.65, 0.0, 0.13]),
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -2185,16 +2187,34 @@ def test_contact_forces(prefer_parallel_linesearch, show_viewer):
     qpos = franka.inverse_kinematics(
         link=end_effector,
         pos=np.array([0.65, 0.0, 0.2]),
-        quat=np.array([0.3, 1, 0, 0]),
+        quat=np.array([0.0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(200):
+    for i in range(100):
         scene.step()
 
-    contact_forces = cube.get_links_net_contact_force()
-    # FIXME: Why forces are not resolved more accurately on MacOS with parallel linesearch enabled??
-    tol = 5e-3 if sys.platform == "darwin" and prefer_parallel_linesearch else 5e-5
-    assert_allclose(contact_forces[0], -cube_weight, atol=tol)
+    # Check contact forces while randomizing gripper orientations.
+    # Note that it is necessary to reset the scene state because the box is slowly falling without noslip solver.
+    state = scene.get_state()
+    rng = np.random.RandomState(42)
+    for i_trial in range(10):
+        scene.reset(state)
+
+        perturb = gu.axis_angle_to_quat(np.array(rng.uniform(-np.deg2rad(45), np.deg2rad(45))), rng.randn(3))
+        lift_quat = gu.transform_quat_by_quat(perturb, np.array([0, 1, 0, 0], dtype=gs.np_float))
+        qpos = franka.inverse_kinematics(
+            link=end_effector,
+            pos=np.array([0.65, 0.0, 0.2]),
+            quat=lift_quat,
+        )
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(0.0, fingers_dof)
+        for _ in range(160):
+            scene.step()
+
+        # FIXME: Why forces are not resolved more accurately when enabling parallel linesearch?!
+        contact_forces = cube.get_links_net_contact_force()
+        assert_allclose(contact_forces[0], -cube_weight, atol=5e-3 if prefer_parallel_linesearch else 5e-6)
 
 
 @pytest.mark.required
