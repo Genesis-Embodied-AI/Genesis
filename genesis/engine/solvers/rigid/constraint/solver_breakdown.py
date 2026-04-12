@@ -454,7 +454,7 @@ def _func_parallel_linesearch_eval(
                 best_cost_prev = constraint_state.candidates[4, i_b]
                 for ci in range(n_total_cands):
                     c = sh_cand_cost[ci]
-                    if c < best_cost and c < best_cost_prev:
+                    if c <= best_cost and c < best_cost_prev:
                         best_cost = c
                         best_alpha = sh_cand_alpha[ci]
 
@@ -466,7 +466,11 @@ def _func_parallel_linesearch_eval(
             qd.simt.block.sync()
 
             # === Phase 3: Cooperative gradient bisection ===
+            # Fall back to Newton step when grid search found no improvement (flat cost in float32)
             best_alpha_shared = sh_cand_alpha[0]
+            if best_alpha_shared <= 0.0:
+                best_alpha_shared = constraint_state.candidates[5, i_b]
+                sh_cand_alpha[0] = best_alpha_shared
             if best_alpha_shared > 0.0:
                 # Cooperatively compute gradient at best_alpha
                 alpha_eval = best_alpha_shared
@@ -525,7 +529,7 @@ def _func_parallel_linesearch_eval(
                             alpha_nc = alpha_eval - g_best / hess_best
                             if alpha_nc > 0.0:
                                 c_nc, g_nc = _ls_eval_cost_grad(alpha_nc, i_b, constraint_state)
-                                if c_nc < p0_cost and c_nc < constraint_state.candidates[4, i_b]:
+                                if c_nc <= p0_cost and c_nc <= constraint_state.candidates[4, i_b]:
                                     constraint_state.candidates[0, i_b] = alpha_nc
                                     constraint_state.candidates[4, i_b] = c_nc
                                     newton_done = True
@@ -553,7 +557,7 @@ def _func_parallel_linesearch_eval(
                                         bis_b = mid_b
                                 mid_b = (bis_a + bis_b) * 0.5
                                 c_mid_b, _ = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
-                                if c_mid_b < p0_cost and c_mid_b < constraint_state.candidates[4, i_b]:
+                                if c_mid_b <= p0_cost and c_mid_b <= constraint_state.candidates[4, i_b]:
                                     constraint_state.candidates[0, i_b] = mid_b
                                     constraint_state.candidates[4, i_b] = c_mid_b
         else:
