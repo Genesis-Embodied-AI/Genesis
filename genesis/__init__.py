@@ -257,6 +257,14 @@ def init(
 
     # init quadrants
     qd_debug = debug and (os.environ.get("QD_DEBUG") != "0")
+    # Set Quadrants device memory pool size. The default (1 GB) is far too small for large-scale simulations.
+    # Use the GS_DEVICE_MEMORY_GB env var if set, otherwise allocate up to 80% of total device memory.
+    if backend != _gs_backend.cpu:
+        _device_mem_gb_env = os.environ.get("GS_DEVICE_MEMORY_GB")
+        if _device_mem_gb_env is not None:
+            qd_init_kwargs["device_memory_GB"] = float(_device_mem_gb_env)
+        elif "device_memory_GB" not in qd_init_kwargs:
+            qd_init_kwargs["device_memory_GB"] = round(total_mem * 0.8, 1)
     with redirect_stdout(_qd_outputs):
         qd.init(
             arch=getattr(qd, backend.name),
