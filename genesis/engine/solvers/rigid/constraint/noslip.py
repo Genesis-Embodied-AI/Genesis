@@ -43,6 +43,8 @@ def kernel_build_efc_AR_b(
                 is_backward=False,
             )
 
+            # TODO: For consistency with other usages, migrate to either the lower or upper variant
+            # and update all remaining use cases that still read both.
             # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
             for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
