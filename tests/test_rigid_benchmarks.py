@@ -550,7 +550,7 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
     )
 
 
-def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, **scene_kwargs):
+def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
     _STEP_DT = 1.0 / 30
     TABLE_Z = 0.762
 
@@ -559,6 +559,7 @@ def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, **scene_kwargs):
         rigid_options=gs.options.RigidOptions(
             noslip_iterations=2,
             max_collision_pairs=256,
+            sparse_solve=sparse_solve,
             **(dict(constraint_solver=solver) if solver is not None else {}),
             **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
         ),
@@ -963,6 +964,12 @@ def shadow_hand_cubes(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def shadow_hand_cubes_sparse(solver, n_envs, gjk):
+    _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk, sparse_solve=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def dex_hand(solver, n_envs, gjk):
     _, step_fn, meta = make_dex_hand(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -1006,6 +1013,7 @@ def dex_hand(solver, n_envs, gjk):
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
         ("shadow_hand_cubes", None, None, 0, gs.cpu),
+        ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
         ("dex_hand", None, None, 4096, gs.gpu),
     ],
 )
