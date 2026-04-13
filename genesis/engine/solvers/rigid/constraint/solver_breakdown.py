@@ -37,6 +37,70 @@ LS_ALPHA_MAX = 1e4
 
 
 @qd.func
+def _subgroup_reduce_add_f32(tid, v):
+    """Sum-reduce a scalar across a 32-thread subgroup, broadcasting to every thread.
+
+    Down-shuffle tree (stride 16 -> 1) leaves tid 0 with the full sum; a final
+    shuffle-from-lane-0 distributes the result to every lane so the caller can
+    use it in control flow without branching on tid.
+    """
+    for stride in qd.static((16, 8, 4, 2, 1)):
+        v = v + qd.simt.subgroup.shuffle(v, qd.cast(tid + stride, qd.u32))
+    return qd.simt.subgroup.shuffle(v, qd.cast(0, qd.u32))
+
+
+@qd.func
+def _func_ls_point_fn_coop(
+    tid,
+    i_b,
+    alpha,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Cooperative K-thread evaluation of cost, gradient, and curvature at `alpha`.
+
+    Same semantics as solver.func_ls_point_fn_opt, but each of the 32 subgroup
+    threads handles a strided slice of the friction + contact constraints. The
+    per-constraint body is shared (solver.func_ls_constraint_quad_contrib); the
+    strided partial sums are combined via a sync-free subgroup shuffle tree and
+    broadcast back to every lane, so the caller's control flow runs in lockstep.
+
+    Does not increment `constraint_state.ls_it` - the caller manages the
+    iteration counter locally to avoid cross-thread memory-ordering concerns.
+    """
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+    n_con = constraint_state.n_constraints[i_b]
+
+    local_qt0 = gs.qd_float(0.0)
+    local_qt1 = gs.qd_float(0.0)
+    local_qt2 = gs.qd_float(0.0)
+
+    i_c = ne + tid
+    while i_c < n_con:
+        qf_0, qf_1, qf_2 = solver.func_ls_constraint_quad_contrib(i_c, alpha, i_b, nef, constraint_state)
+        local_qt0 = local_qt0 + qf_0
+        local_qt1 = local_qt1 + qf_1
+        local_qt2 = local_qt2 + qf_2
+        i_c += qd.static(LS_PARALLEL_K)
+
+    red_qt0 = _subgroup_reduce_add_f32(tid, local_qt0)
+    red_qt1 = _subgroup_reduce_add_f32(tid, local_qt1)
+    red_qt2 = _subgroup_reduce_add_f32(tid, local_qt2)
+
+    qt0_total = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b] + red_qt0
+    qt1_total = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b] + red_qt1
+    qt2_total = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b] + red_qt2
+
+    cost = alpha * alpha * qt2_total + alpha * qt1_total + qt0_total
+    grad = gs.qd_float(2.0) * alpha * qt2_total + qt1_total
+    hess = gs.qd_float(2.0) * qt2_total
+    if hess <= 0.0:
+        hess = rigid_global_info.EPS[None]
+    return alpha, cost, grad, hess
+
+
+@qd.func
 def _ls_eval_cost_grad(
     alpha,
     i_b,
@@ -465,10 +529,11 @@ def _func_parallel_linesearch_eval(
                 sh_cand_alpha[0] = best_alpha
             qd.simt.block.sync()
 
-            # === Phase 3: Serial linesearch refinement (thread 0) ===
-            # The grid search (Phase 1+2) picks a good starting alpha via cooperative evaluation.
-            # Phase 3 re-evaluates it serially via func_ls_point_fn_opt (consistent with the
-            # post-linesearch cost kernel), then runs a Newton-step bracketing walk to converge.
+            # === Phase 3: Cooperative linesearch refinement ===
+            # All K threads participate in every per-alpha evaluation via
+            # _func_ls_point_fn_coop, which returns the same (cost, grad, hess) on
+            # every thread so the control flow below runs in subgroup lockstep.
+            # Writes to candidates[*, i_b] and ls_it[i_b] are gated on tid == 0.
             #
             # Three fixes vs the original bisection-based Phase 3:
             # 1. Always entered (not gated on best_alpha > 0) - the cooperative grid search can
@@ -482,45 +547,51 @@ def _func_parallel_linesearch_eval(
                 constraint_state.candidates[0, i_b] = 0.0
                 constraint_state.candidates[4, i_b] = gs.qd_float(1e30)
 
-                # Re-evaluate grid winner (or alpha=0) serially
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b,
-                    sh_cand_alpha[0],
-                    constraint_state,
-                    rigid_global_info,
+            # Local copy of ls_it so we don't pay for cross-thread memory ordering;
+            # written back to global memory at the end of Phase 3.
+            local_ls_it = constraint_state.ls_it[i_b]
+            max_ls_it = rigid_global_info.ls_iterations[None]
+
+            # Re-evaluate grid winner cooperatively
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_ls_point_fn_coop(
+                tid, i_b, sh_cand_alpha[0], constraint_state, rigid_global_info
+            )
+            local_ls_it = local_ls_it + 1
+            if p0_cost < p1_cost:
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_ls_point_fn_coop(
+                    tid, i_b, gs.qd_float(0.0), constraint_state, rigid_global_info
                 )
-                if p0_cost < p1_cost:
-                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                local_ls_it = local_ls_it + 1
+
+            # Always write candidates[0] - even if already converged
+            if p1_cost < p0_cost:
+                if tid == 0:
+                    constraint_state.candidates[0, i_b] = p1_alpha
+
+            if qd.abs(p1_deriv_0) > gtol:
+                # Bracketing walk: Newton steps until gradient sign flips or max iterations.
+                direction = (p1_deriv_0 < 0) * 2 - 1
+                bracket_done = False
+                while p1_deriv_0 * direction <= -gtol and local_ls_it < max_ls_it:
+                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_ls_point_fn_coop(
+                        tid,
                         i_b,
-                        gs.qd_float(0.0),
+                        p1_alpha - p1_deriv_0 / p1_deriv_1,
                         constraint_state,
                         rigid_global_info,
                     )
-
-                # Always write candidates[0] - even if already converged
-                if p1_cost < p0_cost:
-                    constraint_state.candidates[0, i_b] = p1_alpha
-
-                if qd.abs(p1_deriv_0) > gtol:
-                    # Bracketing walk: Newton steps until gradient sign flips or max iterations.
-                    direction = (p1_deriv_0 < 0) * 2 - 1
-                    bracket_done = False
-                    while (
-                        p1_deriv_0 * direction <= -gtol
-                        and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
-                    ):
-                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                            i_b,
-                            p1_alpha - p1_deriv_0 / p1_deriv_1,
-                            constraint_state,
-                            rigid_global_info,
-                        )
-                        if qd.abs(p1_deriv_0) < gtol:
+                    local_ls_it = local_ls_it + 1
+                    if qd.abs(p1_deriv_0) < gtol:
+                        if tid == 0:
                             constraint_state.candidates[0, i_b] = p1_alpha
-                            bracket_done = True
-                            break
-                    if not bracket_done:
+                        bracket_done = True
+                        break
+                if not bracket_done:
+                    if tid == 0:
                         constraint_state.candidates[0, i_b] = p1_alpha
+
+            if tid == 0:
+                constraint_state.ls_it[i_b] = local_ls_it
             qd.simt.block.sync()
         else:
             if tid == 0:

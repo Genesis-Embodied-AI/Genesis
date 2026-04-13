@@ -2201,6 +2201,51 @@ def func_ls_init_and_eval_p0_opt(
 
 
 @qd.func
+def func_ls_constraint_quad_contrib(
+    i_c,
+    alpha,
+    i_b,
+    nef,
+    constraint_state: array_class.ConstraintState,
+):
+    """Per-constraint (qf_0, qf_1, qf_2) contribution to the quadratic cost coefficients at `alpha`.
+
+    Handles friction (i_c < nef; linear-regime toggle when x falls outside [-rf, rf]) and
+    contact (i_c >= nef; active only when x < 0). Equality constraints are pre-summed into
+    quad_gauss + eq_sum during the p0 kernel and should be skipped by the caller (i.e. the
+    caller's constraint loop starts at `ne`, not 0).
+
+    Shared by the serial monolith evaluator (func_ls_point_fn_opt) and the cooperative
+    subgroup variant used inside the parallel linesearch kernel.
+    """
+    Jaref_c = constraint_state.Jaref[i_c, i_b]
+    jv_c = constraint_state.jv[i_c, i_b]
+    D = constraint_state.efc_D[i_c, i_b]
+    qf_0 = D * (gs.qd_float(0.5) * Jaref_c * Jaref_c)
+    qf_1 = D * (jv_c * Jaref_c)
+    qf_2 = D * (gs.qd_float(0.5) * jv_c * jv_c)
+    x = Jaref_c + alpha * jv_c
+    if i_c < nef:
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = x <= -rf
+        linear_pos = x >= rf
+        if linear_neg or linear_pos:
+            qf_0 = linear_neg * f * (-gs.qd_float(0.5) * rf - Jaref_c) + linear_pos * f * (
+                -gs.qd_float(0.5) * rf + Jaref_c
+            )
+            qf_1 = linear_neg * (-f * jv_c) + linear_pos * (f * jv_c)
+            qf_2 = gs.qd_float(0.0)
+    else:
+        active = x < 0
+        qf_0 = qf_0 * active
+        qf_1 = qf_1 * active
+        qf_2 = qf_2 * active
+    return qf_0, qf_1, qf_2
+
+
+@qd.func
 def func_ls_point_fn_opt(
     i_b,
     alpha,
@@ -2209,7 +2254,7 @@ def func_ls_point_fn_opt(
 ):
     """Evaluate linesearch cost, gradient, and curvature at a single candidate alpha.
 
-    Iterates over only friction and contact constraints — equality constraints are skipped by initializing accumulators
+    Iterates over only friction and contact constraints - equality constraints are skipped by initializing accumulators
     from quad_gauss + eq_sum (pre-computed during init).
 
     Quad coefficients are recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array.
@@ -2224,41 +2269,11 @@ def func_ls_point_fn_opt(
     quad_total_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
     quad_total_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
 
-    # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad
-    for i_c in range(ne, nef):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
-        f = constraint_state.efc_frictionloss[i_c, i_b]
-        r = constraint_state.diag[i_c, i_b]
-        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
-        qf_1 = D * (jv_c * Jaref_c)
-        qf_2 = D * (0.5 * jv_c * jv_c)
-        x = Jaref_c + alpha * jv_c
-        rf = r * f
-        linear_neg = x <= -rf
-        linear_pos = x >= rf
-        if linear_neg or linear_pos:
-            qf_0 = linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
-            qf_1 = linear_neg * (-f * jv_c) + linear_pos * (f * jv_c)
-            qf_2 = 0.0
+    for i_c in range(ne, n_con):
+        qf_0, qf_1, qf_2 = func_ls_constraint_quad_contrib(i_c, alpha, i_b, nef, constraint_state)
         quad_total_0 = quad_total_0 + qf_0
         quad_total_1 = quad_total_1 + qf_1
         quad_total_2 = quad_total_2 + qf_2
-
-    # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad
-    for i_c in range(nef, n_con):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
-        x = Jaref_c + alpha * jv_c
-        active = x < 0
-        qf_0 = D * (0.5 * Jaref_c * Jaref_c)
-        qf_1 = D * (jv_c * Jaref_c)
-        qf_2 = D * (0.5 * jv_c * jv_c)
-        quad_total_0 = quad_total_0 + qf_0 * active
-        quad_total_1 = quad_total_1 + qf_1 * active
-        quad_total_2 = quad_total_2 + qf_2 * active
 
     cost = alpha * alpha * quad_total_2 + alpha * quad_total_1 + quad_total_0
     grad = 2 * alpha * quad_total_2 + quad_total_1
