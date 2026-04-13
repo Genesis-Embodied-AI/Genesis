@@ -2212,9 +2212,8 @@ def test_contact_forces(prefer_parallel_linesearch, show_viewer):
         for _ in range(160):
             scene.step()
 
-        # FIXME: Why forces are not resolved more accurately when enabling parallel linesearch?!
         contact_forces = cube.get_links_net_contact_force()
-        assert_allclose(contact_forces[0], -cube_weight, atol=5e-3 if prefer_parallel_linesearch else 5e-6)
+        assert_allclose(contact_forces[0], -cube_weight, atol=5e-6)
 
 
 @pytest.mark.required
