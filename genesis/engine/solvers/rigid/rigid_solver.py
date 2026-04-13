@@ -396,14 +396,7 @@ class RigidSolver(KinematicSolver):
 
     def _build_static_config(self):
         prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
-        # FIXME: Enable gs.metal once Quadrants supports shared memory atomics on Apple Metal.
-        # FIXME: CUDA Graph is not supported on Windows for now due to faulty static linking on 'libcudadevrt.a'.
-        if (
-            gs.backend in (gs.cpu, gs.metal)
-            or self._enable_mujoco_compatibility
-            or self.sim.options.requires_grad
-            or sys.platform == "win32"
-        ):
+        if gs.backend == gs.cpu or self._enable_mujoco_compatibility or self.sim.options.requires_grad:
             prefer_parallel_linesearch = False
 
         static_rigid_sim_config = dict(
@@ -1014,8 +1007,9 @@ class RigidSolver(KinematicSolver):
         return qd_to_torch(self._errno) > 0
 
     def check_errno(self):
-        # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
-        if gs.use_zerocopy:
+        # FIXME: qd.atomic_or return value is broken on Metal — always returns 0.
+        # See repro_metal_kernel_return.py. Falling back to numpy reduction.
+        if gs.use_zerocopy or sys.platform == "darwin":
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
         else:
             errno = kernel_bit_reduction(self._errno)

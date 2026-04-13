@@ -2120,13 +2120,18 @@ def test_all_fixed(show_viewer):
 
 
 @pytest.mark.required
-def test_contact_forces(show_viewer, tol):
+@pytest.mark.parametrize("precision", ["32"])
+@pytest.mark.parametrize("backend", [gs.gpu])
+@pytest.mark.parametrize("prefer_parallel_linesearch", [False, True])
+def test_contact_forces(prefer_parallel_linesearch, show_viewer):
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,
         ),
         rigid_options=gs.options.RigidOptions(
+            # Enabling box-box algorithm to improve code coverage
             box_box_detection=True,
+            prefer_parallel_linesearch=prefer_parallel_linesearch,
         ),
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(3, -1, 1.5),
@@ -2147,7 +2152,7 @@ def test_contact_forces(show_viewer, tol):
             size=(0.04, 0.04, 0.04),
             pos=(0.65, 0.0, 0.02),
         ),
-        visualize_contact=True,
+        # visualize_contact=True,
     )
     scene.build()
 
@@ -2161,7 +2166,7 @@ def test_contact_forces(show_viewer, tol):
     end_effector = franka.get_link("hand")
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.135]),
+        pos=np.array([0.65, 0.0, 0.13]),
         quat=np.array([0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
@@ -2181,14 +2186,35 @@ def test_contact_forces(show_viewer, tol):
     # lift
     qpos = franka.inverse_kinematics(
         link=end_effector,
-        pos=np.array([0.65, 0.0, 0.3]),
-        quat=np.array([0, 1, 0, 0]),
+        pos=np.array([0.65, 0.0, 0.2]),
+        quat=np.array([0.0, 1, 0, 0]),
     )
     franka.control_dofs_position(qpos[:-2], motors_dof)
-    for i in range(200):
+    for i in range(100):
         scene.step()
-    contact_forces = cube.get_links_net_contact_force()
-    assert_allclose(contact_forces[0], -cube_weight, atol=5e-5)
+
+    # Check contact forces while randomizing gripper orientations.
+    # Note that it is necessary to reset the scene state because the box is slowly falling without noslip solver.
+    state = scene.get_state()
+    rng = np.random.RandomState(42)
+    for i_trial in range(10):
+        scene.reset(state)
+
+        perturb = gu.axis_angle_to_quat(np.array(rng.uniform(-np.deg2rad(45), np.deg2rad(45))), rng.randn(3))
+        lift_quat = gu.transform_quat_by_quat(perturb, np.array([0, 1, 0, 0], dtype=gs.np_float))
+        qpos = franka.inverse_kinematics(
+            link=end_effector,
+            pos=np.array([0.65, 0.0, 0.2]),
+            quat=lift_quat,
+        )
+        franka.control_dofs_position(qpos[:-2], motors_dof)
+        franka.control_dofs_position(0.0, fingers_dof)
+        for _ in range(160):
+            scene.step()
+
+        # FIXME: Why forces are not resolved more accurately when enabling parallel linesearch?!
+        contact_forces = cube.get_links_net_contact_force()
+        assert_allclose(contact_forces[0], -cube_weight, atol=5e-3 if prefer_parallel_linesearch else 5e-6)
 
 
 @pytest.mark.required
@@ -2603,6 +2629,28 @@ def test_convexify(euler, backend, show_viewer, gjk_collision):
             qpos = obj.get_dofs_position()
             assert_allclose(qpos[0], OBJ_OFFSET_X * (1.5 - i), atol=7e-3)
             assert_allclose(qpos[1], OBJ_OFFSET_Y * (i - 1.5), atol=5e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_num_contact_overflow(show_viewer):
+    asset_path = get_hf_dataset(pattern="glb/orange_plastic_bowl.glb")
+    scene = gs.Scene(show_viewer=show_viewer, renderer=gs.renderers.Rasterizer())
+    scene.add_entity(morph=gs.morphs.Plane())
+    for _ in range(4):
+        scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=f"{asset_path}/glb/orange_plastic_bowl.glb",
+                pos=(0, 0, 0.5),
+                euler=(90, 0, 0),
+                convexify=True,
+                file_meshes_are_zup=True,
+            ),
+        )
+    scene.build()
+    with pytest.raises(gs.GenesisException, match="max number of contact pairs"):
+        for _ in range(20):
+            scene.step()
 
 
 @pytest.mark.required

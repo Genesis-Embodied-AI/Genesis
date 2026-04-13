@@ -811,8 +811,8 @@ def _func_check_early_exit(
 # ============================================== Solve body dispatch ================================================
 
 
-@qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
-def _kernel_solve_gpu_graph(
+@qd.kernel(graph=True, fastcache=gs.use_fastcache)
+def _kernel_solve_graph(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -844,8 +844,6 @@ def _kernel_solve_gpu_graph(
     is_compatible=lambda *args, **kwargs: (
         not (static_rigid_sim_config := solver._get_static_config(*args, **kwargs)).requires_grad
         and static_rigid_sim_config.prefer_parallel_linesearch != 0
-        # FIXME: CUDA Graph is not supported on Windows for now due to faulty static linking on 'libcudadevrt.a'
-        and sys.platform != "win32"
     )
 )
 def func_solve_decomposed(
@@ -869,7 +867,7 @@ def func_solve_decomposed(
     if _n_iterations <= 0:
         return
     constraint_state.graph_counter.from_numpy(np.array(_n_iterations, dtype=np.int32))
-    _kernel_solve_gpu_graph(
+    _kernel_solve_graph(
         dofs_info,
         entities_info,
         dofs_state,

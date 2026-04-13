@@ -47,7 +47,7 @@ from .contact import (
     func_contact_orthogonals,
     func_rotate_frame,
     func_set_upstream_grad,
-    func_sort_contacts,
+    func_clamp_and_sort_contacts,
 )
 from . import narrowphase
 from .narrowphase import (
@@ -802,8 +802,9 @@ class Collider:
             )
 
         if self._use_split_narrowphase:
-            func_sort_contacts(
+            func_clamp_and_sort_contacts(
                 self._collider_state,
+                self._collider_info,
                 self._solver._static_rigid_sim_config,
             )
 
