@@ -450,6 +450,7 @@ def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
+                tolerance=1e-5,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )

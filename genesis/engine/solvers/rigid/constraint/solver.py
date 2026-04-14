@@ -115,7 +115,10 @@ class ConstraintSolver:
         self.jv = cs.jv
         self.quad_gauss = cs.quad_gauss
 
-        self.candidates = cs.candidates
+        self.ls_alpha = cs.ls_alpha
+        self.ls_p0_cost = cs.ls_p0_cost
+        self.ls_alpha_newton = cs.ls_alpha_newton
+        self.ls_gtol = cs.ls_gtol
         self.ls_it = cs.ls_it
         self.ls_result = cs.ls_result
         if self._solver_type == gs.constraint_solver.CG:
@@ -2473,6 +2476,123 @@ def func_linesearch_and_apply_alpha(
 
 
 @qd.func
+def func_linesearch_refine(
+    i_b,
+    p1_alpha,
+    p1_cost,
+    p1_deriv_0,
+    p1_deriv_1,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Bracketing walk + 3-alpha dual-bracket refinement.
+
+    Shared by the monolith linesearch (func_linesearch_batch) and the decomposed path's Phase 3 (solver_breakdown).
+    Takes an initial point (p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1) and refines it via Newton steps until the
+    gradient sign flips, then polishes with batched 3-alpha evaluation.
+
+    Returns (res_alpha, ls_result) where ls_result is a status code for diagnostics.
+    """
+    res_alpha = gs.qd_float(0.0)
+    ls_result = 0
+    done = False
+
+    direction = (p1_deriv_0 < 0) * 2 - 1
+    p2update = 0
+    p2_alpha = p1_alpha
+    p2_cost = p1_cost
+    p2_deriv_0 = p1_deriv_0
+    p2_deriv_1 = p1_deriv_1
+    while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
+        p2update = 1
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+            i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
+        )
+        if qd.abs(p1_deriv_0) < gtol:
+            res_alpha = p1_alpha
+            done = True
+            break
+    if not done:
+        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+            ls_result = 3
+            res_alpha = p1_alpha
+            done = True
+        if not p2update and not done:
+            ls_result = 6
+            res_alpha = p1_alpha
+            done = True
+        if not done:
+            alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
+            alpha_1 = p1_alpha
+            alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+                costs, grads, hess = func_ls_point_fn_3alphas_opt(
+                    i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                )
+                alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
+                p1_next = alpha_0
+                p2_next = alpha_1
+                best_a = gs.qd_float(0.0)
+                best_c = gs.qd_float(0.0)
+                best_found = False
+                for i in qd.static(range(3)):
+                    if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_c):
+                        best_a = alphas[i]
+                        best_c = costs[i]
+                        best_found = True
+                if best_found:
+                    res_alpha = best_a
+                    done = True
+                else:
+                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
+                        p1_alpha,
+                        p1_cost,
+                        p1_deriv_0,
+                        p1_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
+                    )
+                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
+                        p2_alpha,
+                        p2_cost,
+                        p2_deriv_0,
+                        p2_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
+                    )
+                    if b1 == 0 and b2 == 0:
+                        if costs[2] < p0_cost:
+                            ls_result = 0
+                        else:
+                            ls_result = 7
+                        res_alpha = alpha_2
+                        done = True
+                if done:
+                    break
+                alpha_0 = p1_next
+                alpha_1 = p2_next
+                alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            if not done:
+                if p1_cost <= p2_cost and p1_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p1_alpha
+                elif p2_cost <= p1_cost and p2_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p2_alpha
+                else:
+                    ls_result = 5
+                    res_alpha = 0.0
+    return res_alpha, ls_result
+
+
+@qd.func
 def func_linesearch_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2524,125 +2644,13 @@ def func_linesearch_batch(
                 constraint_state.ls_result[i_b] = 0
             res_alpha = p1_alpha
         else:
-            # Phase 2: Bracketing
-            direction = (p1_deriv_0 < 0) * 2 - 1
-            p2update = 0
-            p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-            while (
-                p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
-            ):
-                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-                p2update = 1
-
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
-                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
-                )
-                if qd.abs(p1_deriv_0) < gtol:
-                    res_alpha = p1_alpha
-                    done = True
-                    break
-            if not done:
-                if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
-                    constraint_state.ls_result[i_b] = 3
-                    res_alpha = p1_alpha
-                    done = True
-
-                if not p2update and not done:
-                    constraint_state.ls_result[i_b] = 6
-                    res_alpha = p1_alpha
-                    done = True
-
-                if not done:
-                    # Phase 3: Refinement with batched 3-alpha evaluation
-                    alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1  # Newton from p1
-                    alpha_1 = p1_alpha  # p2_next (= current p1)
-                    alpha_2 = (p1_alpha + p2_alpha) * 0.5  # midpoint
-
-                    while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                        # Batch evaluate cost, gradient, hessian for all 3 alphas in one constraint loop
-                        costs, grads, hess = func_ls_point_fn_3alphas_opt(
-                            i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
-                        )
-                        alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
-
-                        # Check convergence among 3 candidates
-                        p1_next_alpha = alpha_0
-                        p2_next_alpha = alpha_1
-
-                        best_alpha = gs.qd_float(0.0)
-                        best_cost = gs.qd_float(0.0)
-                        best_found = False
-                        for i in qd.static(range(3)):
-                            if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_cost):
-                                best_alpha = alphas[i]
-                                best_cost = costs[i]
-                                best_found = True
-
-                        if best_found:
-                            res_alpha = best_alpha
-                            done = True
-                        else:
-                            (
-                                b1,
-                                p1_alpha,
-                                p1_cost,
-                                p1_deriv_0,
-                                p1_deriv_1,
-                                p1_next_alpha,
-                            ) = update_bracket_no_eval_local(
-                                p1_alpha,
-                                p1_cost,
-                                p1_deriv_0,
-                                p1_deriv_1,
-                                alphas,
-                                costs,
-                                grads,
-                                hess,
-                            )
-                            (
-                                b2,
-                                p2_alpha,
-                                p2_cost,
-                                p2_deriv_0,
-                                p2_deriv_1,
-                                p2_next_alpha,
-                            ) = update_bracket_no_eval_local(
-                                p2_alpha,
-                                p2_cost,
-                                p2_deriv_0,
-                                p2_deriv_1,
-                                alphas,
-                                costs,
-                                grads,
-                                hess,
-                            )
-
-                            if b1 == 0 and b2 == 0:
-                                if costs[2] < p0_cost:
-                                    constraint_state.ls_result[i_b] = 0
-                                else:
-                                    constraint_state.ls_result[i_b] = 7
-                                res_alpha = alpha_2
-                                done = True
-
-                        if done:
-                            break
-
-                        # Compute next 3 alphas for next iteration
-                        alpha_0 = p1_next_alpha
-                        alpha_1 = p2_next_alpha
-                        alpha_2 = (p1_alpha + p2_alpha) * 0.5
-
-                    if not done:
-                        if p1_cost <= p2_cost and p1_cost < p0_cost:
-                            constraint_state.ls_result[i_b] = 4
-                            res_alpha = p1_alpha
-                        elif p2_cost <= p1_cost and p2_cost < p0_cost:
-                            constraint_state.ls_result[i_b] = 4
-                            res_alpha = p2_alpha
-                        else:
-                            constraint_state.ls_result[i_b] = 5
-                            res_alpha = 0.0
+            res_alpha, ls_result = func_linesearch_refine(
+                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol, constraint_state, rigid_global_info
+            )
+            constraint_state.ls_result[i_b] = ls_result
+            # Status 7: both brackets stalled and midpoint cost >= p0_cost. Reject the non-improving alpha.
+            if ls_result == 7:
+                res_alpha = 0.0
     return res_alpha
 
 
@@ -3268,7 +3276,7 @@ def func_solve_body(
 
 
 @func_solve_body.register(
-    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_decomposed_solver != 1
 )
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
