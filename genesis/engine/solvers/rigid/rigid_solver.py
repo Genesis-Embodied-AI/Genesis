@@ -337,6 +337,10 @@ class RigidSolver(KinematicSolver):
         self.n_fixed_verts_ = max(1, self.n_fixed_verts)
         self.n_candidate_equalities_ = max(1, self.n_equalities + self._options.max_dynamic_constraints)
 
+        # Resolve precision-dependent tolerance default
+        if self._options.tolerance is None:
+            self._options.tolerance = 1e-5 if gs.qd_float == qd.f32 else 1e-8
+
         super().build()
 
         self._init_mass_mat()

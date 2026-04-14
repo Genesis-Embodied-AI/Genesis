@@ -500,7 +500,7 @@ class RigidOptions(Options):
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
     iterations: PositiveInt = 50
-    tolerance: PositiveFloat = 1e-6
+    tolerance: PositiveFloat | None = None
     ls_iterations: PositiveInt = 50
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
