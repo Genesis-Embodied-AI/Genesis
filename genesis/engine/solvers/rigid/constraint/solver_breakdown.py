@@ -465,97 +465,132 @@ def _func_parallel_linesearch_eval(
                 sh_cand_alpha[0] = best_alpha
             qd.simt.block.sync()
 
-            # === Phase 3: Cooperative gradient bisection ===
+            # === Phase 3: Serial linesearch refinement (thread 0) ===
+            # Gated: skip Phase 3 entirely when both the cooperative grid search and the
+            # Newton step found no improvement. The Newton fallback (from fix) catches
+            # most envs that the grid misses due to f32 cost ties.
             best_alpha_shared = sh_cand_alpha[0]
-            if best_alpha_shared > 0.0:
-                # Cooperatively compute gradient at best_alpha
-                alpha_eval = best_alpha_shared
+            if best_alpha_shared <= 0.0:
+                best_alpha_shared = constraint_state.candidates[5, i_b]
+            if best_alpha_shared > 0.0 and tid == 0:
+                constraint_state.candidates[0, i_b] = 0.0
+                constraint_state.candidates[4, i_b] = gs.qd_float(1e30)
 
-                # Cooperative gradient: accumulate quad_total_1 and quad_total_2
-                local_qt1 = gs.qd_float(0.0)
-                local_qt2 = gs.qd_float(0.0)
-                i_c = ne + tid
-                while i_c < n_con:
-                    Jaref_c = constraint_state.Jaref[i_c, i_b]
-                    jv_c = constraint_state.jv[i_c, i_b]
-                    D = constraint_state.efc_D[i_c, i_b]
-                    x = Jaref_c + alpha_eval * jv_c
-                    if i_c < nef:
-                        f_val = constraint_state.efc_frictionloss[i_c, i_b]
-                        r_val = constraint_state.diag[i_c, i_b]
-                        rf = r_val * f_val
-                        linear_neg = x <= -rf
-                        linear_pos = x >= rf
-                        qf_1 = D * (jv_c * Jaref_c)
-                        qf_2 = D * (0.5 * jv_c * jv_c)
-                        if linear_neg or linear_pos:
-                            qf_1 = linear_neg * (-f_val * jv_c) + linear_pos * (f_val * jv_c)
-                            qf_2 = 0.0
-                        local_qt1 = local_qt1 + qf_1
-                        local_qt2 = local_qt2 + qf_2
-                    else:
-                        act = x < 0
-                        local_qt1 = local_qt1 + D * (jv_c * Jaref_c) * act
-                        local_qt2 = local_qt2 + D * (0.5 * jv_c * jv_c) * act
-                    i_c += _K
+                # Re-evaluate the best candidate (grid winner or Newton fallback) serially
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                    i_b,
+                    best_alpha_shared,
+                    constraint_state,
+                    rigid_global_info,
+                )
+                if p0_cost < p1_cost:
+                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                        i_b,
+                        gs.qd_float(0.0),
+                        constraint_state,
+                        rigid_global_info,
+                    )
 
-                # Reduce qt1 and qt2
-                sh_val[tid] = local_qt1
-                sh_val2[tid] = local_qt2
-                qd.simt.block.sync()
-                stride = _K // 2
-                while stride > 0:
-                    if tid < stride:
-                        sh_val[tid] += sh_val[tid + stride]
-                        sh_val2[tid] += sh_val2[tid + stride]
-                    qd.simt.block.sync()
-                    stride //= 2
+                # Always write candidates[0] — even if already converged
+                if p1_cost < p0_cost:
+                    constraint_state.candidates[0, i_b] = p1_alpha
 
-                if tid == 0:
-                    qt1_total = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b] + sh_val[0]
-                    qt2_total = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b] + sh_val2[0]
-                    g_best = 2.0 * alpha_eval * qt2_total + qt1_total
-
-                    if qd.abs(g_best) > gtol:
-                        hess_best = 2.0 * qt2_total
-                        newton_done = False
-
-                        # Try one Newton correction first (O(1) compute + 1 cost eval)
-                        if hess_best > rigid_global_info.EPS[None]:
-                            alpha_nc = alpha_eval - g_best / hess_best
-                            if alpha_nc > 0.0:
-                                c_nc, g_nc = _ls_eval_cost_grad(alpha_nc, i_b, constraint_state)
-                                if c_nc < p0_cost and c_nc < constraint_state.candidates[4, i_b]:
-                                    constraint_state.candidates[0, i_b] = alpha_nc
-                                    constraint_state.candidates[4, i_b] = c_nc
-                                    newton_done = True
-                        # Fall back to bisection if Newton didn't converge
-                        if not newton_done:
-                            bis_a = alpha_eval * 0.5
-                            bis_b = alpha_eval
-                            if g_best < 0.0:
-                                bis_a = alpha_eval
-                                bis_b = alpha_eval * 2.0
-
-                            _, g_a = _ls_eval_cost_grad(bis_a, i_b, constraint_state)
-                            _, g_b = _ls_eval_cost_grad(bis_b, i_b, constraint_state)
-
-                            if g_a < 0.0 and g_b > 0.0:
-                                _N_BISECT = qd.static(LS_BISECT_STEPS)
-                                for _bis_it in range(_N_BISECT):
-                                    mid_b = (bis_a + bis_b) * 0.5
-                                    c_mid_b, g_mid_b = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
-                                    if qd.abs(g_mid_b) < gtol or qd.abs(bis_b - bis_a) < rigid_global_info.EPS[None]:
-                                        break
-                                    if g_mid_b < 0.0:
-                                        bis_a = mid_b
-                                    else:
-                                        bis_b = mid_b
-                                mid_b = (bis_a + bis_b) * 0.5
-                                c_mid_b, _ = _ls_eval_cost_grad(mid_b, i_b, constraint_state)
-                                if c_mid_b < p0_cost and c_mid_b < constraint_state.candidates[4, i_b]:
-                                    constraint_state.candidates[0, i_b] = mid_b
-                                    constraint_state.candidates[4, i_b] = c_mid_b
+                if qd.abs(p1_deriv_0) > gtol:
+                    # Bracketing walk: Newton steps until gradient sign changes
+                    direction = (p1_deriv_0 < 0) * 2 - 1
+                    p2_alpha = p1_alpha
+                    p2_cost = p1_cost
+                    p2_deriv_0 = p1_deriv_0
+                    p2_deriv_1 = p1_deriv_1
+                    p2update = 0
+                    bracket_done = False
+                    while (
+                        p1_deriv_0 * direction <= -gtol
+                        and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
+                    ):
+                        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
+                        p2update = 1
+                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                            i_b,
+                            p1_alpha - p1_deriv_0 / p1_deriv_1,
+                            constraint_state,
+                            rigid_global_info,
+                        )
+                        if qd.abs(p1_deriv_0) < gtol:
+                            constraint_state.candidates[0, i_b] = p1_alpha
+                            bracket_done = True
+                            break
+                    if not bracket_done:
+                        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None] or not p2update:
+                            constraint_state.candidates[0, i_b] = p1_alpha
+                        else:
+                            # 3-alpha dual-bracket refinement
+                            alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
+                            alpha_1 = p1_alpha
+                            alpha_2 = (p1_alpha + p2_alpha) * 0.5
+                            p1_next = alpha_0
+                            p2_next = alpha_1
+                            refine_done = False
+                            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+                                costs, grads, hess = solver.func_ls_point_fn_3alphas_opt(
+                                    i_b,
+                                    alpha_0,
+                                    alpha_1,
+                                    alpha_2,
+                                    constraint_state,
+                                    rigid_global_info,
+                                )
+                                alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
+                                best_a = gs.qd_float(0.0)
+                                best_c = gs.qd_float(0.0)
+                                best_found = False
+                                for i in qd.static(range(3)):
+                                    if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_c):
+                                        best_a = alphas[i]
+                                        best_c = costs[i]
+                                        best_found = True
+                                if best_found:
+                                    constraint_state.candidates[0, i_b] = best_a
+                                    refine_done = True
+                                else:
+                                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = (
+                                        solver.update_bracket_no_eval_local(
+                                            p1_alpha,
+                                            p1_cost,
+                                            p1_deriv_0,
+                                            p1_deriv_1,
+                                            alphas,
+                                            costs,
+                                            grads,
+                                            hess,
+                                        )
+                                    )
+                                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = (
+                                        solver.update_bracket_no_eval_local(
+                                            p2_alpha,
+                                            p2_cost,
+                                            p2_deriv_0,
+                                            p2_deriv_1,
+                                            alphas,
+                                            costs,
+                                            grads,
+                                            hess,
+                                        )
+                                    )
+                                    if b1 == 0 and b2 == 0:
+                                        constraint_state.candidates[0, i_b] = alpha_2
+                                        refine_done = True
+                                if refine_done:
+                                    break
+                                alpha_0 = p1_next
+                                alpha_1 = p2_next
+                                alpha_2 = (p1_alpha + p2_alpha) * 0.5
+                            if not refine_done:
+                                if p1_cost <= p2_cost:
+                                    constraint_state.candidates[0, i_b] = p1_alpha
+                                else:
+                                    constraint_state.candidates[0, i_b] = p2_alpha
+            qd.simt.block.sync()
         else:
             if tid == 0:
                 constraint_state.candidates[0, i_b] = 0.0
