@@ -395,10 +395,6 @@ class RigidSolver(KinematicSolver):
         return self.n_envs <= gpu_cores
 
     def _build_static_config(self):
-        prefer_parallel_linesearch = self._options.prefer_parallel_linesearch
-        if gs.backend == gs.cpu or self._enable_mujoco_compatibility or self.sim.options.requires_grad:
-            prefer_parallel_linesearch = False
-
         static_rigid_sim_config = dict(
             backend=gs.backend,
             para_level=self.sim._para_level,
@@ -416,10 +412,13 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
-            prefer_parallel_linesearch={None: -1, False: 0, True: 1}[prefer_parallel_linesearch],
             broadphase_traversal=self._resolve_broadphase_traversal(),
             parallel_init=self._should_use_parallel_init(),
         )
+
+        # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
+        if gs.backend == gs.cpu or self.sim.options.requires_grad:
+            static_rigid_sim_config["prefer_decomposed_solver"] = 0
 
         if self.is_active:
             # TODO: These alternative tiled algorithms are designed to reduce the impact of latency. However, naive

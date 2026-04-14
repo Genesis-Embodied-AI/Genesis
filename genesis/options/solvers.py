@@ -522,12 +522,6 @@ class RigidOptions(Options):
     enable_multi_contact: StrictBool = True
     enable_mujoco_compatibility: StrictBool = False
 
-    # Linesearch strategy selection:
-    #   * None:  perf dispatch chooses between monolith + iterative and decomposed + parallel linesearch
-    #   * False: force monolith + iterative (Newton-guided) linesearch
-    #   * True:  force decomposed + parallel (grid search) linesearch
-    prefer_parallel_linesearch: StrictBool | None = None
-
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None
 
