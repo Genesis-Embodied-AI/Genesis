@@ -815,6 +815,9 @@ def _func_parallel_linesearch_eval(
                                         best_c = costs_2
                                         best_found = True
 
+                                    p1_next = alpha_0
+                                    p2_next = alpha_1
+
                                     if best_found:
                                         best_alpha = res_alpha
                                         bracket_done = True
@@ -826,7 +829,6 @@ def _func_parallel_linesearch_eval(
                                         hess_v = qd.Vector([hess_0, hess_1, hess_2])
 
                                         b1 = 0
-                                        p1_next = alpha_0
                                         for i in qd.static(range(3)):
                                             if p1_grad < 0 and grads_v[i] < 0 and p1_grad < grads_v[i]:
                                                 p1_alpha = alphas[i]
@@ -845,7 +847,6 @@ def _func_parallel_linesearch_eval(
 
                                         # Dual-bracket update for p2
                                         b2 = 0
-                                        p2_next = alpha_1
                                         for i in qd.static(range(3)):
                                             if p2_grad < 0 and grads_v[i] < 0 and p2_grad < grads_v[i]:
                                                 p2_alpha = alphas[i]
