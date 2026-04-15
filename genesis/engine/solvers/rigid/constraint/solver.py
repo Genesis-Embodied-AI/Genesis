@@ -1681,7 +1681,6 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
-_TILE = qd.simt.Tile16x16.SIZE
 
 
 @qd.func
@@ -1717,12 +1716,12 @@ def func_cholesky_factor_direct_tiled(
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
-    N_BLOCKS = (n_dofs + _TILE - 1) // _TILE
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
 
-    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=_TILE)
-    for i in range(_B * _TILE):
-        tid = i % _TILE
-        i_b = i // _TILE
+    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=16)
+    for i in range(_B * 16):
+        tid = i % 16
+        i_b = i // 16
         if i_b >= _B:
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
@@ -1732,19 +1731,19 @@ def func_cholesky_factor_direct_tiled(
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
         # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
-            k0 = kb * _TILE
+            k0 = kb * 16
 
             # Load diagonal tile H[k,k], padding out-of-bounds rows with identity
             L_kk = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
             if k0 + tid < n_dofs:
-                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + _TILE, k0:n_dofs]
+                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + 16, k0:n_dofs]
             else:
                 L_kk.eye_()
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
             for jb in range(kb):
-                j0 = jb * _TILE
-                for t in range(_TILE):
+                j0 = jb * 16
+                for t in range(16):
                     v = constraint_state.nt_H[i_b, k0:n_dofs, j0 + t]
                     L_kk -= qd.outer(v, v)
 
@@ -1753,17 +1752,17 @@ def func_cholesky_factor_direct_tiled(
 
             # Solve off-diagonal tiles: L[i,k] = (H[i,k] - sum_j L[i,j] L[k,j]^T) @ inv(L[k,k]^T)
             for ib in range(kb + 1, N_BLOCKS):
-                i0 = ib * _TILE
+                i0 = ib * 16
 
                 # Load off-diagonal tile H[i,k]
                 L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
                 if i0 + tid < n_dofs:
-                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + _TILE, k0:n_dofs]
+                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + 16, k0:n_dofs]
 
                 # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
                 for jb in range(kb):
-                    j0 = jb * _TILE
-                    for t in range(_TILE):
+                    j0 = jb * 16
+                    for t in range(16):
                         v_own = constraint_state.nt_H[i_b, i0:n_dofs, j0 + t]
                         v_diag = constraint_state.nt_H[i_b, k0:n_dofs, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
@@ -1773,11 +1772,11 @@ def func_cholesky_factor_direct_tiled(
 
                 # Write L[i,k] back to global memory
                 if i0 + tid < n_dofs:
-                    constraint_state.nt_H[i_b, i0 : i0 + _TILE, k0:n_dofs] = L_ik
+                    constraint_state.nt_H[i_b, i0 : i0 + 16, k0:n_dofs] = L_ik
 
             # Write L[k,k] back to global memory
             if k0 + tid < n_dofs:
-                constraint_state.nt_H[i_b, k0 : k0 + _TILE, k0:n_dofs] = L_kk
+                constraint_state.nt_H[i_b, k0 : k0 + 16, k0:n_dofs] = L_kk
 
 
 @qd.func
@@ -1797,12 +1796,12 @@ def func_cholesky_and_solve_fused_tiled(
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
-    N_BLOCKS = (n_dofs + _TILE - 1) // _TILE
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
 
-    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=_TILE)
-    for i in range(_B * _TILE):
-        tid = i % _TILE
-        i_b = i // _TILE
+    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=16)
+    for i in range(_B * 16):
+        tid = i % 16
+        i_b = i // 16
         if i_b >= _B:
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
@@ -1817,19 +1816,19 @@ def func_cholesky_and_solve_fused_tiled(
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
         # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
         for kb in range(N_BLOCKS):
-            k0 = kb * _TILE
+            k0 = kb * 16
 
             # Load diagonal tile H[k,k], padding out-of-bounds rows with identity
             L_kk = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
             if k0 + tid < n_dofs:
-                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + _TILE, k0:n_dofs]
+                L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + 16, k0:n_dofs]
             else:
                 L_kk.eye_()
 
             # Subtract prior-column contributions from shared memory
             for jb in range(kb):
-                j0 = jb * _TILE
-                for t in range(_TILE):
+                j0 = jb * 16
+                for t in range(16):
                     v = L_sh[k0:n_dofs, j0 + t]
                     L_kk -= qd.outer(v, v)
 
@@ -1838,17 +1837,17 @@ def func_cholesky_and_solve_fused_tiled(
 
             # Solve off-diagonal tiles and store in shared memory (not global)
             for ib in range(kb + 1, N_BLOCKS):
-                i0 = ib * _TILE
+                i0 = ib * 16
 
                 # Load off-diagonal tile H[i,k]
                 L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
                 if i0 + tid < n_dofs:
-                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + _TILE, k0:n_dofs]
+                    L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + 16, k0:n_dofs]
 
                 # Subtract prior-column contributions from shared memory
                 for jb in range(kb):
-                    j0 = jb * _TILE
-                    for t in range(_TILE):
+                    j0 = jb * 16
+                    for t in range(16):
                         v_own = L_sh[i0:n_dofs, j0 + t]
                         v_diag = L_sh[k0:n_dofs, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
@@ -1858,11 +1857,11 @@ def func_cholesky_and_solve_fused_tiled(
 
                 # Write L[i,k] to shared memory
                 if i0 + tid < n_dofs:
-                    L_sh[i0 : i0 + _TILE, k0:n_dofs] = L_ik
+                    L_sh[i0 : i0 + 16, k0:n_dofs] = L_ik
 
             # Write L[k,k] to shared memory
             if k0 + tid < n_dofs:
-                L_sh[k0 : k0 + _TILE, k0:n_dofs] = L_kk
+                L_sh[k0 : k0 + 16, k0:n_dofs] = L_kk
 
         # --- Scalar triangular solve using L from shared memory ---
         # No longer using 16x16 tiles; the 16 threads parallelize each row's
@@ -1873,7 +1872,7 @@ def func_cholesky_and_solve_fused_tiled(
         k = tid
         while k < n_dofs:
             v_sh[k] = constraint_state.grad[k, i_b]
-            k = k + _TILE
+            k = k + 16
         qd.simt.block.sync()
 
         # Forward substitution: solve L @ y = grad (parallel dot with 16 threads)
@@ -1882,7 +1881,7 @@ def func_cholesky_and_solve_fused_tiled(
             j = tid
             while j < i_d:
                 dot = dot + L_sh[i_d, j] * v_sh[j]
-                j = j + _TILE
+                j = j + 16
             dot = _butterfly_reduce_16(dot, tid)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
@@ -1895,7 +1894,7 @@ def func_cholesky_and_solve_fused_tiled(
             j = i_d + 1 + tid
             while j < n_dofs:
                 dot = dot + L_sh[j, i_d] * v_sh[j]
-                j = j + _TILE
+                j = j + 16
             dot = _butterfly_reduce_16(dot, tid)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
@@ -1905,7 +1904,7 @@ def func_cholesky_and_solve_fused_tiled(
         k = tid
         while k < n_dofs:
             constraint_state.Mgrad[k, i_b] = v_sh[k]
-            k = k + _TILE
+            k = k + 16
 
 
 @qd.func
