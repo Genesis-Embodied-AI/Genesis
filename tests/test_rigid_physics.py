@@ -4718,7 +4718,7 @@ def test_mesh_align(show_viewer, tol):
     scene.reset()
 
     # Simulate
-    for _ in range(400):
+    for _ in range(450):
         scene.step()
 
     assert_allclose(mango.get_dofs_velocity(), 0, tol=0.05)

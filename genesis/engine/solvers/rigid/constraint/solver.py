@@ -2648,6 +2648,9 @@ def func_linesearch_batch(
                 i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol, constraint_state, rigid_global_info
             )
             constraint_state.ls_result[i_b] = ls_result
+            # Status 7: both brackets stalled and midpoint cost >= p0_cost. Reject the non-improving alpha.
+            if ls_result == 7:
+                res_alpha = 0.0
     return res_alpha
 
 
