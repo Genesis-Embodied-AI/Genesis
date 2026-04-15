@@ -154,9 +154,9 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
     for i4 in range(4):
         i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.qd_int(qd.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii)) % support_res
         else:
-            i = gs.qd_int(qd.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
             j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
@@ -346,9 +346,9 @@ def _func_count_supports_mesh(
     for i4 in range(4):
         i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.qd_int(qd.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii)) % support_res
         else:
-            i = gs.qd_int(qd.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
             j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
@@ -366,6 +366,7 @@ def _func_count_supports_mesh(
 
         if dot > dot_max:
             count = 1
+            dot_max = dot
         elif dot == dot_max:
             count += 1
 
