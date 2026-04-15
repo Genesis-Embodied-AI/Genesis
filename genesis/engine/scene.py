@@ -3,6 +3,7 @@ import os
 import pickle
 import sys
 import time
+import trimesh
 import weakref
 from typing import TYPE_CHECKING, Callable, Iterable, Literal, overload
 
@@ -13,6 +14,7 @@ from quadrants.lang import impl
 
 import genesis as gs
 import genesis.utils.geom as gu
+import genesis.utils.mesh as mu
 from genesis.engine.force_fields import ForceField
 from genesis.engine.materials.base import EntityT, Material
 from genesis.engine.states.solvers import SimState
@@ -1258,6 +1260,57 @@ class Scene(RBC):
         """
         with self._visualizer.viewer_lock:
             return self._visualizer.context.draw_debug_points(poss, colors)
+
+    @gs.assert_built
+    def draw_debug_frustum(self, camera, color=(1.0, 1.0, 1.0, 0.3)):
+        """
+        Draws a camera frustum in the scene for visualization.
+
+        Parameters
+        ----------
+        camera : Camera
+            The camera object whose frustum will be visualized. Works for any
+            camera including sensor cameras.
+        color : array_like, shape (4,), optional
+            The color of the frustum in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object.
+        """
+        with self._visualizer.viewer_lock:
+            mesh = mu.create_camera_frustum(camera, color)
+            return self._visualizer.context.draw_debug_mesh(mesh, T=camera.transform)
+
+    @gs.assert_built
+    def draw_debug_trajectory(self, poss, radius=0.002, color=(1.0, 0.5, 0.0, 0.8)):
+        """
+        Draws a trajectory as a series of connected lines in the scene for visualization.
+
+        Parameters
+        ----------
+        poss : array_like, shape (N, 3)
+            The positions of the trajectory points.
+        radius : float, optional
+            The radius of the trajectory lines.
+        color : array_like, shape (4,), optional
+            The color of the trajectory in RGBA format.
+
+        Returns
+        -------
+        node : genesis.ext.pyrender.mesh.Mesh
+            The created debug object (a single merged mesh of all segments).
+        """
+
+        poss = np.asarray(poss)
+        if len(poss) < 2:
+            return None
+
+        segments = [mu.create_line(poss[i], poss[i + 1], radius, color) for i in range(len(poss) - 1)]
+        merged = trimesh.util.concatenate(segments)
+        with self._visualizer.viewer_lock:
+            return self._visualizer.context.draw_debug_mesh(merged)
 
     @gs.assert_built
     def draw_debug_path(self, qposs, entity, link_idx=-1, density=0.3, frame_scaling=1.0):

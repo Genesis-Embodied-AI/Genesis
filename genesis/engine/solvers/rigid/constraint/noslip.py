@@ -29,8 +29,16 @@ def kernel_build_efc_AR_b(
         # do it row-by-row: for each row r, tmp = inv(M) * J[r]^T, then AR[r,:] = J * tmp
         for i_row in range(nefc):
             # tmp = M^{-1} * Jr^T
-            for i_d in range(n_dofs):
-                constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                # Sparse: zero buffer, copy only relevant DOFs
+                for i_d in range(n_dofs):
+                    constraint_state.Mgrad[i_d, i_b] = gs.qd_float(0.0)
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_row, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_row, i_d_, i_b]
+                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
+            else:
+                for i_d in range(n_dofs):
+                    constraint_state.Mgrad[i_d, i_b] = constraint_state.jac[i_row, i_d, i_b]
 
             rigid_solver.func_solve_mass_batch(
                 i_b,
@@ -43,17 +51,31 @@ def kernel_build_efc_AR_b(
                 is_backward=False,
             )
 
-            # AR[r, c] = J[c, :] * tmp
-            for i_col in range(nefc):
+            # TODO: For consistency with other usages, migrate to either the lower or upper variant
+            # and update all remaining use cases that still read both.
+            # AR[r, c] = J[c, :] * Mgrad, only compute lower triangle
+            for i_col in range(i_row + 1):
                 s = gs.qd_float(0.0)
-                for i_d in range(n_dofs):
-                    s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                if qd.static(static_rigid_sim_config.sparse_solve):
+                    for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_col, i_b]):
+                        i_d = constraint_state.jac_relevant_dofs[i_col, i_d_, i_b]
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
+                else:
+                    for i_d in range(n_dofs):
+                        s += constraint_state.jac[i_col, i_d, i_b] * constraint_state.Mgrad[i_d, i_b]
                 constraint_state.efc_AR[i_row, i_col, i_b] = s
+                constraint_state.efc_AR[i_col, i_row, i_b] = s
 
+        # Build efc_b
         for i_c in range(constraint_state.n_constraints[i_b]):
             v = -constraint_state.aref[i_c, i_b]
-            for i_d in range(n_dofs):
-                v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
+            else:
+                for i_d in range(n_dofs):
+                    v += constraint_state.jac[i_c, i_d, i_b] * dofs_state.acc_smooth[i_d, i_b]
             constraint_state.efc_b[i_c, i_b] = v
 
 

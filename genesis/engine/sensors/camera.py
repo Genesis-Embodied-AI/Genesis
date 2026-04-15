@@ -265,7 +265,7 @@ class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, 
         # No per-step measured-cache update for cameras (handled lazily on read()).
         pass
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """No debug drawing for cameras."""
         pass
 
@@ -559,7 +559,7 @@ class RasterizerCameraSensor(
                     poses[:, :3, 3] -= envs_offset[context.rendered_envs_idx]
                     buf_id = context._scene.get_buffer_id(node, "model")
                     if buf_id >= 0:
-                        context.buffer[buf_id] = poses.transpose((0, 2, 1))
+                        context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
 
         rgb_arr, _, _, _ = self._shared_metadata.renderer.render_camera(
             self._camera_wrapper,
@@ -575,7 +575,7 @@ class RasterizerCameraSensor(
             node.mesh.primitives[0].poses = poses
             buf_id = context._scene.get_buffer_id(node, "model")
             if buf_id >= 0:
-                context.buffer[buf_id] = poses.transpose((0, 2, 1))
+                context.jit.update_buffer(buf_id, poses.transpose((0, 2, 1)))
 
         # Ensure contiguous layout because the rendered array may have negative strides.
         rgb_tensor = torch.from_numpy(np.ascontiguousarray(rgb_arr)).to(dtype=torch.uint8, device=gs.device)

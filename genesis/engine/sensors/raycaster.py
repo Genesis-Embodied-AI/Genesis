@@ -304,7 +304,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
-    def _draw_debug(self, context: "RasterizerContext", buffer_updates: dict[str, np.ndarray]):
+    def _draw_debug(self, context: "RasterizerContext"):
         """
         Draw hit points as spheres in the scene.
 
