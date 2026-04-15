@@ -493,6 +493,14 @@ def _func_parallel_linesearch_eval(
                             # ── Phase 2: 3-alpha bracket refinement ───────────────────────────────────
                             if qd.static(_LINESEARCH_TIGHTER_BRACKET):
                                 # Tighter-bracket: set up lo/hi from chase endpoints
+                                lo_a = p2_alpha
+                                lo_c = p2_cost
+                                lo_g = p2_grad
+                                lo_h = p2_hess
+                                hi_a = p1_alpha
+                                hi_c = p1_cost
+                                hi_g = p1_grad
+                                hi_h = p1_hess
                                 if p1_grad < p2_grad:
                                     lo_a = p1_alpha
                                     lo_c = p1_cost
@@ -502,15 +510,6 @@ def _func_parallel_linesearch_eval(
                                     hi_c = p2_cost
                                     hi_g = p2_grad
                                     hi_h = p2_hess
-                                else:
-                                    lo_a = p2_alpha
-                                    lo_c = p2_cost
-                                    lo_g = p2_grad
-                                    lo_h = p2_hess
-                                    hi_a = p1_alpha
-                                    hi_c = p1_cost
-                                    hi_g = p1_grad
-                                    hi_h = p1_hess
 
                                 bracket_done = False
                                 while not bracket_done and ls_iter < max_ls_iter:
