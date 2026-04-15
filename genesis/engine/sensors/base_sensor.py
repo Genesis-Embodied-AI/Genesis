@@ -1,9 +1,9 @@
+import functools
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, Type, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, TypeVar, get_args, get_origin
 
 import numpy as np
-import quadrants as qd
 import torch
 from typing_extensions import TypeVar as TypeVarWithDefault
 
@@ -36,6 +36,19 @@ def _to_tuple(*values: NumArrayType, length_per_value: int = 3) -> tuple[Numeric
             value = value.reshape((-1,))
         full_tuple += tuple(value)
     return full_tuple
+
+
+def assert_measured_cache_will_update(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if not self._shared_metadata.update_ground_truth_only:
+            gs.raise_exception(
+                "Tried to update noise option but update_ground_truth_only is True. "
+                "Set a noisy option to nonzero value so that the measured cache will be updated."
+            )
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 # Note: dataclass is used as opposed to pydantic.BaseModel since torch.Tensors are not supported by default
@@ -138,7 +151,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
 
         self._cache_size = 0
         for shape in intrinsic_shapes:
-            data_size = int(np.prod(shape))
+            data_size = np.prod(shape)
             self._cache_slices.append(slice(self._cache_size, self._cache_size + data_size))
             self._cache_size += data_size
 
@@ -146,7 +159,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         self._read_flat_slices: list[slice] = []
         read_off = 0
         for shape in intrinsic_shapes:
-            p = int(np.prod(shape))
+            p = np.prod(shape)
             span = p * self._history_length if self._history_length > 0 else p
             self._read_flat_slices.append(slice(read_off, read_off + span))
             read_off += span
@@ -477,41 +490,35 @@ class NoisySensorMixin(Generic[NoisySensorMetadataMixinT]):
     Base sensor class for analog sensors that are attached to a RigidEntity.
     """
 
-    def _assert_measured_cache_will_update(self):
-        assert self._shared_metadata.update_ground_truth_only is False, (
-            "Tried to update noise option but update_ground_truth_only is True. "
-            "Set a noisy option to nonzero value so that the measured cache will be updated."
-        )
-
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_resolution(self, resolution, envs_idx=None):
-        self._assert_measured_cache_will_update()
         self._set_metadata_field(resolution, self._shared_metadata.resolution, self._cache_size, envs_idx)
 
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_bias(self, bias, envs_idx=None):
-        self._assert_measured_cache_will_update()
         self._set_metadata_field(bias, self._shared_metadata.bias, self._cache_size, envs_idx)
 
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_random_walk(self, random_walk, envs_idx=None):
-        self._assert_measured_cache_will_update()
         self._set_metadata_field(random_walk, self._shared_metadata.random_walk, self._cache_size, envs_idx)
 
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_noise(self, noise, envs_idx=None):
-        self._assert_measured_cache_will_update()
         self._set_metadata_field(noise, self._shared_metadata.noise, self._cache_size, envs_idx)
 
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_jitter(self, jitter, envs_idx=None):
-        self._assert_measured_cache_will_update()
         jitter_ts = np.asarray(jitter, dtype=gs.np_float) / self._dt
         self._set_metadata_field(jitter_ts, self._shared_metadata.jitter_ts, 1, envs_idx)
 
     @gs.assert_built
+    @assert_measured_cache_will_update
     def set_delay(self, delay, envs_idx=None):
-        self._assert_measured_cache_will_update()
         self._set_metadata_field(delay, self._shared_metadata.delay_in_steps, 1, envs_idx)
 
     def build(self):

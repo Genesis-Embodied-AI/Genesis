@@ -412,35 +412,18 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
 
         assert_equal(contact_h.read(), cg)
 
-        assert_allclose(
-            ig.lin_acc[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().lin_acc, tol=tol
-        )
-        assert_allclose(
-            ig.ang_vel[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().ang_vel, tol=tol
-        )
-        assert_allclose(ig.mag[0 if n_envs == 0 else (slice(None), 0)], imu_ref.read_ground_truth().mag, tol=tol)
+        cur_slice = 0 if n_envs == 0 else (slice(None), 0)
+        prev_slice = 0 if n_envs == 0 else (slice(None), 1)
+        assert_allclose(ig.lin_acc[cur_slice], imu_ref.read_ground_truth().lin_acc, tol=tol)
+        assert_allclose(ig.ang_vel[cur_slice], imu_ref.read_ground_truth().ang_vel, tol=tol)
+        assert_allclose(ig.mag[cur_slice], imu_ref.read_ground_truth().mag, tol=tol)
 
         if prev_c is not None:
-            assert_equal(
-                cg[1 if n_envs == 0 else (slice(None), 1)],
-                prev_c[0 if n_envs == 0 else (slice(None), 0)],
-            )
+            assert_equal(cg[prev_slice], prev_c[cur_slice])
         if prev_i is not None:
-            assert_allclose(
-                ig.lin_acc[1 if n_envs == 0 else (slice(None), 1)],
-                prev_i.lin_acc[0 if n_envs == 0 else (slice(None), 0)],
-                tol=tol,
-            )
-            assert_allclose(
-                ig.ang_vel[1 if n_envs == 0 else (slice(None), 1)],
-                prev_i.ang_vel[0 if n_envs == 0 else (slice(None), 0)],
-                tol=tol,
-            )
-            assert_allclose(
-                ig.mag[1 if n_envs == 0 else (slice(None), 1)],
-                prev_i.mag[0 if n_envs == 0 else (slice(None), 0)],
-                tol=tol,
-            )
+            assert_allclose(ig.lin_acc[prev_slice], prev_i.lin_acc[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.ang_vel[prev_slice], prev_i.ang_vel[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.mag[prev_slice], prev_i.mag[cur_slice], tol=gs.EPS)
         prev_c = cg
         prev_i = ig
 
@@ -608,8 +591,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("n_envs", [0, 2])
-def test_contact_sensor_filter_link_idx(n_envs, show_viewer):
+def test_contact_sensor_filter_link_idx(show_viewer):
     """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -619,28 +601,44 @@ def test_contact_sensor_filter_link_idx(n_envs, show_viewer):
         show_viewer=show_viewer,
     )
     floor = scene.add_entity(morph=gs.morphs.Plane())
+    box_on_floor = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        ),
+    )
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(0.2, 0.2, 0.2),
-            pos=(0.0, 0.0, 0.2),
+            pos=(0.0, 0.5, 0.1),
         ),
     )
-    sensor_floor = scene.add_sensor(
+    sensor = scene.add_sensor(
         gs.sensors.Contact(
-            entity_idx=floor.idx,
+            entity_idx=box_on_floor.idx,
         )
     )
     sensor_filtered = scene.add_sensor(
         gs.sensors.Contact(
-            entity_idx=floor.idx,
-            filter_link_idx=(box.link_start,),
+            entity_idx=box_on_floor.idx,
+            filter_link_idx=(floor.link_start,),
         )
     )
-    scene.build(n_envs=n_envs)
-    for _ in range(20):
+    scene.build(n_envs=2)
+    box.set_pos(
+        (
+            (0.0, 0.5, 0.1),  # box not touching box_on_floor
+            (0.0, 0.0, 0.3),  # box on top of box_on_floor
+        )
+    )
+    for _ in range(20):  # make sure the boxes are stably resting
         scene.step()
-    assert sensor_floor.read().all()
-    assert not sensor_filtered.read().any()
+    data = sensor.read()
+    filtered_data = sensor_filtered.read()
+    assert data[0], "Contact sensor should detect contact with the floor"
+    assert not filtered_data[0], "Contact sensor with filter_link_idx should filter out contact with the floor"
+    assert data[1], "Contact sensor should detect contact with the box"
+    assert filtered_data[1], "Contact sensor with filter_link_idx should still detect contact with the box"
 
 
 # ------------------------------------------------------------------------------------------
