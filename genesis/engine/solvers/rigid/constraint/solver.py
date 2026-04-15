@@ -1681,7 +1681,7 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
-Tile16x16 = qd.types.Tile16x16(dtype=gs.qd_float)
+Tile16x16 = qd.simt.Tile16x16
 
 
 @qd.func
@@ -1735,7 +1735,7 @@ def func_cholesky_factor_direct_tiled(
             k0 = kb * Tile16x16.SIZE
 
             # Load diagonal tile H[k,k], padding out-of-bounds rows with identity
-            L_kk = Tile16x16()
+            L_kk = Tile16x16.zeros(dtype=gs.qd_float)
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
@@ -1756,7 +1756,7 @@ def func_cholesky_factor_direct_tiled(
                 i0 = ib * Tile16x16.SIZE
 
                 # Load off-diagonal tile H[i,k]
-                L_ik = Tile16x16()
+                L_ik = Tile16x16.zeros(dtype=gs.qd_float)
                 if i0 + tid < n_dofs:
                     L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + Tile16x16.SIZE, k0:n_dofs]
 
@@ -1820,7 +1820,7 @@ def func_cholesky_and_solve_fused_tiled(
             k0 = kb * Tile16x16.SIZE
 
             # Load diagonal tile H[k,k], padding out-of-bounds rows with identity
-            L_kk = Tile16x16()
+            L_kk = Tile16x16.zeros(dtype=gs.qd_float)
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
@@ -1841,7 +1841,7 @@ def func_cholesky_and_solve_fused_tiled(
                 i0 = ib * Tile16x16.SIZE
 
                 # Load off-diagonal tile H[i,k]
-                L_ik = Tile16x16()
+                L_ik = Tile16x16.zeros(dtype=gs.qd_float)
                 if i0 + tid < n_dofs:
                     L_ik[:] = constraint_state.nt_H[i_b, i0 : i0 + Tile16x16.SIZE, k0:n_dofs]
 
