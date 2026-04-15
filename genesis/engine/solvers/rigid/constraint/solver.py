@@ -1739,7 +1739,7 @@ def func_cholesky_factor_direct_tiled(
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
-                L_kk.eye_()
+                L_kk._eye_()
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
             for jb in range(kb):
@@ -1824,7 +1824,7 @@ def func_cholesky_and_solve_fused_tiled(
             if k0 + tid < n_dofs:
                 L_kk[:] = constraint_state.nt_H[i_b, k0 : k0 + Tile16x16.SIZE, k0:n_dofs]
             else:
-                L_kk.eye_()
+                L_kk._eye_()
 
             # Subtract prior-column contributions from shared memory
             for jb in range(kb):
