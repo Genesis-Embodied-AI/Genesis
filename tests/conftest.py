@@ -196,6 +196,8 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
             gpu_index = gpu_indices[worker_num % len(gpu_indices)]
             os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
             os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+            os.environ["HIP_VISIBLE_DEVICES"] = str(gpu_index)
+            os.environ["ROCR_VISIBLE_DEVICES"] = str(gpu_index)
             os.environ["QD_VISIBLE_DEVICE"] = str(gpu_index)
 
         # Limit CPU threading
@@ -215,16 +217,34 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
         os.environ["NUMBA_NUM_THREADS"] = num_cpu_per_worker
 
 
+def _get_visible_gpu_indices():
+    """Return GPU indices from whichever vendor-specific visibility env var is set, or None."""
+    for env_var in ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"):
+        value = os.environ.get(env_var)
+        if value is not None:
+            return tuple(int(d.strip()) for d in value.split(",") if d.strip())
+    return None
+
+
 def _get_gpu_indices():
-    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if cuda_visible_devices is not None:
-        return tuple(map(int, cuda_visible_devices.split(",")))
+    visible = _get_visible_gpu_indices()
+    if visible is not None:
+        return visible
 
     if sys.platform == "linux":
-        nvidia_gpu_indices = []
+        # NVIDIA: enumerate via procfs when available
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
         if os.path.exists(nvidia_gpu_interface_path):
             return tuple(range(len(os.listdir(nvidia_gpu_interface_path))))
+
+        # AMD / other: fall back to torch device count (ROCm exposes GPUs through torch.cuda)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                return tuple(range(torch.cuda.device_count()))
+        except Exception:
+            pass
 
     return (0,)
 
@@ -236,15 +256,25 @@ def _torch_get_gpu_idx(device):
     if sys.platform == "linux":
         import torch
 
-        device_property = torch.cuda.get_device_properties(device)
-        device_uuid = str(device_property.uuid)
+        # When a visibility env var is set, the torch device ordinal maps directly
+        visible = _get_visible_gpu_indices()
+        if visible is not None:
+            return visible[device] if device < len(visible) else -1
 
+        # AMD / ROCm: no NVIDIA procfs, torch ordinal *is* the physical index
+        if torch.version.hip:
+            return device
+
+        # NVIDIA: resolve torch ordinal -> physical index via procfs UUID matching
         nvidia_gpu_interface_path = "/proc/driver/nvidia/gpus/"
-        for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
-            with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
-                device_info = f.read()
-            if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
-                return device_idx
+        if os.path.exists(nvidia_gpu_interface_path):
+            device_property = torch.cuda.get_device_properties(device)
+            device_uuid = str(device_property.uuid)
+            for device_idx, device_path in enumerate(os.listdir(nvidia_gpu_interface_path)):
+                with open(os.path.join(nvidia_gpu_interface_path, device_path, "information"), "r") as f:
+                    device_info = f.read()
+                if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
+                    return device_idx
 
     return -1
 
@@ -412,11 +442,12 @@ def pytest_runtest_setup(item):
     test_name = test_name[:-1] + f"-{dtype}]"
     setproctitle.setproctitle(f"pytest: {test_name}")
 
-    # Match CUDA device with EGL device.
+    # Match CUDA device with EGL device (NVIDIA-only; EGL_NV_device_cuda is not available on AMD).
     # Note that this must be done here instead of 'pytest_cmdline_main', otherwise it will segfault when using
     # 'pytest-forked', because EGL instances are not allowed to cross thread boundaries.
     worker_id = os.environ.get("PYTEST_XDIST_WORKER")
-    if worker_id and worker_id.startswith("gw"):
+    is_amd = os.environ.get("HIP_VISIBLE_DEVICES") is not None or os.environ.get("ROCR_VISIBLE_DEVICES") is not None
+    if worker_id and worker_id.startswith("gw") and not is_amd:
         cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
         if cuda_visible_devices is not None:
             gpu_index = int(cuda_visible_devices)

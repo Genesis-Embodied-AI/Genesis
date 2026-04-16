@@ -206,7 +206,7 @@ class Collider:
         # Contact0 & multicontact scratch states only needed when split narrowphase is active
         if self._use_split_narrowphase:
             gpu_props = torch.cuda.get_device_properties(gs.device)
-            gpu_cuda_cores = gpu_props.multi_processor_count * 128
+            gpu_cuda_cores = gpu_props.multi_processor_count * 64 if torch.version.hip else 128
             self._contact0_n_chunks = max(1, -(-gpu_cuda_cores // self._solver._B))
             self._contact0_grid_size = self._solver._B * self._contact0_n_chunks
             self._contact0_mpr_state = array_class.get_mpr_state(self._contact0_grid_size)

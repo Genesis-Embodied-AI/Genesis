@@ -294,7 +294,7 @@ def init(
             advanced_optimization=True,
             # This improves runtime speed by around 1%-5%, while it makes compilation up to 6x slower
             cfg_optimization=False,
-            fast_math=not debug,
+            fast_math=not debug and os.environ.get("GS_FAST_MATH", "1") != "0",
             default_ip=qd_int,
             default_fp=qd_float,
             unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation

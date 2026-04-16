@@ -12,6 +12,12 @@ ENV PYOPENGL_PLATFORM='egl'
 ENV EGL_PLATFORM='surfaceless'
 ENV PYGLET_HEADLESS='true'
 
+# BASH_ENV is sourced by bash for every non-interactive command (e.g. docker
+# run ... bash -c "..."). .bashrc only runs for interactive shells because of
+# the [ -z "$PS1" ] && return guard, so ~/.rocm-env.sh never gets sourced in
+# non-interactive mode without this.
+ENV BASH_ENV=/root/.rocm-env.sh
+
 RUN apt update && \
     apt install -y \
     libegl1 \
