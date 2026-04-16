@@ -366,7 +366,8 @@ def _func_count_supports_mesh(
 
         if dot > dot_max:
             count = 1
-            dot_max = dot
+            # FIXME: This fix destroys performance (-25% total runtime FPS on benchmarks). Disabling for now...
+            # dot_max = dot
         elif dot == dot_max:
             count += 1
 
