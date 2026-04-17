@@ -376,14 +376,23 @@ class RigidSolver(KinematicSolver):
             # be selected based on dynamic timer-based profiling instead of hard-coded heuristic.
             max_n_dofs_per_entity = max(entity.n_dofs for entity in self.entities) if self.entities else 0
             if gs.backend != gs.cpu:
-                max_shared_mem = 32.0 if gs.backend == gs.metal else 48.0
-                max_n_warps = int(math.sqrt(max_shared_mem * 1024 / (4 if gs.qd_float == qd.f32 else 8))) // 32
-                max_n_threads = max_n_warps * 32
+                max_shared_bytes = 65536 # TODO hardcoded for MI300x right now
+                bytes_per_float = 4 if gs.qd_float == qd.f32 else 8
 
-                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
-                enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
-                tiled_n_dofs = min(max(math.ceil(self.n_dofs / 32), 1), max_n_warps) * 32
-                tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
+                def _tile_dim(n_dofs):
+                    aligned = ((n_dofs + 3) // 4) * 4
+                    lds = aligned * (aligned + 1) * bytes_per_float
+                    if lds <= max_shared_bytes:
+                        return aligned
+                    return min(max(math.ceil(n_dofs / 32), 1), int(math.sqrt(max_shared_bytes / bytes_per_float)) // 32) * 32
+
+                tiled_n_dofs_per_entity = _tile_dim(max_n_dofs_per_entity)
+                tiled_n_dofs = _tile_dim(self.n_dofs)
+
+                lds_per_entity = tiled_n_dofs_per_entity * (tiled_n_dofs_per_entity + 1) * bytes_per_float
+                lds_total = tiled_n_dofs * (tiled_n_dofs + 1) * bytes_per_float
+                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity and lds_per_entity <= max_shared_bytes and self.n_envs <= 16384
+                enable_tiled_cholesky_hessian = 16 <= self.n_dofs and lds_total <= max_shared_bytes and self.n_envs <= 16384
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
@@ -2719,3 +2728,4 @@ def kernel_step_2(
                 static_rigid_sim_config=static_rigid_sim_config,
                 is_backward=is_backward,
             )
+            
