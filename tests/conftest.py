@@ -250,9 +250,6 @@ def _get_gpu_indices():
 
 
 def _torch_get_gpu_idx(device):
-    if sys.platform == "darwin":
-        return 0
-
     if sys.platform == "linux":
         import torch
 
@@ -266,6 +263,8 @@ def _torch_get_gpu_idx(device):
                     device_info = f.read()
                 if re.search(rf"GPU UUID:\s+GPU-{device_uuid}", device_info):
                     return device_idx
+            else:
+                return -1
         except FileNotFoundError:
             warnings.warn(
                 f"'{nvidia_gpu_interface_path}' is not available. Multi-GPU support will be disabled. This is expected "
@@ -273,7 +272,7 @@ def _torch_get_gpu_idx(device):
                 stacklevel=2,
             )
 
-    return -1
+    return 0
 
 
 def _get_egl_index(gpu_index):
@@ -737,8 +736,9 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
             monkeypatch.setattr(StructRigidSimStaticConfig, "__init__", _StructRigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
-            if _torch_get_gpu_idx(gs.device.index) not in _get_gpu_indices():
-                raise RuntimeError(f"Invalid CUDA GPU device, got {gs.device.index}, expected {_get_gpu_indices()}.")
+            device_idx = _torch_get_gpu_idx(gs.device.index)
+            if device_idx not in _get_gpu_indices():
+                raise RuntimeError(f"Invalid CUDA GPU device, got {device_idx}, not in {_get_gpu_indices()}.")
 
         if backend != gs.cpu and gs.backend == gs.cpu:
             pytest.skip(SKIP_NO_GPU)
