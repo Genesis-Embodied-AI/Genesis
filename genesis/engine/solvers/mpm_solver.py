@@ -217,6 +217,11 @@ class MPMSolver(Solver):
 
         self._coupler = self.sim._coupler
 
+        # Aggregate SVD requirement across registered materials. If no material reads U/V/S,
+        # the solver can skip the SVD kernel entirely on the forward pass and derive J from
+        # det(F_tmp) directly. Compile-time constant consumed by p2g via qd.static.
+        self._any_needs_svd = any(getattr(m, "needs_svd", True) for m in self._materials)
+
         if self.is_active:
             if self._enable_CPIC and self._sim.requires_grad:
                 gs.raise_exception(
@@ -334,6 +339,16 @@ class MPMSolver(Solver):
                 )
 
     @qd.kernel
+    def compute_F_tmp_only(self, f: qd.i32):
+        # Fast path when no registered material needs U/V/S: compute F_tmp without SVD.
+        # p2g then derives J from det(F_tmp) directly. Only used on the forward pass.
+        for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+            if self.particles_ng[f, i_p, i_b].active:
+                self.particles[f, i_p, i_b].F_tmp = (
+                    qd.Matrix.identity(gs.qd_float, 3) + self.substep_dt * self.particles[f, i_p, i_b].C
+                ) @ self.particles[f, i_p, i_b].F
+
+    @qd.kernel
     def svd_grad(self, f: qd.i32):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
@@ -360,8 +375,15 @@ class MPMSolver(Solver):
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
-                # (volume compression ratio) based on material type
-                J = self.particles[f, i_p, i_b].S.determinant()
+                # (volume compression ratio) based on material type.
+                # det(F_tmp) == det(U S V^T) == det(S) for qd.svd (U, V are proper rotations), so when no
+                # material needs U/V/S we can read J directly from F_tmp and skip the SVD kernel. Predeclared
+                # outside the qd.static branch because quadrants scopes qd.static branches locally.
+                J = gs.qd_float(0.0)
+                if qd.static(self._any_needs_svd):
+                    J = self.particles[f, i_p, i_b].S.determinant()
+                else:
+                    J = self.particles[f, i_p, i_b].F_tmp.determinant()
                 F_new = qd.Matrix.zero(gs.qd_float, 3, 3)
                 S_new = qd.Matrix.zero(gs.qd_float, 3, 3)
                 Jp_new = gs.qd_float(1.0)
@@ -528,14 +550,20 @@ class MPMSolver(Solver):
             entity.process_input_grad()
 
     def substep_pre_coupling(self, f):
-        self.reset_grid_and_grad(f)
         if self._sim.requires_grad:
+            self.reset_grid_and_grad(f)
             # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad
             # and svd_grad) remain correct.
             self.compute_F_tmp(f)
             self.svd(f)
         else:
-            self.compute_F_tmp_and_svd(f)
+            self.reset_grid(f)
+            if self._any_needs_svd:
+                self.compute_F_tmp_and_svd(f)
+            else:
+                # All registered materials ignore U/V/S; skip SVD entirely (e.g. scenes of only
+                # non-viscous Liquid and/or neohooken Elastic).
+                self.compute_F_tmp_only(f)
         self.p2g(
             f,
             self.sim.coupler.rigid_solver.geoms_state,
@@ -621,6 +649,15 @@ class MPMSolver(Solver):
             self.grid.grad[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
             self.grid.grad[f, i, j, k, i_b].mass = gs.qd_float(0.0)
             self.grid.grad[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+
+    @qd.kernel
+    def reset_grid(self, f: qd.i32):
+        # Non-differentiable forward path: skip the grad-buffer writes. Halves the DRAM write
+        # traffic per substep on scenes where the grid reset is bandwidth-bound.
+        for i, j, k, i_b in qd.ndrange(*self._grid_res, self._B):
+            self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
+            self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
+            self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):

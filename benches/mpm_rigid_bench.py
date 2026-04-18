@@ -18,8 +18,16 @@ import argparse
 import csv
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Ensure the editable repo root takes priority over any site-packages `genesis` namespace
+# stub (common when a prior `pip install genesis-world` left behind an assets/ext dir). Without
+# this, `import genesis` may resolve to an empty namespace package that lacks `gs.init`.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import numpy as np
 import torch

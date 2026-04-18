@@ -74,6 +74,11 @@ class Base(Material["MPMEntity"]):
     # Internal solver state — does not belong in an options class, kept pending larger refactor.
     _default_Jp: float = PrivateAttr(default=1.0)
 
+    # Whether this material's F-update or stress computation reads U/V/S from SVD(F_tmp).
+    # Subclasses that only use F_tmp (e.g. non-viscous liquid, neohooken elastic) override to False
+    # so the solver can skip the SVD kernel for scenes where no material needs it.
+    _needs_svd: bool = PrivateAttr(default=True)
+
     def model_post_init(self, context: Any) -> None:
         # Resolve Lame parameters
         if self.mu is None:
@@ -86,6 +91,10 @@ class Base(Material["MPMEntity"]):
             self.update_F_S_Jp = self._update_F_S_Jp_noop
         if self.update_stress is None:
             self.update_stress = self._update_stress_default
+
+    @property
+    def needs_svd(self) -> bool:
+        return self._needs_svd
 
     @qd.func
     def _update_F_S_Jp_noop(self, J, F_tmp, U, S, V, Jp):
