@@ -16,6 +16,10 @@ from genesis.utils.misc import DeprecationError
 
 from .base_solver import Solver
 
+# Cadence (in substeps) for syncing the MPM state-validity check back to the host.
+# Tuned to match simulator.RATE_CHECK_ERRNO so the GPU queue can stay ahead.
+_MPM_ERRNO_CHECK_EVERY = 10
+
 if TYPE_CHECKING:
     from genesis.engine.entities import MPMEntity
     from genesis.engine.scene import Scene
@@ -141,8 +145,11 @@ class MPMSolver(Solver):
             vel_in=gs.qd_vec3,  # input momentum/velocity
             vel_out=gs.qd_vec3,  # output momentum/velocity
         )
+        # Grid is only ever indexed at [f] (never [f+1]) in p2g/g2p/reset/coupler, so
+        # `substeps_local` frames are enough. Particles still need `substeps_local + 1`
+        # because g2p writes the next-frame state at [f+1].
         self.grid = grid_cell_state.field(
-            shape=(self._sim.substeps_local + 1, *self._grid_res, self._B),
+            shape=(self._sim.substeps_local, *self._grid_res, self._B),
             needs_grad=True,
             layout=qd.Layout.SOA,
         )
@@ -308,6 +315,22 @@ class MPMSolver(Solver):
             if self.particles_ng[f, i_p, i_b].active:
                 self.particles[f, i_p, i_b].U, self.particles[f, i_p, i_b].S, self.particles[f, i_p, i_b].V = qd.svd(
                     self.particles[f, i_p, i_b].F_tmp, gs.qd_float
+                )
+
+    @qd.kernel
+    def compute_F_tmp_and_svd(self, f: qd.i32):
+        # Fused F_tmp + SVD: keeps F_tmp in register/local-memory for the SVD instead of
+        # round-tripping through global memory. Only used on the forward pass; the backward
+        # path continues to call compute_F_tmp / svd separately so their autodiff remains
+        # composed unchanged.
+        for i_p, i_b in qd.ndrange(self._n_particles, self._B):
+            if self.particles_ng[f, i_p, i_b].active:
+                F_tmp = (
+                    qd.Matrix.identity(gs.qd_float, 3) + self.substep_dt * self.particles[f, i_p, i_b].C
+                ) @ self.particles[f, i_p, i_b].F
+                self.particles[f, i_p, i_b].F_tmp = F_tmp
+                self.particles[f, i_p, i_b].U, self.particles[f, i_p, i_b].S, self.particles[f, i_p, i_b].V = qd.svd(
+                    F_tmp, gs.qd_float
                 )
 
     @qd.kernel
@@ -506,8 +529,13 @@ class MPMSolver(Solver):
 
     def substep_pre_coupling(self, f):
         self.reset_grid_and_grad(f)
-        self.compute_F_tmp(f)
-        self.svd(f)
+        if self._sim.requires_grad:
+            # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad
+            # and svd_grad) remain correct.
+            self.compute_F_tmp(f)
+            self.svd(f)
+        else:
+            self.compute_F_tmp_and_svd(f)
         self.p2g(
             f,
             self.sim.coupler.rigid_solver.geoms_state,
@@ -543,11 +571,15 @@ class MPMSolver(Solver):
         if self._constraints_initialized:
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
-        # FIXME: Use existing errno mechanism for this.
-        if not self._is_state_valid(f):
-            gs.raise_exception(
-                "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
-            )
+        # Rate-limit the NaN check. `_is_state_valid` triggers a GPU->CPU sync on its return
+        # value, so calling it every substep forces a sync every substep. Matching the cadence
+        # used by the rigid solver (see simulator.RATE_CHECK_ERRNO) keeps the safety net while
+        # letting the GPU stay ahead of the host queue.
+        if self._sim._cur_substep_global % _MPM_ERRNO_CHECK_EVERY == 0:
+            if not self._is_state_valid(f):
+                gs.raise_exception(
+                    "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
+                )
 
     def substep_post_coupling_grad(self, f):
         self.g2p.grad(
