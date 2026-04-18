@@ -154,6 +154,16 @@ class MPMSolver(Solver):
             layout=qd.Layout.SOA,
         )
 
+        # Sparse-reset bookkeeping: p2g at substep slot f appends flat cell indices into a
+        # PER-SLOT dirty list, detected via atomic_add on mass returning 0. The next time
+        # that same slot is scheduled (substeps_local iterations later), sparse_reset_grid
+        # zeroes exactly those cells. Fields are zero-initialized, so the very first pass
+        # through each slot is a no-op (grid starts zero). Upper bound: n_particles * 27
+        # unique cells per batch (each particle scatters to a 3^3 neighbourhood).
+        self._max_dirty_cells = int(min(np.prod(self._grid_res), max(self._n_particles, 1) * 27))
+        self.grid_dirty_list = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._max_dirty_cells, self._B))
+        self.grid_dirty_count = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._B))
+
     def init_vvert_fields(self):
         struct_vvert_info = qd.types.struct(
             support_idxs=qd.types.vector(self._n_vvert_supports, gs.qd_int),
@@ -221,6 +231,11 @@ class MPMSolver(Solver):
         # the solver can skip the SVD kernel entirely on the forward pass and derive J from
         # det(F_tmp) directly. Compile-time constant consumed by p2g via qd.static.
         self._any_needs_svd = any(getattr(m, "needs_svd", True) for m in self._materials)
+
+        # Sparse-reset is forward-only: it relies on atomic_add returning the prior mass to
+        # detect first-touch and appending to a dirty list. Backward mode composes p2g through
+        # autodiff where those bookkeeping atomics are meaningless, so gate by requires_grad.
+        self._sparse_reset_enabled = not self._sim.requires_grad
 
         if self.is_active:
             if self._enable_CPIC and self._sim.requires_grad:
@@ -459,12 +474,20 @@ class MPMSolver(Solver):
                                     break
                         self._coupler.cpic_flag[i_p, offset[0], offset[1], offset[2], i_b] = sep_geom_idx
                     if sep_geom_idx == -1:
-                        self.grid[f, base - self._grid_offset + offset, i_b].vel_in += weight * (
+                        cell_ijk = base - self._grid_offset + offset
+                        self.grid[f, cell_ijk, i_b].vel_in += weight * (
                             self.particles_info[i_p].mass * self.particles[f, i_p, i_b].vel + affine @ dpos
                         )
-                        self.grid[f, base - self._grid_offset + offset, i_b].mass += (
-                            weight * self.particles_info[i_p].mass
-                        )
+                        mass_contrib = weight * self.particles_info[i_p].mass
+                        prev_mass = qd.atomic_add(self.grid[f, cell_ijk, i_b].mass, mass_contrib)
+                        if qd.static(self._sparse_reset_enabled):
+                            # First writer into this cell (prev mass exactly zero) records it for
+                            # the next time slot f is scheduled. Subsequent writers see a positive
+                            # mass and fall through.
+                            if prev_mass == gs.qd_float(0.0) and mass_contrib > gs.qd_float(0.0):
+                                slot_idx = qd.atomic_add(self.grid_dirty_count[f, i_b], 1)
+                                flat = (cell_ijk[0] * self._grid_res[1] + cell_ijk[1]) * self._grid_res[2] + cell_ijk[2]
+                                self.grid_dirty_list[f, slot_idx, i_b] = flat
 
                     if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
@@ -557,7 +580,12 @@ class MPMSolver(Solver):
             self.compute_F_tmp(f)
             self.svd(f)
         else:
-            self.reset_grid(f)
+            # Per-slot sparse reset. On the very first pass through slot f the dirty count is
+            # zero (fields zero-init) and the grid is already zero, so the kernel is a no-op.
+            # On subsequent passes it zeros exactly the cells p2g wrote last time this slot
+            # ran, which is bounded by n_particles * 27 — typically 20-30x cheaper than the
+            # dense reset for a robot-vs-small-deformable scene.
+            self.sparse_reset_grid(f)
             if self._any_needs_svd:
                 self.compute_F_tmp_and_svd(f)
             else:
@@ -658,6 +686,27 @@ class MPMSolver(Solver):
             self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
             self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
             self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+
+    @qd.kernel
+    def sparse_reset_grid(self, f: qd.i32):
+        # Zero only the cells that p2g touched the last time slot f was scheduled (tracked in
+        # grid_dirty_list[f, :, :] up to grid_dirty_count[f, :]). Typical robot-vs-deformable
+        # scenes touch well under 5% of the grid, so this is ~20-30x less work than the dense
+        # reset. Threads whose linear slot exceeds grid_dirty_count idle.
+        for i_linear, i_b in qd.ndrange(self._max_dirty_cells, self._B):
+            if i_linear < self.grid_dirty_count[f, i_b]:
+                flat = self.grid_dirty_list[f, i_linear, i_b]
+                k = flat % self._grid_res[2]
+                rem = flat // self._grid_res[2]
+                j = rem % self._grid_res[1]
+                i = rem // self._grid_res[1]
+                self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
+                self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
+                self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+        # Reset the per-slot counter so p2g populates a fresh list below. Done in the same
+        # kernel to avoid an extra launch; only one thread per batch writes.
+        for i_b in range(self._B):
+            self.grid_dirty_count[f, i_b] = 0
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):
