@@ -550,7 +550,10 @@ def _func_build_changed_and_decide_hessian_mode(
             else:
                 n_changed = constraint_state.incr_n_changed[i_b]
                 n_total = constraint_state.n_constraints[i_b]
-                if n_changed * 2 > n_total:
+                # exp14: tightened from 1/2 to 1/3 — patch is cheaper than rebuild whenever n_changed/n_total is small;
+                # at 1/3 we still patch when patch cost is up to 33% of rebuild, vs 50% before. Both fused (Tile16x16)
+                # and legacy (BLOCK_DIM=64 fused factor+solve) paths use this threshold.
+                if n_changed * 3 > n_total:
                     constraint_state.use_full_hessian[i_b] = 1
                 else:
                     constraint_state.use_full_hessian[i_b] = 0
