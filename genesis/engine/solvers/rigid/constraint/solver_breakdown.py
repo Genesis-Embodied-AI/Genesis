@@ -550,7 +550,9 @@ def _func_build_changed_and_decide_hessian_mode(
             else:
                 n_changed = constraint_state.incr_n_changed[i_b]
                 n_total = constraint_state.n_constraints[i_b]
-                if n_changed * 2 > n_total:
+                # exp15: loosen from 1/2 to 3/5 — patch only when n_changed is clearly small (<40% of n_total).
+                # exp14 showed tightening (33%) hurt dex_hand; testing whether the opposite helps.
+                if n_changed * 5 > n_total * 3:
                     constraint_state.use_full_hessian[i_b] = 1
                 else:
                     constraint_state.use_full_hessian[i_b] = 0
