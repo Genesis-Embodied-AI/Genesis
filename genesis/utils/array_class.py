@@ -2050,6 +2050,11 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
+    # When True (and enable_tiled_cholesky_hessian is True), use the new Tile16x16 fused factor+solve cholesky kernel
+    # (`func_cholesky_and_solve_fused_tiled`). Faster for large n_dofs (>= 50). When False but
+    # enable_tiled_cholesky_hessian is True, use the legacy BLOCK_DIM=64 hand-rolled Crout cholesky from origin/main
+    # (`func_cholesky_factor_direct_tiled_v1`). Faster for small n_dofs (~ 16-49).
+    prefer_fused_cholesky_solve: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
     max_n_links_per_entity: int = -1

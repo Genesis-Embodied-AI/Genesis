@@ -441,9 +441,16 @@ class RigidSolver(KinematicSolver):
                 tiled_n_dofs = min(max(math.ceil(self.n_dofs / 32), 1), max_n_warps) * 32
                 tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
 
+                # Fused Tile16x16 cholesky+solve (`func_cholesky_and_solve_fused_tiled`, BLOCK_DIM=16) is faster than
+                # the legacy BLOCK_DIM=64 hand-rolled Crout for large n_dofs (>= ~50, e.g. dex_hand nv=62, +10.85% on
+                # 4096 envs) but slower for small n_dofs (e.g. g1_fall nv=37, -38.62%). Route small-nv scenes through
+                # the legacy path; both paths preserve adaptive H patching upstream of cholesky.
+                prefer_fused_cholesky_solve = enable_tiled_cholesky_hessian and self.n_dofs >= 50
+
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
                     enable_tiled_cholesky_hessian=enable_tiled_cholesky_hessian,
+                    prefer_fused_cholesky_solve=prefer_fused_cholesky_solve,
                     tiled_n_dofs_per_entity=tiled_n_dofs_per_entity,
                     tiled_n_dofs=tiled_n_dofs,
                 )

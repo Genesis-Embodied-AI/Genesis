@@ -1692,6 +1692,80 @@ def _butterfly_reduce_16(val, tid):
 
 
 @qd.func
+def func_cholesky_factor_direct_tiled_v1(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Legacy BLOCK_DIM=64 hand-rolled Crout Cholesky from origin/main, kept here as the small-n_dofs fast path.
+
+    The Tile16x16-based `func_cholesky_factor_direct_tiled` (and its fused factor+solve sibling
+    `func_cholesky_and_solve_fused_tiled`) is faster for n_dofs >= ~50 (e.g. dex_hand nv=62), but slower for
+    n_dofs in [16, 49] (e.g. g1_fall nv=37, go2 nv=19) because BLOCK_DIM=16 is half a warp and the blocked algorithm
+    has more sync points than this column-by-column Crout. This function preserves the origin/main code path for
+    those scenes, dispatched via `prefer_fused_cholesky_solve` in `static_rigid_sim_config`.
+
+    See the doc on `func_cholesky_factor_direct_tiled` for the original docstring.
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+
+    # Performance is optimal for BLOCK_DIM = 64 (origin/main grid-search result).
+    BLOCK_DIM = qd.static(64)
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    qd.loop_config(name="cholesky_factor_direct_tiled_v1", block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        # +1 padding avoids shared memory bank conflicts on column-wise access
+        H = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+
+        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
+        i_pair = tid
+        while i_pair < n_lower_tri:
+            i_d1, i_d2 = linear_to_lower_tri(i_pair)
+            H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+            i_pair = i_pair + BLOCK_DIM
+        qd.simt.block.sync()
+
+        # Sequential column loop (left-looking Cholesky-Crout)
+        for i_d in range(n_dofs):
+            if tid == 0:
+                tmp = H[i_d, i_d]
+                for j_d in range(i_d):
+                    tmp = tmp - H[i_d, j_d] ** 2
+                H[i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+            qd.simt.block.sync()
+
+            inv_diag = 1.0 / H[i_d, i_d]
+            j_d = i_d + 1 + tid
+            while j_d < n_dofs:
+                dot = gs.qd_float(0.0)
+                for k_d in range(i_d):
+                    dot = dot + H[j_d, k_d] * H[i_d, k_d]
+                H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
+                j_d = j_d + BLOCK_DIM
+            qd.simt.block.sync()
+
+        # Copy the lower triangular part back to global memory
+        i_pair = tid
+        while i_pair < n_lower_tri:
+            i_d1, i_d2 = linear_to_lower_tri(i_pair)
+            constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
+            i_pair = i_pair + BLOCK_DIM
+
+
+@qd.func
 def func_cholesky_factor_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,

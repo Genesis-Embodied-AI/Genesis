@@ -782,6 +782,7 @@ def _kernel_solve_graph(
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
+            and static_rigid_sim_config.prefer_fused_cholesky_solve
         ):
             # Fused path: H patching + fused Cholesky+Solve (L in shmem, H preserved in nt_H)
             _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
@@ -791,6 +792,25 @@ def _kernel_solve_graph(
                 entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
             _func_cholesky_and_solve_fused(constraint_state, rigid_global_info, static_rigid_sim_config)
+        elif qd.static(
+            static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
+            and static_rigid_sim_config.enable_tiled_cholesky_hessian
+        ):
+            # Legacy tiled path (small-n_dofs): full H rebuild + BLOCK_DIM=64 Crout cholesky + tiled solve. Matches
+            # origin/main behavior; no patching (cholesky overwrites H in-place). Dispatched for n_dofs in [16, 49].
+            solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
+            solver.func_cholesky_factor_direct_tiled_v1(
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
+            solver.func_update_gradient_tiled(
+                dofs_state=dofs_state,
+                entities_info=entities_info,
+                constraint_state=constraint_state,
+                rigid_global_info=rigid_global_info,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
         elif qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             # Non-fused path: full H rebuild + separate Cholesky every iteration (Cholesky overwrites nt_H with L,
             # so H patching is not possible)
