@@ -2226,13 +2226,29 @@ def func_cholesky_factor_and_solve_tiled_v1(
             k_d = k_d + BLOCK_DIM
         qd.simt.block.sync()
 
-        # === Cholesky-Crout factorisation, left-looking, in shared mem only (mirrors v1) ===
+        # === Cholesky-Crout factorisation, left-looking, in shared mem only ===
+        # exp16: parallelise the diagonal step (was serial in tid==0). Reuses `partial` shared array.
         for i_d in range(n_dofs):
+            # Parallel reduction: H[i_d,i_d] -= sum_{k<i_d} H[i_d,k]**2
+            diag_dot = gs.qd_float(0.0)
+            k_diag = tid
+            while k_diag < i_d:
+                diag_dot = diag_dot + H[i_d, k_diag] ** 2
+                k_diag = k_diag + BLOCK_DIM
+            if qd.static(ENABLE_WARP_REDUCTION):
+                for offset in qd.static([16, 8, 4, 2, 1]):
+                    diag_dot = diag_dot + qd.simt.warp.shfl_down_f32(qd.u32(0xFFFFFFFF), diag_dot, offset)
+                if lane_id == 0:
+                    partial[warp_id] = diag_dot
+            else:
+                partial[tid] = diag_dot
+            qd.simt.block.sync()
+
             if tid == 0:
-                tmp = H[i_d, i_d]
-                for j_d in range(i_d):
-                    tmp = tmp - H[i_d, j_d] ** 2
-                H[i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+                diag_total = gs.qd_float(0.0)
+                for k_part in qd.static(range(NUM_WARPS)) if qd.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
+                    diag_total = diag_total + partial[k_part]
+                H[i_d, i_d] = qd.sqrt(qd.max(H[i_d, i_d] - diag_total, EPS))
             qd.simt.block.sync()
 
             inv_diag = 1.0 / H[i_d, i_d]
