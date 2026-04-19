@@ -557,39 +557,6 @@ def _func_build_changed_and_decide_hessian_mode(
 
 
 @qd.func
-def _func_build_changed_and_decide_hessian_mode_legacy(
-    constraint_state: array_class.ConstraintState,
-    static_rigid_sim_config: qd.template(),
-):
-    """Variant of _func_build_changed_and_decide_hessian_mode for the legacy small-nv path.
-
-    The legacy path has no incremental rank-1 update support (Givens rotation is per-env single-threaded and was
-    measured to lose to cooperative full-rebuild whenever n_changed > a few percent of n_total — see exp9). So the
-    only useful optimization is to SKIP the rebuild+factor entirely for envs where the active set didn't change
-    at all (incr_n_changed == 0): in that case L from the previous iter is still valid.
-
-    Sets use_full_hessian = 1 if rebuild needed, else 0 (skip — L unchanged).
-    """
-    qd.loop_config(name="increment_iter_counter")
-    for _ in range(1):
-        constraint_state.solver_iter_counter[()] = constraint_state.solver_iter_counter[()] + 1
-
-    _B = constraint_state.grad.shape[1]
-    iter_count = constraint_state.solver_iter_counter[()]
-    qd.loop_config(name="build_changed_decide_legacy", block_dim=32)
-    for i_b in range(_B):
-        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-            if iter_count <= 1:
-                constraint_state.use_full_hessian[i_b] = 1
-            else:
-                if constraint_state.incr_n_changed[i_b] == 0:
-                    constraint_state.use_full_hessian[i_b] = 0
-                else:
-                    constraint_state.use_full_hessian[i_b] = 1
-
-
-@qd.func
 def _func_patch_hessian_delta(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -829,18 +796,13 @@ def _kernel_solve_graph(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
         ):
-            # Legacy tiled path (small-n_dofs, n_dofs in [16, 49]): tiled H rebuild + BLOCK_DIM=64 Crout cholesky +
-            # tiled solve (BLOCK_DIM=64). Skips rebuild+factor for envs where the active set is identical to the
-            # previous iter (incr_n_changed == 0): L from the previous iter is still valid. No H patching: incremental
-            # Givens-rotation update of L was tested in exp9 and lost (per-env serial work doesn't pay off for nv=37
-            # whenever a few constraints change).
-            _func_build_changed_and_decide_hessian_mode_legacy(constraint_state, static_rigid_sim_config)
-            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
+            # Legacy tiled path (small-n_dofs): full H rebuild + BLOCK_DIM=64 Crout cholesky + tiled solve. Matches
+            # origin/main behavior; no patching (cholesky overwrites H in-place). Dispatched for n_dofs in [16, 49].
+            solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
             solver.func_cholesky_factor_direct_tiled_v1(
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
-                check_full_hessian=True,
             )
             solver.func_update_gradient_tiled(
                 dofs_state=dofs_state,
