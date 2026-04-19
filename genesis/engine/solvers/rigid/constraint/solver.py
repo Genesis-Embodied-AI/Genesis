@@ -1696,7 +1696,6 @@ def func_cholesky_factor_direct_tiled_v1(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    check_full_hessian: qd.template() = False,
 ):
     """Legacy BLOCK_DIM=64 hand-rolled Crout Cholesky from origin/main, kept here as the small-n_dofs fast path.
 
@@ -1727,9 +1726,6 @@ def func_cholesky_factor_direct_tiled_v1(
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
-        if qd.static(check_full_hessian):
-            if constraint_state.use_full_hessian[i_b] == 0:
-                continue
 
         # +1 padding avoids shared memory bank conflicts on column-wise access
         H = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
