@@ -437,11 +437,7 @@ class RigidSolver(KinematicSolver):
                 max_n_threads = max_n_warps * 32
 
                 enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity <= max_n_threads and self.n_envs <= 16384
-                # NOTE(pelican-20260419): the Tile16x16-based fused cholesky+solve in solver.py wins for
-                # large nv (~62, dex_hand: +10.85%) but loses badly for small nv (g1_fall nv=37: -38%, go2
-                # nv=19: -3%) vs the old BLOCK_DIM=64 cholesky used on origin/main. Bumping the threshold
-                # so smaller scenes fall back to the per-env batch cholesky path.
-                enable_tiled_cholesky_hessian = 50 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
+                enable_tiled_cholesky_hessian = 16 <= self.n_dofs <= max_n_threads and self.n_envs <= 16384
                 tiled_n_dofs = min(max(math.ceil(self.n_dofs / 32), 1), max_n_warps) * 32
                 tiled_n_dofs_per_entity = min(max(math.ceil(max_n_dofs_per_entity / 32), 1), max_n_warps) * 32
 
