@@ -796,17 +796,17 @@ def _kernel_solve_graph(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
         ):
-            # Legacy tiled path (small-n_dofs): full H rebuild + BLOCK_DIM=64 Crout cholesky + tiled solve. Matches
-            # origin/main behavior; no patching (cholesky overwrites H in-place). Dispatched for n_dofs in [16, 49].
-            solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
-            solver.func_cholesky_factor_direct_tiled_v1(
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
+            # Legacy fused path (small-n_dofs, n_dofs in [16, 49]): H patching + BLOCK_DIM=64 Crout fused factor+solve
+            # entirely in shared memory (`func_cholesky_factor_and_solve_tiled_v1`). nt_H stays as H across iters,
+            # which lets us reuse `_func_patch_hessian_delta` from the fused path. Same patching + caching benefits as
+            # the Tile16x16 fused path but with the BLOCK_DIM=64 cholesky which is faster for n_dofs in this range.
+            _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
+            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
+            _func_patch_hessian_delta(constraint_state, rigid_global_info)
+            _func_update_gradient_no_solve(
+                entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
             )
-            solver.func_update_gradient_tiled(
-                dofs_state=dofs_state,
-                entities_info=entities_info,
+            solver.func_cholesky_factor_and_solve_tiled_v1(
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,

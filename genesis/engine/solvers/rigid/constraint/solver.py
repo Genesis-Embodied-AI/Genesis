@@ -2169,6 +2169,139 @@ def func_hessian_and_cholesky_factor_incremental_batch(
 
 
 @qd.func
+def func_cholesky_factor_and_solve_tiled_v1(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Fused BLOCK_DIM=64 hand-rolled Crout Cholesky factor + forward/back substitute, in shared memory only.
+
+    Combines the factorisation algorithm of `func_cholesky_factor_direct_tiled_v1` and the solve algorithm of
+    `func_cholesky_solve_tiled` in one kernel. The Cholesky factor L lives only in shared memory; nt_H is read-only
+    on entry and untouched on exit. This is the small-n_dofs (BLOCK_DIM=64) analogue of the Tile16x16 kernel
+    `func_cholesky_and_solve_fused_tiled` and lets the legacy small-nv path do H patching (since nt_H stays as H,
+    not L).
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    BLOCK_DIM = qd.static(64)
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+    ENABLE_WARP_REDUCTION = qd.static(static_rigid_sim_config.backend == gs.cuda and gs.qd_float == qd.f32)
+    WARP_SIZE = qd.static(32)
+    NUM_WARPS = qd.static(BLOCK_DIM // WARP_SIZE)
+
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+    n_dofs_2 = n_dofs**2
+    n_lower_tri = n_dofs * (n_dofs + 1) // 2
+
+    qd.loop_config(name="cholesky_factor_and_solve_tiled_v1", block_dim=BLOCK_DIM)
+    for i in range(_B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_b = i // BLOCK_DIM
+        warp_id = tid // WARP_SIZE
+        lane_id = tid % WARP_SIZE
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        H = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        v = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+        partial = qd.simt.block.SharedArray(
+            (NUM_WARPS if qd.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.qd_float
+        )
+
+        # Load lower triangle of H into shared memory (factor will overwrite with L in-place in shmem only)
+        i_pair = tid
+        while i_pair < n_lower_tri:
+            i_d1, i_d2 = linear_to_lower_tri(i_pair)
+            H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
+            i_pair = i_pair + BLOCK_DIM
+
+        # Load gradient into shared memory
+        k_d = tid
+        while k_d < n_dofs:
+            v[k_d] = constraint_state.grad[k_d, i_b]
+            k_d = k_d + BLOCK_DIM
+        qd.simt.block.sync()
+
+        # === Cholesky-Crout factorisation, left-looking, in shared mem only (mirrors v1) ===
+        for i_d in range(n_dofs):
+            if tid == 0:
+                tmp = H[i_d, i_d]
+                for j_d in range(i_d):
+                    tmp = tmp - H[i_d, j_d] ** 2
+                H[i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+            qd.simt.block.sync()
+
+            inv_diag = 1.0 / H[i_d, i_d]
+            j_d = i_d + 1 + tid
+            while j_d < n_dofs:
+                dot = gs.qd_float(0.0)
+                for k_d2 in range(i_d):
+                    dot = dot + H[j_d, k_d2] * H[i_d, k_d2]
+                H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
+                j_d = j_d + BLOCK_DIM
+            qd.simt.block.sync()
+
+        # === Solve step 1: L^T @ w = y, but L is stored as lower triangle (so we solve L @ w = y first) ===
+        # Forward substitution: solve L @ z = grad (z stored back into v)
+        for i_d in range(n_dofs):
+            dot = gs.qd_float(0.0)
+            j_d = tid
+            while j_d < i_d:
+                dot = dot + H[i_d, j_d] * v[j_d]
+                j_d = j_d + BLOCK_DIM
+            if qd.static(ENABLE_WARP_REDUCTION):
+                for offset in qd.static([16, 8, 4, 2, 1]):
+                    dot = dot + qd.simt.warp.shfl_down_f32(qd.u32(0xFFFFFFFF), dot, offset)
+                if lane_id == 0:
+                    partial[warp_id] = dot
+            else:
+                partial[tid] = dot
+            qd.simt.block.sync()
+
+            if tid == 0:
+                total = gs.qd_float(0.0)
+                for k in qd.static(range(NUM_WARPS)) if qd.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
+                    total = total + partial[k]
+                v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+            qd.simt.block.sync()
+
+        # === Solve step 2: L^T @ x = z (back substitution) ===
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.qd_float(0.0)
+            j_d = i_d + 1 + tid
+            while j_d < n_dofs:
+                dot = dot + H[j_d, i_d] * v[j_d]
+                j_d = j_d + BLOCK_DIM
+
+            if qd.static(ENABLE_WARP_REDUCTION):
+                for offset in qd.static([16, 8, 4, 2, 1]):
+                    dot = dot + qd.simt.warp.shfl_down_f32(qd.u32(0xFFFFFFFF), dot, offset)
+                if lane_id == 0:
+                    partial[warp_id] = dot
+            else:
+                partial[tid] = dot
+            qd.simt.block.sync()
+
+            if tid == 0:
+                total = gs.qd_float(0.0)
+                for k in qd.static(range(NUM_WARPS)) if qd.static(ENABLE_WARP_REDUCTION) else range(BLOCK_DIM):
+                    total = total + partial[k]
+                v[i_d] = (v[i_d] - total) / H[i_d, i_d]
+            qd.simt.block.sync()
+
+        # Write solution to Mgrad
+        k_d = tid
+        while k_d < n_dofs:
+            constraint_state.Mgrad[k_d, i_b] = v[k_d]
+            k_d = k_d + BLOCK_DIM
+
+
+@qd.func
 def func_cholesky_solve_batch(
     i_b,
     constraint_state: array_class.ConstraintState,
