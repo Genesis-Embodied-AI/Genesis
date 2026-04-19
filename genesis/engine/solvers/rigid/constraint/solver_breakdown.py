@@ -621,6 +621,37 @@ def _func_newton_only_nt_hessian(
 
 
 @qd.func
+def _func_newton_only_incremental_cholesky_legacy(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Incremental rank-1 Cholesky update of L (stored in nt_H) for envs with use_full_hessian == 0.
+
+    Used by the legacy tiled path (small n_dofs). Operates per-env using the existing
+    `func_hessian_and_cholesky_factor_incremental_batch` (Givens-rotation-based update of L). If the update detects
+    a degenerated factor, that env is marked for full rebuild via `use_full_hessian = 1`, which the subsequent
+    cooperative `_func_newton_only_nt_hessian` + `func_cholesky_factor_direct_tiled_v1(check_full_hessian=True)`
+    pair will then handle.
+    """
+    _B = constraint_state.grad.shape[1]
+    qd.loop_config(name="incremental_cholesky_legacy", block_dim=32)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+        if constraint_state.use_full_hessian[i_b] != 0:
+            continue
+        is_degenerated = solver.func_hessian_and_cholesky_factor_incremental_batch(
+            i_b,
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+        if is_degenerated:
+            constraint_state.use_full_hessian[i_b] = 1
+
+
+@qd.func
 def _func_newton_only_nt_hessian_and_cholesky(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -796,13 +827,20 @@ def _kernel_solve_graph(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
             and static_rigid_sim_config.enable_tiled_cholesky_hessian
         ):
-            # Legacy tiled path (small-n_dofs): full H rebuild + BLOCK_DIM=64 Crout cholesky + tiled solve. Matches
-            # origin/main behavior; no patching (cholesky overwrites H in-place). Dispatched for n_dofs in [16, 49].
-            solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
+            # Legacy tiled path (small-n_dofs, n_dofs in [16, 49]): adaptive H patching via Givens-rotation incremental
+            # cholesky update (in-place on L stored in nt_H). Envs marked use_full_hessian=1 (or where the incremental
+            # update detected a degenerate factor) fall back to: tiled H rebuild + BLOCK_DIM=64 Crout factor.
+            # Solve via tiled cholesky_solve (BLOCK_DIM=64).
+            _func_build_changed_and_decide_hessian_mode(constraint_state, static_rigid_sim_config)
+            _func_newton_only_incremental_cholesky_legacy(
+                constraint_state, rigid_global_info, static_rigid_sim_config
+            )
+            _func_newton_only_nt_hessian(constraint_state, rigid_global_info)
             solver.func_cholesky_factor_direct_tiled_v1(
                 constraint_state=constraint_state,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
+                check_full_hessian=True,
             )
             solver.func_update_gradient_tiled(
                 dofs_state=dofs_state,
