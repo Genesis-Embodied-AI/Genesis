@@ -1,9 +1,9 @@
-# Based on https://github.com/ROCm/quadrants/blob/0.4.5.amd0/Dockerfile.rocm
+# Based on https://github.com/ROCm/quadrants/blob/amd-integration/Dockerfile.rocm
 # Build the quandrants container first with (in the quadrants src dir):
-#   docker build -t quadrants:0.4.5.amd0 -f quadrants/Dockerfile.rocm quadrants/.
+#   docker build -t quadrants:amd-integration -f quadrants/Dockerfile.rocm quadrants/.
 # Then build the genesis container with (in the genesis src dir):
-#   docker build -t genesis:0.4.4.amd0 -f Dockerfile.rocm Genesis/.
-ARG BASE_IMAGE=quadrants:0.4.5.amd0
+#   docker build -t genesis:amd-integration -f Dockerfile.rocm Genesis/.
+ARG BASE_IMAGE=quadrants:amd-integration
 FROM ${BASE_IMAGE}
 
 ENV HAS_ENABLE_SCRATCH_ASYNC_RECLAIM=0
