@@ -475,12 +475,10 @@ def func_COM_links_entity(
                     links_state.j_pos[i_l, i_b] = links_state.pos[i_l, i_b]
                     links_state.j_quat[i_l, i_b] = links_state.quat[i_l, i_b]
                 else:
-                    acc_pos, acc_quat = gu.qd_transform_pos_quat_by_trans_quat(
-                        links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat,
-                    )
-                    if qd.static(BW):
-                        links_state.j_pos_bw[i_l, 0, i_b] = acc_pos
-                        links_state.j_quat_bw[i_l, 0, i_b] = acc_quat
+                    (
+                        links_state.j_pos_bw[i_l, 0, i_b],
+                        links_state.j_quat_bw[i_l, 0, i_b],
+                    ) = gu.qd_transform_pos_quat_by_trans_quat(links_info.pos[I_l], links_info.quat[I_l], p_pos, p_quat)
 
                     n_joints = links_info.joint_end[I_l] - links_info.joint_start[I_l]
 
@@ -491,6 +489,9 @@ def func_COM_links_entity(
                     ):
                         i_j = i_j_ + links_info.joint_start[I_l]
 
+                        curr_i_j = 0 if qd.static(not BW) else i_j_
+                        next_i_j = 0 if qd.static(not BW) else i_j_ + 1
+
                         if func_check_index_range(
                             i_j,
                             links_info.joint_start[I_l],
@@ -499,24 +500,19 @@ def func_COM_links_entity(
                         ):
                             I_j = [i_j, i_b] if qd.static(static_rigid_sim_config.batch_joints_info) else i_j
 
-                            if qd.static(not BW):
-                                acc_pos = acc_pos + gu.qd_transform_by_quat(joints_info.pos[I_j], acc_quat)
-                            else:
-                                curr_i_j = i_j_
-                                next_i_j = i_j_ + 1
-                                prev_quat = links_state.j_quat_bw[i_l, curr_i_j, i_b]
-                                links_state.j_pos_bw[i_l, next_i_j, i_b] = (
-                                    links_state.j_pos_bw[i_l, curr_i_j, i_b]
-                                    + gu.qd_transform_by_quat(joints_info.pos[I_j], prev_quat)
-                                )
-                                links_state.j_quat_bw[i_l, next_i_j, i_b] = prev_quat
+                            (
+                                links_state.j_pos_bw[i_l, next_i_j, i_b],
+                                links_state.j_quat_bw[i_l, next_i_j, i_b],
+                            ) = gu.qd_transform_pos_quat_by_trans_quat(
+                                joints_info.pos[I_j],
+                                gu.qd_identity_quat(),
+                                links_state.j_pos_bw[i_l, curr_i_j, i_b],
+                                links_state.j_quat_bw[i_l, curr_i_j, i_b],
+                            )
 
-                    if qd.static(not BW):
-                        links_state.j_pos[i_l, i_b] = acc_pos
-                        links_state.j_quat[i_l, i_b] = acc_quat
-                    else:
-                        links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, n_joints, i_b]
-                        links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, n_joints, i_b]
+                    i_j_ = 0 if qd.static(not BW) else n_joints
+                    links_state.j_pos[i_l, i_b] = links_state.j_pos_bw[i_l, i_j_, i_b]
+                    links_state.j_quat[i_l, i_b] = links_state.j_quat_bw[i_l, i_j_, i_b]
 
     for i_l_ in (
         range(entities_info.link_start[i_e], entities_info.link_end[i_e])
