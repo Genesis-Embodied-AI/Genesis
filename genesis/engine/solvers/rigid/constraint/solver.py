@@ -1681,8 +1681,6 @@ def func_cholesky_factor_direct_batch(
             constraint_state.nt_H[i_b, j_d, i_d] = (constraint_state.nt_H[i_b, j_d, i_d] - dot) * tmp
 
 
-
-
 @qd.func
 def _butterfly_reduce_16(val, tid):
     """Sum val across 16 threads using butterfly reduction via subgroup shuffles (4 rounds)."""
