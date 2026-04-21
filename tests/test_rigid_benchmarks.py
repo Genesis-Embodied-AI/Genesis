@@ -782,8 +782,7 @@ def run_benchmark(step_fn, *, n_envs, meta):
     # warmup actually means 20 s of step()s — enough to absorb the cold-
     # start phase on every benchmark. Cost: 1 step() + 1 qd.sync().
     step_fn()
-    if meta.needs_sync:
-        qd.sync()
+    qd.sync()
 
     num_steps = 0
     is_recording = False
