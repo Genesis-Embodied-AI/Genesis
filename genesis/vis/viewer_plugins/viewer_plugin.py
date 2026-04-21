@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from typing_extensions import override
 
+from genesis.ext.pyrender.camera import OrthographicCamera
 from genesis.utils.raycast import Ray
 
 if TYPE_CHECKING:
@@ -25,8 +26,6 @@ class ViewerPlugin:
         self.viewer: "Viewer | None" = None
         self.camera: "Node | None" = None
         self.scene: "Scene | None" = None
-        self._camera_yfov: float = 0.0
-        self._tan_half_fov: float = 0.0
 
     def build(self, viewer: "Viewer", camera: "Node", scene: "Scene"):
         """Build and initialize the plugin with pyrender viewer context."""
@@ -34,8 +33,6 @@ class ViewerPlugin:
         self.viewer = viewer
         self.camera = camera
         self.scene = scene
-        self._camera_yfov: float = camera.camera.yfov
-        self._tan_half_fov: float = np.tan(0.5 * self._camera_yfov)
 
     def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> EVENT_HANDLE_STATE:
         pass
@@ -78,7 +75,6 @@ class RaycasterViewerPlugin(ViewerPlugin):
 
     def __init__(self) -> None:
         super().__init__()
-        self._camera_tan_half_fov: float = 0.0
         self._raycaster: "Raycaster | None" = None
 
     def build(self, viewer, camera: "Node", scene: "Scene"):
@@ -88,7 +84,6 @@ class RaycasterViewerPlugin(ViewerPlugin):
         from genesis.utils.raycast_qd import Raycaster
 
         self._raycaster = Raycaster(self.scene)
-        self._camera_tan_half_fov = np.tan(0.5 * self.camera.camera.yfov)
 
     @override
     def update_on_sim_step(self) -> None:
@@ -116,19 +111,29 @@ class RaycasterViewerPlugin(ViewerPlugin):
         """
 
         viewport_size = self.viewer._viewport_size
-        x = x - 0.5 * viewport_size[0]
-        y = y - 0.5 * viewport_size[1]
-        x = 2.0 * x / viewport_size[1] * self._camera_tan_half_fov
-        y = 2.0 * y / viewport_size[1] * self._camera_tan_half_fov
+        w_raw = float(viewport_size[0])
+        h_raw = float(viewport_size[1])
+        h = max(h_raw, 1e-8)
+        x_c = float(x) - 0.5 * w_raw
+        y_c = float(y) - 0.5 * h_raw
+        sx = 2.0 * x_c / h
+        sy = 2.0 * y_c / h
 
-        # NOTE: ignoring pixel aspect ratio
+        # NOTE: ignoring pixel aspect ratio; projection may change after build (e.g. O key)
         mtx = self.camera.matrix
         position = mtx[:3, 3]
         forward = -mtx[:3, 2]
         right = mtx[:3, 0]
         up = mtx[:3, 1]
 
-        direction = forward + right * x + up * y
-        direction /= np.linalg.norm(direction)
+        cam = self.camera.camera
+        if isinstance(cam, OrthographicCamera):
+            ymag = float(cam.ymag)
+            origin = position + right * (sx * ymag) + up * (sy * ymag)
+            direction = forward / np.linalg.norm(forward)
+            return Ray(origin, direction)
 
+        tan_half = float(np.tan(0.5 * float(cam.yfov)))
+        direction = forward + right * (sx * tan_half) + up * (sy * tan_half)
+        direction /= np.linalg.norm(direction)
         return Ray(position, direction)

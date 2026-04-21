@@ -330,6 +330,7 @@ class Viewer(pyglet.window.Window):
             if self.scene.scale < 1e-6:
                 xmag = ymag = 1.0
             self._default_orth_cam = OrthographicCamera(xmag=xmag, ymag=ymag, znear=znear, zfar=zfar)
+        self._orth_cam_reset_mags = (self._default_orth_cam.xmag, self._default_orth_cam.ymag)
         if self._default_camera_pose is None:
             self._default_camera_pose = self._compute_initial_camera_pose()
 
@@ -859,12 +860,10 @@ class Viewer(pyglet.window.Window):
             self._trackball.scroll(dy)
         else:
             spfc = 0.95
-            spbc = 1.0 / 0.95
-            sf = 1.0
-            if dy > 0:
-                sf = spfc * dy
-            elif dy < 0:
-                sf = -spbc * dy
+            dy_f = float(dy)
+            if abs(dy_f) < 1e-8:
+                return EVENT_HANDLED
+            sf = float(spfc**dy_f)
 
             c = self._camera_node.camera
             xmag = max(c.xmag * sf, 1e-8)
@@ -917,9 +916,6 @@ class Viewer(pyglet.window.Window):
         The view is initially along the positive x-axis at a
         sufficient distance from the scene.
         """
-        # scale = self.scene.scale
-        # if scale == 0.0:
-        #     scale = DEFAULT_SCENE_SCALE
         scale = DEFAULT_SCENE_SCALE
         centroid = self.scene.centroid
 
@@ -927,6 +923,8 @@ class Viewer(pyglet.window.Window):
             centroid = self.viewer_flags["view_center"]
 
         self._camera_node.matrix = self._default_camera_pose
+        oc = self._default_orth_cam
+        oc.xmag, oc.ymag = self._orth_cam_reset_mags
         self._trackball = Trackball(self._default_camera_pose, self.viewport_size, scale, centroid)
 
     def _get_save_filename(self, file_exts):
