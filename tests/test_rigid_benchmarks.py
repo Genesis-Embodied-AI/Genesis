@@ -24,8 +24,8 @@ DURATION_RECORD = 15.0
 
 SceneMeta = namedtuple(
     "SceneMeta",
-    ["compile_time", "step_dt", "duration_warmup", "duration_record", "needs_sync"],
-    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD, False],
+    ["compile_time", "step_dt", "duration_warmup", "duration_record"],
+    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD],
 )
 
 pytestmark = [
@@ -209,7 +209,7 @@ def get_file_morph_options(**kwargs):
 #   - scene:    the built gs.Scene (useful for visualization, inspection)
 #   - step_fn:  callable that runs one simulation step including control logic
 #   - metadata: dict with compile_time, step_dt, and optional overrides for
-#               duration_warmup, duration_record, needs_sync
+#               duration_warmup, duration_record
 #
 # **scene_kwargs are forwarded to gs.Scene(), allowing callers to control
 # show_viewer, vis_options, etc. without modifying these factories.
@@ -546,7 +546,6 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
             step_dt=step_dt,
             duration_warmup=20.0,
             duration_record=5.0,
-            needs_sync=True,
         ),
     )
 
@@ -754,7 +753,6 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
             step_dt=_STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
-            needs_sync=True,
         ),
     )
 
@@ -765,10 +763,9 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 
 def run_benchmark(step_fn, *, n_envs, meta):
-    if meta.needs_sync:
-        import quadrants as qd
+    import quadrants as qd
 
-        qd.sync()
+    qd.sync()
 
     num_steps = 0
     is_recording = False
@@ -779,13 +776,11 @@ def run_benchmark(step_fn, *, n_envs, meta):
         if is_recording:
             num_steps += 1
             if time_elapsed > meta.duration_record:
-                if meta.needs_sync:
-                    qd.sync()
-                    time_elapsed = time.time() - time_start
+                qd.sync()
+                time_elapsed = time.time() - time_start
                 break
         elif time_elapsed > meta.duration_warmup:
-            if meta.needs_sync:
-                qd.sync()
+            qd.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
