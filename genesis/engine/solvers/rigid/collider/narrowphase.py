@@ -1566,6 +1566,22 @@ def _func_multicontact_gjk_full(
             errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
+@qd.func
+def _compute_thread_slice(
+    thread_id: qd.i32,
+    n_workers: qd.template(),
+    queue_lo: qd.i32,
+    queue_hi: qd.i32,
+    max_items: qd.template(),
+):
+    # Widen to i64 to avoid i32 overflow when thread_id * n_items exceeds 2^31.
+    n_items_64 = qd.cast(queue_hi - queue_lo, qd.i64)
+    slice_lo = queue_lo + qd.cast(qd.cast(thread_id, qd.i64) * n_items_64 // n_workers, qd.i32)
+    slice_hi = queue_lo + qd.cast(qd.cast(thread_id + 1, qd.i64) * n_items_64 // n_workers, qd.i32)
+    slice_hi = qd.min(slice_hi, slice_lo + qd.static(max_items))
+    return slice_lo, slice_hi
+
+
 @qd.kernel(fastcache=gs.use_fastcache)
 def _func_narrowphase_multicontact_mixed(
     links_state: array_class.LinksState,
@@ -1592,13 +1608,20 @@ def _func_narrowphase_multicontact_mixed(
     n_total_threads: qd.template(),
     max_items_per_thread: qd.template(),
 ):
+    # queue_lo comes from gjk_work_counter / mpr_work_counter, which the reset
+    # and prepare_gjk_rerun kernels set to the correct start offset (0 normally,
+    # k1_size for the GJK rerun pass). Slices are clamped to max_items_per_thread
+    # to match the original behaviour where excess work was silently dropped.
     for i_tid in range(n_total_threads):
         if i_tid < qd.static(n_gjk_threads):
-            # GJK partition: pull from gjk_queue
-            for _iter in range(max_items_per_thread):
-                idx = qd.atomic_add(collider_state.narrowphase_work_queues.gjk_work_counter[0], 1)
-                if idx >= collider_state.narrowphase_work_queues.gjk_queue_size[0]:
-                    break
+            slice_lo, slice_hi = _compute_thread_slice(
+                i_tid,
+                n_gjk_threads,
+                collider_state.narrowphase_work_queues.gjk_work_counter[0],
+                collider_state.narrowphase_work_queues.gjk_queue_size[0],
+                max_items_per_thread,
+            )
+            for idx in range(slice_lo, slice_hi):
                 i_b = collider_state.narrowphase_work_queues.gjk_i_b[idx]
                 i_ga = collider_state.narrowphase_work_queues.gjk_i_ga[idx]
                 i_gb = collider_state.narrowphase_work_queues.gjk_i_gb[idx]
@@ -1632,11 +1655,16 @@ def _func_narrowphase_multicontact_mixed(
                     errno,
                 )
         else:
-            # MPR partition: pull from mpr_queue
-            for _iter in range(max_items_per_thread):
-                idx = qd.atomic_add(collider_state.narrowphase_work_queues.mpr_work_counter[0], 1)
-                if idx >= collider_state.narrowphase_work_queues.mpr_queue_size[0]:
-                    break
+            # max(..., 1) keeps the divisor compile-safe in the gjk-only config
+            # where n_total_threads == n_gjk_threads and this branch is dead.
+            slice_lo, slice_hi = _compute_thread_slice(
+                i_tid - qd.static(n_gjk_threads),
+                max(n_total_threads - n_gjk_threads, 1),
+                collider_state.narrowphase_work_queues.mpr_work_counter[0],
+                collider_state.narrowphase_work_queues.mpr_queue_size[0],
+                max_items_per_thread,
+            )
+            for idx in range(slice_lo, slice_hi):
                 i_b = collider_state.narrowphase_work_queues.mpr_i_b[idx]
                 i_ga = collider_state.narrowphase_work_queues.mpr_i_ga[idx]
                 i_gb = collider_state.narrowphase_work_queues.mpr_i_gb[idx]
