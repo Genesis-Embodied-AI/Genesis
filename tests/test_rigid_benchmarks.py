@@ -770,6 +770,24 @@ def run_benchmark(step_fn, *, n_envs, meta):
 
         qd.sync()
 
+    # Force CUDA-context init / lazy module load / first kernel SASS JIT to
+    # complete BEFORE entering the wall-clock warmup loop. Otherwise, the
+    # warmup's `meta.duration_warmup` budget can be partially consumed by
+    # CUDA setup (which happens on the first kernel launch into a fresh
+    # context) instead of by actual step()s. When that happens, the wall-
+    # clock warmup ends before the per-process cold-start phase (~5 s of
+    # slow step()s on hardware tested) is over, and the recording window
+    # then measures cold-start step time instead of steady-state — which
+    # manifested as intermittent 50%+ apparent `runtime_fps` regressions in
+    # `g1_fall` cluster benchmark runs even though steady-state step() time
+    # was unchanged. After this single sync-bracketed step the warmup loop's
+    # wall-clock budget contains only step() execution time, so 20 s of
+    # warmup actually means 20 s of step()s — enough to absorb the cold-
+    # start phase on every benchmark. Cost: 1 step() + 1 qd.sync().
+    step_fn()
+    if meta.needs_sync:
+        qd.sync()
+
     num_steps = 0
     is_recording = False
     time_start = time.time()
