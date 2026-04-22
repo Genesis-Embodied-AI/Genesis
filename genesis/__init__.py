@@ -280,6 +280,8 @@ def init(
             qd_init_kwargs["device_memory_GB"] = float(_device_mem_gb_env)
         elif "device_memory_GB" not in qd_init_kwargs:
             qd_init_kwargs["device_memory_GB"] = round(total_mem * 0.8, 1)
+    if backend == _gs_backend.amdgpu:
+        qd_init_kwargs.setdefault("amdgpu_auto_waves_per_eu", True)
     with redirect_stdout(_qd_outputs):
         qd.init(
             arch=getattr(qd, backend.name),

@@ -463,52 +463,45 @@ def func_compute_mass_matrix(
                     else i_0
                 )
 
-                for i_d_, j_d_ in (
-                    (
-                        # Dynamic inner loop for forward pass
-                        qd.ndrange(
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                        )
-                    )
-                    if qd.static(not BW)
-                    else (
-                        qd.static(  # Static inner loop for backward pass
-                            qd.ndrange(
-                                static_rigid_sim_config.max_n_dofs_per_entity,
-                                static_rigid_sim_config.max_n_dofs_per_entity,
-                            )
-                        )
-                    )
-                ):
-                    i_d = i_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + i_d_
-                    j_d = j_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + j_d_
-
-                    if func_check_index_range(
-                        i_d,
-                        entities_info.dof_start[i_e],
-                        entities_info.dof_end[i_e],
-                        BW,
-                    ) and func_check_index_range(
-                        j_d,
-                        entities_info.dof_start[i_e],
-                        entities_info.dof_end[i_e],
-                        BW,
-                    ):
-                        rigid_global_info.mass_mat[i_d, j_d, i_b] = (
-                            dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
-                            + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
-                        ) * rigid_global_info.mass_parent_mask[i_d, j_d]
-
                 if qd.static(not BW):
-                    _e_start_m = entities_info.dof_start[i_e]
-                    _e_nd = entities_info.n_dofs[i_e]
-                    _n_upper = _e_nd * (_e_nd - 1) // 2
-                    for _pair_idx in range(_n_upper):
-                        _row = qd.cast((qd.sqrt(8.0 * qd.cast(_pair_idx, gs.qd_float) + 1.0) + 1.0) // 2.0, qd.i32)
-                        _col = _pair_idx - _row * (_row - 1) // 2
-                        rigid_global_info.mass_mat[_e_start_m + _col, _e_start_m + _row, i_b] = rigid_global_info.mass_mat[_e_start_m + _row, _e_start_m + _col, i_b]
+                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                        _f_ang_i = dofs_state.f_ang[i_d, i_b]
+                        _f_vel_i = dofs_state.f_vel[i_d, i_b]
+                        for j_d in range(entities_info.dof_start[i_e], i_d + 1):
+                            _mm_val = (
+                                _f_ang_i.dot(dofs_state.cdof_ang[j_d, i_b])
+                                + _f_vel_i.dot(dofs_state.cdof_vel[j_d, i_b])
+                            ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = _mm_val
+                            if i_d != j_d:
+                                rigid_global_info.mass_mat[j_d, i_d, i_b] = _mm_val
                 else:
+                    for i_d_, j_d_ in qd.static(
+                        qd.ndrange(
+                            static_rigid_sim_config.max_n_dofs_per_entity,
+                            static_rigid_sim_config.max_n_dofs_per_entity,
+                        )
+                    ):
+                        i_d = entities_info.dof_start[i_e] + i_d_
+                        j_d = entities_info.dof_start[i_e] + j_d_
+
+                        if func_check_index_range(
+                            i_d,
+                            entities_info.dof_start[i_e],
+                            entities_info.dof_end[i_e],
+                            BW,
+                        ) and func_check_index_range(
+                            j_d,
+                            entities_info.dof_start[i_e],
+                            entities_info.dof_end[i_e],
+                            BW,
+                        ):
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                                dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
+                                + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
+                            ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+
+                if qd.static(BW):
                     for i_d_, j_d_ in qd.static(
                         qd.ndrange(
                             static_rigid_sim_config.max_n_dofs_per_entity,
