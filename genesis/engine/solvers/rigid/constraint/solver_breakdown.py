@@ -809,7 +809,7 @@ def _func_check_early_exit(
 # ============================================== Solve body dispatch ================================================
 
 
-@qd.kernel(gpu_graph=True, fastcache=gs.use_fastcache)
+@qd.kernel(graph=True, fastcache=gs.use_fastcache)
 def _kernel_solve_gpu_graph(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
