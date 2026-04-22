@@ -39,6 +39,8 @@ from .constants import (
     DEFAULT_SCENE_SCALE,
     DEFAULT_Z_FAR,
     DEFAULT_Z_NEAR,
+    FONT_COLOR_DARKMODE,
+    FONT_COLOR_LIGHTMODE,
     FONT_SIZE,
     MIN_OPEN_GL_MAJOR,
     MIN_OPEN_GL_MINOR,
@@ -346,6 +348,8 @@ class Viewer(pyglet.window.Window):
         self._reset_view()
 
         # Setup help text functionality
+        is_dark_mode = np.mean(context.background_color[0:3]) < 0.5
+        self._font_color = FONT_COLOR_DARKMODE if is_dark_mode else FONT_COLOR_LIGHTMODE
         self._enable_help_text = enable_help_text
         if self._enable_help_text:
             self._collapse_instructions = True
@@ -1440,7 +1444,7 @@ class Viewer(pyglet.window.Window):
                 TEXT_PADDING,
                 self._viewport_size[1] - TEXT_PADDING,
                 font_pt=FONT_SIZE,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
+                color=self._font_color,
             )
         else:
             self._renderer.render_texts(
@@ -1448,7 +1452,7 @@ class Viewer(pyglet.window.Window):
                 TEXT_PADDING,
                 self._viewport_size[1] - TEXT_PADDING,
                 font_pt=FONT_SIZE,
-                color=np.array([1.0, 1.0, 1.0, 0.85]),
+                color=self._font_color,
             )
 
 
