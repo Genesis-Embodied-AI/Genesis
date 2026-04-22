@@ -31,6 +31,41 @@ else:
     DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
 
 
+# ----------------------------------------------------------------------------
+# qd.Tensor migration (Phase 1: Tier-1 constraint state).
+#
+# ``V_TENSOR`` returns a ``qd.Tensor`` wrapper whose underlying impl is
+# the same Field / Ndarray that ``V`` would have allocated. The
+# wrapper is unwrapped back to the bare impl by ``Kernel.__call__``
+# before the JIT cache key is computed (Quadrants stork-19), so this is
+# free at the kernel-dispatch boundary.
+#
+# Setting ``GS_TENSOR_BARE_TIER1=1`` falls back to bare ``V(...)`` for
+# bisection if a benchmark regression turns up. Acts at allocation
+# time, so a fresh process is required per A/B side.
+#
+# See ``perso_hugh/doc/genesis_tensor_migration.md`` for the full plan.
+# ----------------------------------------------------------------------------
+import os as _os
+
+_GS_TENSOR_BARE_TIER1 = _os.environ.get("GS_TENSOR_BARE_TIER1", "0") == "1"
+
+
+def V_TENSOR(*, dtype, shape, layout=None):
+    if _GS_TENSOR_BARE_TIER1:
+        # Bisection fallback: behave identically to the legacy bare
+        # allocator. ``layout`` is silently dropped — Phase 1 only
+        # passes ``layout=None`` so this is a no-op today; once Phase 2
+        # starts passing real layouts the env var should not be used.
+        return V(dtype=dtype, shape=shape)
+    return qd.tensor(
+        dtype,
+        shape=shape,
+        backend=qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD,
+        layout=layout,
+    )
+
+
 PLACEHOLDER = V(dtype=gs.qd_float, shape=())
 
 
@@ -371,15 +406,18 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
-        active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        # Tier-1 constraint state: migrated to qd.Tensor wrappers in
+        # the stork-20 Phase-1 migration. See
+        # perso_hugh/doc/genesis_tensor_migration.md.
+        active=V_TENSOR(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
-        diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        diag=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        Jaref=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_frictionloss=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_D=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        jv=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         jac=V(dtype=gs.qd_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.qd_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.qd_int, shape=jac_n_relevant_dofs_shape),
