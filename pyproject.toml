@@ -72,7 +72,6 @@ dependencies = [
     "fast_simplification>=0.1.12",
     # Surface reconstruction library for particle data from SPH simulations
     "pysplashsurf==0.14.*",
-    "torch>=2.11.0",
 ]
 
 [project.optional-dependencies]
