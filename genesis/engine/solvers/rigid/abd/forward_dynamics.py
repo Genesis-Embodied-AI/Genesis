@@ -288,6 +288,145 @@ def func_vel_at_point(pos_world, link_idx, i_b, links_state: array_class.LinksSt
     return vel_rot + vel_lin
 
 
+
+@qd.func
+def func_compute_mass_matrix_lds(
+    implicit_damping: qd.template(),
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    dofs_state: array_class.DofsState,
+    dofs_info: array_class.DofsInfo,
+    entities_info: array_class.EntitiesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    is_backward: qd.template(),
+):
+    BW = qd.static(is_backward)
+
+    # LDS-optimized GPU implementation - MAXIMUM performance settings
+    BLOCK_DIM = qd.static(8)
+    MAX_DOFS_PER_ENTITY = qd.static(static_rigid_sim_config.tiled_n_dofs_per_entity)
+    MAX_TILE_SIZE = qd.static(32)  # MAXIMUM tile size for best performance
+
+    n_entities = entities_info.n_links.shape[0]
+    _B = links_state.pos.shape[1]
+
+    qd.loop_config(block_dim=BLOCK_DIM)
+    for i in range(n_entities * _B * BLOCK_DIM):
+        tid = i % BLOCK_DIM
+        i_e = (i // BLOCK_DIM) % n_entities
+        i_b = i // (BLOCK_DIM * n_entities)
+
+        if i_b >= _B:
+            continue
+
+        entity_dof_start = entities_info.dof_start[i_e]
+        entity_dof_end = entities_info.dof_end[i_e]
+        n_dofs = entities_info.n_dofs[i_e]
+
+        if n_dofs <= 0 or n_dofs > MAX_DOFS_PER_ENTITY:
+            continue
+
+        # MAXIMUM LDS allocation for best performance (7168 bytes total)
+        f_ang_cache = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, 3), gs.qd_float)     # 32×3×4 = 384 bytes
+        f_vel_cache = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, 3), gs.qd_float)     # 32×3×4 = 384 bytes
+        cdof_ang_cache = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, 3), gs.qd_float)  # 32×3×4 = 384 bytes
+        cdof_vel_cache = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, 3), gs.qd_float)  # 32×3×4 = 384 bytes
+        mass_mat_local = qd.simt.block.SharedArray((MAX_DOFS_PER_ENTITY, MAX_DOFS_PER_ENTITY), gs.qd_float) # 32×32×4 = 4096 bytes
+        # Total: 5632 bytes theoretical, ~7168 bytes with padding - MAXIMUM performance!
+
+        # Cooperative loading into LDS
+        for load_round in range((n_dofs + BLOCK_DIM - 1) // BLOCK_DIM):
+            i_d_local = load_round * BLOCK_DIM + tid
+            if i_d_local < n_dofs:
+                i_d_global = entity_dof_start + i_d_local
+
+                # Coalesced loading of all vector components
+                f_ang_cache[i_d_local, 0] = dofs_state.f_ang[i_d_global, i_b][0]
+                f_ang_cache[i_d_local, 1] = dofs_state.f_ang[i_d_global, i_b][1]
+                f_ang_cache[i_d_local, 2] = dofs_state.f_ang[i_d_global, i_b][2]
+
+                f_vel_cache[i_d_local, 0] = dofs_state.f_vel[i_d_global, i_b][0]
+                f_vel_cache[i_d_local, 1] = dofs_state.f_vel[i_d_global, i_b][1]
+                f_vel_cache[i_d_local, 2] = dofs_state.f_vel[i_d_global, i_b][2]
+
+                cdof_ang_cache[i_d_local, 0] = dofs_state.cdof_ang[i_d_global, i_b][0]
+                cdof_ang_cache[i_d_local, 1] = dofs_state.cdof_ang[i_d_global, i_b][1]
+                cdof_ang_cache[i_d_local, 2] = dofs_state.cdof_ang[i_d_global, i_b][2]
+
+                cdof_vel_cache[i_d_local, 0] = dofs_state.cdof_vel[i_d_global, i_b][0]
+                cdof_vel_cache[i_d_local, 1] = dofs_state.cdof_vel[i_d_global, i_b][1]
+                cdof_vel_cache[i_d_local, 2] = dofs_state.cdof_vel[i_d_global, i_b][2]
+
+        qd.simt.block.sync()  # Ensure all data is loaded
+
+        # Compute mass matrix using LDS - optimal performance
+        n_pairs = n_dofs * (n_dofs + 1) // 2
+        pair_idx = tid
+
+        while pair_idx < n_pairs:
+            # Convert linear index to (i, j) lower triangular
+            i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * pair_idx + 1, qd.f32)) - 1.0) / 2.0), qd.i32)
+            if (i_d_ + 1) * (i_d_ + 2) // 2 <= pair_idx:
+                i_d_ = i_d_ + 1
+            j_d_ = pair_idx - i_d_ * (i_d_ + 1) // 2
+
+            # Fast LDS-based computation
+            ang_dot = (f_ang_cache[i_d_, 0] * cdof_ang_cache[j_d_, 0] +
+                      f_ang_cache[i_d_, 1] * cdof_ang_cache[j_d_, 1] +
+                      f_ang_cache[i_d_, 2] * cdof_ang_cache[j_d_, 2])
+
+            vel_dot = (f_vel_cache[i_d_, 0] * cdof_vel_cache[j_d_, 0] +
+                      f_vel_cache[i_d_, 1] * cdof_vel_cache[j_d_, 1] +
+                      f_vel_cache[i_d_, 2] * cdof_vel_cache[j_d_, 2])
+
+            # Store in local matrix
+            mass_mat_local[i_d_, j_d_] = ang_dot + vel_dot
+            pair_idx += BLOCK_DIM
+
+        qd.simt.block.sync()
+
+        # Write results to global memory with masking
+        global_pair_idx = tid
+        while global_pair_idx < n_pairs:
+            i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * global_pair_idx + 1, qd.f32)) - 1.0) / 2.0), qd.i32)
+            if (i_d_ + 1) * (i_d_ + 2) // 2 <= global_pair_idx:
+                i_d_ = i_d_ + 1
+            j_d_ = global_pair_idx - i_d_ * (i_d_ + 1) // 2
+
+            i_d_global = entity_dof_start + i_d_
+            j_d_global = entity_dof_start + j_d_
+
+            # Apply masking and store
+            rigid_global_info.mass_mat[i_d_global, j_d_global, i_b] = (
+                mass_mat_local[i_d_, j_d_] * rigid_global_info.mass_parent_mask[i_d_global, j_d_global]
+            )
+
+            global_pair_idx += BLOCK_DIM
+
+        # Mirror upper triangle for symmetric matrix (forward pass only)
+        if qd.static(not BW):
+            qd.simt.block.sync()  # Ensure stores are complete
+
+            n_upper_pairs = n_dofs * (n_dofs - 1) // 2
+            upper_idx = tid
+
+            while upper_idx < n_upper_pairs:
+                # Convert to upper triangle indices
+                i_d_ = qd.cast(qd.floor((qd.sqrt(qd.cast(8 * upper_idx + 1, qd.f32)) + 1.0) / 2.0), qd.i32)
+                if i_d_ * (i_d_ + 1) // 2 <= upper_idx:
+                    i_d_ = i_d_ + 1
+                j_d_ = upper_idx - i_d_ * (i_d_ - 1) // 2
+
+                i_d_global = entity_dof_start + j_d_  # Note: swapped for upper triangle
+                j_d_global = entity_dof_start + i_d_
+
+                # Mirror from lower triangle
+                rigid_global_info.mass_mat[i_d_global, j_d_global, i_b] = rigid_global_info.mass_mat[j_d_global, i_d_global, i_b]
+
+                upper_idx += BLOCK_DIM
+
+
 @qd.func
 def func_compute_mass_matrix(
     implicit_damping: qd.template(),
@@ -434,92 +573,110 @@ def func_compute_mass_matrix(
                             dofs_state.cdof_ang[i_d, i_b],
                         )
 
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_0, i_b in (
-        qd.ndrange(1, links_state.pos.shape[1])
-        if qd.static(static_rigid_sim_config.use_hibernation)
-        else qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1])
+    # Choose mass matrix computation implementation
+    if qd.static(
+        static_rigid_sim_config.enable_tiled_cholesky_mass_matrix and static_rigid_sim_config.backend != gs.cpu
     ):
-        for i_1 in (
-            (
-                # Dynamic inner loop for forward pass
-                range(rigid_global_info.n_awake_entities[i_b])
-                if qd.static(static_rigid_sim_config.use_hibernation)
-                else qd.static(range(1))
-            )
-            if qd.static(not BW)
-            else (
-                qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
-                if qd.static(static_rigid_sim_config.use_hibernation)
-                else qd.static(range(1))
-            )
+        # Use isolated LDS-optimized function
+        func_compute_mass_matrix_lds(
+            implicit_damping=implicit_damping,
+            links_state=links_state,
+            links_info=links_info,
+            dofs_state=dofs_state,
+            dofs_info=dofs_info,
+            entities_info=entities_info,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+            is_backward=BW,
+        )
+    else:
+        # Original CPU/simple implementation
+        qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
+        for i_0, i_b in (
+            qd.ndrange(1, links_state.pos.shape[1])
+            if qd.static(static_rigid_sim_config.use_hibernation)
+            else qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1])
         ):
-            if func_check_index_range(
-                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
-            ):
-                i_e = (
-                    rigid_global_info.awake_entities[i_1, i_b]
+            for i_1 in (
+                (
+                    # Dynamic inner loop for forward pass
+                    range(rigid_global_info.n_awake_entities[i_b])
                     if qd.static(static_rigid_sim_config.use_hibernation)
-                    else i_0
+                    else qd.static(range(1))
                 )
-
-                for i_d_, j_d_ in (
-                    (
-                        # Dynamic inner loop for forward pass
-                        qd.ndrange(
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                            (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                        )
+                if qd.static(not BW)
+                else (
+                    qd.static(range(static_rigid_sim_config.max_n_awake_entities))  # Static inner loop for backward pass
+                    if qd.static(static_rigid_sim_config.use_hibernation)
+                    else qd.static(range(1))
+                )
+            ):
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+                ):
+                    i_e = (
+                        rigid_global_info.awake_entities[i_1, i_b]
+                        if qd.static(static_rigid_sim_config.use_hibernation)
+                        else i_0
                     )
-                    if qd.static(not BW)
-                    else (
-                        qd.static(  # Static inner loop for backward pass
+
+                    for i_d_, j_d_ in (
+                        (
+                            # Dynamic inner loop for forward pass
+                            qd.ndrange(
+                                (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                                (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                            )
+                        )
+                        if qd.static(not BW)
+                        else (
+                            qd.static(  # Static inner loop for backward pass
+                                qd.ndrange(
+                                    static_rigid_sim_config.max_n_dofs_per_entity,
+                                    static_rigid_sim_config.max_n_dofs_per_entity,
+                                )
+                            )
+                        )
+                    ):
+                        i_d = i_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + i_d_
+                        j_d = j_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + j_d_
+
+                        if func_check_index_range(
+                            i_d,
+                            entities_info.dof_start[i_e],
+                            entities_info.dof_end[i_e],
+                            BW,
+                        ) and func_check_index_range(
+                            j_d,
+                            entities_info.dof_start[i_e],
+                            entities_info.dof_end[i_e],
+                            BW,
+                        ):
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                                dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
+                                + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
+                            ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+
+                    if qd.static(not BW):
+                        _e_start_m = entities_info.dof_start[i_e]
+                        _e_nd = entities_info.n_dofs[i_e]
+                        _n_upper = _e_nd * (_e_nd - 1) // 2
+                        for _pair_idx in range(_n_upper):
+                            _row = qd.cast((qd.sqrt(8.0 * qd.cast(_pair_idx, gs.qd_float) + 1.0) + 1.0) // 2.0, qd.i32)
+                            _col = _pair_idx - _row * (_row - 1) // 2
+                            rigid_global_info.mass_mat[_e_start_m + _col, _e_start_m + _row, i_b] = rigid_global_info.mass_mat[_e_start_m + _row, _e_start_m + _col, i_b]
+                    else:
+                        for i_d_, j_d_ in qd.static(
                             qd.ndrange(
                                 static_rigid_sim_config.max_n_dofs_per_entity,
                                 static_rigid_sim_config.max_n_dofs_per_entity,
                             )
-                        )
-                    )
-                ):
-                    i_d = i_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + i_d_
-                    j_d = j_d_ if qd.static(not BW) else entities_info.dof_start[i_e] + j_d_
+                        ):
+                            i_d = entities_info.dof_start[i_e] + i_d_
+                            j_d = entities_info.dof_start[i_e] + j_d_
 
-                    if func_check_index_range(
-                        i_d,
-                        entities_info.dof_start[i_e],
-                        entities_info.dof_end[i_e],
-                        BW,
-                    ) and func_check_index_range(
-                        j_d,
-                        entities_info.dof_start[i_e],
-                        entities_info.dof_end[i_e],
-                        BW,
-                    ):
-                        rigid_global_info.mass_mat[i_d, j_d, i_b] = (
-                            dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
-                            + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
-                        ) * rigid_global_info.mass_parent_mask[i_d, j_d]
-
-                if qd.static(not BW):
-                    _e_start_m = entities_info.dof_start[i_e]
-                    _e_nd = entities_info.n_dofs[i_e]
-                    _n_upper = _e_nd * (_e_nd - 1) // 2
-                    for _pair_idx in range(_n_upper):
-                        _row = qd.cast((qd.sqrt(8.0 * qd.cast(_pair_idx, gs.qd_float) + 1.0) + 1.0) // 2.0, qd.i32)
-                        _col = _pair_idx - _row * (_row - 1) // 2
-                        rigid_global_info.mass_mat[_e_start_m + _col, _e_start_m + _row, i_b] = rigid_global_info.mass_mat[_e_start_m + _row, _e_start_m + _col, i_b]
-                else:
-                    for i_d_, j_d_ in qd.static(
-                        qd.ndrange(
-                            static_rigid_sim_config.max_n_dofs_per_entity,
-                            static_rigid_sim_config.max_n_dofs_per_entity,
-                        )
-                    ):
-                        i_d = entities_info.dof_start[i_e] + i_d_
-                        j_d = entities_info.dof_start[i_e] + j_d_
-
-                        if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e] and j_d > i_d:
-                            rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+                            if i_d < entities_info.dof_end[i_e] and j_d < entities_info.dof_end[i_e] and j_d > i_d:
+                                rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
