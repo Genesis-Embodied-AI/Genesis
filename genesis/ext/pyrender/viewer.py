@@ -109,25 +109,6 @@ class Viewer(pyglet.window.Window):
       - Scroll the mouse wheel, or
       - Hold the right mouse button and drag the cursor.
 
-    Other keyboard commands are as follows:
-
-    - ``a``: Toggles rotational animation mode.
-    - ``c``: Toggles backface culling.
-    - ``f``: Toggles fullscreen mode.
-    - ``h``: Toggles shadow rendering.
-    - ``i``: Toggles axis display mode.
-    - ``l``: Toggles lighting mode
-      (scene lighting, Raymond lighting, or direct lighting).
-    - ``m``: Toggles face normal visualization.
-    - ``n``: Toggles vertex normal visualization.
-    - ``o``: Toggles orthographic mode.
-    - ``q``: Quits the viewer.
-    - ``r``: Starts recording a GIF, and pressing again stops recording
-      and opens a file dialog.
-    - ``s``: Opens a file dialog to save the current view as an image.
-    - ``w``: Toggles wireframe mode
-      (scene default, flip wireframes, all wireframe, or all solid).
-    - ``z``: Resets the camera to the initial view.
 
     Note
     ----
