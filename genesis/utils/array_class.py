@@ -16,7 +16,7 @@ if not gs._initialized:
 
 
 if TYPE_CHECKING:
-    V_ANNOTATION = qd.Field | qd.Ndarray
+    V_ANNOTATION = qd.Tensor | qd.Field | qd.Ndarray
     V = V_ANNOTATION
     V_VEC = V_ANNOTATION
     V_MAT = V_ANNOTATION

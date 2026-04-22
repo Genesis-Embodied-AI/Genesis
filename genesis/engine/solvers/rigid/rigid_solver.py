@@ -260,7 +260,7 @@ class RigidSolver(KinematicSolver):
         self.collider = None
         self.constraint_solver = None
 
-        self.qpos: qd.Field | qd.Ndarray | None = None
+        self.qpos: qd.Tensor | qd.Field | qd.Ndarray | None = None
 
         self._is_backward: bool = False
 

@@ -413,7 +413,7 @@ TO_EXT_ARR_FAST_MAP = dict(
 
 
 def qd_to_python(
-    value: qd.Field | qd.Ndarray,
+    value: qd.Tensor | qd.Field | qd.Ndarray,
     transpose: bool = False,
     copy: bool | None = None,
     to_torch: bool = True,
@@ -613,7 +613,7 @@ def indices_to_mask(
 
 
 def qd_to_torch(
-    value: qd.Field | qd.Ndarray,
+    value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     keepdim: bool = True,
@@ -663,7 +663,7 @@ def qd_to_torch(
 
 
 def qd_to_numpy(
-    value: qd.Field | qd.Ndarray,
+    value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     keepdim: bool = True,
