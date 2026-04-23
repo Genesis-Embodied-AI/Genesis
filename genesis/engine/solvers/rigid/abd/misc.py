@@ -826,14 +826,14 @@ def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: qd.Tensor):
 
 
 @qd.func
-def func_atomic_add_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_atomic_add_if(field: qd.template(), I, value, cond: qd.template()):
     if qd.static(cond):
         qd.atomic_add(field[I], value)
     return value
 
 
 @qd.func
-def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
+def func_add_safe_backward(field: qd.template(), I, value, cond: qd.template()):
     # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
     # write, use atomic add directly. For reference, see official Quadrants documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
@@ -844,19 +844,19 @@ def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
 
 
 @qd.func
-def func_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_read_field_if(field: qd.template(), I, value, cond: qd.template()):
     return field[I] if qd.static(cond) else value
 
 
 @qd.func
-def func_write_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_write_field_if(field: qd.template(), I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return value
 
 
 @qd.func
-def func_write_and_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
+def func_write_and_read_field_if(field: qd.template(), I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return field[I] if qd.static(cond) else value

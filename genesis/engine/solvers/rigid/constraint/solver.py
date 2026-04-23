@@ -2812,9 +2812,9 @@ def func_save_prev_grad(
 @qd.func
 def func_update_constraint_batch(
     i_b,
-    qacc: qd.Tensor,
-    Ma: qd.Tensor,
-    cost: qd.Tensor,
+    qacc: qd.template(),
+    Ma: qd.template(),
+    cost: qd.template(),
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -2889,9 +2889,9 @@ def func_update_constraint_batch(
 
 @qd.func
 def func_update_constraint(
-    qacc: qd.Tensor,
-    Ma: qd.Tensor,
-    cost: qd.Tensor,
+    qacc: qd.template(),
+    Ma: qd.template(),
+    cost: qd.template(),
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -3079,7 +3079,7 @@ def func_terminate_or_update_descent_batch(
 
 @qd.func
 def initialize_Jaref(
-    qacc: qd.Tensor,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3102,7 +3102,7 @@ def _initialize_Jaref_body(
     i_c,
     i_b,
     n_dofs,
-    qacc: qd.Tensor,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3119,7 +3119,7 @@ def _initialize_Jaref_body(
 
 @qd.func
 def _initialize_Jaref_per_env(
-    qacc: qd.Tensor,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3134,7 +3134,7 @@ def _initialize_Jaref_per_env(
 
 @qd.func
 def _initialize_Jaref_parallel(
-    qacc: qd.Tensor,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3151,8 +3151,8 @@ def _initialize_Jaref_parallel(
 
 @qd.func
 def initialize_Ma(
-    Ma: qd.Tensor,
-    qacc: qd.Tensor,
+    Ma: qd.template(),
+    qacc: qd.template(),
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,

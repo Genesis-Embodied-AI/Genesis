@@ -358,7 +358,7 @@ def func_contact_mpr_terrain(
     mpr_state: array_class.MPRState,
     mpr_info: array_class.MPRInfo,
     support_field_info: array_class.SupportFieldInfo,
-    errno: qd.Tensor,
+    errno: qd.template(),
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
@@ -541,7 +541,7 @@ def func_convex_convex_contact(
     support_field_info: array_class.SupportFieldInfo,
     # FIXME: Passing nested data structure as input argument is not supported for now.
     diff_contact_input: array_class.DiffContactInput,
-    errno: qd.Tensor,
+    errno: qd.template(),
 ):
     if not (geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
         EPS = rigid_global_info.EPS[None]
@@ -1151,7 +1151,7 @@ def _func_multicontact_mpr(
     gjk_info: array_class.GJKInfo,
     gjk_static_config: qd.template(),
     support_field_info: array_class.SupportFieldInfo,
-    errno: qd.Tensor,
+    errno: qd.template(),
 ):
     """Compute all contacts (0 through 4) for a pair and write them contiguously
     via a single atomic reservation, ensuring deterministic per-pair ordering.
@@ -1359,7 +1359,7 @@ def _func_multicontact_gjk_full(
     gjk_static_config: qd.template(),
     support_field_info: array_class.SupportFieldInfo,
     diff_contact_input: array_class.DiffContactInput,
-    errno: qd.Tensor,
+    errno: qd.template(),
 ):
     """Run full contact detection (contacts 0-4) using GJK+EPA for pairs that MPR couldn't handle.
     All contacts are collected locally and written contiguously via a single atomic reservation."""

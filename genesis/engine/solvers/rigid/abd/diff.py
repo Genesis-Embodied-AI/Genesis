@@ -27,7 +27,7 @@ def func_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    errno: qd.Tensor,
+    errno: qd.template(),
 ):
     n_qs = rigid_global_info.qpos.shape[0]
     n_dofs = dofs_state.vel.shape[0]
