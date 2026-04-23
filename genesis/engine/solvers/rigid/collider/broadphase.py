@@ -150,7 +150,7 @@ def _func_broad_phase_sap(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     Sweep and Prune (SAP) for broad-phase collision detection.
@@ -408,7 +408,7 @@ def _func_broad_phase_all_vs_all(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     All-vs-all broad-phase collision detection.

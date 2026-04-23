@@ -812,7 +812,7 @@ def kernel_update_vgeoms_render_T(
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
+def kernel_bit_reduction(tensor: qd.Tensor) -> qd.i32:
     flag = qd.i32(0)
     for i in range(tensor.shape[0]):
         flag = qd.atomic_or(flag, tensor[i])
@@ -820,20 +820,20 @@ def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
-def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: array_class.V_ANNOTATION):
+def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: qd.Tensor):
     for i_b_ in range(envs_idx.shape[0]):
         tensor[i_b_] = 0
 
 
 @qd.func
-def func_atomic_add_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_atomic_add_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         qd.atomic_add(field[I], value)
     return value
 
 
 @qd.func
-def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
     # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
     # write, use atomic add directly. For reference, see official Quadrants documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
@@ -844,19 +844,19 @@ def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.t
 
 
 @qd.func
-def func_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     return field[I] if qd.static(cond) else value
 
 
 @qd.func
-def func_write_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return value
 
 
 @qd.func
-def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_and_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return field[I] if qd.static(cond) else value

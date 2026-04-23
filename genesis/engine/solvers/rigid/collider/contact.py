@@ -190,7 +190,7 @@ def func_add_contact(
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
     use_atomic: qd.template() = False,
 ):
     i_c = 0

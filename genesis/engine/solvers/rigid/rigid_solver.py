@@ -2825,7 +2825,7 @@ def kernel_step_2(
     static_rigid_sim_config: qd.template(),
     contact_island_state: array_class.ContactIslandState,
     is_backward: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,

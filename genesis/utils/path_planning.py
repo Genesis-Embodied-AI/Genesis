@@ -707,7 +707,7 @@ class RRTConnect(PathPlanner):
     @qd.kernel
     def _kernel_rrt_connect_step1(
         self,
-        qpos: array_class.V_ANNOTATION,
+        qpos: qd.Tensor,
         forward_pass: qd.i32,
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),

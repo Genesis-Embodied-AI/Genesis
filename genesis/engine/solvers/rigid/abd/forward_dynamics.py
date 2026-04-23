@@ -813,9 +813,9 @@ def func_factor_mass(
 def func_solve_mass_entity(
     i_e: qd.int32,
     i_b: qd.int32,
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.Tensor,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -897,9 +897,9 @@ def func_solve_mass_entity(
 @qd.func
 def func_solve_mass_batch(
     i_b: qd.int32,
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.Tensor,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -936,9 +936,9 @@ def func_solve_mass_batch(
 
 @qd.func
 def func_solve_mass(
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,  # Should not be None if backward
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.Tensor,  # Should not be None if backward
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),

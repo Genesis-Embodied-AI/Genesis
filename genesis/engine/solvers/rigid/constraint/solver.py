@@ -2812,9 +2812,9 @@ def func_save_prev_grad(
 @qd.func
 def func_update_constraint_batch(
     i_b,
-    qacc: array_class.V_ANNOTATION,
-    Ma: array_class.V_ANNOTATION,
-    cost: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
+    Ma: qd.Tensor,
+    cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -2889,9 +2889,9 @@ def func_update_constraint_batch(
 
 @qd.func
 def func_update_constraint(
-    qacc: array_class.V_ANNOTATION,
-    Ma: array_class.V_ANNOTATION,
-    cost: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
+    Ma: qd.Tensor,
+    cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -3079,7 +3079,7 @@ def func_terminate_or_update_descent_batch(
 
 @qd.func
 def initialize_Jaref(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3102,7 +3102,7 @@ def _initialize_Jaref_body(
     i_c,
     i_b,
     n_dofs,
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3119,7 +3119,7 @@ def _initialize_Jaref_body(
 
 @qd.func
 def _initialize_Jaref_per_env(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3134,7 +3134,7 @@ def _initialize_Jaref_per_env(
 
 @qd.func
 def _initialize_Jaref_parallel(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3151,8 +3151,8 @@ def _initialize_Jaref_parallel(
 
 @qd.func
 def initialize_Ma(
-    Ma: array_class.V_ANNOTATION,
-    qacc: array_class.V_ANNOTATION,
+    Ma: qd.Tensor,
+    qacc: qd.Tensor,
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3498,7 +3498,7 @@ def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
