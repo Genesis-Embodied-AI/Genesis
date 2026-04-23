@@ -31,39 +31,11 @@ else:
     DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
 
 
-# ----------------------------------------------------------------------------
-# qd.Tensor migration (Phase 1: Tier-1 constraint state).
-#
-# ``V_TENSOR`` returns a ``qd.Tensor`` wrapper whose underlying impl is
-# the same Field / Ndarray that ``V`` would have allocated. The
-# wrapper is unwrapped back to the bare impl by ``Kernel.__call__``
-# before the JIT cache key is computed (Quadrants stork-19), so this is
-# free at the kernel-dispatch boundary.
-#
-# Setting ``GS_TENSOR_BARE_TIER1=1`` falls back to bare ``V(...)`` for
-# bisection if a benchmark regression turns up. Acts at allocation
-# time, so a fresh process is required per A/B side.
-#
-# See ``perso_hugh/doc/genesis_tensor_migration.md`` for the full plan.
-# ----------------------------------------------------------------------------
-import os as _os
-
-_GS_TENSOR_BARE_TIER1 = _os.environ.get("GS_TENSOR_BARE_TIER1", "0") == "1"
-
-
-def V_TENSOR(*, dtype, shape, layout=None):
-    if _GS_TENSOR_BARE_TIER1:
-        # Bisection fallback: behave identically to the legacy bare
-        # allocator. ``layout`` is silently dropped — Phase 1 only
-        # passes ``layout=None`` so this is a no-op today; once Phase 2
-        # starts passing real layouts the env var should not be used.
-        return V(dtype=dtype, shape=shape)
-    return qd.tensor(
-        dtype,
-        shape=shape,
-        backend=qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD,
-        layout=layout,
-    )
+# Tier-1 constraint state allocations use ``qd.tensor(...)`` directly, producing
+# ``qd.Tensor`` wrappers. Wrappers are unwrapped to bare Field / Ndarray at the
+# kernel-dispatch boundary (Quadrants stork-19 / stork-21), so there is no
+# runtime overhead versus bare allocation.
+_TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
 PLACEHOLDER = V(dtype=gs.qd_float, shape=())
@@ -270,26 +242,26 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     n_constraints: V_ANNOTATION
     qd_n_equalities: V_ANNOTATION
     jac: V_ANNOTATION
-    diag: V_ANNOTATION
+    diag: qd.Tensor
     aref: V_ANNOTATION
     jac_relevant_dofs: V_ANNOTATION
     jac_n_relevant_dofs: V_ANNOTATION
     n_constraints_equality: V_ANNOTATION
     n_constraints_frictionloss: V_ANNOTATION
     improved: V_ANNOTATION
-    Jaref: V_ANNOTATION
+    Jaref: qd.Tensor
     Ma: V_ANNOTATION
     Ma_ws: V_ANNOTATION
     grad: V_ANNOTATION
     Mgrad: V_ANNOTATION
     MinvJT: V_ANNOTATION
     search: V_ANNOTATION
-    efc_D: V_ANNOTATION
-    efc_frictionloss: V_ANNOTATION
+    efc_D: qd.Tensor
+    efc_frictionloss: qd.Tensor
     efc_force: V_ANNOTATION
     efc_b: V_ANNOTATION
     efc_AR: V_ANNOTATION
-    active: V_ANNOTATION
+    active: qd.Tensor
     prev_active: V_ANNOTATION
     qfrc_constraint: V_ANNOTATION
     qacc: V_ANNOTATION
@@ -301,7 +273,7 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     prev_cost: V_ANNOTATION
     gtol: V_ANNOTATION
     mv: V_ANNOTATION
-    jv: V_ANNOTATION
+    jv: qd.Tensor
     quad_gauss: V_ANNOTATION
     ls_alpha: V_ANNOTATION
     ls_p0_cost: V_ANNOTATION
@@ -416,18 +388,17 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
-        # Tier-1 constraint state: migrated to qd.Tensor wrappers in
-        # the stork-20 Phase-1 migration. See
-        # perso_hugh/doc/genesis_tensor_migration.md.
-        active=V_TENSOR(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
+        # Tier-1 constraint state: allocated as qd.Tensor wrappers
+        # (Phase-1 migration; see perso_hugh/doc/genesis_tensor_migration.md).
+        active=qd.tensor(gs.qd_bool, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
-        diag=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        diag=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
         aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        Jaref=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        efc_frictionloss=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        Jaref=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
+        efc_frictionloss=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        efc_D=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
-        jv=V_TENSOR(dtype=gs.qd_float, shape=(len_constraints_, _B)),
+        efc_D=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
+        jv=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
         jac=V(dtype=gs.qd_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.qd_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.qd_int, shape=jac_n_relevant_dofs_shape),
