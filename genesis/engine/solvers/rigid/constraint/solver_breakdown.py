@@ -307,11 +307,19 @@ def _func_parallel_linesearch_p0(
 def _func_parallel_linesearch_eval(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
 ):
-    """Decomposed solver eval kernel: serial refinement from Newton step + cooperative apply.
+    """Decomposed solver eval kernel: linesearch refinement from Newton step + cooperative apply.
 
-    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via func_linesearch_refine, then
+    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via
+    ``func_linesearch_refine`` (serial, tid==0 only) or ``func_linesearch_refine_coop``
+    (cooperative across the 32-lane warp), gated on ``constraint_layout_transposed``. It then
     cooperatively applies the chosen alpha to qacc, Ma, and Jaref.
+
+    The cooperative path is only safe when the Tier-1 constraint-state tensors are stored with
+    ``layout=(1, 0)`` (so per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across
+    constraints for a fixed env). The qd.Tensor layout rewrite makes the canonical indexing
+    identical in both paths; only the access pattern changes.
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
@@ -328,43 +336,86 @@ def _func_parallel_linesearch_eval(
             gtol = constraint_state.ls_gtol[i_b]
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
-            # === Serial linesearch refinement (thread 0) ===
-            # Gated: skip when the Newton step is zero (degenerate hessian)
-            if alpha_newton > 0.0 and tid == 0:
-                constraint_state.ls_alpha[i_b] = 0.0
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b,
-                    alpha_newton,
-                    constraint_state,
-                    rigid_global_info,
-                )
-                if p0_cost < p1_cost:
+            if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+                # === Cooperative linesearch refinement (all 32 lanes) ===
+                # Gated: skip when the Newton step is zero (degenerate hessian).
+                # All lanes follow uniform control flow because the inner reductions
+                # in ``*_coop`` make every reduced scalar identical across the warp.
+                if alpha_newton > 0.0:
+                    if tid == 0:
+                        constraint_state.ls_alpha[i_b] = 0.0
+                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
+                        i_b,
+                        tid,
+                        alpha_newton,
+                        constraint_state,
+                        rigid_global_info,
+                    )
+                    if p0_cost < p1_cost:
+                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
+                            i_b,
+                            tid,
+                            gs.qd_float(0.0),
+                            constraint_state,
+                            rigid_global_info,
+                        )
+
+                    if p1_cost < p0_cost and tid == 0:
+                        constraint_state.ls_alpha[i_b] = p1_alpha
+
+                    if qd.abs(p1_deriv_0) > gtol:
+                        res_alpha, ls_result = solver.func_linesearch_refine_coop(
+                            i_b,
+                            tid,
+                            p1_alpha,
+                            p1_cost,
+                            p1_deriv_0,
+                            p1_deriv_1,
+                            p0_cost,
+                            gtol,
+                            constraint_state,
+                            rigid_global_info,
+                        )
+                        if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
+                            constraint_state.ls_alpha[i_b] = res_alpha
+            else:
+                # === Serial linesearch refinement (thread 0) ===
+                # Gated: skip when the Newton step is zero (degenerate hessian)
+                if alpha_newton > 0.0 and tid == 0:
+                    constraint_state.ls_alpha[i_b] = 0.0
                     p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
                         i_b,
-                        gs.qd_float(0.0),
+                        alpha_newton,
                         constraint_state,
                         rigid_global_info,
                     )
+                    if p0_cost < p1_cost:
+                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                            i_b,
+                            gs.qd_float(0.0),
+                            constraint_state,
+                            rigid_global_info,
+                        )
 
-                if p1_cost < p0_cost:
-                    constraint_state.ls_alpha[i_b] = p1_alpha
+                    if p1_cost < p0_cost:
+                        constraint_state.ls_alpha[i_b] = p1_alpha
 
-                if qd.abs(p1_deriv_0) > gtol:
-                    res_alpha, ls_result = solver.func_linesearch_refine(
-                        i_b,
-                        p1_alpha,
-                        p1_cost,
-                        p1_deriv_0,
-                        p1_deriv_1,
-                        p0_cost,
-                        gtol,
-                        constraint_state,
-                        rigid_global_info,
-                    )
-                    # Skip status 7 (brackets stalled, midpoint non-improving) to preserve
-                    # the validated p1_alpha already written above
-                    if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
-                        constraint_state.ls_alpha[i_b] = res_alpha
+                    if qd.abs(p1_deriv_0) > gtol:
+                        res_alpha, ls_result = solver.func_linesearch_refine(
+                            i_b,
+                            p1_alpha,
+                            p1_cost,
+                            p1_deriv_0,
+                            p1_deriv_1,
+                            p0_cost,
+                            gtol,
+                            constraint_state,
+                            rigid_global_info,
+                        )
+                        # Skip status 7 (brackets stalled, midpoint non-improving) to preserve
+                        # the validated p1_alpha already written above
+                        if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
+                            constraint_state.ls_alpha[i_b] = res_alpha
             qd.simt.block.sync()
         else:
             if tid == 0:
@@ -773,7 +824,7 @@ def _kernel_solve_graph(
             dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
         )
         # Fused: refinement + apply alpha
-        _func_parallel_linesearch_eval(constraint_state, rigid_global_info)
+        _func_parallel_linesearch_eval(constraint_state, rigid_global_info, static_rigid_sim_config)
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
