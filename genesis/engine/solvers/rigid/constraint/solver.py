@@ -2413,89 +2413,45 @@ def _func_ls_quad_reduce_opt(
 
 
 @qd.func
-def func_ls_point_fn_opt(
+def _func_ls_point_fn_opt_post(
     i_b,
+    tid,
     alpha,
+    t0_0,
+    t0_1,
+    t0_2,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    coop: qd.template(),
 ):
-    """Evaluate linesearch cost, gradient, and curvature at a single candidate alpha.
-
-    Thin wrapper around ``_func_ls_quad_reduce_opt`` (n_alphas=1).
-    """
-    t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt(
-        i_b, alpha, alpha, alpha, constraint_state, 1
-    )
-
+    """Shared post-reduction logic for ``func_ls_point_fn_opt``. Computes cost/grad/hess
+    from the reduced quadratic coefficients and increments ``ls_it``."""
     cost = alpha * alpha * t0_2 + alpha * t0_1 + t0_0
     grad = 2 * alpha * t0_2 + t0_1
     hess = 2 * t0_2
     if hess <= 0.0:
         hess = rigid_global_info.EPS[None]
 
-    constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
+    if qd.static(not coop) or tid == 0:
+        constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
 
     return alpha, cost, grad, hess
 
 
 @qd.func
-def func_ls_point_fn_3alphas_opt(
+def func_ls_point_fn_opt(
     i_b,
-    alpha_0,
-    alpha_1,
-    alpha_2,
+    alpha,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single
-    constraint-loop pass. Thin wrapper around ``_func_ls_quad_reduce_opt`` (n_alphas=3).
-
-    Batches three candidate step sizes into one loop, amortizing per-constraint loads
-    (Jaref, jv, efc_D, etc.) across all three evaluations.
-    """
-    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt(
-        i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
+    """Serial single-alpha linesearch evaluator."""
+    t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt(
+        i_b, alpha, alpha, alpha, constraint_state, 1
     )
-
-    EPS = rigid_global_info.EPS[None]
-
-    cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
-    grad_0 = 2 * alpha_0 * t0_2 + t0_1
-    hess_0 = 2 * t0_2
-    if hess_0 <= 0.0:
-        hess_0 = EPS
-
-    cost_1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
-    grad_1 = 2 * alpha_1 * t1_2 + t1_1
-    hess_1 = 2 * t1_2
-    if hess_1 <= 0.0:
-        hess_1 = EPS
-
-    cost_2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
-    grad_2 = 2 * alpha_2 * t2_2 + t2_1
-    hess_2 = 2 * t2_2
-    if hess_2 <= 0.0:
-        hess_2 = EPS
-
-    constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 3
-
-    costs = qd.Vector([cost_0, cost_1, cost_2])
-    grads = qd.Vector([grad_0, grad_1, grad_2])
-    hess = qd.Vector([hess_0, hess_1, hess_2])
-    return costs, grads, hess
-
-
-# ----------------------------------------------------------------------
-# Subgroup-cooperative variants of the linesearch evaluators.
-# ----------------------------------------------------------------------
-# Used by the decomposed-solver linesearch (`_func_parallel_linesearch_eval`),
-# where each block has 32 threads cooperating on a single env.
-# All 32 lanes call these with their own `tid`. The constraint loop is
-# strided by 32, then `quad_total_*` accumulators are summed across the warp
-# via `subgroup.reduce_all_add(_, 5)` so every lane ends up with the same
-# scalar return values. Writes to `constraint_state.ls_it` are gated on
-# `tid == 0` to avoid 32x over-counting.
-# ----------------------------------------------------------------------
+    return _func_ls_point_fn_opt_post(
+        i_b, 0, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False
+    )
 
 
 @qd.func
@@ -2530,8 +2486,6 @@ def _func_ls_quad_reduce_opt_coop(
     t_1 = [base_1, base_1, base_1]
     t_2 = [base_2, base_2, base_2]
 
-    # Quadrants AST `for` only accepts 1- or 2-arg `range()`; use while-loops for the
-    # strided forms here.
     i_c = ne + tid
     while i_c < nef:
         Jaref_c = constraint_state.Jaref[i_c, i_b]
@@ -2591,40 +2545,30 @@ def func_ls_point_fn_opt_coop(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Cooperative (32-lane) version of ``func_ls_point_fn_opt``. Thin wrapper around
-    ``_func_ls_quad_reduce_opt_coop`` (n_alphas=1)."""
+    """Cooperative (32-lane) single-alpha linesearch evaluator."""
     t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_coop(
         i_b, tid, alpha, alpha, alpha, constraint_state, 1
     )
-
-    cost = alpha * alpha * t0_2 + alpha * t0_1 + t0_0
-    grad = 2 * alpha * t0_2 + t0_1
-    hess = 2 * t0_2
-    if hess <= 0.0:
-        hess = rigid_global_info.EPS[None]
-
-    if tid == 0:
-        constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 1
-
-    return alpha, cost, grad, hess
+    return _func_ls_point_fn_opt_post(
+        i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True
+    )
 
 
 @qd.func
-def func_ls_point_fn_3alphas_opt_coop(
+def _func_ls_point_fn_3alphas_post(
     i_b,
     tid,
     alpha_0,
     alpha_1,
     alpha_2,
+    t0_0, t0_1, t0_2,
+    t1_0, t1_1, t1_2,
+    t2_0, t2_1, t2_2,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    coop: qd.template(),
 ):
-    """Cooperative (32-lane) version of ``func_ls_point_fn_3alphas_opt``. Thin wrapper around
-    ``_func_ls_quad_reduce_opt_coop`` (n_alphas=3)."""
-    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_coop(
-        i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
-    )
-
+    """Shared post-reduction logic for ``func_ls_point_fn_3alphas_opt``."""
     EPS = rigid_global_info.EPS[None]
 
     cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
@@ -2645,7 +2589,7 @@ def func_ls_point_fn_3alphas_opt_coop(
     if hess_2 <= 0.0:
         hess_2 = EPS
 
-    if tid == 0:
+    if qd.static(not coop) or tid == 0:
         constraint_state.ls_it[i_b] = constraint_state.ls_it[i_b] + 3
 
     costs = qd.Vector([cost_0, cost_1, cost_2])
@@ -2655,123 +2599,44 @@ def func_ls_point_fn_3alphas_opt_coop(
 
 
 @qd.func
-def func_linesearch_refine_coop(
+def func_ls_point_fn_3alphas_opt(
     i_b,
-    tid,
-    p1_alpha,
-    p1_cost,
-    p1_deriv_0,
-    p1_deriv_1,
-    p0_cost,
-    gtol,
+    alpha_0,
+    alpha_1,
+    alpha_2,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Cooperative (32-lane subgroup) version of ``func_linesearch_refine``.
+    """Serial 3-alpha linesearch evaluator."""
+    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt(
+        i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
+    )
+    return _func_ls_point_fn_3alphas_post(
+        i_b, 0, alpha_0, alpha_1, alpha_2,
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2,
+        constraint_state, rigid_global_info, False
+    )
 
-    All 32 lanes execute the same control flow. Reductions inside
-    ``func_ls_point_fn_*_opt_coop`` ensure ``p1_deriv_0`` etc. are uniform
-    across the warp, so all branches are uniform too.
-    """
-    res_alpha = gs.qd_float(0.0)
-    ls_result = 0
-    done = False
 
-    direction = (p1_deriv_0 < 0) * 2 - 1
-    p2update = 0
-    p2_alpha = p1_alpha
-    p2_cost = p1_cost
-    p2_deriv_0 = p1_deriv_0
-    p2_deriv_1 = p1_deriv_1
-    while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-        p2update = 1
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt_coop(
-            i_b,
-            tid,
-            p1_alpha - p1_deriv_0 / p1_deriv_1,
-            constraint_state,
-            rigid_global_info,
-        )
-        if qd.abs(p1_deriv_0) < gtol:
-            res_alpha = p1_alpha
-            done = True
-            break
-    if not done:
-        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
-            ls_result = 3
-            res_alpha = p1_alpha
-            done = True
-        if not p2update and not done:
-            ls_result = 6
-            res_alpha = p1_alpha
-            done = True
-        if not done:
-            alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
-            alpha_1 = p1_alpha
-            alpha_2 = (p1_alpha + p2_alpha) * 0.5
-            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                costs, grads, hess = func_ls_point_fn_3alphas_opt_coop(
-                    i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
-                )
-                alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
-                p1_next = alpha_0
-                p2_next = alpha_1
-                best_a = gs.qd_float(0.0)
-                best_c = gs.qd_float(0.0)
-                best_found = False
-                for i in qd.static(range(3)):
-                    if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_c):
-                        best_a = alphas[i]
-                        best_c = costs[i]
-                        best_found = True
-                if best_found:
-                    res_alpha = best_a
-                    done = True
-                else:
-                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
-                        p1_alpha,
-                        p1_cost,
-                        p1_deriv_0,
-                        p1_deriv_1,
-                        alphas,
-                        costs,
-                        grads,
-                        hess,
-                    )
-                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
-                        p2_alpha,
-                        p2_cost,
-                        p2_deriv_0,
-                        p2_deriv_1,
-                        alphas,
-                        costs,
-                        grads,
-                        hess,
-                    )
-                    if b1 == 0 and b2 == 0:
-                        if costs[2] < p0_cost:
-                            ls_result = 0
-                        else:
-                            ls_result = 7
-                        res_alpha = alpha_2
-                        done = True
-                if done:
-                    break
-                alpha_0 = p1_next
-                alpha_1 = p2_next
-                alpha_2 = (p1_alpha + p2_alpha) * 0.5
-            if not done:
-                if p1_cost <= p2_cost and p1_cost < p0_cost:
-                    ls_result = 4
-                    res_alpha = p1_alpha
-                elif p2_cost <= p1_cost and p2_cost < p0_cost:
-                    ls_result = 4
-                    res_alpha = p2_alpha
-                else:
-                    ls_result = 5
-                    res_alpha = 0.0
-    return res_alpha, ls_result
+@qd.func
+def func_ls_point_fn_3alphas_opt_coop(
+    i_b,
+    tid,
+    alpha_0,
+    alpha_1,
+    alpha_2,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Cooperative (32-lane) 3-alpha linesearch evaluator."""
+    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_coop(
+        i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
+    )
+    return _func_ls_point_fn_3alphas_post(
+        i_b, tid, alpha_0, alpha_1, alpha_2,
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2,
+        constraint_state, rigid_global_info, True
+    )
 
 
 @qd.func
@@ -2855,14 +2720,7 @@ def func_linesearch_refine(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
-    """Bracketing walk + 3-alpha dual-bracket refinement.
-
-    Shared by the monolith linesearch (func_linesearch_batch) and the decomposed path's Phase 3 (solver_breakdown).
-    Takes an initial point (p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1) and refines it via Newton steps until the
-    gradient sign flips, then polishes with batched 3-alpha evaluation.
-
-    Returns (res_alpha, ls_result) where ls_result is a status code for diagnostics.
-    """
+    """Bracketing walk + 3-alpha dual-bracket refinement (serial, 1-thread-per-env)."""
     res_alpha = gs.qd_float(0.0)
     ls_result = 0
     done = False
@@ -2916,24 +2774,107 @@ def func_linesearch_refine(
                     done = True
                 else:
                     b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
-                        p1_alpha,
-                        p1_cost,
-                        p1_deriv_0,
-                        p1_deriv_1,
-                        alphas,
-                        costs,
-                        grads,
-                        hess,
+                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, alphas, costs, grads, hess,
                     )
                     b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
-                        p2_alpha,
-                        p2_cost,
-                        p2_deriv_0,
-                        p2_deriv_1,
-                        alphas,
-                        costs,
-                        grads,
-                        hess,
+                        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, alphas, costs, grads, hess,
+                    )
+                    if b1 == 0 and b2 == 0:
+                        if costs[2] < p0_cost:
+                            ls_result = 0
+                        else:
+                            ls_result = 7
+                        res_alpha = alpha_2
+                        done = True
+                if done:
+                    break
+                alpha_0 = p1_next
+                alpha_1 = p2_next
+                alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            if not done:
+                if p1_cost <= p2_cost and p1_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p1_alpha
+                elif p2_cost <= p1_cost and p2_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p2_alpha
+                else:
+                    ls_result = 5
+                    res_alpha = 0.0
+    return res_alpha, ls_result
+
+
+@qd.func
+def func_linesearch_refine_coop(
+    i_b,
+    tid,
+    p1_alpha,
+    p1_cost,
+    p1_deriv_0,
+    p1_deriv_1,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Bracketing walk + 3-alpha dual-bracket refinement (cooperative, 32-lane warp-per-env)."""
+    res_alpha = gs.qd_float(0.0)
+    ls_result = 0
+    done = False
+
+    direction = (p1_deriv_0 < 0) * 2 - 1
+    p2update = 0
+    p2_alpha = p1_alpha
+    p2_cost = p1_cost
+    p2_deriv_0 = p1_deriv_0
+    p2_deriv_1 = p1_deriv_1
+    while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
+        p2update = 1
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt_coop(
+            i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info,
+        )
+        if qd.abs(p1_deriv_0) < gtol:
+            res_alpha = p1_alpha
+            done = True
+            break
+    if not done:
+        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+            ls_result = 3
+            res_alpha = p1_alpha
+            done = True
+        if not p2update and not done:
+            ls_result = 6
+            res_alpha = p1_alpha
+            done = True
+        if not done:
+            alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
+            alpha_1 = p1_alpha
+            alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+                costs, grads, hess = func_ls_point_fn_3alphas_opt_coop(
+                    i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                )
+                alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
+                p1_next = alpha_0
+                p2_next = alpha_1
+                best_a = gs.qd_float(0.0)
+                best_c = gs.qd_float(0.0)
+                best_found = False
+                for i in qd.static(range(3)):
+                    if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_c):
+                        best_a = alphas[i]
+                        best_c = costs[i]
+                        best_found = True
+                if best_found:
+                    res_alpha = best_a
+                    done = True
+                else:
+                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
+                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, alphas, costs, grads, hess,
+                    )
+                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
+                        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, alphas, costs, grads, hess,
                     )
                     if b1 == 0 and b2 == 0:
                         if costs[2] < p0_cost:
@@ -3013,7 +2954,8 @@ def func_linesearch_batch(
             res_alpha = p1_alpha
         else:
             res_alpha, ls_result = func_linesearch_refine(
-                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol, constraint_state, rigid_global_info
+                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol,
+                constraint_state, rigid_global_info
             )
             constraint_state.ls_result[i_b] = ls_result
             # Status 7: both brackets stalled and midpoint cost >= p0_cost. Reject the non-improving alpha.

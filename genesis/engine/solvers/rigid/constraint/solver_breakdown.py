@@ -304,6 +304,64 @@ def _func_parallel_linesearch_p0(
 
 
 @qd.func
+def _func_parallel_linesearch_refine(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Linesearch refinement body, called per-env from ``_func_parallel_linesearch_eval``.
+
+    Dispatches to serial (tid==0 only) or cooperative (all 32 lanes) based on
+    ``constraint_layout_transposed``. Extracted so the ``qd.static`` branching
+    on the entry condition doesn't require variable assignment across branches.
+    """
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        if alpha_newton > 0.0:
+            if tid == 0:
+                constraint_state.ls_alpha[i_b] = 0.0
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
+                i_b, tid, alpha_newton, constraint_state, rigid_global_info,
+            )
+            if p0_cost < p1_cost:
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
+                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info,
+                )
+            if p1_cost < p0_cost and tid == 0:
+                constraint_state.ls_alpha[i_b] = p1_alpha
+            if qd.abs(p1_deriv_0) > gtol:
+                res_alpha, ls_result = solver.func_linesearch_refine_coop(
+                    i_b, tid, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1,
+                    p0_cost, gtol, constraint_state, rigid_global_info,
+                )
+                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
+                    constraint_state.ls_alpha[i_b] = res_alpha
+    else:
+        if alpha_newton > 0.0 and tid == 0:
+            constraint_state.ls_alpha[i_b] = 0.0
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                i_b, alpha_newton, constraint_state, rigid_global_info,
+            )
+            if p0_cost < p1_cost:
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                    i_b, gs.qd_float(0.0), constraint_state, rigid_global_info,
+                )
+            if p1_cost < p0_cost:
+                constraint_state.ls_alpha[i_b] = p1_alpha
+            if qd.abs(p1_deriv_0) > gtol:
+                res_alpha, ls_result = solver.func_linesearch_refine(
+                    i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1,
+                    p0_cost, gtol, constraint_state, rigid_global_info,
+                )
+                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
+                    constraint_state.ls_alpha[i_b] = res_alpha
+
+
+@qd.func
 def _func_parallel_linesearch_eval(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -336,86 +394,10 @@ def _func_parallel_linesearch_eval(
             gtol = constraint_state.ls_gtol[i_b]
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
-            if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-                # === Cooperative linesearch refinement (all 32 lanes) ===
-                # Gated: skip when the Newton step is zero (degenerate hessian).
-                # All lanes follow uniform control flow because the inner reductions
-                # in ``*_coop`` make every reduced scalar identical across the warp.
-                if alpha_newton > 0.0:
-                    if tid == 0:
-                        constraint_state.ls_alpha[i_b] = 0.0
-                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
-                        i_b,
-                        tid,
-                        alpha_newton,
-                        constraint_state,
-                        rigid_global_info,
-                    )
-                    if p0_cost < p1_cost:
-                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
-                            i_b,
-                            tid,
-                            gs.qd_float(0.0),
-                            constraint_state,
-                            rigid_global_info,
-                        )
-
-                    if p1_cost < p0_cost and tid == 0:
-                        constraint_state.ls_alpha[i_b] = p1_alpha
-
-                    if qd.abs(p1_deriv_0) > gtol:
-                        res_alpha, ls_result = solver.func_linesearch_refine_coop(
-                            i_b,
-                            tid,
-                            p1_alpha,
-                            p1_cost,
-                            p1_deriv_0,
-                            p1_deriv_1,
-                            p0_cost,
-                            gtol,
-                            constraint_state,
-                            rigid_global_info,
-                        )
-                        if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
-                            constraint_state.ls_alpha[i_b] = res_alpha
-            else:
-                # === Serial linesearch refinement (thread 0) ===
-                # Gated: skip when the Newton step is zero (degenerate hessian)
-                if alpha_newton > 0.0 and tid == 0:
-                    constraint_state.ls_alpha[i_b] = 0.0
-                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                        i_b,
-                        alpha_newton,
-                        constraint_state,
-                        rigid_global_info,
-                    )
-                    if p0_cost < p1_cost:
-                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                            i_b,
-                            gs.qd_float(0.0),
-                            constraint_state,
-                            rigid_global_info,
-                        )
-
-                    if p1_cost < p0_cost:
-                        constraint_state.ls_alpha[i_b] = p1_alpha
-
-                    if qd.abs(p1_deriv_0) > gtol:
-                        res_alpha, ls_result = solver.func_linesearch_refine(
-                            i_b,
-                            p1_alpha,
-                            p1_cost,
-                            p1_deriv_0,
-                            p1_deriv_1,
-                            p0_cost,
-                            gtol,
-                            constraint_state,
-                            rigid_global_info,
-                        )
-                        # Skip status 7 (brackets stalled, midpoint non-improving) to preserve
-                        # the validated p1_alpha already written above
-                        if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
-                            constraint_state.ls_alpha[i_b] = res_alpha
+            _func_parallel_linesearch_refine(
+                i_b, tid, alpha_newton, p0_cost, gtol,
+                constraint_state, rigid_global_info, static_rigid_sim_config,
+            )
             qd.simt.block.sync()
         else:
             if tid == 0:
@@ -464,6 +446,42 @@ def _func_cg_only_save_prev_grad(
 
 
 @qd.func
+def _func_update_constraint_forces_body(
+    i_c,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Per-element body for ``_func_update_constraint_forces``. Factored out so the two
+    ndrange orderings (coalescing-optimal for each layout) share a single implementation."""
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+
+    constraint_state.active[i_c, i_b] = True
+    floss_force = gs.qd_float(0.0)
+
+    if ne <= i_c and i_c < nef:
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+        linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+        constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+        floss_force = linear_neg * f + linear_pos * -f
+    elif nef <= i_c:
+        constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+
+    constraint_state.efc_force[i_c, i_b] = floss_force + (
+        -constraint_state.Jaref[i_c, i_b]
+        * constraint_state.efc_D[i_c, i_b]
+        * constraint_state.active[i_c, i_b]
+    )
+
+
+@qd.func
 def _func_update_constraint_forces(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -474,8 +492,6 @@ def _func_update_constraint_forces(
     *physical* contiguous dimension of the Tier-1 tensors:
       - layout False (canonical [i_c, i_b], physical [i_c, i_b]):  ndrange(len_constraints, _B)
       - layout True  (canonical [i_c, i_b], physical [i_b, i_c]):  ndrange(_B, len_constraints)
-    Both branches are otherwise identical thanks to qd.Tensor's transparent
-    layout rewrite of ``constraint_state.X[i_c, i_b]``.
     """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
@@ -484,59 +500,11 @@ def _func_update_constraint_forces(
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         for i_b, i_c in qd.ndrange(_B, len_constraints):
             if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-                ne = constraint_state.n_constraints_equality[i_b]
-                nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-
-                if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                    constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-
-                constraint_state.active[i_c, i_b] = True
-                floss_force = gs.qd_float(0.0)
-
-                if ne <= i_c and i_c < nef:
-                    f = constraint_state.efc_frictionloss[i_c, i_b]
-                    r = constraint_state.diag[i_c, i_b]
-                    rf = r * f
-                    linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-                    linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-                    constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-                    floss_force = linear_neg * f + linear_pos * -f
-                elif nef <= i_c:
-                    constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-
-                constraint_state.efc_force[i_c, i_b] = floss_force + (
-                    -constraint_state.Jaref[i_c, i_b]
-                    * constraint_state.efc_D[i_c, i_b]
-                    * constraint_state.active[i_c, i_b]
-                )
+                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
     else:
         for i_c, i_b in qd.ndrange(len_constraints, _B):
             if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-                ne = constraint_state.n_constraints_equality[i_b]
-                nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-
-                if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                    constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-
-                constraint_state.active[i_c, i_b] = True
-                floss_force = gs.qd_float(0.0)
-
-                if ne <= i_c and i_c < nef:
-                    f = constraint_state.efc_frictionloss[i_c, i_b]
-                    r = constraint_state.diag[i_c, i_b]
-                    rf = r * f
-                    linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-                    linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-                    constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-                    floss_force = linear_neg * f + linear_pos * -f
-                elif nef <= i_c:
-                    constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-
-                constraint_state.efc_force[i_c, i_b] = floss_force + (
-                    -constraint_state.Jaref[i_c, i_b]
-                    * constraint_state.efc_D[i_c, i_b]
-                    * constraint_state.active[i_c, i_b]
-                )
+                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
