@@ -1,26 +1,16 @@
 import dataclasses
 import math
 from enum import IntEnum
-from functools import partial
-from typing import TYPE_CHECKING
 
 import quadrants as qd
 import numpy as np
 import torch
-from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import genesis as gs
 
 if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
 
-
-if TYPE_CHECKING:
-    _STRUCT_FIELD_ANNOTATION = qd.Tensor | qd.Field | qd.Ndarray
-    DATA_ORIENTED = dataclasses.dataclass
-else:
-    _STRUCT_FIELD_ANNOTATION = qd.types.ndarray() if gs.use_ndarray else qd.template
-    DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
 
 _TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
@@ -30,47 +20,6 @@ PLACEHOLDER = qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND)
 
 def maybe_shape(shape, is_on):
     return shape if is_on else ()
-
-
-@dataclass_transform(eq_default=True, order_default=True, kw_only_default=False, frozen_default=True)
-class AutoInitMeta(type):
-    def __new__(cls, name, bases, namespace):
-        names = tuple(namespace["__annotations__"].keys())
-        defaults = {k: namespace[k] for k in names if k in namespace}
-
-        def __init__(self, *args, **kwargs):
-            # Initialize assigned arguments from defaults
-            assigned = defaults.copy()
-
-            # Assign positional arguments
-            if len(args) > len(names):
-                raise TypeError(f"{name}() takes {len(names)} positional arguments but {len(args)} were given")
-            for key, value in zip(names, args):
-                assigned[key] = value
-
-            # Assign keyword arguments
-            for key, value in kwargs.items():
-                if key not in names:
-                    raise TypeError(f"{name}() got unexpected keyword argument '{key}'")
-                if key in names[: len(args)]:
-                    raise TypeError(f"{name}() got multiple values for argument '{key}'")
-                assigned[key] = value
-
-            # Check for missing arguments
-            for key in names:
-                if key not in assigned:
-                    raise TypeError(f"{name}() missing required argument: '{key}'")
-
-            # Set attributes
-            for key, value in assigned.items():
-                setattr(self, key, value)
-
-        namespace["__init__"] = __init__
-
-        return super().__new__(cls, name, bases, namespace)
-
-
-BASE_METACLASS = type if gs.use_ndarray else AutoInitMeta
 
 
 def V_SCALAR_FROM(dtype, value):
@@ -94,42 +43,42 @@ class ErrorCode(IntEnum):
 # =========================================== RigidGlobalInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructRigidGlobalInfo:
     # *_bw: Cache for backward pass
-    n_awake_dofs: _STRUCT_FIELD_ANNOTATION
-    awake_dofs: _STRUCT_FIELD_ANNOTATION
-    n_awake_entities: _STRUCT_FIELD_ANNOTATION
-    awake_entities: _STRUCT_FIELD_ANNOTATION
-    n_awake_links: _STRUCT_FIELD_ANNOTATION
-    awake_links: _STRUCT_FIELD_ANNOTATION
-    qpos0: _STRUCT_FIELD_ANNOTATION
-    qpos: _STRUCT_FIELD_ANNOTATION
-    qpos_next: _STRUCT_FIELD_ANNOTATION
-    links_T: _STRUCT_FIELD_ANNOTATION
-    envs_offset: _STRUCT_FIELD_ANNOTATION
-    geoms_init_AABB: _STRUCT_FIELD_ANNOTATION
-    mass_mat: _STRUCT_FIELD_ANNOTATION
-    mass_mat_L: _STRUCT_FIELD_ANNOTATION
-    mass_mat_L_bw: _STRUCT_FIELD_ANNOTATION
-    mass_mat_D_inv: _STRUCT_FIELD_ANNOTATION
-    mass_mat_mask: _STRUCT_FIELD_ANNOTATION
-    meaninertia: _STRUCT_FIELD_ANNOTATION
-    mass_parent_mask: _STRUCT_FIELD_ANNOTATION
-    gravity: _STRUCT_FIELD_ANNOTATION
+    n_awake_dofs: qd.Tensor
+    awake_dofs: qd.Tensor
+    n_awake_entities: qd.Tensor
+    awake_entities: qd.Tensor
+    n_awake_links: qd.Tensor
+    awake_links: qd.Tensor
+    qpos0: qd.Tensor
+    qpos: qd.Tensor
+    qpos_next: qd.Tensor
+    links_T: qd.Tensor
+    envs_offset: qd.Tensor
+    geoms_init_AABB: qd.Tensor
+    mass_mat: qd.Tensor
+    mass_mat_L: qd.Tensor
+    mass_mat_L_bw: qd.Tensor
+    mass_mat_D_inv: qd.Tensor
+    mass_mat_mask: qd.Tensor
+    meaninertia: qd.Tensor
+    mass_parent_mask: qd.Tensor
+    gravity: qd.Tensor
     # Runtime constants
-    substep_dt: _STRUCT_FIELD_ANNOTATION
-    iterations: _STRUCT_FIELD_ANNOTATION
-    tolerance: _STRUCT_FIELD_ANNOTATION
-    ls_iterations: _STRUCT_FIELD_ANNOTATION
-    ls_tolerance: _STRUCT_FIELD_ANNOTATION
-    noslip_iterations: _STRUCT_FIELD_ANNOTATION
-    noslip_tolerance: _STRUCT_FIELD_ANNOTATION
-    n_equalities: _STRUCT_FIELD_ANNOTATION
-    n_candidate_equalities: _STRUCT_FIELD_ANNOTATION
-    hibernation_thresh_acc: _STRUCT_FIELD_ANNOTATION
-    hibernation_thresh_vel: _STRUCT_FIELD_ANNOTATION
-    EPS: _STRUCT_FIELD_ANNOTATION
+    substep_dt: qd.Tensor
+    iterations: qd.Tensor
+    tolerance: qd.Tensor
+    ls_iterations: qd.Tensor
+    ls_tolerance: qd.Tensor
+    noslip_iterations: qd.Tensor
+    noslip_tolerance: qd.Tensor
+    n_equalities: qd.Tensor
+    n_candidate_equalities: qd.Tensor
+    hibernation_thresh_acc: qd.Tensor
+    hibernation_thresh_vel: qd.Tensor
+    EPS: qd.Tensor
 
 
 def get_rigid_global_info(solver, kinematic_only):
@@ -223,93 +172,93 @@ def get_rigid_global_info(solver, kinematic_only):
 # =========================================== Constraint ===========================================
 
 
-@DATA_ORIENTED
-class StructConstraintState(metaclass=BASE_METACLASS):
-    is_warmstart: _STRUCT_FIELD_ANNOTATION
-    n_constraints: _STRUCT_FIELD_ANNOTATION
-    qd_n_equalities: _STRUCT_FIELD_ANNOTATION
-    jac: _STRUCT_FIELD_ANNOTATION
-    diag: _STRUCT_FIELD_ANNOTATION
-    aref: _STRUCT_FIELD_ANNOTATION
-    jac_relevant_dofs: _STRUCT_FIELD_ANNOTATION
-    jac_n_relevant_dofs: _STRUCT_FIELD_ANNOTATION
-    n_constraints_equality: _STRUCT_FIELD_ANNOTATION
-    n_constraints_frictionloss: _STRUCT_FIELD_ANNOTATION
-    improved: _STRUCT_FIELD_ANNOTATION
-    Jaref: _STRUCT_FIELD_ANNOTATION
-    Ma: _STRUCT_FIELD_ANNOTATION
-    Ma_ws: _STRUCT_FIELD_ANNOTATION
-    grad: _STRUCT_FIELD_ANNOTATION
-    Mgrad: _STRUCT_FIELD_ANNOTATION
-    MinvJT: _STRUCT_FIELD_ANNOTATION
-    search: _STRUCT_FIELD_ANNOTATION
-    efc_D: _STRUCT_FIELD_ANNOTATION
-    efc_frictionloss: _STRUCT_FIELD_ANNOTATION
-    efc_force: _STRUCT_FIELD_ANNOTATION
-    efc_b: _STRUCT_FIELD_ANNOTATION
-    efc_AR: _STRUCT_FIELD_ANNOTATION
-    active: _STRUCT_FIELD_ANNOTATION
-    prev_active: _STRUCT_FIELD_ANNOTATION
-    qfrc_constraint: _STRUCT_FIELD_ANNOTATION
-    qacc: _STRUCT_FIELD_ANNOTATION
-    qacc_ws: _STRUCT_FIELD_ANNOTATION
-    qacc_prev: _STRUCT_FIELD_ANNOTATION
-    cost_ws: _STRUCT_FIELD_ANNOTATION
-    gauss: _STRUCT_FIELD_ANNOTATION
-    cost: _STRUCT_FIELD_ANNOTATION
-    prev_cost: _STRUCT_FIELD_ANNOTATION
-    gtol: _STRUCT_FIELD_ANNOTATION
-    mv: _STRUCT_FIELD_ANNOTATION
-    jv: _STRUCT_FIELD_ANNOTATION
-    quad_gauss: _STRUCT_FIELD_ANNOTATION
-    ls_alpha: _STRUCT_FIELD_ANNOTATION
-    ls_p0_cost: _STRUCT_FIELD_ANNOTATION
-    ls_alpha_newton: _STRUCT_FIELD_ANNOTATION
-    ls_gtol: _STRUCT_FIELD_ANNOTATION
-    eq_sum: _STRUCT_FIELD_ANNOTATION
-    ls_it: _STRUCT_FIELD_ANNOTATION
-    ls_result: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructConstraintState:
+    is_warmstart: qd.Tensor
+    n_constraints: qd.Tensor
+    qd_n_equalities: qd.Tensor
+    jac: qd.Tensor
+    diag: qd.Tensor
+    aref: qd.Tensor
+    jac_relevant_dofs: qd.Tensor
+    jac_n_relevant_dofs: qd.Tensor
+    n_constraints_equality: qd.Tensor
+    n_constraints_frictionloss: qd.Tensor
+    improved: qd.Tensor
+    Jaref: qd.Tensor
+    Ma: qd.Tensor
+    Ma_ws: qd.Tensor
+    grad: qd.Tensor
+    Mgrad: qd.Tensor
+    MinvJT: qd.Tensor
+    search: qd.Tensor
+    efc_D: qd.Tensor
+    efc_frictionloss: qd.Tensor
+    efc_force: qd.Tensor
+    efc_b: qd.Tensor
+    efc_AR: qd.Tensor
+    active: qd.Tensor
+    prev_active: qd.Tensor
+    qfrc_constraint: qd.Tensor
+    qacc: qd.Tensor
+    qacc_ws: qd.Tensor
+    qacc_prev: qd.Tensor
+    cost_ws: qd.Tensor
+    gauss: qd.Tensor
+    cost: qd.Tensor
+    prev_cost: qd.Tensor
+    gtol: qd.Tensor
+    mv: qd.Tensor
+    jv: qd.Tensor
+    quad_gauss: qd.Tensor
+    ls_alpha: qd.Tensor
+    ls_p0_cost: qd.Tensor
+    ls_alpha_newton: qd.Tensor
+    ls_gtol: qd.Tensor
+    eq_sum: qd.Tensor
+    ls_it: qd.Tensor
+    ls_result: qd.Tensor
     # Optional CG fields
-    cg_prev_grad: _STRUCT_FIELD_ANNOTATION
-    cg_prev_Mgrad: _STRUCT_FIELD_ANNOTATION
-    cg_beta: _STRUCT_FIELD_ANNOTATION
-    cg_pg_dot_pMg: _STRUCT_FIELD_ANNOTATION
+    cg_prev_grad: qd.Tensor
+    cg_prev_Mgrad: qd.Tensor
+    cg_beta: qd.Tensor
+    cg_pg_dot_pMg: qd.Tensor
     # Optional Newton fields
     # Hessian matrix of the optimization problem as a dense 2D tensor.
     # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
     # As a result, the values of the strictly upper triangular part is undefined.
     # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
-    nt_H: _STRUCT_FIELD_ANNOTATION
-    nt_vec: _STRUCT_FIELD_ANNOTATION
+    nt_H: qd.Tensor
+    nt_vec: qd.Tensor
     # Compacted list of constraints whose active state changed, used by incremental Cholesky update
     # to reduce GPU thread divergence by iterating only over constraints that need processing.
-    incr_changed_idx: _STRUCT_FIELD_ANNOTATION
-    incr_n_changed: _STRUCT_FIELD_ANNOTATION
+    incr_changed_idx: qd.Tensor
+    incr_n_changed: qd.Tensor
     # Backward gradients
-    dL_dqacc: _STRUCT_FIELD_ANNOTATION
-    dL_dM: _STRUCT_FIELD_ANNOTATION
-    dL_djac: _STRUCT_FIELD_ANNOTATION
-    dL_daref: _STRUCT_FIELD_ANNOTATION
-    dL_defc_D: _STRUCT_FIELD_ANNOTATION
-    dL_dforce: _STRUCT_FIELD_ANNOTATION
+    dL_dqacc: qd.Tensor
+    dL_dM: qd.Tensor
+    dL_djac: qd.Tensor
+    dL_daref: qd.Tensor
+    dL_defc_D: qd.Tensor
+    dL_dforce: qd.Tensor
     # Backward buffers for linear system solver
-    bw_u: _STRUCT_FIELD_ANNOTATION
-    bw_r: _STRUCT_FIELD_ANNOTATION
-    bw_p: _STRUCT_FIELD_ANNOTATION
-    bw_Ap: _STRUCT_FIELD_ANNOTATION
-    bw_Ju: _STRUCT_FIELD_ANNOTATION
-    bw_y: _STRUCT_FIELD_ANNOTATION
-    bw_w: _STRUCT_FIELD_ANNOTATION
+    bw_u: qd.Tensor
+    bw_r: qd.Tensor
+    bw_p: qd.Tensor
+    bw_Ap: qd.Tensor
+    bw_Ju: qd.Tensor
+    bw_y: qd.Tensor
+    bw_w: qd.Tensor
     # Timers for profiling
-    timers: _STRUCT_FIELD_ANNOTATION
+    timers: qd.Tensor
     # Per-env flag: 0 = use incremental Hessian+Cholesky, 1 = use full tiled rebuild
-    use_full_hessian: _STRUCT_FIELD_ANNOTATION
+    use_full_hessian: qd.Tensor
     # Solver loop iteration counter (0-indexed, increments each iteration in the graph loop)
-    solver_iter_counter: _STRUCT_FIELD_ANNOTATION
+    solver_iter_counter: qd.Tensor
     # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
     graph_counter: qd.types.ndarray()
-    early_exit_flag: _STRUCT_FIELD_ANNOTATION
+    early_exit_flag: qd.Tensor
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -415,19 +364,19 @@ def get_constraint_state(constraint_solver, solver):
 # =========================================== Collider ===========================================
 
 
-@DATA_ORIENTED
-class StructContactData(metaclass=BASE_METACLASS):
-    geom_a: _STRUCT_FIELD_ANNOTATION
-    geom_b: _STRUCT_FIELD_ANNOTATION
-    penetration: _STRUCT_FIELD_ANNOTATION
-    normal: _STRUCT_FIELD_ANNOTATION
-    pos: _STRUCT_FIELD_ANNOTATION
-    friction: _STRUCT_FIELD_ANNOTATION
-    sol_params: _STRUCT_FIELD_ANNOTATION
-    force: _STRUCT_FIELD_ANNOTATION
-    link_a: _STRUCT_FIELD_ANNOTATION
-    link_b: _STRUCT_FIELD_ANNOTATION
-    pair_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactData:
+    geom_a: qd.Tensor
+    geom_b: qd.Tensor
+    penetration: qd.Tensor
+    normal: qd.Tensor
+    pos: qd.Tensor
+    friction: qd.Tensor
+    sol_params: qd.Tensor
+    force: qd.Tensor
+    link_a: qd.Tensor
+    link_b: qd.Tensor
+    pair_idx: qd.Tensor
 
 
 def get_contact_data(solver, max_contact_pairs, requires_grad):
@@ -449,29 +398,29 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
     )
 
 
-@DATA_ORIENTED
-class StructDiffContactInput(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructDiffContactInput:
     ### Non-differentiable input data
     # Geom id of the two geometries
-    geom_a: _STRUCT_FIELD_ANNOTATION
-    geom_b: _STRUCT_FIELD_ANNOTATION
+    geom_a: qd.Tensor
+    geom_b: qd.Tensor
     # Local positions of the 3 vertices from the two geometries that define the face on the Minkowski difference
-    local_pos1_a: _STRUCT_FIELD_ANNOTATION
-    local_pos1_b: _STRUCT_FIELD_ANNOTATION
-    local_pos1_c: _STRUCT_FIELD_ANNOTATION
-    local_pos2_a: _STRUCT_FIELD_ANNOTATION
-    local_pos2_b: _STRUCT_FIELD_ANNOTATION
-    local_pos2_c: _STRUCT_FIELD_ANNOTATION
+    local_pos1_a: qd.Tensor
+    local_pos1_b: qd.Tensor
+    local_pos1_c: qd.Tensor
+    local_pos2_a: qd.Tensor
+    local_pos2_b: qd.Tensor
+    local_pos2_c: qd.Tensor
     # Local positions of the 1 vertex from the two geometries that define the support point for the face above
-    w_local_pos1: _STRUCT_FIELD_ANNOTATION
-    w_local_pos2: _STRUCT_FIELD_ANNOTATION
+    w_local_pos1: qd.Tensor
+    w_local_pos2: qd.Tensor
     # Reference id of the contact point, which is needed for the backward pass
-    ref_id: _STRUCT_FIELD_ANNOTATION
+    ref_id: qd.Tensor
     # Flag whether the contact data can be computed in numerically stable way in both the forward and backward passes
-    valid: _STRUCT_FIELD_ANNOTATION
+    valid: qd.Tensor
     ### Differentiable input data
     # Reference penetration depth, which is needed for computing the weight of the contact point
-    ref_penetration: _STRUCT_FIELD_ANNOTATION
+    ref_penetration: qd.Tensor
 
 
 def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
@@ -493,11 +442,11 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
     )
 
 
-@DATA_ORIENTED
-class StructSortBuffer(metaclass=BASE_METACLASS):
-    value: _STRUCT_FIELD_ANNOTATION
-    i_g: _STRUCT_FIELD_ANNOTATION
-    is_max: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructSortBuffer:
+    value: qd.Tensor
+    i_g: qd.Tensor
+    is_max: qd.Tensor
 
 
 def get_sort_buffer(solver):
@@ -510,9 +459,9 @@ def get_sort_buffer(solver):
     )
 
 
-@DATA_ORIENTED
-class StructContactCache(metaclass=BASE_METACLASS):
-    normal: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactCache:
+    normal: qd.Tensor
 
 
 def get_contact_cache(solver, n_possible_pairs):
@@ -522,11 +471,11 @@ def get_contact_cache(solver, n_possible_pairs):
     )
 
 
-@DATA_ORIENTED
-class StructAggList(metaclass=BASE_METACLASS):
-    curr: _STRUCT_FIELD_ANNOTATION
-    n: _STRUCT_FIELD_ANNOTATION
-    start: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructAggList:
+    curr: qd.Tensor
+    n: qd.Tensor
+    start: qd.Tensor
 
 
 def get_agg_list(solver):
@@ -540,23 +489,23 @@ def get_agg_list(solver):
     )
 
 
-@DATA_ORIENTED
-class StructContactIslandState(metaclass=BASE_METACLASS):
-    ci_edges: _STRUCT_FIELD_ANNOTATION
-    edge_id: _STRUCT_FIELD_ANNOTATION
-    constraint_list: _STRUCT_FIELD_ANNOTATION
-    constraint_id: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactIslandState:
+    ci_edges: qd.Tensor
+    edge_id: qd.Tensor
+    constraint_list: qd.Tensor
+    constraint_id: qd.Tensor
     entity_edge: StructAggList
     island_col: StructAggList
-    island_hibernated: _STRUCT_FIELD_ANNOTATION
+    island_hibernated: qd.Tensor
     island_entity: StructAggList
-    entity_id: _STRUCT_FIELD_ANNOTATION
-    n_edges: _STRUCT_FIELD_ANNOTATION
-    n_islands: _STRUCT_FIELD_ANNOTATION
-    n_stack: _STRUCT_FIELD_ANNOTATION
-    entity_island: _STRUCT_FIELD_ANNOTATION
-    stack: _STRUCT_FIELD_ANNOTATION
-    entity_idx_to_next_entity_idx_in_hibernated_island: _STRUCT_FIELD_ANNOTATION
+    entity_id: qd.Tensor
+    n_edges: qd.Tensor
+    n_islands: qd.Tensor
+    n_stack: qd.Tensor
+    entity_island: qd.Tensor
+    stack: qd.Tensor
+    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
 
 
 def get_contact_island_state(solver, collider):
@@ -589,27 +538,27 @@ def get_contact_island_state(solver, collider):
     )
 
 
-@DATA_ORIENTED
-class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
-    mpr_i_b: _STRUCT_FIELD_ANNOTATION
-    mpr_i_ga: _STRUCT_FIELD_ANNOTATION
-    mpr_i_gb: _STRUCT_FIELD_ANNOTATION
-    mpr_i_pair: _STRUCT_FIELD_ANNOTATION
-    mpr_contact_pos_0: _STRUCT_FIELD_ANNOTATION
-    mpr_normal_0: _STRUCT_FIELD_ANNOTATION
-    mpr_penetration_0: _STRUCT_FIELD_ANNOTATION
-    gjk_i_b: _STRUCT_FIELD_ANNOTATION
-    gjk_i_ga: _STRUCT_FIELD_ANNOTATION
-    gjk_i_gb: _STRUCT_FIELD_ANNOTATION
-    gjk_i_pair: _STRUCT_FIELD_ANNOTATION
-    gjk_contact_pos_0: _STRUCT_FIELD_ANNOTATION
-    gjk_normal_0: _STRUCT_FIELD_ANNOTATION
-    gjk_penetration_0: _STRUCT_FIELD_ANNOTATION
-    mpr_queue_size: _STRUCT_FIELD_ANNOTATION
-    gjk_queue_size: _STRUCT_FIELD_ANNOTATION
-    gjk_queue_size_k2: _STRUCT_FIELD_ANNOTATION
-    mpr_work_counter: _STRUCT_FIELD_ANNOTATION
-    gjk_work_counter: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructNarrowphaseWorkQueues:
+    mpr_i_b: qd.Tensor
+    mpr_i_ga: qd.Tensor
+    mpr_i_gb: qd.Tensor
+    mpr_i_pair: qd.Tensor
+    mpr_contact_pos_0: qd.Tensor
+    mpr_normal_0: qd.Tensor
+    mpr_penetration_0: qd.Tensor
+    gjk_i_b: qd.Tensor
+    gjk_i_ga: qd.Tensor
+    gjk_i_gb: qd.Tensor
+    gjk_i_pair: qd.Tensor
+    gjk_contact_pos_0: qd.Tensor
+    gjk_normal_0: qd.Tensor
+    gjk_penetration_0: qd.Tensor
+    mpr_queue_size: qd.Tensor
+    gjk_queue_size: qd.Tensor
+    gjk_queue_size_k2: qd.Tensor
+    mpr_work_counter: qd.Tensor
+    gjk_work_counter: qd.Tensor
 
 
 def get_narrowphase_work_queues(max_entries):
@@ -636,34 +585,34 @@ def get_narrowphase_work_queues(max_entries):
     )
 
 
-@DATA_ORIENTED
-class StructColliderState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructColliderState:
     sort_buffer: StructSortBuffer
     contact_data: StructContactData
-    active_buffer: _STRUCT_FIELD_ANNOTATION
-    n_broad_pairs: _STRUCT_FIELD_ANNOTATION
-    broad_collision_pairs: _STRUCT_FIELD_ANNOTATION
-    active_buffer_awake: _STRUCT_FIELD_ANNOTATION
-    active_buffer_hib: _STRUCT_FIELD_ANNOTATION
-    box_depth: _STRUCT_FIELD_ANNOTATION
-    box_points: _STRUCT_FIELD_ANNOTATION
-    box_pts: _STRUCT_FIELD_ANNOTATION
-    box_lines: _STRUCT_FIELD_ANNOTATION
-    box_linesu: _STRUCT_FIELD_ANNOTATION
-    box_axi: _STRUCT_FIELD_ANNOTATION
-    box_ppts2: _STRUCT_FIELD_ANNOTATION
-    box_pu: _STRUCT_FIELD_ANNOTATION
-    xyz_max_min: _STRUCT_FIELD_ANNOTATION
-    prism: _STRUCT_FIELD_ANNOTATION
-    n_contacts: _STRUCT_FIELD_ANNOTATION
-    n_contacts_hibernated: _STRUCT_FIELD_ANNOTATION
-    first_time: _STRUCT_FIELD_ANNOTATION
+    active_buffer: qd.Tensor
+    n_broad_pairs: qd.Tensor
+    broad_collision_pairs: qd.Tensor
+    active_buffer_awake: qd.Tensor
+    active_buffer_hib: qd.Tensor
+    box_depth: qd.Tensor
+    box_points: qd.Tensor
+    box_pts: qd.Tensor
+    box_lines: qd.Tensor
+    box_linesu: qd.Tensor
+    box_axi: qd.Tensor
+    box_ppts2: qd.Tensor
+    box_pu: qd.Tensor
+    xyz_max_min: qd.Tensor
+    prism: qd.Tensor
+    n_contacts: qd.Tensor
+    n_contacts_hibernated: qd.Tensor
+    first_time: qd.Tensor
     contact_cache: StructContactCache
     # Input data for differentiable contact detection used in the backward pass
     diff_contact_input: StructDiffContactInput
     narrowphase_work_queues: StructNarrowphaseWorkQueues
-    contact_sort_key: _STRUCT_FIELD_ANNOTATION
-    contact_sort_idx: _STRUCT_FIELD_ANNOTATION
+    contact_sort_key: qd.Tensor
+    contact_sort_idx: qd.Tensor
 
 
 def get_collider_state(
@@ -725,32 +674,32 @@ def get_collider_state(
     )
 
 
-@DATA_ORIENTED
-class StructColliderInfo(metaclass=BASE_METACLASS):
-    vert_neighbors: _STRUCT_FIELD_ANNOTATION
-    vert_neighbor_start: _STRUCT_FIELD_ANNOTATION
-    vert_n_neighbors: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructColliderInfo:
+    vert_neighbors: qd.Tensor
+    vert_neighbor_start: qd.Tensor
+    vert_n_neighbors: qd.Tensor
     # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by SAP broadphase, narrowphase, and contact cache.
-    collision_pair_idx: _STRUCT_FIELD_ANNOTATION
-    max_possible_pairs: _STRUCT_FIELD_ANNOTATION
-    max_collision_pairs: _STRUCT_FIELD_ANNOTATION
-    max_contact_pairs: _STRUCT_FIELD_ANNOTATION
-    max_collision_pairs_broad: _STRUCT_FIELD_ANNOTATION
+    collision_pair_idx: qd.Tensor
+    max_possible_pairs: qd.Tensor
+    max_collision_pairs: qd.Tensor
+    max_contact_pairs: qd.Tensor
+    max_collision_pairs_broad: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
-    n_valid_pairs: _STRUCT_FIELD_ANNOTATION
-    valid_collision_pairs: _STRUCT_FIELD_ANNOTATION
+    n_valid_pairs: qd.Tensor
+    valid_collision_pairs: qd.Tensor
     # Terrain fields
-    terrain_hf: _STRUCT_FIELD_ANNOTATION
-    terrain_rc: _STRUCT_FIELD_ANNOTATION
-    terrain_scale: _STRUCT_FIELD_ANNOTATION
-    terrain_xyz_maxmin: _STRUCT_FIELD_ANNOTATION
+    terrain_hf: qd.Tensor
+    terrain_rc: qd.Tensor
+    terrain_scale: qd.Tensor
+    terrain_xyz_maxmin: qd.Tensor
     # multi contact perturbation and tolerance
-    mc_perturbation: _STRUCT_FIELD_ANNOTATION
-    mc_tolerance: _STRUCT_FIELD_ANNOTATION
-    mpr_to_gjk_overlap_ratio: _STRUCT_FIELD_ANNOTATION
+    mc_perturbation: qd.Tensor
+    mc_tolerance: qd.Tensor
+    mpr_to_gjk_overlap_ratio: qd.Tensor
     # differentiable contact tolerance
-    diff_pos_tolerance: _STRUCT_FIELD_ANNOTATION
-    diff_normal_tolerance: _STRUCT_FIELD_ANNOTATION
+    diff_pos_tolerance: qd.Tensor
+    diff_normal_tolerance: qd.Tensor
 
 
 def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_config, **kwargs):
@@ -784,8 +733,8 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
     )
 
 
-@qd.data_oriented
-class StructColliderStaticConfig(metaclass=AutoInitMeta):
+@dataclasses.dataclass(frozen=True)
+class StructColliderStaticConfig:
     has_terrain: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
@@ -804,11 +753,11 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
 # =========================================== MPR ===========================================
 
 
-@DATA_ORIENTED
-class StructMPRSimplexSupport(metaclass=BASE_METACLASS):
-    v1: _STRUCT_FIELD_ANNOTATION
-    v2: _STRUCT_FIELD_ANNOTATION
-    v: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructMPRSimplexSupport:
+    v1: qd.Tensor
+    v2: qd.Tensor
+    v: qd.Tensor
 
 
 def get_mpr_simplex_support(B_):
@@ -819,10 +768,10 @@ def get_mpr_simplex_support(B_):
     )
 
 
-@DATA_ORIENTED
-class StructMPRState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructMPRState:
     simplex_support: StructMPRSimplexSupport
-    simplex_size: _STRUCT_FIELD_ANNOTATION
+    simplex_size: qd.Tensor
 
 
 def get_mpr_state(B_):
@@ -832,11 +781,11 @@ def get_mpr_state(B_):
     )
 
 
-@DATA_ORIENTED
-class StructMPRInfo(metaclass=BASE_METACLASS):
-    CCD_EPS: _STRUCT_FIELD_ANNOTATION
-    CCD_TOLERANCE: _STRUCT_FIELD_ANNOTATION
-    CCD_ITERATIONS: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructMPRInfo:
+    CCD_EPS: qd.Tensor
+    CCD_TOLERANCE: qd.Tensor
+    CCD_ITERATIONS: qd.Tensor
 
 
 def get_mpr_info(**kwargs):
@@ -850,16 +799,16 @@ def get_mpr_info(**kwargs):
 # =========================================== GJK ===========================================
 
 
-@DATA_ORIENTED
-class StructMDVertex(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructMDVertex:
     # Vertex of the Minkowski difference
-    obj1: _STRUCT_FIELD_ANNOTATION
-    obj2: _STRUCT_FIELD_ANNOTATION
-    local_obj1: _STRUCT_FIELD_ANNOTATION
-    local_obj2: _STRUCT_FIELD_ANNOTATION
-    id1: _STRUCT_FIELD_ANNOTATION
-    id2: _STRUCT_FIELD_ANNOTATION
-    mink: _STRUCT_FIELD_ANNOTATION
+    obj1: qd.Tensor
+    obj2: qd.Tensor
+    local_obj1: qd.Tensor
+    local_obj2: qd.Tensor
+    id1: qd.Tensor
+    id2: qd.Tensor
+    mink: qd.Tensor
 
 
 def get_gjk_simplex_vertex(_B, is_active):
@@ -889,10 +838,10 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructGJKSimplex(metaclass=BASE_METACLASS):
-    nverts: _STRUCT_FIELD_ANNOTATION
-    dist: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGJKSimplex:
+    nverts: qd.Tensor
+    dist: qd.Tensor
 
 
 def get_gjk_simplex(_B, is_active):
@@ -903,10 +852,10 @@ def get_gjk_simplex(_B, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructGJKSimplexBuffer(metaclass=BASE_METACLASS):
-    normal: _STRUCT_FIELD_ANNOTATION
-    sdist: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGJKSimplexBuffer:
+    normal: qd.Tensor
+    sdist: qd.Tensor
 
 
 def get_gjk_simplex_buffer(_B, is_active):
@@ -917,13 +866,13 @@ def get_gjk_simplex_buffer(_B, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytope(metaclass=BASE_METACLASS):
-    nverts: _STRUCT_FIELD_ANNOTATION
-    nfaces: _STRUCT_FIELD_ANNOTATION
-    nfaces_map: _STRUCT_FIELD_ANNOTATION
-    horizon_nedges: _STRUCT_FIELD_ANNOTATION
-    horizon_w: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEPAPolytope:
+    nverts: qd.Tensor
+    nfaces: qd.Tensor
+    nfaces_map: qd.Tensor
+    horizon_nedges: qd.Tensor
+    horizon_w: qd.Tensor
 
 
 def get_epa_polytope(_B, is_active):
@@ -937,14 +886,14 @@ def get_epa_polytope(_B, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytopeFace(metaclass=BASE_METACLASS):
-    verts_idx: _STRUCT_FIELD_ANNOTATION
-    adj_idx: _STRUCT_FIELD_ANNOTATION
-    normal: _STRUCT_FIELD_ANNOTATION
-    dist2: _STRUCT_FIELD_ANNOTATION
-    map_idx: _STRUCT_FIELD_ANNOTATION
-    visited: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEPAPolytopeFace:
+    verts_idx: qd.Tensor
+    adj_idx: qd.Tensor
+    normal: qd.Tensor
+    dist2: qd.Tensor
+    map_idx: qd.Tensor
+    visited: qd.Tensor
 
 
 def get_epa_polytope_face(_B, polytope_max_faces, is_active):
@@ -959,10 +908,10 @@ def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytopeHorizonData(metaclass=BASE_METACLASS):
-    face_idx: _STRUCT_FIELD_ANNOTATION
-    edge_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEPAPolytopeHorizonData:
+    face_idx: qd.Tensor
+    edge_idx: qd.Tensor
 
 
 def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
@@ -973,15 +922,15 @@ def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructContactFace(metaclass=BASE_METACLASS):
-    vert1: _STRUCT_FIELD_ANNOTATION
-    vert2: _STRUCT_FIELD_ANNOTATION
-    endverts: _STRUCT_FIELD_ANNOTATION
-    normal1: _STRUCT_FIELD_ANNOTATION
-    normal2: _STRUCT_FIELD_ANNOTATION
-    id1: _STRUCT_FIELD_ANNOTATION
-    id2: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactFace:
+    vert1: qd.Tensor
+    vert2: qd.Tensor
+    endverts: qd.Tensor
+    normal1: qd.Tensor
+    normal2: qd.Tensor
+    id1: qd.Tensor
+    id2: qd.Tensor
 
 
 def get_contact_face(_B, max_contact_polygon_verts, is_active):
@@ -997,11 +946,11 @@ def get_contact_face(_B, max_contact_polygon_verts, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructContactNormal(metaclass=BASE_METACLASS):
-    endverts: _STRUCT_FIELD_ANNOTATION
-    normal: _STRUCT_FIELD_ANNOTATION
-    id: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactNormal:
+    endverts: qd.Tensor
+    normal: qd.Tensor
+    id: qd.Tensor
 
 
 def get_contact_normal(_B, max_contact_polygon_verts, is_active):
@@ -1013,10 +962,10 @@ def get_contact_normal(_B, max_contact_polygon_verts, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructContactHalfspace(metaclass=BASE_METACLASS):
-    normal: _STRUCT_FIELD_ANNOTATION
-    dist: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructContactHalfspace:
+    normal: qd.Tensor
+    dist: qd.Tensor
 
 
 def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
@@ -1027,10 +976,10 @@ def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructWitness(metaclass=BASE_METACLASS):
-    point_obj1: _STRUCT_FIELD_ANNOTATION
-    point_obj2: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructWitness:
+    point_obj1: qd.Tensor
+    point_obj2: qd.Tensor
 
 
 def get_witness(_B, max_contacts_per_pair, is_active):
@@ -1041,39 +990,39 @@ def get_witness(_B, max_contacts_per_pair, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructGJKState(metaclass=BASE_METACLASS):
-    support_mesh_prev_vertex_id: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGJKState:
+    support_mesh_prev_vertex_id: qd.Tensor
     simplex_vertex: StructMDVertex
     simplex_buffer: StructGJKSimplexBuffer
     simplex: StructGJKSimplex
     simplex_vertex_intersect: StructMDVertex
     simplex_buffer_intersect: StructGJKSimplexBuffer
-    nsimplex: _STRUCT_FIELD_ANNOTATION
-    last_searched_simplex_vertex_id: _STRUCT_FIELD_ANNOTATION
+    nsimplex: qd.Tensor
+    last_searched_simplex_vertex_id: qd.Tensor
     polytope: StructEPAPolytope
     polytope_verts: StructMDVertex
     polytope_faces: StructEPAPolytopeFace
-    polytope_faces_map: _STRUCT_FIELD_ANNOTATION
+    polytope_faces_map: qd.Tensor
     polytope_horizon_data: StructEPAPolytopeHorizonData
     polytope_horizon_stack: StructEPAPolytopeHorizonData
     contact_faces: StructContactFace
     contact_normals: StructContactNormal
     contact_halfspaces: StructContactHalfspace
-    contact_clipped_polygons: _STRUCT_FIELD_ANNOTATION
-    multi_contact_flag: _STRUCT_FIELD_ANNOTATION
+    contact_clipped_polygons: qd.Tensor
+    multi_contact_flag: qd.Tensor
     witness: StructWitness
-    n_witness: _STRUCT_FIELD_ANNOTATION
-    n_contacts: _STRUCT_FIELD_ANNOTATION
-    contact_pos: _STRUCT_FIELD_ANNOTATION
-    normal: _STRUCT_FIELD_ANNOTATION
-    is_col: _STRUCT_FIELD_ANNOTATION
-    penetration: _STRUCT_FIELD_ANNOTATION
-    distance: _STRUCT_FIELD_ANNOTATION
+    n_witness: qd.Tensor
+    n_contacts: qd.Tensor
+    contact_pos: qd.Tensor
+    normal: qd.Tensor
+    is_col: qd.Tensor
+    penetration: qd.Tensor
+    distance: qd.Tensor
     # Differentiable contact detection
     diff_contact_input: StructDiffContactInput
-    n_diff_contact_input: _STRUCT_FIELD_ANNOTATION
-    diff_penetration: _STRUCT_FIELD_ANNOTATION
+    n_diff_contact_input: qd.Tensor
+    diff_penetration: qd.Tensor
 
 
 def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_grad=False):
@@ -1175,26 +1124,26 @@ def get_gjk_state_contact_only(_B):
     )
 
 
-@DATA_ORIENTED
-class StructGJKInfo(metaclass=BASE_METACLASS):
-    max_contacts_per_pair: _STRUCT_FIELD_ANNOTATION
-    max_contact_polygon_verts: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGJKInfo:
+    max_contacts_per_pair: qd.Tensor
+    max_contact_polygon_verts: qd.Tensor
     # Maximum number of iterations for GJK and EPA algorithms
-    gjk_max_iterations: _STRUCT_FIELD_ANNOTATION
-    epa_max_iterations: _STRUCT_FIELD_ANNOTATION
-    FLOAT_MIN: _STRUCT_FIELD_ANNOTATION
-    FLOAT_MIN_SQ: _STRUCT_FIELD_ANNOTATION
-    FLOAT_MAX: _STRUCT_FIELD_ANNOTATION
-    FLOAT_MAX_SQ: _STRUCT_FIELD_ANNOTATION
+    gjk_max_iterations: qd.Tensor
+    epa_max_iterations: qd.Tensor
+    FLOAT_MIN: qd.Tensor
+    FLOAT_MIN_SQ: qd.Tensor
+    FLOAT_MAX: qd.Tensor
+    FLOAT_MAX_SQ: qd.Tensor
     # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
-    tolerance: _STRUCT_FIELD_ANNOTATION
+    tolerance: qd.Tensor
     # If the distance between two objects is smaller than this value, we consider them colliding.
-    collision_eps: _STRUCT_FIELD_ANNOTATION
+    collision_eps: qd.Tensor
     # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
     # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
     # coplanarity) than this threshold.
-    simplex_max_degeneracy_sq: _STRUCT_FIELD_ANNOTATION
-    polytope_max_faces: _STRUCT_FIELD_ANNOTATION
+    simplex_max_degeneracy_sq: qd.Tensor
+    polytope_max_faces: qd.Tensor
     # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
     # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
     # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
@@ -1203,30 +1152,30 @@ class StructGJKInfo(metaclass=BASE_METACLASS):
     # We check both relative and absolute errors: the relative error catches numerically degenerate faces,
     # while the absolute error prevents false rejections on smooth geometries (e.g. spheres) where
     # polytope faces become extremely small near convergence, amplifying the relative error.
-    polytope_max_rel_reprojection_error: _STRUCT_FIELD_ANNOTATION
-    polytope_max_abs_reprojection_error: _STRUCT_FIELD_ANNOTATION
+    polytope_max_rel_reprojection_error: qd.Tensor
+    polytope_max_abs_reprojection_error: qd.Tensor
     # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
     # tolerance to be considered as a valid parallel contact.
-    contact_face_tol: _STRUCT_FIELD_ANNOTATION
-    contact_edge_tol: _STRUCT_FIELD_ANNOTATION
+    contact_face_tol: qd.Tensor
+    contact_edge_tol: qd.Tensor
     # Epsilon values for differentiable contact. [eps_boundary] denotes the maximum distance between the face
     # and the support point in the direction of the face normal. If this distance is 0, the face is on the
     # boundary of the Minkowski difference. For [eps_distance], the distance between the origin and the face
     # should not exceed this eps value plus the default EPA depth. For [eps_affine], the affine coordinates
     # of the origin's projection onto the face should not violate [0, 1] range by this eps value.
     # FIXME: Adjust these values based on the case study.
-    diff_contact_eps_boundary: _STRUCT_FIELD_ANNOTATION
-    diff_contact_eps_distance: _STRUCT_FIELD_ANNOTATION
-    diff_contact_eps_affine: _STRUCT_FIELD_ANNOTATION
+    diff_contact_eps_boundary: qd.Tensor
+    diff_contact_eps_distance: qd.Tensor
+    diff_contact_eps_affine: qd.Tensor
     # The minimum norm of the normal to be considered as a valid normal in the differentiable formulation.
-    diff_contact_min_normal_norm: _STRUCT_FIELD_ANNOTATION
+    diff_contact_min_normal_norm: qd.Tensor
     # The minimum penetration depth to be considered as a valid contact in the differentiable formulation.
     # The contact with penetration depth smaller than this value is ignored in the differentiable formulation.
     # This should be large enough to be safe from numerical errors, because in the backward pass, the computed
     # penetration depth could be different from the forward pass due to the numerical errors. If this value is
     # too small, the non-zero penetration depth could be falsely computed to 0 in the backward pass and thus
     # produce nan values for the contact normal.
-    diff_contact_min_penetration: _STRUCT_FIELD_ANNOTATION
+    diff_contact_min_penetration: qd.Tensor
 
 
 def get_gjk_info(**kwargs):
@@ -1259,22 +1208,20 @@ def get_gjk_info(**kwargs):
     )
 
 
-@qd.data_oriented
-class StructGJKStaticConfig(metaclass=AutoInitMeta):
-    # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
-    # However, we keep the code here for compatibility with MuJoCo and for possible future use.
+@dataclasses.dataclass(frozen=True)
+class StructGJKStaticConfig:
     enable_mujoco_multi_contact: bool
 
 
 # =========================================== SupportField ===========================================
 
 
-@DATA_ORIENTED
-class StructSupportFieldInfo(metaclass=BASE_METACLASS):
-    support_cell_start: _STRUCT_FIELD_ANNOTATION
-    support_v: _STRUCT_FIELD_ANNOTATION
-    support_vid: _STRUCT_FIELD_ANNOTATION
-    support_res: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructSupportFieldInfo:
+    support_cell_start: qd.Tensor
+    support_v: qd.Tensor
+    support_vid: qd.Tensor
+    support_res: qd.Tensor
 
 
 def get_support_field_info(n_geoms, n_support_cells, support_res):
@@ -1289,13 +1236,13 @@ def get_support_field_info(n_geoms, n_support_cells, support_res):
 # =========================================== SDF ===========================================
 
 
-@DATA_ORIENTED
-class StructSDFGeomInfo(metaclass=BASE_METACLASS):
-    T_mesh_to_sdf: _STRUCT_FIELD_ANNOTATION
-    sdf_res: _STRUCT_FIELD_ANNOTATION
-    sdf_max: _STRUCT_FIELD_ANNOTATION
-    sdf_cell_size: _STRUCT_FIELD_ANNOTATION
-    sdf_cell_start: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructSDFGeomInfo:
+    T_mesh_to_sdf: qd.Tensor
+    sdf_res: qd.Tensor
+    sdf_max: qd.Tensor
+    sdf_cell_size: qd.Tensor
+    sdf_cell_start: qd.Tensor
 
 
 def get_sdf_geom_info(n_geoms):
@@ -1308,13 +1255,13 @@ def get_sdf_geom_info(n_geoms):
     )
 
 
-@DATA_ORIENTED
-class StructSDFInfo(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructSDFInfo:
     geoms_info: StructSDFGeomInfo
-    geoms_sdf_start: _STRUCT_FIELD_ANNOTATION
-    geoms_sdf_val: _STRUCT_FIELD_ANNOTATION
-    geoms_sdf_grad: _STRUCT_FIELD_ANNOTATION
-    geoms_sdf_closest_vert: _STRUCT_FIELD_ANNOTATION
+    geoms_sdf_start: qd.Tensor
+    geoms_sdf_val: qd.Tensor
+    geoms_sdf_grad: qd.Tensor
+    geoms_sdf_closest_vert: qd.Tensor
 
 
 def get_sdf_info(n_geoms, n_cells):
@@ -1336,20 +1283,20 @@ def get_sdf_info(n_geoms, n_cells):
 # =========================================== DofsInfo and DofsState ===========================================
 
 
-@DATA_ORIENTED
-class StructDofsInfo(metaclass=BASE_METACLASS):
-    entity_idx: _STRUCT_FIELD_ANNOTATION
-    stiffness: _STRUCT_FIELD_ANNOTATION
-    invweight: _STRUCT_FIELD_ANNOTATION
-    armature: _STRUCT_FIELD_ANNOTATION
-    damping: _STRUCT_FIELD_ANNOTATION
-    frictionloss: _STRUCT_FIELD_ANNOTATION
-    motion_ang: _STRUCT_FIELD_ANNOTATION
-    motion_vel: _STRUCT_FIELD_ANNOTATION
-    limit: _STRUCT_FIELD_ANNOTATION
-    act_gain: _STRUCT_FIELD_ANNOTATION
-    act_bias: _STRUCT_FIELD_ANNOTATION
-    force_range: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructDofsInfo:
+    entity_idx: qd.Tensor
+    stiffness: qd.Tensor
+    invweight: qd.Tensor
+    armature: qd.Tensor
+    damping: qd.Tensor
+    frictionloss: qd.Tensor
+    motion_ang: qd.Tensor
+    motion_vel: qd.Tensor
+    limit: qd.Tensor
+    act_gain: qd.Tensor
+    act_bias: qd.Tensor
+    force_range: qd.Tensor
 
 
 def get_dofs_info(solver):
@@ -1371,38 +1318,38 @@ def get_dofs_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructDofsState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructDofsState:
     # *_bw: Cache to avoid overwriting for backward pass
-    force: _STRUCT_FIELD_ANNOTATION
-    qf_bias: _STRUCT_FIELD_ANNOTATION
-    qf_passive: _STRUCT_FIELD_ANNOTATION
-    qf_actuator: _STRUCT_FIELD_ANNOTATION
-    qf_applied: _STRUCT_FIELD_ANNOTATION
-    act_length: _STRUCT_FIELD_ANNOTATION
-    pos: _STRUCT_FIELD_ANNOTATION
-    vel: _STRUCT_FIELD_ANNOTATION
-    vel_prev: _STRUCT_FIELD_ANNOTATION
-    vel_next: _STRUCT_FIELD_ANNOTATION
-    acc: _STRUCT_FIELD_ANNOTATION
-    acc_bw: _STRUCT_FIELD_ANNOTATION
-    acc_smooth: _STRUCT_FIELD_ANNOTATION
-    acc_smooth_bw: _STRUCT_FIELD_ANNOTATION
-    qf_smooth: _STRUCT_FIELD_ANNOTATION
-    qf_constraint: _STRUCT_FIELD_ANNOTATION
-    cdof_ang: _STRUCT_FIELD_ANNOTATION
-    cdof_vel: _STRUCT_FIELD_ANNOTATION
-    cdofvel_ang: _STRUCT_FIELD_ANNOTATION
-    cdofvel_vel: _STRUCT_FIELD_ANNOTATION
-    cdofd_ang: _STRUCT_FIELD_ANNOTATION
-    cdofd_vel: _STRUCT_FIELD_ANNOTATION
-    f_vel: _STRUCT_FIELD_ANNOTATION
-    f_ang: _STRUCT_FIELD_ANNOTATION
-    ctrl_force: _STRUCT_FIELD_ANNOTATION
-    ctrl_pos: _STRUCT_FIELD_ANNOTATION
-    ctrl_vel: _STRUCT_FIELD_ANNOTATION
-    ctrl_mode: _STRUCT_FIELD_ANNOTATION
-    hibernated: _STRUCT_FIELD_ANNOTATION
+    force: qd.Tensor
+    qf_bias: qd.Tensor
+    qf_passive: qd.Tensor
+    qf_actuator: qd.Tensor
+    qf_applied: qd.Tensor
+    act_length: qd.Tensor
+    pos: qd.Tensor
+    vel: qd.Tensor
+    vel_prev: qd.Tensor
+    vel_next: qd.Tensor
+    acc: qd.Tensor
+    acc_bw: qd.Tensor
+    acc_smooth: qd.Tensor
+    acc_smooth_bw: qd.Tensor
+    qf_smooth: qd.Tensor
+    qf_constraint: qd.Tensor
+    cdof_ang: qd.Tensor
+    cdof_vel: qd.Tensor
+    cdofvel_ang: qd.Tensor
+    cdofvel_vel: qd.Tensor
+    cdofd_ang: qd.Tensor
+    cdofd_vel: qd.Tensor
+    f_vel: qd.Tensor
+    f_ang: qd.Tensor
+    ctrl_force: qd.Tensor
+    ctrl_pos: qd.Tensor
+    ctrl_vel: qd.Tensor
+    ctrl_mode: qd.Tensor
+    hibernated: qd.Tensor
 
 
 def get_dofs_state(solver):
@@ -1446,51 +1393,51 @@ def get_dofs_state(solver):
 # =========================================== LinksState and LinksInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructLinksState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructLinksState:
     # *_bw: Cache to avoid overwriting for backward pass
-    cinr_inertial: _STRUCT_FIELD_ANNOTATION
-    cinr_pos: _STRUCT_FIELD_ANNOTATION
-    cinr_quat: _STRUCT_FIELD_ANNOTATION
-    cinr_mass: _STRUCT_FIELD_ANNOTATION
-    crb_inertial: _STRUCT_FIELD_ANNOTATION
-    crb_pos: _STRUCT_FIELD_ANNOTATION
-    crb_quat: _STRUCT_FIELD_ANNOTATION
-    crb_mass: _STRUCT_FIELD_ANNOTATION
-    cdd_vel: _STRUCT_FIELD_ANNOTATION
-    cdd_ang: _STRUCT_FIELD_ANNOTATION
-    pos: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
-    pos_bw: _STRUCT_FIELD_ANNOTATION
-    quat_bw: _STRUCT_FIELD_ANNOTATION
-    i_pos: _STRUCT_FIELD_ANNOTATION
-    i_pos_bw: _STRUCT_FIELD_ANNOTATION
-    i_quat: _STRUCT_FIELD_ANNOTATION
-    j_pos: _STRUCT_FIELD_ANNOTATION
-    j_quat: _STRUCT_FIELD_ANNOTATION
-    j_pos_bw: _STRUCT_FIELD_ANNOTATION
-    j_quat_bw: _STRUCT_FIELD_ANNOTATION
-    j_vel: _STRUCT_FIELD_ANNOTATION
-    j_ang: _STRUCT_FIELD_ANNOTATION
-    cd_ang: _STRUCT_FIELD_ANNOTATION
-    cd_vel: _STRUCT_FIELD_ANNOTATION
-    cd_ang_bw: _STRUCT_FIELD_ANNOTATION
-    cd_vel_bw: _STRUCT_FIELD_ANNOTATION
-    mass_sum: _STRUCT_FIELD_ANNOTATION
+    cinr_inertial: qd.Tensor
+    cinr_pos: qd.Tensor
+    cinr_quat: qd.Tensor
+    cinr_mass: qd.Tensor
+    crb_inertial: qd.Tensor
+    crb_pos: qd.Tensor
+    crb_quat: qd.Tensor
+    crb_mass: qd.Tensor
+    cdd_vel: qd.Tensor
+    cdd_ang: qd.Tensor
+    pos: qd.Tensor
+    quat: qd.Tensor
+    pos_bw: qd.Tensor
+    quat_bw: qd.Tensor
+    i_pos: qd.Tensor
+    i_pos_bw: qd.Tensor
+    i_quat: qd.Tensor
+    j_pos: qd.Tensor
+    j_quat: qd.Tensor
+    j_pos_bw: qd.Tensor
+    j_quat_bw: qd.Tensor
+    j_vel: qd.Tensor
+    j_ang: qd.Tensor
+    cd_ang: qd.Tensor
+    cd_vel: qd.Tensor
+    cd_ang_bw: qd.Tensor
+    cd_vel_bw: qd.Tensor
+    mass_sum: qd.Tensor
     root_COM: qd.Tensor  # COM of the kinematic tree
-    root_COM_bw: _STRUCT_FIELD_ANNOTATION
-    mass_shift: _STRUCT_FIELD_ANNOTATION
-    i_pos_shift: _STRUCT_FIELD_ANNOTATION
-    cacc_ang: _STRUCT_FIELD_ANNOTATION
-    cacc_lin: _STRUCT_FIELD_ANNOTATION
-    cfrc_ang: _STRUCT_FIELD_ANNOTATION
-    cfrc_vel: _STRUCT_FIELD_ANNOTATION
-    cfrc_applied_ang: _STRUCT_FIELD_ANNOTATION
-    cfrc_applied_vel: _STRUCT_FIELD_ANNOTATION
-    cfrc_coupling_ang: _STRUCT_FIELD_ANNOTATION
-    cfrc_coupling_vel: _STRUCT_FIELD_ANNOTATION
-    contact_force: _STRUCT_FIELD_ANNOTATION
-    hibernated: _STRUCT_FIELD_ANNOTATION
+    root_COM_bw: qd.Tensor
+    mass_shift: qd.Tensor
+    i_pos_shift: qd.Tensor
+    cacc_ang: qd.Tensor
+    cacc_lin: qd.Tensor
+    cfrc_ang: qd.Tensor
+    cfrc_vel: qd.Tensor
+    cfrc_applied_ang: qd.Tensor
+    cfrc_applied_vel: qd.Tensor
+    cfrc_coupling_ang: qd.Tensor
+    cfrc_coupling_vel: qd.Tensor
+    contact_force: qd.Tensor
+    hibernated: qd.Tensor
 
 
 def get_links_state(solver):
@@ -1545,31 +1492,31 @@ def get_links_state(solver):
     )
 
 
-@DATA_ORIENTED
-class StructLinksInfo(metaclass=BASE_METACLASS):
-    parent_idx: _STRUCT_FIELD_ANNOTATION
-    root_idx: _STRUCT_FIELD_ANNOTATION
-    q_start: _STRUCT_FIELD_ANNOTATION
-    dof_start: _STRUCT_FIELD_ANNOTATION
-    joint_start: _STRUCT_FIELD_ANNOTATION
-    q_end: _STRUCT_FIELD_ANNOTATION
-    dof_end: _STRUCT_FIELD_ANNOTATION
-    joint_end: _STRUCT_FIELD_ANNOTATION
-    n_dofs: _STRUCT_FIELD_ANNOTATION
-    pos: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
-    invweight: _STRUCT_FIELD_ANNOTATION
-    is_fixed: _STRUCT_FIELD_ANNOTATION
-    inertial_pos: _STRUCT_FIELD_ANNOTATION
-    inertial_quat: _STRUCT_FIELD_ANNOTATION
-    inertial_i: _STRUCT_FIELD_ANNOTATION
-    inertial_mass: _STRUCT_FIELD_ANNOTATION
-    entity_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructLinksInfo:
+    parent_idx: qd.Tensor
+    root_idx: qd.Tensor
+    q_start: qd.Tensor
+    dof_start: qd.Tensor
+    joint_start: qd.Tensor
+    q_end: qd.Tensor
+    dof_end: qd.Tensor
+    joint_end: qd.Tensor
+    n_dofs: qd.Tensor
+    pos: qd.Tensor
+    quat: qd.Tensor
+    invweight: qd.Tensor
+    is_fixed: qd.Tensor
+    inertial_pos: qd.Tensor
+    inertial_quat: qd.Tensor
+    inertial_i: qd.Tensor
+    inertial_mass: qd.Tensor
+    entity_idx: qd.Tensor
     # Heterogeneous simulation support: per-link geom/vgeom index ranges
-    geom_start: _STRUCT_FIELD_ANNOTATION
-    geom_end: _STRUCT_FIELD_ANNOTATION
-    vgeom_start: _STRUCT_FIELD_ANNOTATION
-    vgeom_end: _STRUCT_FIELD_ANNOTATION
+    geom_start: qd.Tensor
+    geom_end: qd.Tensor
+    vgeom_start: qd.Tensor
+    vgeom_end: qd.Tensor
 
 
 def get_links_info(solver):
@@ -1605,16 +1552,16 @@ def get_links_info(solver):
 # =========================================== JointsInfo and JointsState ===========================================
 
 
-@DATA_ORIENTED
-class StructJointsInfo(metaclass=BASE_METACLASS):
-    type: _STRUCT_FIELD_ANNOTATION
-    sol_params: _STRUCT_FIELD_ANNOTATION
-    q_start: _STRUCT_FIELD_ANNOTATION
-    dof_start: _STRUCT_FIELD_ANNOTATION
-    q_end: _STRUCT_FIELD_ANNOTATION
-    dof_end: _STRUCT_FIELD_ANNOTATION
-    n_dofs: _STRUCT_FIELD_ANNOTATION
-    pos: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructJointsInfo:
+    type: qd.Tensor
+    sol_params: qd.Tensor
+    q_start: qd.Tensor
+    dof_start: qd.Tensor
+    q_end: qd.Tensor
+    dof_end: qd.Tensor
+    n_dofs: qd.Tensor
+    pos: qd.Tensor
 
 
 def get_joints_info(solver):
@@ -1632,10 +1579,10 @@ def get_joints_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructJointsState(metaclass=BASE_METACLASS):
-    xanchor: _STRUCT_FIELD_ANNOTATION
-    xaxis: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructJointsState:
+    xanchor: qd.Tensor
+    xaxis: qd.Tensor
 
 
 def get_joints_state(solver):
@@ -1651,36 +1598,36 @@ def get_joints_state(solver):
 # =========================================== GeomsInfo and GeomsState ===========================================
 
 
-@DATA_ORIENTED
-class StructGeomsInfo(metaclass=BASE_METACLASS):
-    pos: _STRUCT_FIELD_ANNOTATION
-    center: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
-    data: _STRUCT_FIELD_ANNOTATION
-    link_idx: _STRUCT_FIELD_ANNOTATION
-    type: _STRUCT_FIELD_ANNOTATION
-    friction: _STRUCT_FIELD_ANNOTATION
-    sol_params: _STRUCT_FIELD_ANNOTATION
-    vert_num: _STRUCT_FIELD_ANNOTATION
-    vert_start: _STRUCT_FIELD_ANNOTATION
-    vert_end: _STRUCT_FIELD_ANNOTATION
-    verts_state_start: _STRUCT_FIELD_ANNOTATION
-    verts_state_end: _STRUCT_FIELD_ANNOTATION
-    face_num: _STRUCT_FIELD_ANNOTATION
-    face_start: _STRUCT_FIELD_ANNOTATION
-    face_end: _STRUCT_FIELD_ANNOTATION
-    edge_num: _STRUCT_FIELD_ANNOTATION
-    edge_start: _STRUCT_FIELD_ANNOTATION
-    edge_end: _STRUCT_FIELD_ANNOTATION
-    is_convex: _STRUCT_FIELD_ANNOTATION
-    contype: _STRUCT_FIELD_ANNOTATION
-    conaffinity: _STRUCT_FIELD_ANNOTATION
-    is_fixed: _STRUCT_FIELD_ANNOTATION
-    is_decomposed: _STRUCT_FIELD_ANNOTATION
-    needs_coup: _STRUCT_FIELD_ANNOTATION
-    coup_friction: _STRUCT_FIELD_ANNOTATION
-    coup_softness: _STRUCT_FIELD_ANNOTATION
-    coup_restitution: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGeomsInfo:
+    pos: qd.Tensor
+    center: qd.Tensor
+    quat: qd.Tensor
+    data: qd.Tensor
+    link_idx: qd.Tensor
+    type: qd.Tensor
+    friction: qd.Tensor
+    sol_params: qd.Tensor
+    vert_num: qd.Tensor
+    vert_start: qd.Tensor
+    vert_end: qd.Tensor
+    verts_state_start: qd.Tensor
+    verts_state_end: qd.Tensor
+    face_num: qd.Tensor
+    face_start: qd.Tensor
+    face_end: qd.Tensor
+    edge_num: qd.Tensor
+    edge_start: qd.Tensor
+    edge_end: qd.Tensor
+    is_convex: qd.Tensor
+    contype: qd.Tensor
+    conaffinity: qd.Tensor
+    is_fixed: qd.Tensor
+    is_decomposed: qd.Tensor
+    needs_coup: qd.Tensor
+    coup_friction: qd.Tensor
+    coup_softness: qd.Tensor
+    coup_restitution: qd.Tensor
 
 
 def get_geoms_info(solver):
@@ -1718,17 +1665,17 @@ def get_geoms_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructGeomsState(metaclass=BASE_METACLASS):
-    pos: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
-    aabb_min: _STRUCT_FIELD_ANNOTATION
-    aabb_max: _STRUCT_FIELD_ANNOTATION
-    verts_updated: _STRUCT_FIELD_ANNOTATION
-    min_buffer_idx: _STRUCT_FIELD_ANNOTATION
-    max_buffer_idx: _STRUCT_FIELD_ANNOTATION
-    hibernated: _STRUCT_FIELD_ANNOTATION
-    friction_ratio: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructGeomsState:
+    pos: qd.Tensor
+    quat: qd.Tensor
+    aabb_min: qd.Tensor
+    aabb_max: qd.Tensor
+    verts_updated: qd.Tensor
+    min_buffer_idx: qd.Tensor
+    max_buffer_idx: qd.Tensor
+    hibernated: qd.Tensor
+    friction_ratio: qd.Tensor
 
 
 def get_geoms_state(solver):
@@ -1751,14 +1698,14 @@ def get_geoms_state(solver):
 # =========================================== VertsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVertsInfo(metaclass=BASE_METACLASS):
-    init_pos: _STRUCT_FIELD_ANNOTATION
-    init_normal: _STRUCT_FIELD_ANNOTATION
-    geom_idx: _STRUCT_FIELD_ANNOTATION
-    init_center_pos: _STRUCT_FIELD_ANNOTATION
-    verts_state_idx: _STRUCT_FIELD_ANNOTATION
-    is_fixed: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVertsInfo:
+    init_pos: qd.Tensor
+    init_normal: qd.Tensor
+    geom_idx: qd.Tensor
+    init_center_pos: qd.Tensor
+    verts_state_idx: qd.Tensor
+    is_fixed: qd.Tensor
 
 
 def get_verts_info(solver):
@@ -1777,10 +1724,10 @@ def get_verts_info(solver):
 # =========================================== FacesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructFacesInfo(metaclass=BASE_METACLASS):
-    verts_idx: _STRUCT_FIELD_ANNOTATION
-    geom_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructFacesInfo:
+    verts_idx: qd.Tensor
+    geom_idx: qd.Tensor
 
 
 def get_faces_info(solver):
@@ -1795,11 +1742,11 @@ def get_faces_info(solver):
 # =========================================== EdgesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEdgesInfo(metaclass=BASE_METACLASS):
-    v0: _STRUCT_FIELD_ANNOTATION
-    v1: _STRUCT_FIELD_ANNOTATION
-    length: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEdgesInfo:
+    v0: qd.Tensor
+    v1: qd.Tensor
+    length: qd.Tensor
 
 
 def get_edges_info(solver):
@@ -1815,9 +1762,9 @@ def get_edges_info(solver):
 # =========================================== VertsState ===========================================
 
 
-@DATA_ORIENTED
-class StructVertsState(metaclass=BASE_METACLASS):
-    pos: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVertsState:
+    pos: qd.Tensor
 
 
 def get_free_verts_state(solver):
@@ -1835,11 +1782,11 @@ def get_fixed_verts_state(solver):
 # =========================================== VvertsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVvertsInfo(metaclass=BASE_METACLASS):
-    init_pos: _STRUCT_FIELD_ANNOTATION
-    init_vnormal: _STRUCT_FIELD_ANNOTATION
-    vgeom_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVvertsInfo:
+    init_pos: qd.Tensor
+    init_vnormal: qd.Tensor
+    vgeom_idx: qd.Tensor
 
 
 def get_vverts_info(solver):
@@ -1855,10 +1802,10 @@ def get_vverts_info(solver):
 # =========================================== VfacesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVfacesInfo(metaclass=BASE_METACLASS):
-    vverts_idx: _STRUCT_FIELD_ANNOTATION
-    vgeom_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVfacesInfo:
+    vverts_idx: qd.Tensor
+    vgeom_idx: qd.Tensor
 
 
 def get_vfaces_info(solver):
@@ -1873,18 +1820,18 @@ def get_vfaces_info(solver):
 # =========================================== VgeomsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVgeomsInfo(metaclass=BASE_METACLASS):
-    pos: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
-    link_idx: _STRUCT_FIELD_ANNOTATION
-    vvert_num: _STRUCT_FIELD_ANNOTATION
-    vvert_start: _STRUCT_FIELD_ANNOTATION
-    vvert_end: _STRUCT_FIELD_ANNOTATION
-    vface_num: _STRUCT_FIELD_ANNOTATION
-    vface_start: _STRUCT_FIELD_ANNOTATION
-    vface_end: _STRUCT_FIELD_ANNOTATION
-    color: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVgeomsInfo:
+    pos: qd.Tensor
+    quat: qd.Tensor
+    link_idx: qd.Tensor
+    vvert_num: qd.Tensor
+    vvert_start: qd.Tensor
+    vvert_end: qd.Tensor
+    vface_num: qd.Tensor
+    vface_start: qd.Tensor
+    vface_end: qd.Tensor
+    color: qd.Tensor
 
 
 def get_vgeoms_info(solver):
@@ -1907,10 +1854,10 @@ def get_vgeoms_info(solver):
 # =========================================== VGeomsState ===========================================
 
 
-@DATA_ORIENTED
-class StructVgeomsState(metaclass=BASE_METACLASS):
-    pos: _STRUCT_FIELD_ANNOTATION
-    quat: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructVgeomsState:
+    pos: qd.Tensor
+    quat: qd.Tensor
 
 
 def get_vgeoms_state(solver):
@@ -1925,13 +1872,13 @@ def get_vgeoms_state(solver):
 # =========================================== EqualitiesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEqualitiesInfo(metaclass=BASE_METACLASS):
-    eq_obj1id: _STRUCT_FIELD_ANNOTATION
-    eq_obj2id: _STRUCT_FIELD_ANNOTATION
-    eq_data: _STRUCT_FIELD_ANNOTATION
-    eq_type: _STRUCT_FIELD_ANNOTATION
-    sol_params: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEqualitiesInfo:
+    eq_obj1id: qd.Tensor
+    eq_obj2id: qd.Tensor
+    eq_data: qd.Tensor
+    eq_type: qd.Tensor
+    sol_params: qd.Tensor
 
 
 def get_equalities_info(solver):
@@ -1949,19 +1896,19 @@ def get_equalities_info(solver):
 # =========================================== EntitiesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEntitiesInfo(metaclass=BASE_METACLASS):
-    dof_start: _STRUCT_FIELD_ANNOTATION
-    dof_end: _STRUCT_FIELD_ANNOTATION
-    n_dofs: _STRUCT_FIELD_ANNOTATION
-    link_start: _STRUCT_FIELD_ANNOTATION
-    link_end: _STRUCT_FIELD_ANNOTATION
-    n_links: _STRUCT_FIELD_ANNOTATION
-    geom_start: _STRUCT_FIELD_ANNOTATION
-    geom_end: _STRUCT_FIELD_ANNOTATION
-    n_geoms: _STRUCT_FIELD_ANNOTATION
-    gravity_compensation: _STRUCT_FIELD_ANNOTATION
-    is_local_collision_mask: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEntitiesInfo:
+    dof_start: qd.Tensor
+    dof_end: qd.Tensor
+    n_dofs: qd.Tensor
+    link_start: qd.Tensor
+    link_end: qd.Tensor
+    n_links: qd.Tensor
+    geom_start: qd.Tensor
+    geom_end: qd.Tensor
+    n_geoms: qd.Tensor
+    gravity_compensation: qd.Tensor
+    is_local_collision_mask: qd.Tensor
 
 
 def get_entities_info(solver):
@@ -1985,9 +1932,9 @@ def get_entities_info(solver):
 # =========================================== EntitiesState ===========================================
 
 
-@DATA_ORIENTED
-class StructEntitiesState(metaclass=BASE_METACLASS):
-    hibernated: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructEntitiesState:
+    hibernated: qd.Tensor
 
 
 def get_entities_state(solver):
@@ -1997,16 +1944,16 @@ def get_entities_state(solver):
 
 
 # =========================================== RigidAdjointCache ===========================================
-@DATA_ORIENTED
-class StructRigidAdjointCache(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(frozen=True)
+class StructRigidAdjointCache:
     # This cache stores intermediate values during rigid body simulation to use Quadrants's AD. Quadrants's AD requires
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
     # dofs_acc, we need to store them in this cache because we overwrite the values in the next frame. See how
     # [kernel_save_adjoint_cache] is used in [rigid_solver.py] to store the values in this cache.
-    qpos: _STRUCT_FIELD_ANNOTATION
-    dofs_vel: _STRUCT_FIELD_ANNOTATION
-    dofs_acc: _STRUCT_FIELD_ANNOTATION
+    qpos: qd.Tensor
+    dofs_vel: qd.Tensor
+    dofs_acc: qd.Tensor
 
 
 def get_rigid_adjoint_cache(solver):
@@ -2023,8 +1970,8 @@ def get_rigid_adjoint_cache(solver):
 # =================================== StructRigidSimStaticConfig ===================================
 
 
-@qd.data_oriented
-class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+@dataclasses.dataclass(frozen=True)
+class StructRigidSimStaticConfig:
     backend: int
     para_level: int
     enable_collision: bool
@@ -2111,13 +2058,13 @@ class DataManager:
 # =========================================== ViewerRaycastResult ===========================================
 
 
-@DATA_ORIENTED
-class StructViewerRaycastResult(metaclass=BASE_METACLASS):
-    distance: _STRUCT_FIELD_ANNOTATION
-    geom_idx: _STRUCT_FIELD_ANNOTATION
-    hit_point: _STRUCT_FIELD_ANNOTATION
-    normal: _STRUCT_FIELD_ANNOTATION
-    env_idx: _STRUCT_FIELD_ANNOTATION
+@dataclasses.dataclass(frozen=True)
+class StructViewerRaycastResult:
+    distance: qd.Tensor
+    geom_idx: qd.Tensor
+    hit_point: qd.Tensor
+    normal: qd.Tensor
+    env_idx: qd.Tensor
 
 
 def get_viewer_raycast_result():
