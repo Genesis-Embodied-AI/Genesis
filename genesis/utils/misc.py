@@ -473,13 +473,18 @@ def qd_to_python(
                     value._np = value_tc.numpy()
                     value._T_np = value._T_tc.numpy()
 
-        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
+        # Quadrants and PyTorch MPS use separate Metal command queues, so `qd.sync()` only guarantees Quadrants
+        # writes are complete. A subsequent `.clone()` is queued on the MPS stream and may execute *after* the next
+        # Quadrants kernel overwrites the source buffer. We must also synchronize MPS after cloning.
         if gs.backend == gs.metal:
             qd.sync()
 
         if copy:
             if to_torch:
                 out = out.clone()
+                if gs.backend == gs.metal:
+                    torch.mps.synchronize()
             elif gs.backend != gs.cpu:
                 out = tensor_to_array(out)
             else:
@@ -637,11 +642,14 @@ def qd_to_torch(
     if gs.use_zerocopy:
         try:
             tensor = value._T_tc if transpose else value._tc
-            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
+            # See comment in `qd_to_python` for details on the MPS command queue race condition.
             if gs.backend == gs.metal:
                 qd.sync()
             if copy:
                 tensor = tensor.clone()
+                if gs.backend == gs.metal:
+                    torch.mps.synchronize()
         except AttributeError:
             tensor = qd_to_python(value, transpose, copy=copy, to_torch=True)
     else:

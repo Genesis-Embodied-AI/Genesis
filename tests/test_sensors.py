@@ -203,12 +203,6 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             substeps=1,
             gravity=(0.0, 0.0, GRAVITY),
         ),
-        # FIXME: Force iterative linesearch: the parallel linesearch's grid search + single Newton
-        # correction accumulates ~1e-4 residual over ~60 resting contact steps in float32,
-        # exceeding the 5e-6 tolerance required by the IMU acceleration assertions below.
-        rigid_options=gs.options.RigidOptions(
-            prefer_parallel_linesearch=False,
-        ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),

@@ -172,13 +172,12 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         if self.scene._visualizer is None or not self.scene._visualizer.is_built:
             return
 
-        context = self.scene._visualizer.context
         mouse_ray: Ray = self._screen_position_to_ray(*self._prev_mouse_screen_pos)
 
         if self._held_link:
             # Clean up hover arrow when transitioning to hold state
             if self._arrow_node is not None:
-                context.clear_debug_object(self._arrow_node)
+                self.scene.clear_debug_object(self._arrow_node)
                 self._arrow_node = None
 
             assert self._mouse_drag_plane is not None
@@ -195,46 +194,46 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
                 # Sphere at clamped control point (translation only, no rotation)
                 sphere_T = gu.trans_to_T(control_point)
                 if self._sphere_node is None:
-                    self._sphere_node = context.draw_debug_sphere(control_point, radius=0.01, color=self.color)
+                    self._sphere_node = self.scene.draw_debug_sphere(control_point, radius=0.01, color=self.color)
                 else:
-                    context.update_debug_objects((self._sphere_node,), (sphere_T,))
+                    self.scene.update_debug_objects((self._sphere_node,), (sphere_T,))
 
                 # Cylinder from held point to clamped control point
                 line_T = self._compute_line_T(held_point_world, control_point)
                 if self._line_node is None:
-                    self._line_node = context.draw_debug_mesh(self._unit_cylinder_mesh, T=line_T)
+                    self._line_node = self.scene.draw_debug_mesh(self._unit_cylinder_mesh, T=line_T)
                 else:
-                    context.update_debug_objects((self._line_node,), (line_T,))
+                    self.scene.update_debug_objects((self._line_node,), (line_T,))
 
                 # Drag plane visualization centered on clamped control point
                 plane_T = gu.trans_R_to_T(control_point, gu.z_up_to_R(self._mouse_drag_plane[0]))
                 if self._plane_node is None:
-                    self._plane_node = context.draw_debug_mesh(self._plane_mesh, T=plane_T)
+                    self._plane_node = self.scene.draw_debug_mesh(self._plane_mesh, T=plane_T)
                 else:
-                    context.update_debug_objects((self._plane_node,), (plane_T,))
+                    self.scene.update_debug_objects((self._plane_node,), (plane_T,))
 
             else:
                 # No plane hit: hide held visualization nodes
                 if self._sphere_node is not None:
-                    context.clear_debug_object(self._sphere_node)
+                    self.scene.clear_debug_object(self._sphere_node)
                     self._sphere_node = None
                 if self._line_node is not None:
-                    context.clear_debug_object(self._line_node)
+                    self.scene.clear_debug_object(self._line_node)
                     self._line_node = None
                 if self._plane_node is not None:
-                    context.clear_debug_object(self._plane_node)
+                    self.scene.clear_debug_object(self._plane_node)
                     self._plane_node = None
 
         else:
             # Clean up held visualization nodes
             if self._sphere_node is not None:
-                context.clear_debug_object(self._sphere_node)
+                self.scene.clear_debug_object(self._sphere_node)
                 self._sphere_node = None
             if self._line_node is not None:
-                context.clear_debug_object(self._line_node)
+                self.scene.clear_debug_object(self._line_node)
                 self._line_node = None
             if self._plane_node is not None:
-                context.clear_debug_object(self._plane_node)
+                self.scene.clear_debug_object(self._plane_node)
                 self._plane_node = None
 
             # Hover arrow: only show for pickable (non-fixed, sufficient mass) entities
@@ -244,13 +243,13 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
             if is_pickable:
                 arrow_T = gu.trans_R_to_T(closest_hit.position, gu.z_up_to_R(closest_hit.normal))
                 if self._arrow_node is None:
-                    self._arrow_node = context.draw_debug_arrow(
+                    self._arrow_node = self.scene.draw_debug_arrow(
                         closest_hit.position, closest_hit.normal * 0.25, color=self.color
                     )
                 else:
-                    context.update_debug_objects((self._arrow_node,), (arrow_T,))
+                    self.scene.update_debug_objects((self._arrow_node,), (arrow_T,))
             elif self._arrow_node is not None:
-                context.clear_debug_object(self._arrow_node)
+                self.scene.clear_debug_object(self._arrow_node)
                 self._arrow_node = None
 
     def _compute_line_T(self, start: np.ndarray, end: np.ndarray) -> np.ndarray:

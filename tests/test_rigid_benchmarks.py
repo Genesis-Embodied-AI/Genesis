@@ -24,13 +24,13 @@ DURATION_RECORD = 15.0
 
 SceneMeta = namedtuple(
     "SceneMeta",
-    ["compile_time", "step_dt", "duration_warmup", "duration_record", "needs_sync"],
-    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD, False],
+    ["compile_time", "step_dt", "duration_warmup", "duration_record"],
+    defaults=[STEP_DT, DURATION_WARMUP, DURATION_RECORD],
 )
 
 pytestmark = [
     pytest.mark.benchmarks,
-    pytest.mark.disable_cache(False),
+    pytest.mark.cache(False),
 ]
 
 
@@ -209,7 +209,7 @@ def get_file_morph_options(**kwargs):
 #   - scene:    the built gs.Scene (useful for visualization, inspection)
 #   - step_fn:  callable that runs one simulation step including control logic
 #   - metadata: dict with compile_time, step_dt, and optional overrides for
-#               duration_warmup, duration_record, needs_sync
+#               duration_warmup, duration_record
 #
 # **scene_kwargs are forwarded to gs.Scene(), allowing callers to control
 # show_viewer, vis_options, etc. without modifying these factories.
@@ -450,6 +450,7 @@ def make_box_pyramid(n_envs, solver=None, gjk=None, n_cubes=3, **scene_kwargs):
         rigid_options=gs.options.RigidOptions(
             **get_rigid_solver_options(
                 dt=STEP_DT,
+                tolerance=1e-5,
                 **(dict(constraint_solver=solver) if solver is not None else {}),
                 **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
             )
@@ -545,7 +546,80 @@ def make_g1_fall(n_envs, solver=None, gjk=None, **scene_kwargs):
             step_dt=step_dt,
             duration_warmup=20.0,
             duration_record=5.0,
-            needs_sync=True,
+        ),
+    )
+
+
+def make_shadow_hand_cubes(n_envs, solver=None, gjk=None, sparse_solve=False, **scene_kwargs):
+    _STEP_DT = 1.0 / 30
+    TABLE_Z = 0.762
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(dt=_STEP_DT, substeps=4, gravity=(0, 0, -9.81)),
+        rigid_options=gs.options.RigidOptions(
+            noslip_iterations=2,
+            max_collision_pairs=256,
+            sparse_solve=sparse_solve,
+            **(dict(constraint_solver=solver) if solver is not None else {}),
+            **(dict(use_gjk_collision=gjk) if gjk is not None else {}),
+        ),
+        **{"show_viewer": False, "show_FPS": False, **scene_kwargs},
+    )
+
+    # Two shadow hands placed horizontally, palms facing down
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+            pos=(-0.1, 0.30, 0.9 * TABLE_Z),
+            euler=(90, 0, 0),
+            fixed=True,
+        )
+    )
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file="urdf/shadow_hand/shadow_hand.urdf",
+            pos=(0.1, 0.30, 0.9 * TABLE_Z),
+            euler=(90, 0, 0),
+            fixed=True,
+        )
+    )
+
+    # Table
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0, 0, TABLE_Z / 2),
+            size=(0.5, 0.5, TABLE_Z / 2),
+            fixed=True,
+        )
+    )
+
+    # 25 cubes in a 5x5 grid on the table
+    for i in range(25):
+        x = -0.10 + 0.05 * (i % 5)
+        y = -0.05 + 0.05 * (i // 5)
+        scene.add_entity(
+            material=gs.materials.Rigid(friction=0.8),
+            morph=gs.morphs.Box(
+                pos=(x, y, TABLE_Z + 0.01),
+                size=(0.02, 0.02, 0.02),
+            ),
+        )
+
+    time_start = time.time()
+    scene.build(n_envs=n_envs)
+    compile_time = time.time() - time_start
+
+    def step():
+        scene.step()
+
+    return (
+        scene,
+        step,
+        SceneMeta(
+            compile_time=compile_time,
+            step_dt=_STEP_DT,
+            duration_warmup=20.0,
+            duration_record=5.0,
         ),
     )
 
@@ -679,7 +753,6 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
             step_dt=_STEP_DT,
             duration_warmup=20.0,
             duration_record=5.0,
-            needs_sync=True,
         ),
     )
 
@@ -690,10 +763,26 @@ def make_dex_hand(n_envs, solver=None, gjk=None, **scene_kwargs):
 
 
 def run_benchmark(step_fn, *, n_envs, meta):
-    if meta.needs_sync:
-        import quadrants as qd
+    import quadrants as qd
 
-        qd.sync()
+    qd.sync()
+
+    # Force CUDA-context init / lazy module load / first kernel SASS JIT to
+    # complete BEFORE entering the wall-clock warmup loop. Otherwise, the
+    # warmup's `meta.duration_warmup` budget can be partially consumed by
+    # CUDA setup (which happens on the first kernel launch into a fresh
+    # context) instead of by actual step()s. When that happens, the wall-
+    # clock warmup ends before the per-process cold-start phase (~5 s of
+    # slow step()s on hardware tested) is over, and the recording window
+    # then measures cold-start step time instead of steady-state — which
+    # manifested as intermittent 50%+ apparent `runtime_fps` regressions in
+    # `g1_fall` cluster benchmark runs even though steady-state step() time
+    # was unchanged. After this single sync-bracketed step the warmup loop's
+    # wall-clock budget contains only step() execution time, so 20 s of
+    # warmup actually means 20 s of step()s — enough to absorb the cold-
+    # start phase on every benchmark. Cost: 1 step() + 1 qd.sync().
+    step_fn()
+    qd.sync()
 
     num_steps = 0
     is_recording = False
@@ -704,13 +793,11 @@ def run_benchmark(step_fn, *, n_envs, meta):
         if is_recording:
             num_steps += 1
             if time_elapsed > meta.duration_record:
-                if meta.needs_sync:
-                    qd.sync()
-                    time_elapsed = time.time() - time_start
+                qd.sync()
+                time_elapsed = time.time() - time_start
                 break
         elif time_elapsed > meta.duration_warmup:
-            if meta.needs_sync:
-                qd.sync()
+            qd.sync()
             time_start = time.time()
             is_recording = True
     runtime_fps = int(num_steps * max(n_envs, 1) / time_elapsed)
@@ -884,6 +971,18 @@ def g1_fall(solver, n_envs, gjk):
 
 
 @pytest.fixture
+def shadow_hand_cubes(solver, n_envs, gjk):
+    _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
+def shadow_hand_cubes_sparse(solver, n_envs, gjk):
+    _, step_fn, meta = make_shadow_hand_cubes(n_envs, solver=solver, gjk=gjk, sparse_solve=True)
+    return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
+
+
+@pytest.fixture
 def dex_hand(solver, n_envs, gjk):
     _, step_fn, meta = make_dex_hand(n_envs, solver=solver, gjk=gjk)
     return run_benchmark(step_fn, n_envs=n_envs, meta=meta)
@@ -926,6 +1025,8 @@ def dex_hand(solver, n_envs, gjk):
         ("box_pyramid_6", None, True, 4096, gs.gpu),
         ("box_pyramid_6", None, False, 4096, gs.gpu),
         ("g1_fall", gs.constraint_solver.Newton, None, 4096, gs.gpu),
+        ("shadow_hand_cubes", None, None, 0, gs.cpu),
+        ("shadow_hand_cubes_sparse", None, None, 0, gs.cpu),
         ("dex_hand", None, None, 4096, gs.gpu),
     ],
 )

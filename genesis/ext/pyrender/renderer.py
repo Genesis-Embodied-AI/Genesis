@@ -30,6 +30,10 @@ from .utils import format_color_vector
 from .texture import Texture
 
 
+MARKER_XRAY_DIM_FACTOR = 0.3
+MARKER_XRAY_ALPHA = 0.4
+
+
 class Renderer(object):
     """Class for handling all rendering operations on a scene.
 
@@ -140,6 +144,12 @@ class Renderer(object):
         if is_first_pass:
             self._update_context(scene, flags)
             all_ready = self.jit.update(scene)
+
+            # Flush queued buffer updates AFTER jit.update(scene) so that new
+            # nodes created by set_primitive -> _add_to_context already have
+            # their GPU buffers allocated and can receive the data.
+            self.jit.flush_buffer()
+
             if not all_ready:
                 # Shadow textures not yet initialized - skip this frame to avoid
                 # flickering. The caller should display the previous frame.
@@ -395,6 +405,7 @@ class Renderer(object):
         floor_tex = self._floor_texture_color._texid if flags & RenderFlags.REFLECTIVE_FLOOR else 0
         screen_size = np.array([self.viewport_width, self.viewport_height], np.float32)
 
+        common_kwargs = dict(env_idx=env_idx)
         if flags & RenderFlags.SEG:
             color_list = np.zeros((len(self.jit.node_list), 3), np.float32)
             for i, node in enumerate(self.jit.node_list):
@@ -402,6 +413,37 @@ class Renderer(object):
                     color_list[i, :] = -2.0
                 else:
                     color_list[i] = seg_node_map[node] / 255.0
+            common_kwargs["color_list"] = color_list
+        else:
+            common_kwargs["floor_tex"] = floor_tex
+
+        if flags & (RenderFlags.SEG | RenderFlags.DEPTH_ONLY | RenderFlags.SKIP_MARKERS):
+            # No markers contribute to the output in these modes — single pass.
+            self.jit.forward_pass(self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, **common_kwargs)
+        else:
+            # Draw non-marker geometry first so the depth buffer only contains
+            # real geometry when the x-ray pass runs. This way the GL_GREATER
+            # depth test in _marker_xray_pass cannot see marker-on-marker
+            # occlusion (e.g. dark rings at joints of chained debug cylinders)
+            # — it only ghosts markers occluded by real objects.
+            self.jit.forward_pass(
+                self,
+                V,
+                P,
+                cam_pos,
+                flags | RenderFlags.SKIP_MARKERS,
+                ProgramFlags.USE_MATERIAL,
+                screen_size,
+                **common_kwargs,
+            )
+
+            # Render occluded markers as darkened ghosts for depth cues — must
+            # happen before markers themselves are drawn so the depth buffer
+            # used for the GL_GREATER test is free of marker depths.
+            if flags & RenderFlags.MARKER_XRAY:
+                self._marker_xray_pass(V, P, cam_pos, flags, screen_size, env_idx)
+
+            # Now draw opaque markers on top
             self.jit.forward_pass(
                 self,
                 V,
@@ -410,17 +452,41 @@ class Renderer(object):
                 flags,
                 ProgramFlags.USE_MATERIAL,
                 screen_size,
-                color_list=color_list,
-                env_idx=env_idx,
-            )
-        else:
-            self.jit.forward_pass(
-                self, V, P, cam_pos, flags, ProgramFlags.USE_MATERIAL, screen_size, floor_tex=floor_tex, env_idx=env_idx
+                markers_only=True,
+                **common_kwargs,
             )
 
         # If doing offscreen render, copy result from framebuffer and return
         if flags & RenderFlags.OFFSCREEN:
             return self._read_main_framebuffer(scene, flags)
+
+    def _marker_xray_pass(self, V, P, cam_pos, flags, screen_size, env_idx):
+        """Render markers behind geometry with darkened transparency (X-ray effect)."""
+        marker_mask = self.jit.render_flags[:, 6].astype(bool)
+        if not np.any(marker_mask):
+            return
+
+        # Save and dim marker colors, force alpha blending
+        saved_pbr_mat = self.jit.pbr_mat[marker_mask].copy()
+        saved_blend_flags = self.jit.render_flags[marker_mask, 0].copy()
+        self.jit.pbr_mat[marker_mask, 0:3] *= MARKER_XRAY_DIM_FACTOR
+        self.jit.pbr_mat[marker_mask, 3] = MARKER_XRAY_ALPHA
+        self.jit.render_flags[marker_mask, 0] = 1
+
+        # Draw only occluded fragments, without touching the depth buffer.
+        glDepthFunc(GL_GREATER)
+        glDepthMask(GL_FALSE)
+
+        xray_flags = flags & ~(RenderFlags.SHADOWS_DIRECTIONAL | RenderFlags.SHADOWS_SPOT | RenderFlags.SHADOWS_POINT)
+        self.jit.forward_pass(
+            self, V, P, cam_pos, xray_flags, ProgramFlags.USE_MATERIAL, screen_size, env_idx=env_idx, markers_only=True
+        )
+
+        # Restore GL state and marker data
+        glDepthFunc(GL_LESS)
+        glDepthMask(GL_TRUE)
+        self.jit.pbr_mat[marker_mask] = saved_pbr_mat
+        self.jit.render_flags[marker_mask, 0] = saved_blend_flags
 
     def _point_shadow_mapping_pass(self, scene, light_node, flags, env_idx=-1):
         light = light_node.light

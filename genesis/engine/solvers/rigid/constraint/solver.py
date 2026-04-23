@@ -16,6 +16,28 @@ from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
 from . import noslip as constraint_noslip
 
+
+@qd.func
+def _sort_relevant_dofs_descending(
+    constraint_state: array_class.ConstraintState,
+    i_con: qd.int32,
+    n: qd.int32,
+    i_b: qd.int32,
+):
+    """Insertion sort jac_relevant_dofs[i_con, :n, i_b] in descending order.
+
+    Called after populating relevant DOFs for a constraint that may involve multiple entities.
+    The array is typically <= 14 elements, so O(n^2) is fine.
+    """
+    for i in range(1, n):
+        key = constraint_state.jac_relevant_dofs[i_con, i, i_b]
+        j = i - 1
+        while j >= 0 and constraint_state.jac_relevant_dofs[i_con, j, i_b] < key:
+            constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = constraint_state.jac_relevant_dofs[i_con, j, i_b]
+            j -= 1
+        constraint_state.jac_relevant_dofs[i_con, j + 1, i_b] = key
+
+
 if TYPE_CHECKING:
     from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
 
@@ -93,7 +115,10 @@ class ConstraintSolver:
         self.jv = cs.jv
         self.quad_gauss = cs.quad_gauss
 
-        self.candidates = cs.candidates
+        self.ls_alpha = cs.ls_alpha
+        self.ls_p0_cost = cs.ls_p0_cost
+        self.ls_alpha_newton = cs.ls_alpha_newton
+        self.ls_gtol = cs.ls_gtol
         self.ls_it = cs.ls_it
         self.ls_result = cs.ls_result
         if self._solver_type == gs.constraint_solver.CG:
@@ -520,9 +545,9 @@ def constraint_solver_kernel_reset(
 
 @qd.func
 def func_clear_constraint_at_env(
-    i_b: int,
-    n_dofs: int,
-    len_constraints: int,
+    i_b,
+    n_dofs,
+    len_constraints,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -668,6 +693,7 @@ def add_collision_constraints(
 
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+                    _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
                 imp, aref = gu.imp_aref(
                     contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
                 )
@@ -784,6 +810,9 @@ def func_equality_connect(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            # Sort needed: DOFs from two entities are only descending within each
+            # entity. Incremental Cholesky requires globally descending order.
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         pos_diff = global_anchor1 - global_anchor2
         penetration = pos_diff.norm()
@@ -875,6 +904,19 @@ def func_equality_joint(
     constraint_state.diag[n_con, i_b] = diag
     constraint_state.aref[n_con, i_b] = aref
     constraint_state.efc_D[n_con, i_b] = 1.0 / diag
+
+    # Populate jac_relevant_dofs for this joint-equality constraint.
+    # Without this, sparse iterations see 0 relevant DOFs and produce
+    # zero forces, leading to NaN in the solver.
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        con_n_relevant_dofs = 0
+        constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof1
+        con_n_relevant_dofs += 1
+        if i_dof2 != i_dof1:
+            constraint_state.jac_relevant_dofs[n_con, con_n_relevant_dofs, i_b] = i_dof2
+            con_n_relevant_dofs += 1
+        constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+        _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
 
 @qd.kernel(fastcache=gs.use_fastcache)
@@ -1108,6 +1150,7 @@ def func_equality_weld(
 
         if qd.static(static_rigid_sim_config.sparse_solve):
             constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
+            _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel, pos_error[i])
         diag = qd.max(invweight[0] * (1 - imp) / imp, EPS)
@@ -1163,6 +1206,7 @@ def func_equality_weld(
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_con in range(n_con, n_con + 3):
             constraint_state.jac_n_relevant_dofs[i_con, i_b] = con_n_relevant_dofs
+            _sort_relevant_dofs_descending(constraint_state, i_con, con_n_relevant_dofs, i_b)
 
     for i_con in range(n_con, n_con + 3):
         imp, aref = gu.imp_aref(sol_params, -pos_imp, jac_qvel[i_con - n_con], rot_error[i_con - n_con])
@@ -1284,6 +1328,10 @@ def add_frictionloss_constraints(
                         for i_d2 in range(n_dofs):
                             constraint_state.jac[i_con, i_d2, i_b] = gs.qd_float(0.0)
                         constraint_state.jac[i_con, i_d, i_b] = jac
+
+                        if qd.static(static_rigid_sim_config.sparse_solve):
+                            constraint_state.jac_relevant_dofs[i_con, 0, i_b] = i_d
+                            constraint_state.jac_n_relevant_dofs[i_con, i_b] = 1
 
 
 # ====================================== Runtime User-Specified Weld Constraints ======================================
@@ -1423,11 +1471,15 @@ def func_hessian_direct_batch(
                 i_d1 = constraint_state.jac_relevant_dofs[i_c, i_d1_, i_b]
                 if qd.abs(constraint_state.jac[i_c, i_d1, i_b]) > EPS:
                     for i_d2_ in range(i_d1_, jac_n_relevant_dofs):
-                        i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]  # i_d2 is strictly <= i_d1
-                        constraint_state.nt_H[i_b, i_d1, i_d2] = (
-                            constraint_state.nt_H[i_b, i_d1, i_d2]
-                            + constraint_state.jac[i_c, i_d2, i_b]
-                            * constraint_state.jac[i_c, i_d1, i_b]
+                        i_d2 = constraint_state.jac_relevant_dofs[i_c, i_d2_, i_b]
+                        # Ensure lower triangle: row >= col. jac_relevant_dofs is descending within
+                        # each entity but can have cross-entity pairs where i_d2 > i_d1.
+                        row = qd.max(i_d1, i_d2)
+                        col = qd.min(i_d1, i_d2)
+                        constraint_state.nt_H[i_b, row, col] = (
+                            constraint_state.nt_H[i_b, row, col]
+                            + constraint_state.jac[i_c, col, i_b]
+                            * constraint_state.jac[i_c, row, i_b]
                             * constraint_state.efc_D[i_c, i_b]
                             * constraint_state.active[i_c, i_b]
                         )
@@ -1456,6 +1508,7 @@ def func_hessian_direct_batch(
 def func_hessian_direct_tiled(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    check_full_hessian: qd.template() = False,
 ):
     """Compute the Hessian matrix `H = M + J.T @ D @ J of the optimization problem for all environment at once.
 
@@ -1467,6 +1520,9 @@ def func_hessian_direct_tiled(
     optimization problem fits in a single block, i.e. n_constraints <= 32 and n_dofs <= 64.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+
+    When check_full_hessian is True (used with H patching), skips envs where use_full_hessian == 0 (those get patched
+    instead of rebuilt).
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
@@ -1492,6 +1548,9 @@ def func_hessian_direct_tiled(
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
+        if qd.static(check_full_hessian):
+            if constraint_state.use_full_hessian[i_b] == 0:
+                continue
 
         jac_row = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
         jac_col = qd.simt.block.SharedArray((MAX_CONSTRAINTS_PER_BLOCK, MAX_DOFS_PER_BLOCK), gs.qd_float)
@@ -1607,6 +1666,7 @@ def func_cholesky_factor_direct_batch(
 
     n_dofs = constraint_state.nt_H.shape[1]
 
+    # In-place factorization on nt_H (batch path never uses H patching)
     for i_d in range(n_dofs):
         tmp = constraint_state.nt_H[i_b, i_d, i_d]
         for j_d in range(i_d):
@@ -1629,77 +1689,204 @@ def func_cholesky_factor_direct_tiled(
 ):
     """Compute the Cholesky factorization L of the Hessian matrix H = L @ L.T for a given environment `i_b`.
 
-    This implementation is specialized for GPU backend and highly optimized for it using shared memory and cooperative
-    threading. The current implementation only supports n_dofs <= 64 for 64bits precision and n_dofs <= 92 for 32bits
-    precision due to shared memory storage being limited to 48kB. Note that the amount of shared memory available is
-    hardware-specific, but the 48kB default limit without enabling dedicated GPU context flag is hardware-agnostic on
-    modern GPUs.
+    This implementation is specialized for GPU backend and highly optimized for it using a left-looking blocked algorithm
+    with Tile16x16 primitives (potrf, trsm, syr_sub, ger_sub), all operating entirely in registers via subgroup shuffles.
+    No shared memory or block synchronization needed. This function has no inherent DOF limit, but the fused variant
+    (func_cholesky_and_solve_fused_tiled) requires shared memory for L, so the caller gates both behind the same
+    shared-memory-based DOF threshold: n_dofs <= 64 (f64) or 96 (f32) with 48kB default shared memory, higher with
+    opt-in shared memory (e.g. 160/224 on RTX PRO 6000).
 
-    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to sparse memory resources.
+    Beware the Hessian matrix is re-purposed to store its Cholesky factorization to spare memory resources.
 
     Note that only the lower triangular part will be updated for efficiency, because the Hessian matrix is symmetric.
+    When n_dofs is not a multiple of 16, partial tiles are padded with identity (diagonal=1, off-diagonal=0) so the
+    factorization is correct for the original n_dofs x n_dofs submatrix. Tile slice ops handle the per-thread bounds
+    internally, so no `if tid < ...` guards are needed at the call site.
     """
     EPS = rigid_global_info.EPS[None]
 
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
 
-    # Performance is optimal for BLOCK_DIM = 64
-    BLOCK_DIM = qd.static(64)
-    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
-
-    n_lower_tri = n_dofs * (n_dofs + 1) // 2
-
-    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=BLOCK_DIM)
-    for i in range(_B * BLOCK_DIM):
-        tid = i % BLOCK_DIM
-        i_b = i // BLOCK_DIM
+    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=16)
+    for i in range(_B * 16):
+        i_b = i // 16
         if i_b >= _B:
             continue
         if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
             continue
 
-        # Padding +1 to avoid memory bank conflicts that would cause access serialization
-        H = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
+        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
+        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
+        for kb in range(N_BLOCKS):
+            k0 = kb * 16
+            k1 = qd.min(k0 + 16, n_dofs)
 
-        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
-        i_pair = tid
-        while i_pair < n_lower_tri:
-            i_d1, i_d2 = linear_to_lower_tri(i_pair)
-            H[i_d1, i_d2] = constraint_state.nt_H[i_b, i_d1, i_d2]
-            i_pair = i_pair + BLOCK_DIM
+            # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
+            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
+            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+
+            # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
+            for jb in range(kb):
+                j0 = jb * 16
+                for t in range(16):
+                    v = constraint_state.nt_H[i_b, k0:k1, j0 + t]
+                    L_kk -= qd.outer(v, v)
+
+            # Factor diagonal tile in-place
+            L_kk.cholesky_(EPS)
+
+            # Solve off-diagonal tiles: L[i,k] = (H[i,k] - sum_j L[i,j] L[k,j]^T) @ inv(L[k,k]^T)
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 16
+                i1 = qd.min(i0 + 16, n_dofs)
+
+                # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
+                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
+                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+
+                # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
+                for jb in range(kb):
+                    j0 = jb * 16
+                    for t in range(16):
+                        v_own = constraint_state.nt_H[i_b, i0:i1, j0 + t]
+                        v_diag = constraint_state.nt_H[i_b, k0:k1, j0 + t]
+                        L_ik -= qd.outer(v_own, v_diag)
+
+                # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
+                L_kk.solve_triangular_(L_ik)
+
+                # Write L[i,k] back to global memory
+                constraint_state.nt_H[i_b, i0:i1, k0:k1] = L_ik
+
+            # Write L[k,k] back to global memory
+            constraint_state.nt_H[i_b, k0:k1, k0:k1] = L_kk
+
+
+@qd.func
+def func_cholesky_and_solve_fused_tiled(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
+
+    Factorizes H = L L^T using register-resident 16x16 tiles, storing completed L tiles in shared memory. Then solves
+    L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
+    global memory.
+    """
+    EPS = rigid_global_info.EPS[None]
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
+
+    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=16)
+    for i in range(_B * 16):
+        tid = i % 16
+        i_b = i // 16
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        # +1 padding avoids shared memory bank conflicts on column-wise access (backward substitution, factorization)
+        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+
+        # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
+        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
+        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
+        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
+        for kb in range(N_BLOCKS):
+            k0 = kb * 16
+            k1 = qd.min(k0 + 16, n_dofs)
+
+            # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
+            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
+            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+
+            # Subtract prior-column contributions from shared memory
+            for jb in range(kb):
+                j0 = jb * 16
+                for t in range(16):
+                    v = L_sh[k0:k1, j0 + t]
+                    L_kk -= qd.outer(v, v)
+
+            # Factor diagonal tile in-place
+            L_kk.cholesky_(EPS)
+
+            # Solve off-diagonal tiles and store in shared memory (not global)
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 16
+                i1 = qd.min(i0 + 16, n_dofs)
+
+                # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
+                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
+                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+
+                # Subtract prior-column contributions from shared memory
+                for jb in range(kb):
+                    j0 = jb * 16
+                    for t in range(16):
+                        v_own = L_sh[i0:i1, j0 + t]
+                        v_diag = L_sh[k0:k1, j0 + t]
+                        L_ik -= qd.outer(v_own, v_diag)
+
+                # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
+                L_kk.solve_triangular_(L_ik)
+
+                # Write L[i,k] to shared memory
+                L_sh[i0:i1, k0:k1] = L_ik
+
+            # Write L[k,k] to shared memory
+            L_sh[k0:k1, k0:k1] = L_kk
+
+        # --- Scalar triangular solve using L from shared memory ---
+        # No longer using 16x16 tiles; the 16 threads parallelize each row's
+        # dot product by striping across columns, then subgroup-reduce to
+        # sum the partial products. Thread 0 writes each solved element.
+
+        # Load gradient into v_sh
+        k = tid
+        while k < n_dofs:
+            v_sh[k] = constraint_state.grad[k, i_b]
+            k = k + 16
         qd.simt.block.sync()
 
-        # Loop over all columns sequentially, which is an integral part of Cholesky-Crout algorithm and cannot be
-        # avoided.
+        # Forward substitution: solve L @ y = grad (parallel dot with 16 threads)
         for i_d in range(n_dofs):
-            # Compute the diagonal of the Cholesky factor L for the column i being considered, ie
-            # L_{i,i} = sqrt(A_{i,i} - sum_{j=1}^{i-1}(L_{i,j} ** 2 ))
+            dot = gs.qd_float(0.0)
+            j = tid
+            while j < i_d:
+                dot = dot + L_sh[i_d, j] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add(dot, 4)
             if tid == 0:
-                tmp = H[i_d, i_d]
-                for j_d in range(i_d):
-                    tmp = tmp - H[i_d, j_d] ** 2
-                H[i_d, i_d] = qd.sqrt(qd.max(tmp, EPS))
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
 
-            # Compute all the off-diagonal terms of the Cholesky factor L for the column i being considered, ie
-            # L_{j,i} = 1 / L_{i,i} (A_{j,i} - sum_{k=1}^{i-1}(L_{j,k} L_{i,k}), for j > i
-            inv_diag = 1.0 / H[i_d, i_d]
-            j_d = i_d + 1 + tid
-            while j_d < n_dofs:
-                dot = gs.qd_float(0.0)
-                for k_d in range(i_d):
-                    dot = dot + H[j_d, k_d] * H[i_d, k_d]
-                H[j_d, i_d] = (H[j_d, i_d] - dot) * inv_diag
-                j_d = j_d + BLOCK_DIM
+        # Backward substitution: solve L^T @ x = y (parallel dot with 16 threads)
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.qd_float(0.0)
+            j = i_d + 1 + tid
+            while j < n_dofs:
+                dot = dot + L_sh[j, i_d] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add(dot, 4)
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
 
-        # Copy the final result back from shared memory, only considered the lower triangular part
-        i_pair = tid
-        while i_pair < n_lower_tri:
-            i_d1, i_d2 = linear_to_lower_tri(i_pair)
-            constraint_state.nt_H[i_b, i_d1, i_d2] = H[i_d1, i_d2]
-            i_pair = i_pair + BLOCK_DIM
+        # Write Mgrad to global memory
+        k = tid
+        while k < n_dofs:
+            constraint_state.Mgrad[k, i_b] = v_sh[k]
+            k = k + 16
 
 
 @qd.func
@@ -1896,6 +2083,7 @@ def func_cholesky_solve_batch(
 ):
     n_dofs = constraint_state.Mgrad.shape[0]
 
+    # Batch path: L is in nt_H (in-place factorization)
     for i_d in range(n_dofs):
         curr_out = constraint_state.grad[i_d, i_b]
         for j_d in range(i_d):
@@ -1954,7 +2142,7 @@ def func_cholesky_solve_tiled(
             (NUM_WARPS if qd.static(ENABLE_WARP_REDUCTION) else BLOCK_DIM,), gs.qd_float
         )
 
-        # Copy the lower triangular part of the entire Hessian matrix to shared memory for efficiency
+        # Copy the lower triangular part of L (Cholesky factor) to shared memory for efficiency
         i_flat = tid
         while i_flat < n_dofs_2:
             i_d1 = i_flat // n_dofs
@@ -2424,6 +2612,123 @@ def func_linesearch_and_apply_alpha(
 
 
 @qd.func
+def func_linesearch_refine(
+    i_b,
+    p1_alpha,
+    p1_cost,
+    p1_deriv_0,
+    p1_deriv_1,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """Bracketing walk + 3-alpha dual-bracket refinement.
+
+    Shared by the monolith linesearch (func_linesearch_batch) and the decomposed path's Phase 3 (solver_breakdown).
+    Takes an initial point (p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1) and refines it via Newton steps until the
+    gradient sign flips, then polishes with batched 3-alpha evaluation.
+
+    Returns (res_alpha, ls_result) where ls_result is a status code for diagnostics.
+    """
+    res_alpha = gs.qd_float(0.0)
+    ls_result = 0
+    done = False
+
+    direction = (p1_deriv_0 < 0) * 2 - 1
+    p2update = 0
+    p2_alpha = p1_alpha
+    p2_cost = p1_cost
+    p2_deriv_0 = p1_deriv_0
+    p2_deriv_1 = p1_deriv_1
+    while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
+        p2update = 1
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+            i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
+        )
+        if qd.abs(p1_deriv_0) < gtol:
+            res_alpha = p1_alpha
+            done = True
+            break
+    if not done:
+        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+            ls_result = 3
+            res_alpha = p1_alpha
+            done = True
+        if not p2update and not done:
+            ls_result = 6
+            res_alpha = p1_alpha
+            done = True
+        if not done:
+            alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
+            alpha_1 = p1_alpha
+            alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+                costs, grads, hess = func_ls_point_fn_3alphas_opt(
+                    i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                )
+                alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
+                p1_next = alpha_0
+                p2_next = alpha_1
+                best_a = gs.qd_float(0.0)
+                best_c = gs.qd_float(0.0)
+                best_found = False
+                for i in qd.static(range(3)):
+                    if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_c):
+                        best_a = alphas[i]
+                        best_c = costs[i]
+                        best_found = True
+                if best_found:
+                    res_alpha = best_a
+                    done = True
+                else:
+                    b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
+                        p1_alpha,
+                        p1_cost,
+                        p1_deriv_0,
+                        p1_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
+                    )
+                    b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
+                        p2_alpha,
+                        p2_cost,
+                        p2_deriv_0,
+                        p2_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
+                    )
+                    if b1 == 0 and b2 == 0:
+                        if costs[2] < p0_cost:
+                            ls_result = 0
+                        else:
+                            ls_result = 7
+                        res_alpha = alpha_2
+                        done = True
+                if done:
+                    break
+                alpha_0 = p1_next
+                alpha_1 = p2_next
+                alpha_2 = (p1_alpha + p2_alpha) * 0.5
+            if not done:
+                if p1_cost <= p2_cost and p1_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p1_alpha
+                elif p2_cost <= p1_cost and p2_cost < p0_cost:
+                    ls_result = 4
+                    res_alpha = p2_alpha
+                else:
+                    ls_result = 5
+                    res_alpha = 0.0
+    return res_alpha, ls_result
+
+
+@qd.func
 def func_linesearch_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
@@ -2475,125 +2780,13 @@ def func_linesearch_batch(
                 constraint_state.ls_result[i_b] = 0
             res_alpha = p1_alpha
         else:
-            # Phase 2: Bracketing
-            direction = (p1_deriv_0 < 0) * 2 - 1
-            p2update = 0
-            p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-            while (
-                p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]
-            ):
-                p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
-                p2update = 1
-
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
-                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
-                )
-                if qd.abs(p1_deriv_0) < gtol:
-                    res_alpha = p1_alpha
-                    done = True
-                    break
-            if not done:
-                if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
-                    constraint_state.ls_result[i_b] = 3
-                    res_alpha = p1_alpha
-                    done = True
-
-                if not p2update and not done:
-                    constraint_state.ls_result[i_b] = 6
-                    res_alpha = p1_alpha
-                    done = True
-
-                if not done:
-                    # Phase 3: Refinement with batched 3-alpha evaluation
-                    alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1  # Newton from p1
-                    alpha_1 = p1_alpha  # p2_next (= current p1)
-                    alpha_2 = (p1_alpha + p2_alpha) * 0.5  # midpoint
-
-                    while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                        # Batch evaluate cost, gradient, hessian for all 3 alphas in one constraint loop
-                        costs, grads, hess = func_ls_point_fn_3alphas_opt(
-                            i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
-                        )
-                        alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
-
-                        # Check convergence among 3 candidates
-                        p1_next_alpha = alpha_0
-                        p2_next_alpha = alpha_1
-
-                        best_alpha = gs.qd_float(0.0)
-                        best_cost = gs.qd_float(0.0)
-                        best_found = False
-                        for i in qd.static(range(3)):
-                            if qd.abs(grads[i]) < gtol and (not best_found or costs[i] < best_cost):
-                                best_alpha = alphas[i]
-                                best_cost = costs[i]
-                                best_found = True
-
-                        if best_found:
-                            res_alpha = best_alpha
-                            done = True
-                        else:
-                            (
-                                b1,
-                                p1_alpha,
-                                p1_cost,
-                                p1_deriv_0,
-                                p1_deriv_1,
-                                p1_next_alpha,
-                            ) = update_bracket_no_eval_local(
-                                p1_alpha,
-                                p1_cost,
-                                p1_deriv_0,
-                                p1_deriv_1,
-                                alphas,
-                                costs,
-                                grads,
-                                hess,
-                            )
-                            (
-                                b2,
-                                p2_alpha,
-                                p2_cost,
-                                p2_deriv_0,
-                                p2_deriv_1,
-                                p2_next_alpha,
-                            ) = update_bracket_no_eval_local(
-                                p2_alpha,
-                                p2_cost,
-                                p2_deriv_0,
-                                p2_deriv_1,
-                                alphas,
-                                costs,
-                                grads,
-                                hess,
-                            )
-
-                            if b1 == 0 and b2 == 0:
-                                if costs[2] < p0_cost:
-                                    constraint_state.ls_result[i_b] = 0
-                                else:
-                                    constraint_state.ls_result[i_b] = 7
-                                res_alpha = alpha_2
-                                done = True
-
-                        if done:
-                            break
-
-                        # Compute next 3 alphas for next iteration
-                        alpha_0 = p1_next_alpha
-                        alpha_1 = p2_next_alpha
-                        alpha_2 = (p1_alpha + p2_alpha) * 0.5
-
-                    if not done:
-                        if p1_cost <= p2_cost and p1_cost < p0_cost:
-                            constraint_state.ls_result[i_b] = 4
-                            res_alpha = p1_alpha
-                        elif p2_cost <= p1_cost and p2_cost < p0_cost:
-                            constraint_state.ls_result[i_b] = 4
-                            res_alpha = p2_alpha
-                        else:
-                            constraint_state.ls_result[i_b] = 5
-                            res_alpha = 0.0
+            res_alpha, ls_result = func_linesearch_refine(
+                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol, constraint_state, rigid_global_info
+            )
+            constraint_state.ls_result[i_b] = ls_result
+            # Status 7: both brackets stalled and midpoint cost >= p0_cost. Reject the non-improving alpha.
+            if ls_result == 7:
+                res_alpha = 0.0
     return res_alpha
 
 
@@ -2890,21 +3083,70 @@ def initialize_Jaref(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
+    if qd.static(static_rigid_sim_config.parallel_init):
+        _initialize_Jaref_parallel(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        _initialize_Jaref_per_env(
+            qacc=qacc,
+            constraint_state=constraint_state,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@qd.func
+def _initialize_Jaref_body(
+    i_c,
+    i_b,
+    n_dofs,
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    Jaref = -constraint_state.aref[i_c, i_b]
+    if qd.static(static_rigid_sim_config.sparse_solve):
+        for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
+            i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    else:
+        for i_d in range(n_dofs):
+            Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
+    constraint_state.Jaref[i_c, i_b] = Jaref
+
+
+@qd.func
+def _initialize_Jaref_per_env(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
     qd.loop_config(name="init_jaref", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
         for i_c in range(constraint_state.n_constraints[i_b]):
-            Jaref = -constraint_state.aref[i_c, i_b]
-            if qd.static(static_rigid_sim_config.sparse_solve):
-                for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
-                    i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            else:
-                for i_d in range(n_dofs):
-                    Jaref = Jaref + constraint_state.jac[i_c, i_d, i_b] * qacc[i_d, i_b]
-            constraint_state.Jaref[i_c, i_b] = Jaref
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
+
+
+@qd.func
+def _initialize_Jaref_parallel(
+    qacc: array_class.V_ANNOTATION,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone."""
+    _B = constraint_state.jac.shape[2]
+    n_dofs = constraint_state.jac.shape[1]
+    len_constraints = constraint_state.Jaref.shape[0]
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_c, i_b in qd.ndrange(len_constraints, _B):
+        if i_c < constraint_state.n_constraints[i_b]:
+            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -3037,6 +3279,8 @@ def func_solve_init(
     qd.loop_config(name="init_improved", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in qd.ndrange(_B):
         constraint_state.improved[i_b] = constraint_state.n_constraints[i_b] > 0
+        constraint_state.use_full_hessian[i_b] = 1
+    constraint_state.solver_iter_counter[()] = 0
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
         func_hessian_and_cholesky_factor_direct(
@@ -3107,13 +3351,10 @@ def func_solve_iter(
 
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             func_build_changed_constraint_list(i_b, constraint_state=constraint_state)
-            is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
-                i_b,
-                constraint_state=constraint_state,
-                rigid_global_info=rigid_global_info,
-                static_rigid_sim_config=static_rigid_sim_config,
-            )
-            if is_degenerated:
+            if qd.static(static_rigid_sim_config.sparse_solve):
+                # Bypass incremental Cholesky when sparse_solve=True. The incremental rank-1 update
+                # assumes globally descending DOF order in jac_relevant_dofs, which doesn't hold
+                # for cross-entity constraints. Always use direct Hessian rebuild which has the max/min fix.
                 func_hessian_and_cholesky_factor_direct_batch(
                     i_b,
                     entities_info=entities_info,
@@ -3121,6 +3362,21 @@ def func_solve_iter(
                     rigid_global_info=rigid_global_info,
                     static_rigid_sim_config=static_rigid_sim_config,
                 )
+            else:
+                is_degenerated = func_hessian_and_cholesky_factor_incremental_batch(
+                    i_b,
+                    constraint_state=constraint_state,
+                    rigid_global_info=rigid_global_info,
+                    static_rigid_sim_config=static_rigid_sim_config,
+                )
+                if is_degenerated:
+                    func_hessian_and_cholesky_factor_direct_batch(
+                        i_b,
+                        entities_info=entities_info,
+                        constraint_state=constraint_state,
+                        rigid_global_info=rigid_global_info,
+                        static_rigid_sim_config=static_rigid_sim_config,
+                    )
 
         func_update_gradient_batch(
             i_b,
@@ -3158,7 +3414,7 @@ def func_solve_body(
 
 
 @func_solve_body.register(
-    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_parallel_linesearch != 1
+    is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_decomposed_solver != 1
 )
 @qd.kernel(fastcache=gs.use_fastcache)
 def func_solve_body_monolith(
