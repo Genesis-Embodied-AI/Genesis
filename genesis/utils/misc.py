@@ -427,8 +427,7 @@ def qd_to_python(
         without raising an exception if not.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
-    _was_tensor = isinstance(value, qd.Tensor)
-    if _was_tensor:
+    if isinstance(value, qd.Tensor):
         value = value._unwrap()
 
     # Get batch size if possible
@@ -469,12 +468,6 @@ def qd_to_python(
             except AttributeError:
                 # "Cache" no-owning python-side views of the original Quadrants memory buffer as a hidden attribute
                 value_tc = torch.utils.dlpack.from_dlpack(value.to_dlpack())
-                if _was_tensor and issubclass(data_type, qd.MatrixField):
-                    import sys
-                    print(f"[DEBUG qd_to_python] was_tensor={_was_tensor} data_type={data_type.__name__} "
-                          f"batch_shape={batch_shape} m={getattr(value, 'm', '?')} n={getattr(value, 'n', '?')} "
-                          f"dlpack_shape={value_tc.shape} dlpack_strides={value_tc.stride()} "
-                          f"transpose={transpose}", file=sys.stderr, flush=True)
                 if issubclass(data_type, qd.MatrixField) and value.m == 1:
                     value_tc = value_tc.reshape((*batch_shape, value.n))
                 value._tc = value_tc
