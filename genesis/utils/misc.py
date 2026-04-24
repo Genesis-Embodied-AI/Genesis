@@ -427,6 +427,9 @@ def qd_to_python(
         without raising an exception if not.
         to_torch (bool): Whether to convert to Torch tensor or Numpy array. Defaults to True.
     """
+    if isinstance(value, qd.Tensor):
+        value = value._unwrap()
+
     # Get batch size if possible
     try:
         batch_shape = value.shape
@@ -637,6 +640,9 @@ def qd_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
+    if isinstance(value, qd.Tensor):
+        value = value._unwrap()
+
     # Try efficient shortcut first and only fallback to standard branching if necessary.
     # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
     if gs.use_zerocopy:
@@ -690,6 +696,9 @@ def qd_to_numpy(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
+    if isinstance(value, qd.Tensor):
+        value = value._unwrap()
+
     tensor = qd_to_python(value, transpose, copy=copy, to_torch=False)
     if row_mask is None and col_mask is None:
         return tensor
