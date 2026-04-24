@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,51 @@ try:
     HAS_OMNIVERSE_KIT_SUPPORT = True
 except ImportError:
     HAS_OMNIVERSE_KIT_SUPPORT = False
+
+
+def _acquire_bake_lock(lock_path: str):
+    """Acquire a cross-process file lock to serialize omni-kit bake operations.
+
+    Returns an opaque lock handle to pass to _release_bake_lock().
+    Falls back to no-op if neither filelock nor fcntl is available.
+    """
+    try:
+        from filelock import FileLock
+
+        lock = FileLock(lock_path, timeout=600)
+        lock.acquire()
+        return lock
+    except ImportError:
+        pass
+    try:
+        import fcntl
+
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+    except ImportError:
+        return None
+
+
+def _release_bake_lock(lock) -> None:
+    """Release a lock acquired by _acquire_bake_lock()."""
+    if lock is None:
+        return
+    try:
+        from filelock import FileLock
+
+        if isinstance(lock, FileLock):
+            lock.release()
+            return
+    except ImportError:
+        pass
+    try:
+        import fcntl
+
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        os.close(lock)
+    except (ImportError, OSError):
+        pass
 
 
 def decompress_usdz(usdz_path: str):
@@ -290,6 +336,11 @@ class UsdContext:
         env = dict(os.environ)
         env["OMNI_KIT_ALLOW_ROOT"] = "1"
 
+        # Omniverse Kit cannot handle multiple concurrent instances safely — concurrent bootstrapping
+        # causes segfaults from GPU resource contention and shared extension cache corruption.
+        # Use a file lock to serialize bake operations across parallel processes (e.g. pytest-xdist workers).
+        lock_path = os.path.join(tempfile.gettempdir(), "genesis_usd_bake.lock")
+        lock = _acquire_bake_lock(lock_path)
         try:
             result = subprocess.run(commands, capture_output=True, check=True, text=True, env=env)
             if result.stdout:
@@ -306,6 +357,8 @@ class UsdContext:
                 "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
                 "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
             )
+        finally:
+            _release_bake_lock(lock)
 
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
