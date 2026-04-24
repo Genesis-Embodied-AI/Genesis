@@ -15,6 +15,35 @@ if not gs._initialized:
 _TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
+class _AutoInitMeta(type):
+    """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
+
+    def __new__(cls, name, bases, namespace):
+        names = tuple(namespace.get("__annotations__", {}).keys())
+        defaults = {k: namespace[k] for k in names if k in namespace}
+
+        def __init__(self, *args, **kwargs):
+            assigned = defaults.copy()
+            if len(args) > len(names):
+                raise TypeError(f"{name}() takes {len(names)} positional arguments but {len(args)} were given")
+            for key, value in zip(names, args):
+                assigned[key] = value
+            for key, value in kwargs.items():
+                if key not in names:
+                    raise TypeError(f"{name}() got unexpected keyword argument '{key}'")
+                if key in names[: len(args)]:
+                    raise TypeError(f"{name}() got multiple values for argument '{key}'")
+                assigned[key] = value
+            for key in names:
+                if key not in assigned:
+                    raise TypeError(f"{name}() missing required argument: '{key}'")
+            for key, value in assigned.items():
+                setattr(self, key, value)
+
+        namespace["__init__"] = __init__
+        return super().__new__(cls, name, bases, namespace)
+
+
 PLACEHOLDER = qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND)
 
 
@@ -733,8 +762,8 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
     )
 
 
-@dataclasses.dataclass(frozen=True)
-class StructColliderStaticConfig:
+@qd.data_oriented
+class StructColliderStaticConfig(metaclass=_AutoInitMeta):
     has_terrain: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
@@ -1208,8 +1237,8 @@ def get_gjk_info(**kwargs):
     )
 
 
-@dataclasses.dataclass(frozen=True)
-class StructGJKStaticConfig:
+@qd.data_oriented
+class StructGJKStaticConfig(metaclass=_AutoInitMeta):
     enable_mujoco_multi_contact: bool
 
 
@@ -1970,8 +1999,8 @@ def get_rigid_adjoint_cache(solver):
 # =================================== StructRigidSimStaticConfig ===================================
 
 
-@dataclasses.dataclass(frozen=True)
-class StructRigidSimStaticConfig:
+@qd.data_oriented
+class StructRigidSimStaticConfig(metaclass=_AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
