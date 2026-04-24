@@ -31,10 +31,6 @@ else:
     DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
 
 
-# Tier-1 constraint state allocations use ``qd.tensor(...)`` directly, producing
-# ``qd.Tensor`` wrappers. Wrappers are unwrapped to bare Field / Ndarray at the
-# kernel-dispatch boundary (Quadrants stork-19 / stork-21), so there is no
-# runtime overhead versus bare allocation.
 _TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
