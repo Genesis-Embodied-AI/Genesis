@@ -4081,21 +4081,20 @@ def test_data_accessor(n_envs, batched, tol):
         if qd_data is not None:
             true_raw = qd_to_torch(qd_data)
             qd_ndim = getattr(qd_data, "ndim", len(getattr(qd_data, "element_shape", ())))
-            import sys
             print(f"[DEBUG] type(qd_data)={type(qd_data).__name__} qd_ndim={qd_ndim} "
-                  f"true_raw.shape={true_raw.shape} datas.shape={datas.shape if not isinstance(datas, (list,tuple)) else 'list'} "
-                  f"movedim_arg={true_raw.ndim - qd_ndim - 1}",
-                  file=sys.stderr, flush=True)
+                  f"true_raw.shape={true_raw.shape} datas_shape={datas.shape if not isinstance(datas, (list,tuple)) else 'list'} "
+                  f"movedim_arg={true_raw.ndim - qd_ndim - 1}", flush=True)
             true = true_raw.movedim(true_raw.ndim - qd_ndim - 1, 0)
             if is_tuple:
                 true = torch.unbind(true, dim=-1)
                 true = [val.reshape(data.shape) for data, val in zip(datas, true)]
             else:
                 true = true.reshape(datas.shape)
-            if not torch.allclose(torch.as_tensor(datas, dtype=true.dtype, device=true.device), true, atol=5e-5, rtol=5e-5):
-                print(f"[DEBUG] MISMATCH! datas[:3]={datas[:3]} true[:3]={true[:3]} "
-                      f"true_raw[:3]={true_raw[:3]} true_raw.stride()={true_raw.stride()}",
-                      file=sys.stderr, flush=True)
+            if not isinstance(datas, (list, tuple)):
+                datas_t = torch.as_tensor(datas, dtype=true.dtype, device=true.device)
+                if not torch.allclose(datas_t, true, atol=5e-5, rtol=5e-5):
+                    print(f"[DEBUG] MISMATCH! datas[:2]={datas[:2].tolist()} true[:2]={true[:2].tolist()} "
+                          f"true_raw.stride()={true_raw.stride()} true_raw[:2]={true_raw[:2].tolist()}", flush=True)
             assert_allclose(datas, true, tol=tol)
         if setter is not None:
             if is_tuple:
