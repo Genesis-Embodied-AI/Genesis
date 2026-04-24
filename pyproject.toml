@@ -130,6 +130,8 @@ render = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",
+    # Used to serialize concurrent omni-kit bake operations (concurrent bootstrapping causes segfaults)
+    "filelock",
 ]
 
 [project.scripts]

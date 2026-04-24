@@ -4,8 +4,10 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+import filelock
 import numpy as np
 import torch
 from pxr import Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
@@ -290,22 +292,26 @@ class UsdContext:
         env = dict(os.environ)
         env["OMNI_KIT_ALLOW_ROOT"] = "1"
 
-        try:
-            result = subprocess.run(commands, capture_output=True, check=True, text=True, env=env)
-            if result.stdout:
-                gs.logger.debug(result.stdout)
-            if result.stderr:
-                gs.logger.warning(result.stderr)
-        except (subprocess.CalledProcessError, OSError) as e:
-            gs.logger.warning(
-                f"Baking process failed: {e} A few possible reasons:"
-                "\n\t1. The first launch may require accepting the Omniverse EULA. "
-                "Set `OMNI_KIT_ACCEPT_EULA=yes` to accept it automatically."
-                "\n\t2. The first launch may install additional dependencies, which can cause a timeout."
-                "\n\t3. If you have multiple Python environments (especially with different Python versions), "
-                "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
-                "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
-            )
+        # Bootstrapping omni-kit by multiple processes concurrently causes segfaults. Use a file lock to serialize
+        # bake operations across parallel processes (e.g. pytest-xdist workers).
+        lock_path = os.path.join(tempfile.gettempdir(), "genesis_usd_bake.lock")
+        with filelock.FileLock(lock_path, timeout=600):
+            try:
+                result = subprocess.run(commands, capture_output=True, check=True, text=True, env=env)
+                if result.stdout:
+                    gs.logger.debug(result.stdout)
+                if result.stderr:
+                    gs.logger.warning(result.stderr)
+            except (subprocess.CalledProcessError, OSError) as e:
+                gs.logger.warning(
+                    f"Baking process failed: {e} A few possible reasons:"
+                    "\n\t1. The first launch may require accepting the Omniverse EULA. "
+                    "Set `OMNI_KIT_ACCEPT_EULA=yes` to accept it automatically."
+                    "\n\t2. The first launch may install additional dependencies, which can cause a timeout."
+                    "\n\t3. If you have multiple Python environments (especially with different Python versions), "
+                    "Omniverse Kit extensions may conflict across environments. Try to remove the shared omniverse "
+                    "extension folder (e.g. `~/.local/share/ov/data/ext` in Linux) and try again."
+                )
 
         if os.path.exists(self._bake_stage_file):
             gs.logger.warning(f"USD materials baked to file {self._bake_stage_file}")
