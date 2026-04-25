@@ -384,8 +384,6 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
-        # Tier-1 constraint state: allocated as qd.Tensor wrappers
-        # (Phase-1 migration; see perso_hugh/doc/genesis_tensor_migration.md).
         active=qd.tensor(gs.qd_bool, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         diag=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
