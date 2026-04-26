@@ -3400,7 +3400,11 @@ def _get_static_config(*args, **kwargs):
 
 
 @qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=1, active=1, repeat_after_seconds=5
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)),
+    first_warmup=1,
+    warmup=0,
+    active=2,
+    repeat_after_seconds=5,
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
