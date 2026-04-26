@@ -644,7 +644,7 @@ def func_com_pass2_accumulate_entity(
 
             i_r = links_info.root_idx[I_l]
             links_state.mass_sum[i_r, i_b] = links_state.mass_sum[i_r, i_b] + mass
-            qd.atomic_add(links_state.root_COM_bw[i_r, i_b], mass * links_state.i_pos_bw[i_l, i_b])
+            links_state.root_COM_bw[i_r, i_b] = links_state.root_COM_bw[i_r, i_b] + mass * links_state.i_pos_bw[i_l, i_b]
 
 
 @qd.func
