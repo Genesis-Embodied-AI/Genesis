@@ -2035,6 +2035,10 @@ def func_cholesky_solve_tiled(
 @qd.func
 def func_ls_init_and_eval_p0_opt(
     i_b,
+    tid,
+    Jaref_lds,
+    jv_lds,
+    efc_D_lds,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -2057,12 +2061,23 @@ def func_ls_init_and_eval_p0_opt(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
+    # Stage search into LDS (Tier 4). Allocated locally in this @qd.func; the mv (n_dofs^2),
+    # jv (n_con*n_dofs), and quad_gauss (3*n_dofs) reductions below all consume search from LDS,
+    # eliminating ~1825 redundant HBM rereads per linesearch init for the unitree_g1 scene.
+    # n_dofs <= N_DOFS_MAX (32) verified for the unitree_g1 benchmark scene; future scenes
+    # exceeding that bound must raise N_DOFS_MAX (and re-verify the LDS-per-CU budget).
+    BLOCK_DIM_LS = qd.static(32)
+    N_DOFS_MAX = qd.static(32)
+    search_lds = qd.simt.block.SharedArray((N_DOFS_MAX, BLOCK_DIM_LS), gs.qd_float)
+    for i_d in range(n_dofs):
+        search_lds[i_d, tid] = constraint_state.search[i_d, i_b]
+
     # -- mv and jv (same as original func_ls_init) --
     for i_e in range(n_entities):
         for i_d1 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
             mv = gs.qd_float(0.0)
             for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * constraint_state.search[i_d2, i_b]
+                mv = mv + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * search_lds[i_d2, tid]
             constraint_state.mv[i_d1, i_b] = mv
 
     for i_c in range(n_con):
@@ -2070,27 +2085,37 @@ def func_ls_init_and_eval_p0_opt(
         if qd.static(static_rigid_sim_config.sparse_solve):
             for i_d_ in range(constraint_state.jac_n_relevant_dofs[i_c, i_b]):
                 i_d = constraint_state.jac_relevant_dofs[i_c, i_d_, i_b]
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * search_lds[i_d, tid]
         else:
             for i_d in range(n_dofs):
-                jv = jv + constraint_state.jac[i_c, i_d, i_b] * constraint_state.search[i_d, i_b]
+                jv = jv + constraint_state.jac[i_c, i_d, i_b] * search_lds[i_d, tid]
         constraint_state.jv[i_c, i_b] = jv
+        # Stage jv into LDS while it's still in register (no extra HBM read).
+        # Subsequent linesearch evaluations consume jv ~50x; reading from LDS instead of HBM
+        # eliminates 50 * n_con HBM loads of jv per linesearch.
+        # Caller guarantees n_con <= N_CON_MAX in func_linesearch_batch.
+        jv_lds[i_c, tid] = jv
 
     # -- quad_gauss (same as original func_ls_init) --
+    # quad_gauss_0 is constraint_state.gauss[i_b]; quad_gauss_1/2 are reductions over DOFs.
+    # Previously these were written to constraint_state.quad_gauss[3, _B] and re-read by every
+    # subsequent func_ls_point_fn_opt / func_ls_point_fn_3alphas_opt call. Since this function is
+    # the sole writer and those are the sole readers (verified via grep), thread them through the
+    # call chain as scalar locals + return values instead — eliminates 3 HBM writes per linesearch
+    # init plus 3 HBM reads per linesearch eval.
+    quad_gauss_0 = constraint_state.gauss[i_b]
     quad_gauss_1 = gs.qd_float(0.0)
     quad_gauss_2 = gs.qd_float(0.0)
     for i_d in range(n_dofs):
+        s = search_lds[i_d, tid]
         quad_gauss_1 = quad_gauss_1 + (
-            constraint_state.search[i_d, i_b] * constraint_state.Ma[i_d, i_b]
-            - constraint_state.search[i_d, i_b] * dofs_state.force[i_d, i_b]
+            s * constraint_state.Ma[i_d, i_b]
+            - s * dofs_state.force[i_d, i_b]
         )
-        quad_gauss_2 = quad_gauss_2 + 0.5 * constraint_state.search[i_d, i_b] * constraint_state.mv[i_d, i_b]
-    constraint_state.quad_gauss[0, i_b] = constraint_state.gauss[i_b]
-    constraint_state.quad_gauss[1, i_b] = quad_gauss_1
-    constraint_state.quad_gauss[2, i_b] = quad_gauss_2
+        quad_gauss_2 = quad_gauss_2 + 0.5 * s * constraint_state.mv[i_d, i_b]
 
     # -- Compute quad per constraint and accumulate by type --
-    quad_total_0 = constraint_state.gauss[i_b]
+    quad_total_0 = quad_gauss_0
     quad_total_1 = quad_gauss_1
     quad_total_2 = quad_gauss_2
     eq_sum_0 = gs.qd_float(0.0)
@@ -2099,10 +2124,14 @@ def func_ls_init_and_eval_p0_opt(
 
     # Recompute quad on the fly from Jaref, jv, efc_D — avoids writing/reading the quad array entirely.
     # 3 loads per constraint (Jaref, jv, D) + ~8 FLOPs, vs 3 writes + 3 reads through global memory.
+    # Also stage Jaref and efc_D into LDS while they're in register, for reuse by the up-to-50
+    # subsequent func_ls_point_fn_opt / func_ls_point_fn_3alphas_opt evaluations in this linesearch.
     for i_c in range(n_con):
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
         D = constraint_state.efc_D[i_c, i_b]
+        Jaref_lds[i_c, tid] = Jaref_c
+        efc_D_lds[i_c, tid] = D
         qf_0 = D * (0.5 * Jaref_c * Jaref_c)
         qf_1 = D * (jv_c * Jaref_c)
         qf_2 = D * (0.5 * jv_c * jv_c)
@@ -2136,10 +2165,12 @@ def func_ls_init_and_eval_p0_opt(
             quad_total_1 = quad_total_1 + qf_1 * active
             quad_total_2 = quad_total_2 + qf_2 * active
 
-    # Write eq_sum to global for subsequent calls
-    constraint_state.eq_sum[0, i_b] = eq_sum_0
-    constraint_state.eq_sum[1, i_b] = eq_sum_1
-    constraint_state.eq_sum[2, i_b] = eq_sum_2
+    # Pre-combine quad_gauss + eq_sum into the bases consumed by func_ls_point_fn_opt and
+    # func_ls_point_fn_3alphas_opt. Returning these as locals avoids 6 HBM writes here and
+    # 6 HBM reads (plus 3 adds) at every subsequent linesearch evaluation.
+    base_0 = quad_gauss_0 + eq_sum_0
+    base_1 = quad_gauss_1 + eq_sum_1
+    base_2 = quad_gauss_2 + eq_sum_2
 
     # Return p0 result (alpha=0)
     cost = quad_total_0
@@ -2150,38 +2181,51 @@ def func_ls_init_and_eval_p0_opt(
 
     constraint_state.ls_it[i_b] = 1
 
-    return gs.qd_float(0.0), cost, grad, hess
+    return gs.qd_float(0.0), cost, grad, hess, base_0, base_1, base_2
 
 
 @qd.func
 def func_ls_point_fn_opt(
     i_b,
     alpha,
+    base_0,
+    base_1,
+    base_2,
+    tid,
+    Jaref_lds,
+    jv_lds,
+    efc_D_lds,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Evaluate linesearch cost, gradient, and curvature at a single candidate alpha.
 
     Iterates over only friction and contact constraints — equality constraints are skipped by initializing accumulators
-    from quad_gauss + eq_sum (pre-computed during init).
+    from base_{0,1,2} = quad_gauss + eq_sum, pre-combined and threaded in from func_ls_init_and_eval_p0_opt as scalar
+    parameters (saves 6 HBM reads + 3 adds per call vs the prior quad_gauss / eq_sum field loads).
 
     Quad coefficients are recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array.
     This reduces per-constraint loads from 5 to 3 (contacts) and 7 to 5 (friction), a 40%/29% bandwidth reduction.
+
+    Hot constraint working set (Jaref, jv, efc_D) is read from LDS — these fields were staged
+    once at the start of the linesearch in func_ls_init_and_eval_p0_opt and are invariant across all evaluations.
+    LDS access is ~20 cycles vs ~700 ns HBM round-trip, eliminating the 96.7%/88% s_waitcnt vmcnt stall on these reads.
     The ~8 FLOPs of recomputation per constraint are almost free."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
-    # Start from quad_gauss + eq_sum (skips ne equality constraints)
-    quad_total_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
-    quad_total_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
-    quad_total_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
+    quad_total_0 = base_0
+    quad_total_1 = base_1
+    quad_total_2 = base_2
 
     # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad
+    # Jaref / jv / efc_D come from LDS (staged once in func_ls_init_and_eval_p0_opt).
+    # Caller (func_linesearch_batch) guarantees n_con <= N_CON_MAX (probed = 32 for the benchmark scene).
     for i_c in range(ne, nef):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
+        Jaref_c = Jaref_lds[i_c, tid]
+        jv_c = jv_lds[i_c, tid]
+        D = efc_D_lds[i_c, tid]
         f = constraint_state.efc_frictionloss[i_c, i_b]
         r = constraint_state.diag[i_c, i_b]
         qf_0 = D * (0.5 * Jaref_c * Jaref_c)
@@ -2201,9 +2245,9 @@ def func_ls_point_fn_opt(
 
     # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad
     for i_c in range(nef, n_con):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
+        Jaref_c = Jaref_lds[i_c, tid]
+        jv_c = jv_lds[i_c, tid]
+        D = efc_D_lds[i_c, tid]
         x = Jaref_c + alpha * jv_c
         active = x < 0
         qf_0 = D * (0.5 * Jaref_c * Jaref_c)
@@ -2230,13 +2274,21 @@ def func_ls_point_fn_3alphas_opt(
     alpha_0,
     alpha_1,
     alpha_2,
+    base_0,
+    base_1,
+    base_2,
+    tid,
+    Jaref_lds,
+    jv_lds,
+    efc_D_lds,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint loop pass.
 
     Batches three candidate step sizes into one loop, amortizing per-constraint loads (Jaref, jv, efc_D, etc.) across
-    all three evaluations. Equality constraints are skipped via quad_gauss + eq_sum.
+    all three evaluations. Equality constraints are skipped via the base_{0,1,2} = quad_gauss + eq_sum scalars
+    threaded in from func_ls_init_and_eval_p0_opt (saves 6 HBM reads + 3 adds per call vs reloading those fields).
 
     Quad coefficients are recomputed on the fly from Jaref, jv, efc_D — same bandwidth optimization as
     func_ls_point_fn_opt (3 loads per contact instead of 5, 5 per friction instead of 7). Combined with 3-alpha
@@ -2245,20 +2297,18 @@ def func_ls_point_fn_3alphas_opt(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
-    # Start from quad_gauss + eq_sum for all 3
-    base_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
-    base_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
-    base_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
-
     t0_0, t0_1, t0_2 = base_0, base_1, base_2
     t1_0, t1_1, t1_2 = base_0, base_1, base_2
     t2_0, t2_1, t2_2 = base_0, base_1, base_2
 
     # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad, eval 3 alphas
+    # Jaref / jv / efc_D come from LDS (staged once in func_ls_init_and_eval_p0_opt), saving up to
+    # ~50 reload trips per linesearch since they are invariant across linesearch evaluations.
+    # Caller guarantees n_con <= N_CON_MAX (probed = 32 for the benchmark scene); LDS read is unconditional.
     for i_c in range(ne, nef):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
+        Jaref_c = Jaref_lds[i_c, tid]
+        jv_c = jv_lds[i_c, tid]
+        D = efc_D_lds[i_c, tid]
         f = constraint_state.efc_frictionloss[i_c, i_b]
         r = constraint_state.diag[i_c, i_b]
         qf_0 = D * (0.5 * Jaref_c * Jaref_c)
@@ -2304,9 +2354,9 @@ def func_ls_point_fn_3alphas_opt(
 
     # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval 3 alphas
     for i_c in range(nef, n_con):
-        Jaref_c = constraint_state.Jaref[i_c, i_b]
-        jv_c = constraint_state.jv[i_c, i_b]
-        D = constraint_state.efc_D[i_c, i_b]
+        Jaref_c = Jaref_lds[i_c, tid]
+        jv_c = jv_lds[i_c, tid]
+        D = efc_D_lds[i_c, tid]
         qf_0 = D * (0.5 * Jaref_c * Jaref_c)
         qf_1 = D * (jv_c * Jaref_c)
         qf_2 = D * (0.5 * jv_c * jv_c)
@@ -2434,8 +2484,34 @@ def func_linesearch_batch(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
+    # ---- LDS staging of linesearch working set (Tier 2, MI300X) -----------------------------
+    # Tier 2 fields (Jaref, jv, efc_D): read by every linesearch evaluation (up to ~50 per CG
+    # iteration) and never mutated within one linesearch call (Jaref is updated post-linesearch
+    # in func_linesearch_and_apply_alpha; jv is written once during init and stable thereafter;
+    # efc_D is part of the constraint configuration). Stage them once at init and read from LDS
+    # in every subsequent evaluator call to eliminate ~3 * n_con * (#evals - 1) HBM rereads
+    # per linesearch.
+    # Tier 4 (search) is staged separately inside func_ls_init_and_eval_p0_opt; see comment there.
+    #
+    # Layout (N_CON_MAX, BLOCK_DIM): column-major so all 32 lanes of a wave hit distinct LDS
+    # banks for any given i_c -> bank-conflict-free.
+    # Sizing per workgroup: 3 fields * N_CON_MAX * BLOCK_DIM * 4B = 12 KiB/wg.
+    # search_lds adds another 4 KiB/wg -> 16 KiB/wg total -> 64 KiB/CU == LDS limit, preserving
+    # 1 wave/SIMD. Any further LDS staging in this kernel will regress occupancy.
+    # Caller invariant: n_constraints[i_b] <= N_CON_MAX (32). Verified via probe_n_constraints.py
+    # against the unitree_g1 benchmark scene; max(n_constraints) was 32 across all 8192 envs and
+    # 60 steps. If a future scene exceeds this bound, raise N_CON_MAX or restore the runtime guard.
+    BLOCK_DIM = qd.static(32)
+    N_CON_MAX = qd.static(32)
+    Jaref_lds = qd.simt.block.SharedArray((N_CON_MAX, BLOCK_DIM), gs.qd_float)
+    jv_lds = qd.simt.block.SharedArray((N_CON_MAX, BLOCK_DIM), gs.qd_float)
+    efc_D_lds = qd.simt.block.SharedArray((N_CON_MAX, BLOCK_DIM), gs.qd_float)
+    tid = i_b & (BLOCK_DIM - 1)
+
     n_dofs = constraint_state.search.shape[0]
     ## use adaptive linesearch tolerance
+    # snorm reads search from HBM (single pass; not in the linesearch evaluator hot loop, so
+    # not worth threading through the LDS staging that lives inside func_ls_init_and_eval_p0_opt).
     snorm = gs.qd_float(0.0)
     for jd in range(n_dofs):
         snorm = snorm + constraint_state.search[jd, i_b] ** 2
@@ -2455,8 +2531,14 @@ def func_linesearch_batch(
         res_alpha = 0.0
     else:
         # Phase 1: Init + p0 + p1
-        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_init_and_eval_p0_opt(
+        # base_{0,1,2} = quad_gauss + eq_sum, returned as locals from p0 and threaded into all
+        # subsequent linesearch evaluations to avoid 6 HBM reads + 3 adds per evaluation.
+        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1, base_0, base_1, base_2 = func_ls_init_and_eval_p0_opt(
             i_b,
+            tid,
+            Jaref_lds,
+            jv_lds,
+            efc_D_lds,
             entities_info=entities_info,
             dofs_state=dofs_state,
             constraint_state=constraint_state,
@@ -2464,7 +2546,17 @@ def func_linesearch_batch(
             static_rigid_sim_config=static_rigid_sim_config,
         )
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
-            i_b, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info
+            i_b,
+            p0_alpha - p0_deriv_0 / p0_deriv_1,
+            base_0,
+            base_1,
+            base_2,
+            tid,
+            Jaref_lds,
+            jv_lds,
+            efc_D_lds,
+            constraint_state,
+            rigid_global_info,
         )
 
         if p0_cost < p1_cost:
@@ -2488,7 +2580,17 @@ def func_linesearch_batch(
                 p2update = 1
 
                 p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
-                    i_b, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info
+                    i_b,
+                    p1_alpha - p1_deriv_0 / p1_deriv_1,
+                    base_0,
+                    base_1,
+                    base_2,
+                    tid,
+                    Jaref_lds,
+                    jv_lds,
+                    efc_D_lds,
+                    constraint_state,
+                    rigid_global_info,
                 )
                 if qd.abs(p1_deriv_0) < gtol:
                     res_alpha = p1_alpha
@@ -2514,7 +2616,19 @@ def func_linesearch_batch(
                     while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
                         # Batch evaluate cost, gradient, hessian for all 3 alphas in one constraint loop
                         costs, grads, hess = func_ls_point_fn_3alphas_opt(
-                            i_b, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info
+                            i_b,
+                            alpha_0,
+                            alpha_1,
+                            alpha_2,
+                            base_0,
+                            base_1,
+                            base_2,
+                            tid,
+                            Jaref_lds,
+                            jv_lds,
+                            efc_D_lds,
+                            constraint_state,
+                            rigid_global_info,
                         )
                         alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
 
