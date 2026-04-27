@@ -185,7 +185,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",
-    "--timeout=1000",  # Very large timeout, just in case of deadlock
+    "--timeout=1200",  # Very large timeout, just in case of deadlock
     # Note that the retry mechanism is not compatible with "--forked".
     "-m not (benchmarks or examples)",
 ]

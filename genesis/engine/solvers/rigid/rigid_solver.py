@@ -16,6 +16,7 @@ from genesis.utils.misc import (
     DeprecationError,
     qd_to_torch,
     qd_to_numpy,
+    qd_zero_grad,
     indices_to_mask,
     broadcast_tensor,
     sanitize_indexed_tensor,
@@ -1233,6 +1234,20 @@ class RigidSolver(KinematicSolver):
 
             # Run Genesis rigid simulation step for non-IPC couplers
             self.substep(f)
+
+    def reset_grad(self):
+        # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
+        # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
+        # so they must start at zero between consecutive `loss.backward()`s.
+        super().reset_grad()
+        if self._requires_grad:
+            qd_zero_grad(self.geoms_state)
+            qd_zero_grad(self.entities_state)
+            qd_zero_grad(self.dofs_state_adjoint_cache)
+            qd_zero_grad(self.links_state_adjoint_cache)
+            qd_zero_grad(self.joints_state_adjoint_cache)
+            qd_zero_grad(self.geoms_state_adjoint_cache)
+            qd_zero_grad(self._rigid_adjoint_cache)
 
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
@@ -2771,8 +2786,8 @@ def kernel_step_1(
             joints_info=joints_info,
             dofs_state=dofs_state,
             dofs_info=dofs_info,
-            geoms_info=geoms_info,
             geoms_state=geoms_state,
+            geoms_info=geoms_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2899,8 +2914,8 @@ def kernel_step_2(
                 joints_info=joints_info,
                 dofs_state=dofs_state,
                 dofs_info=dofs_info,
-                geoms_info=geoms_info,
                 geoms_state=geoms_state,
+                geoms_info=geoms_info,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,

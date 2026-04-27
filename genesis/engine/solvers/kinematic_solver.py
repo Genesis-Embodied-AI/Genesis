@@ -6,11 +6,11 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.entities.rigid_entity import KinematicEntity
-from genesis.engine.states import QueriedStates
 from genesis.engine.states.solvers import KinematicSolverState
 from genesis.options.solvers import RigidOptions, KinematicOptions
 from genesis.utils.misc import (
     qd_to_torch,
+    qd_zero_grad,
     sanitize_indexed_tensor,
     indices_to_mask,
     broadcast_tensor,
@@ -98,8 +98,6 @@ class KinematicSolver(Solver):
 
         self._is_forward_pos_updated: bool = False
         self._is_forward_vel_updated: bool = False
-
-        self._queried_states = QueriedStates()
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- add_entity -------------------------------------
@@ -504,6 +502,18 @@ class KinematicSolver(Solver):
             self.add_grad_from_state(state)
 
     def reset_grad(self):
+        # Zero every Quadrants-side adjoint buffer the solver owns so a subsequent backward pass does not accumulate on
+        # top of stale residues from the previous one. The rigid/kinematic `.grad` pipeline writes through
+        # `qd.atomic_add` (e.g. `kernel_get_state_grad`, the `substep_pre_coupling_grad` chain), which is the correct
+        # reverse-mode accumulation rule for a single backward pass but requires the buffers to start at zero. MPM's
+        # `reset_grad` already zeros its fields explicitly; the rigid/kinematic solvers historically relied on users
+        # rebuilding the scene per `loss.backward()`, which breaks training loops that call `scene.reset()` between
+        # backward passes.
+        if self._requires_grad:
+            qd_zero_grad(self.links_state)
+            qd_zero_grad(self.dofs_state)
+            qd_zero_grad(self.joints_state)
+            qd_zero_grad(self._rigid_global_info)
         for entity in self._entities:
             entity.reset_grad()
         self._queried_states.clear()

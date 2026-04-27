@@ -415,6 +415,16 @@ class Simulator(RBC):
             solvers=self._solvers,
         )
 
+        # `SimState.__init__` calls `solver.get_state` on every solver, and solvers that maintain a per-solver queue
+        # (kinematic/rigid) push the returned state there as a within-step cache. The SimState itself is registered just
+        # below for grad collection at the simulator level, so the per-solver entry would cause `collect_output_grads`
+        # to dispatch `kernel_get_state_grad` twice on the same state and double the adjoint via atomic_add. Lift those
+        # entries here. Solvers without solver-state registration (mpm, fem, sph, pbd, sf, tool) leave their queue
+        # empty, so `discard` is a no-op for them.
+        for solver, solver_state in zip(self._solvers, state.solvers_state):
+            if solver_state is not None:
+                solver._queried_states.discard(solver_state)
+
         # store all queried states to track gradient flow
         self._queried_states.append(state)
 

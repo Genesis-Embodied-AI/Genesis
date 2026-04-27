@@ -8,6 +8,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.utils.misc import qd_to_torch
 from genesis.engine.entities.base_entity import Entity
+from genesis.engine.states import QueriedStates
 from genesis.repr_base import RBC
 
 
@@ -26,6 +27,12 @@ class Solver(RBC):
         self._init_gravity = getattr(options, "gravity", None)
         self._gravity = None
         self._entities: list[Entity] = gs.List()
+
+        # Queue of solver-level states queried during the current backward window. Solvers that surface solver-state
+        # (kinematic, rigid) push into it from `get_state`; others leave it empty. `Simulator.get_state` calls `discard`
+        # here to lift entries owned by a `SimState`, preventing `collect_output_grads` from accumulating adjoints twice
+        # through both the simulator-level and the per-solver loop.
+        self._queried_states = QueriedStates()
 
         self.data_manager = None
 
