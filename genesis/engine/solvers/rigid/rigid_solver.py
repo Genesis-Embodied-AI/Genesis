@@ -1128,8 +1128,8 @@ class RigidSolver(KinematicSolver):
         kernel_update_geoms(
             envs_idx,
             self.entities_info,
-            self.geoms_info,
             self.geoms_state,
+            self.geoms_info,
             self.links_state,
             self._rigid_global_info,
             self._static_rigid_sim_config,

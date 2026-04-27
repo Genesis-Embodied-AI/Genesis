@@ -262,7 +262,7 @@ def kernel_update_verts_and_aabbs(
     aabb_state: qd.template(),
 ):
     func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
     update_aabbs(
         free_verts_state,

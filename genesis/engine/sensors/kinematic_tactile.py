@@ -310,7 +310,7 @@ def _func_kinematic_contact_probe(
     n_batches = output.shape[-1]
 
     func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
     for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
@@ -582,7 +582,7 @@ def _func_query_contact_probes(
     n_batches = contact_buf.shape[0]
 
     func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
     for i_b, i_p in qd.ndrange(n_batches, total_n_probes):

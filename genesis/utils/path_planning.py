@@ -438,8 +438,8 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
@@ -807,8 +807,8 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
