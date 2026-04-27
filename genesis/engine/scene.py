@@ -277,11 +277,6 @@ class Scene(RBC):
                 )
         else:
             if sim_options.requires_grad and gs.use_ndarray:
-                if gs.backend == gs.metal:
-                    gs.raise_exception(
-                        "Metal backend does not support gradient computation with Quadrants dynamic array mode. "
-                        "Please use field mode instead, i.e. 'gs.init(..., performance_mode=True)'."
-                    )
                 gs.logger.info(
                     "Using Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."

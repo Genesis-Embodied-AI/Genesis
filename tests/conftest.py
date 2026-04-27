@@ -674,9 +674,12 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
     if isinstance(backend, str):
         backend = getattr(gs.constants.backend, backend)
 
-    logging_level = request.config.getoption("--log-cli-level", logging.INFO)
+    dev_mode = request.config.getoption("--dev")
+    logging_level = request.config.getoption("--log-cli-level")
+    if logging_level is None:
+        logging_level = logging.DEBUG if dev_mode else logging.INFO
     if debug is None:
-        debug = request.config.getoption("--dev")
+        debug = dev_mode
 
     if not cache:
         monkeypatch.setenv("QD_OFFLINE_CACHE", "0")

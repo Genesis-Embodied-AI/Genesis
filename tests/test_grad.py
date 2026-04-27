@@ -19,17 +19,7 @@ pytestmark = [
 
 
 @pytest.mark.required
-@pytest.mark.xfail(
-    reason="autodiff: legacy_coupler uses non-static range unsupported by Quadrants reverse-mode AD", strict=False
-)
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        # FIXME: Metal backend does not support gradient computation with Quadrants dynamic array mode
-        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_push(show_viewer):
     HORIZON = 10
 
@@ -112,13 +102,7 @@ def test_differentiable_push(show_viewer):
 
 @pytest.mark.required
 @pytest.mark.precision("64")
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_contact():
     RTOL = 1e-4
 
@@ -238,13 +222,7 @@ def test_diff_contact():
 # stable way.
 @pytest.mark.required
 @pytest.mark.precision("64")
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
-    ],
-)
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
     from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
@@ -433,14 +411,11 @@ def test_diff_solver(monkeypatch):
 
 @pytest.mark.slow  # ~250s
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "backend",
-    [
-        gs.cpu,
-        pytest.param(gs.gpu, marks=(pytest.mark.performance_mode(True),) if sys.platform == "darwin" else ()),
-    ],
-)
-def test_differentiable_rigid(show_viewer):
+@pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
+def test_differentiable_rigid(backend, show_viewer):
+    if sys.platform == "darwin" and gs.backend != gs.cpu:
+        pytest.xfail("This test fails on Apple M1 runners be because shader compilation exceeds 100Mb threshold.")
+
     dt = 1e-2
     horizon = 100
     substeps = 1

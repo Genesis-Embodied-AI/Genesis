@@ -287,7 +287,8 @@ def init(
             fast_math=not debug,
             default_ip=qd_int,
             default_fp=qd_float,
-            unrolling_limit=100,  # This threshold needs to be increased to accommodate gradient computation
+            # This feature is necessary to support auto-diff with non-static for-loop
+            ad_stack_experimental_enabled=True,
             **qd_init_kwargs,
         )
 
