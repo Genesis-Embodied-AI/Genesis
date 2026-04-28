@@ -137,9 +137,10 @@ def func_collision_clear(
         else:
             collider_state.n_contacts[i_b] = 0
 
+MAX_GEOMS_IN_LDS = 46
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def func_broad_phase(
+@qd.func
+def func_broad_phase_lds(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
     geoms_state: array_class.GeomsState,
@@ -164,8 +165,26 @@ def func_broad_phase(
     # Clear collider state
     func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
+    MAX_GEOMS_NUM = qd.static(MAX_GEOMS_IN_LDS)
+    MAX_SORT_ELEM_NUM = qd.static(MAX_GEOMS_NUM * 2)
+
+    BLOCK_DIM = qd.static(64)
+    ENVS_PER_BLOCK = qd.static(16)
+    THREADS_PER_ENV = qd.static(BLOCK_DIM // ENVS_PER_BLOCK)
+
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=BLOCK_DIM)
+    for i_thread in range(_B * THREADS_PER_ENV):
+        i_b = i_thread // THREADS_PER_ENV
+        if i_thread - i_b * THREADS_PER_ENV != 0:
+            continue
+
+        lds_sort_value = qd.simt.block.SharedArray((ENVS_PER_BLOCK, MAX_SORT_ELEM_NUM), gs.qd_float)
+        lds_sort_i_g = qd.simt.block.SharedArray((ENVS_PER_BLOCK, MAX_SORT_ELEM_NUM), gs.qd_int)
+        lds_sort_is_max = qd.simt.block.SharedArray((ENVS_PER_BLOCK, MAX_SORT_ELEM_NUM), gs.qd_bool)
+        lds_active = qd.simt.block.SharedArray((ENVS_PER_BLOCK, MAX_GEOMS_NUM), gs.qd_int)
+        
+        i_b_lds = i_b % ENVS_PER_BLOCK
+
         axis = 0
 
         # Calculate the number of active geoms for this environment
@@ -181,13 +200,13 @@ def func_broad_phase(
             for i_l in range(n_links):
                 I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
                 for i_g in range(links_info.geom_start[I_l], links_info.geom_end[I_l]):
-                    collider_state.sort_buffer.value[2 * i_buffer, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
-                    collider_state.sort_buffer.i_g[2 * i_buffer, i_b] = i_g
-                    collider_state.sort_buffer.is_max[2 * i_buffer, i_b] = False
+                    lds_sort_value[i_b_lds, 2 * i_buffer] = geoms_state.aabb_min[i_g, i_b][axis]
+                    lds_sort_i_g[i_b_lds, 2 * i_buffer] = i_g
+                    lds_sort_is_max[i_b_lds, 2 * i_buffer] = False
 
-                    collider_state.sort_buffer.value[2 * i_buffer + 1, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
-                    collider_state.sort_buffer.i_g[2 * i_buffer + 1, i_b] = i_g
-                    collider_state.sort_buffer.is_max[2 * i_buffer + 1, i_b] = True
+                    lds_sort_value[i_b_lds, 2 * i_buffer + 1] = geoms_state.aabb_max[i_g, i_b][axis]
+                    lds_sort_i_g[i_b_lds, 2 * i_buffer + 1] = i_g
+                    lds_sort_is_max[i_b_lds, 2 * i_buffer + 1] = True
 
                     geoms_state.min_buffer_idx[i_buffer, i_b] = 2 * i_g
                     geoms_state.max_buffer_idx[i_buffer, i_b] = 2 * i_g + 1
@@ -199,37 +218,50 @@ def func_broad_phase(
             # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
             if qd.static(not static_rigid_sim_config.use_hibernation):
                 for i in range(env_n_geoms * 2):
-                    if collider_state.sort_buffer.is_max[i, i_b]:
-                        collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[
-                            collider_state.sort_buffer.i_g[i, i_b], i_b
-                        ][axis]
+                    is_max = collider_state.sort_buffer.is_max[i, i_b]
+                    i_g = collider_state.sort_buffer.i_g[i, i_b]
+                    lds_sort_is_max[i_b_lds, i] = is_max
+                    if is_max:
+                        lds_sort_value[i_b_lds, i] = geoms_state.aabb_max[i_g, i_b][axis]
                     else:
-                        collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[
-                            collider_state.sort_buffer.i_g[i, i_b], i_b
-                        ][axis]
+                        lds_sort_value[i_b_lds, i] = geoms_state.aabb_min[i_g, i_b][axis]
+
+                    lds_sort_i_g[i_b_lds, i] = i_g
+            else:
+                for i in range(env_n_geoms * 2):
+                    is_max = collider_state.sort_buffer.is_max[i, i_b]
+                    i_g = collider_state.sort_buffer.i_g[i, i_b]
+                    value = collider_state.sort_buffer.value[i, i_b]
+                    lds_sort_is_max[i_b_lds, i] = is_max
+                    lds_sort_i_g[i_b_lds, i] = i_g
+                    lds_sort_value[i_b_lds, i] = value
+                    
+
+        for i in range(env_n_geoms):
+            lds_active[i_b_lds, i] = collider_state.active_buffer[i, i_b]
 
         # insertion sort, which has complexity near O(n) for nearly sorted array
         for i in range(1, 2 * env_n_geoms):
-            key_value = collider_state.sort_buffer.value[i, i_b]
-            key_is_max = collider_state.sort_buffer.is_max[i, i_b]
-            key_i_g = collider_state.sort_buffer.i_g[i, i_b]
+            key_value = lds_sort_value[i_b_lds, i]
+            key_is_max = lds_sort_is_max[i_b_lds, i]
+            key_i_g = lds_sort_i_g[i_b_lds, i]
 
             j = i - 1
-            while j >= 0 and key_value < collider_state.sort_buffer.value[j, i_b]:
-                collider_state.sort_buffer.value[j + 1, i_b] = collider_state.sort_buffer.value[j, i_b]
-                collider_state.sort_buffer.is_max[j + 1, i_b] = collider_state.sort_buffer.is_max[j, i_b]
-                collider_state.sort_buffer.i_g[j + 1, i_b] = collider_state.sort_buffer.i_g[j, i_b]
+            while j >= 0 and key_value < lds_sort_value[i_b_lds, j]:
+                lds_sort_value[i_b_lds, j + 1] = lds_sort_value[i_b_lds, j]
+                lds_sort_is_max[i_b_lds, j + 1] = lds_sort_is_max[i_b_lds, j]
+                lds_sort_i_g[i_b_lds, j + 1] = lds_sort_i_g[i_b_lds, j]
 
                 if qd.static(static_rigid_sim_config.use_hibernation):
-                    if collider_state.sort_buffer.is_max[j, i_b]:
-                        geoms_state.max_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
+                    if lds_sort_is_max[i_b_lds, j]:
+                        geoms_state.max_buffer_idx[lds_sort_i_g[i_b_lds, j], i_b] = j + 1
                     else:
-                        geoms_state.min_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
+                        geoms_state.min_buffer_idx[lds_sort_i_g[i_b_lds, j], i_b] = j + 1
 
                 j -= 1
-            collider_state.sort_buffer.value[j + 1, i_b] = key_value
-            collider_state.sort_buffer.is_max[j + 1, i_b] = key_is_max
-            collider_state.sort_buffer.i_g[j + 1, i_b] = key_i_g
+            lds_sort_value[i_b_lds, j + 1] = key_value
+            lds_sort_is_max[i_b_lds, j + 1] = key_is_max
+            lds_sort_i_g[i_b_lds, j + 1] = key_i_g
 
             if qd.static(static_rigid_sim_config.use_hibernation):
                 if key_is_max:
@@ -242,10 +274,10 @@ def func_broad_phase(
         if qd.static(not static_rigid_sim_config.use_hibernation):
             n_active = 0
             for i in range(2 * env_n_geoms):
-                if not collider_state.sort_buffer.is_max[i, i_b]:
+                if not lds_sort_is_max[i_b_lds, i]:
                     for j in range(n_active):
-                        i_ga = collider_state.active_buffer[j, i_b]
-                        i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                        i_ga = lds_active[i_b_lds, j]
+                        i_gb = lds_sort_i_g[i_b_lds, i]
                         if i_ga > i_gb:
                             i_ga, i_gb = i_gb, i_ga
 
@@ -278,15 +310,15 @@ def func_broad_phase(
                         collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
                         n_broad = n_broad + 1
 
-                    collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                    lds_active[i_b_lds, n_active] = lds_sort_i_g[i_b_lds, i]
                     n_active = n_active + 1
                 else:
-                    i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+                    i_g_to_remove = lds_sort_i_g[i_b_lds, i]
                     for j in range(n_active):
-                        if collider_state.active_buffer[j, i_b] == i_g_to_remove:
+                        if lds_active[i_b_lds, j] == i_g_to_remove:
                             if j < n_active - 1:
                                 for k in range(j, n_active - 1):
-                                    collider_state.active_buffer[k, i_b] = collider_state.active_buffer[k + 1, i_b]
+                                    lds_active[i_b_lds, k] = lds_active[i_b_lds, k + 1]
                             n_active = n_active - 1
                             break
         else:
@@ -294,13 +326,13 @@ def func_broad_phase(
                 n_active_awake = 0
                 n_active_hib = 0
                 for i in range(2 * env_n_geoms):
-                    is_incoming_geom_hibernated = geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
+                    is_incoming_geom_hibernated = geoms_state.hibernated[lds_sort_i_g[i_b_lds, i], i_b]
 
-                    if not collider_state.sort_buffer.is_max[i, i_b]:
+                    if not lds_sort_is_max[i_b_lds, i]:
                         # both awake and hibernated geom check with active awake geoms
                         for j in range(n_active_awake):
                             i_ga = collider_state.active_buffer_awake[j, i_b]
-                            i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                            i_gb = lds_sort_i_g[i_b_lds, i]
                             if i_ga > i_gb:
                                 i_ga, i_gb = i_gb, i_ga
 
@@ -334,7 +366,7 @@ def func_broad_phase(
                         if not is_incoming_geom_hibernated:
                             for j in range(n_active_hib):
                                 i_ga = collider_state.active_buffer_hib[j, i_b]
-                                i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                                i_gb = lds_sort_i_g[i_b_lds, i]
                                 if i_ga > i_gb:
                                     i_ga, i_gb = i_gb, i_ga
 
@@ -364,15 +396,13 @@ def func_broad_phase(
                                 n_broad = n_broad + 1
 
                         if is_incoming_geom_hibernated:
-                            collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                            collider_state.active_buffer_hib[n_active_hib, i_b] = lds_sort_i_g[i_b_lds, i]
                             n_active_hib = n_active_hib + 1
                         else:
-                            collider_state.active_buffer_awake[n_active_awake, i_b] = collider_state.sort_buffer.i_g[
-                                i, i_b
-                            ]
+                            collider_state.active_buffer_awake[n_active_awake, i_b] = lds_sort_i_g[i_b_lds, i]
                             n_active_awake = n_active_awake + 1
                     else:
-                        i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+                        i_g_to_remove = lds_sort_i_g[i_b_lds, i]
                         if is_incoming_geom_hibernated:
                             for j in range(n_active_hib):
                                 if collider_state.active_buffer_hib[j, i_b] == i_g_to_remove:
@@ -393,4 +423,291 @@ def func_broad_phase(
                                             )
                                     n_active_awake = n_active_awake - 1
                                     break
+
+        for i in range(env_n_geoms):
+            collider_state.sort_buffer.value[2 * i, i_b] = lds_sort_value[i_b_lds, 2 * i]
+            collider_state.sort_buffer.i_g[2 * i, i_b] = lds_sort_i_g[i_b_lds, 2 * i]
+            collider_state.sort_buffer.is_max[2 * i, i_b] = lds_sort_is_max[i_b_lds, 2 * i]
+
+            collider_state.sort_buffer.value[2 * i + 1, i_b] = lds_sort_value[i_b_lds, 2 * i + 1]
+            collider_state.sort_buffer.i_g[2 * i + 1, i_b] = lds_sort_i_g[i_b_lds, 2 * i + 1]
+            collider_state.sort_buffer.is_max[2 * i + 1, i_b] = lds_sort_is_max[i_b_lds, 2 * i + 1]
+
+            collider_state.active_buffer[i, i_b] = lds_active[i_b_lds, i]
+
         collider_state.n_broad_pairs[i_b] = n_broad
+
+
+
+@qd.kernel(fastcache=gs.use_fastcache)
+def func_broad_phase(
+    links_state: array_class.LinksState,
+    links_info: array_class.LinksInfo,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+    constraint_state: array_class.ConstraintState,
+    collider_state: array_class.ColliderState,
+    equalities_info: array_class.EqualitiesInfo,
+    collider_info: array_class.ColliderInfo,
+    errno: array_class.V_ANNOTATION,
+):
+    """
+    Sweep and Prune (SAP) for broad-phase collision detection.
+
+    This function sorts the geometry axis-aligned bounding boxes (AABBs) along a specified axis and checks for
+    potential collision pairs based on the AABB overlap.
+    """
+
+    if qd.static(static_rigid_sim_config.n_geoms <= MAX_GEOMS_IN_LDS and static_rigid_sim_config.backend != gs.cpu):
+        func_broad_phase_lds(
+            links_state,
+            links_info,
+            geoms_state,
+            geoms_info,
+            rigid_global_info,
+            static_rigid_sim_config,
+            constraint_state,
+            collider_state,
+            equalities_info,
+            collider_info,
+            errno,
+        )
+    else:
+        n_geoms, _B = collider_state.active_buffer.shape
+        n_links = links_info.geom_start.shape[0]
+
+        # Clear collider state
+        func_collision_clear(links_state, links_info, collider_state, static_rigid_sim_config)
+
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            axis = 0
+
+            # Calculate the number of active geoms for this environment
+            # (for heterogeneous entities, different envs may have different geoms)
+            env_n_geoms = 0
+            for i_l in range(n_links):
+                I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                env_n_geoms = env_n_geoms + links_info.geom_end[I_l] - links_info.geom_start[I_l]
+
+            # copy updated geom aabbs to buffer for sorting
+            if collider_state.first_time[i_b]:
+                i_buffer = 0
+                for i_l in range(n_links):
+                    I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
+                    for i_g in range(links_info.geom_start[I_l], links_info.geom_end[I_l]):
+                        collider_state.sort_buffer.value[2 * i_buffer, i_b] = geoms_state.aabb_min[i_g, i_b][axis]
+                        collider_state.sort_buffer.i_g[2 * i_buffer, i_b] = i_g
+                        collider_state.sort_buffer.is_max[2 * i_buffer, i_b] = False
+
+                        collider_state.sort_buffer.value[2 * i_buffer + 1, i_b] = geoms_state.aabb_max[i_g, i_b][axis]
+                        collider_state.sort_buffer.i_g[2 * i_buffer + 1, i_b] = i_g
+                        collider_state.sort_buffer.is_max[2 * i_buffer + 1, i_b] = True
+
+                        geoms_state.min_buffer_idx[i_buffer, i_b] = 2 * i_g
+                        geoms_state.max_buffer_idx[i_buffer, i_b] = 2 * i_g + 1
+                        i_buffer = i_buffer + 1
+
+                collider_state.first_time[i_b] = False
+
+            else:
+                # warm start. If `use_hibernation=True`, it's already updated in rigid_solver.
+                if qd.static(not static_rigid_sim_config.use_hibernation):
+                    for i in range(env_n_geoms * 2):
+                        if collider_state.sort_buffer.is_max[i, i_b]:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_max[
+                                collider_state.sort_buffer.i_g[i, i_b], i_b
+                            ][axis]
+                        else:
+                            collider_state.sort_buffer.value[i, i_b] = geoms_state.aabb_min[
+                                collider_state.sort_buffer.i_g[i, i_b], i_b
+                            ][axis]
+
+            # insertion sort, which has complexity near O(n) for nearly sorted array
+            for i in range(1, 2 * env_n_geoms):
+                key_value = collider_state.sort_buffer.value[i, i_b]
+                key_is_max = collider_state.sort_buffer.is_max[i, i_b]
+                key_i_g = collider_state.sort_buffer.i_g[i, i_b]
+
+                j = i - 1
+                while j >= 0 and key_value < collider_state.sort_buffer.value[j, i_b]:
+                    collider_state.sort_buffer.value[j + 1, i_b] = collider_state.sort_buffer.value[j, i_b]
+                    collider_state.sort_buffer.is_max[j + 1, i_b] = collider_state.sort_buffer.is_max[j, i_b]
+                    collider_state.sort_buffer.i_g[j + 1, i_b] = collider_state.sort_buffer.i_g[j, i_b]
+
+                    if qd.static(static_rigid_sim_config.use_hibernation):
+                        if collider_state.sort_buffer.is_max[j, i_b]:
+                            geoms_state.max_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
+                        else:
+                            geoms_state.min_buffer_idx[collider_state.sort_buffer.i_g[j, i_b], i_b] = j + 1
+
+                    j -= 1
+                collider_state.sort_buffer.value[j + 1, i_b] = key_value
+                collider_state.sort_buffer.is_max[j + 1, i_b] = key_is_max
+                collider_state.sort_buffer.i_g[j + 1, i_b] = key_i_g
+
+                if qd.static(static_rigid_sim_config.use_hibernation):
+                    if key_is_max:
+                        geoms_state.max_buffer_idx[key_i_g, i_b] = j + 1
+                    else:
+                        geoms_state.min_buffer_idx[key_i_g, i_b] = j + 1
+
+            # sweep over the sorted AABBs to find potential collision pairs
+            n_broad = 0
+            if qd.static(not static_rigid_sim_config.use_hibernation):
+                n_active = 0
+                for i in range(2 * env_n_geoms):
+                    if not collider_state.sort_buffer.is_max[i, i_b]:
+                        for j in range(n_active):
+                            i_ga = collider_state.active_buffer[j, i_b]
+                            i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                            if i_ga > i_gb:
+                                i_ga, i_gb = i_gb, i_ga
+
+                            if not func_check_collision_valid(
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                links_state,
+                                links_info,
+                                geoms_info,
+                                rigid_global_info,
+                                static_rigid_sim_config,
+                                constraint_state,
+                                equalities_info,
+                                collider_info,
+                            ):
+                                continue
+
+                            if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
+                                # Clear collision normal cache if not in contact
+                                if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                                    i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                    collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                continue
+
+                            if n_broad == collider_info.max_collision_pairs_broad[None]:
+                                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS
+                                break
+                            collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                            collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                            n_broad = n_broad + 1
+
+                        collider_state.active_buffer[n_active, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                        n_active = n_active + 1
+                    else:
+                        i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+                        for j in range(n_active):
+                            if collider_state.active_buffer[j, i_b] == i_g_to_remove:
+                                if j < n_active - 1:
+                                    for k in range(j, n_active - 1):
+                                        collider_state.active_buffer[k, i_b] = collider_state.active_buffer[k + 1, i_b]
+                                n_active = n_active - 1
+                                break
+            else:
+                if rigid_global_info.n_awake_dofs[i_b] > 0:
+                    n_active_awake = 0
+                    n_active_hib = 0
+                    for i in range(2 * env_n_geoms):
+                        is_incoming_geom_hibernated = geoms_state.hibernated[collider_state.sort_buffer.i_g[i, i_b], i_b]
+
+                        if not collider_state.sort_buffer.is_max[i, i_b]:
+                            # both awake and hibernated geom check with active awake geoms
+                            for j in range(n_active_awake):
+                                i_ga = collider_state.active_buffer_awake[j, i_b]
+                                i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                                if i_ga > i_gb:
+                                    i_ga, i_gb = i_gb, i_ga
+
+                                if not func_check_collision_valid(
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    links_state,
+                                    links_info,
+                                    geoms_info,
+                                    rigid_global_info,
+                                    static_rigid_sim_config,
+                                    constraint_state,
+                                    equalities_info,
+                                    collider_info,
+                                ):
+                                    continue
+
+                                if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
+                                    # Clear collision normal cache if not in contact
+                                    if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                                        i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                        collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                    continue
+
+                                collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                                collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                                n_broad = n_broad + 1
+
+                            # if incoming geom is awake, also need to check with hibernated geoms
+                            if not is_incoming_geom_hibernated:
+                                for j in range(n_active_hib):
+                                    i_ga = collider_state.active_buffer_hib[j, i_b]
+                                    i_gb = collider_state.sort_buffer.i_g[i, i_b]
+                                    if i_ga > i_gb:
+                                        i_ga, i_gb = i_gb, i_ga
+
+                                    if not func_check_collision_valid(
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        links_state,
+                                        links_info,
+                                        geoms_info,
+                                        rigid_global_info,
+                                        static_rigid_sim_config,
+                                        constraint_state,
+                                        equalities_info,
+                                        collider_info,
+                                    ):
+                                        continue
+
+                                    if not func_is_geom_aabbs_overlap(geoms_state, i_ga, i_gb, i_b):
+                                        # Clear collision normal cache if not in contact
+                                        i_pair = collider_info.collision_pair_idx[i_ga, i_gb]
+                                        collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                                        continue
+
+                                    collider_state.broad_collision_pairs[n_broad, i_b][0] = i_ga
+                                    collider_state.broad_collision_pairs[n_broad, i_b][1] = i_gb
+                                    n_broad = n_broad + 1
+
+                            if is_incoming_geom_hibernated:
+                                collider_state.active_buffer_hib[n_active_hib, i_b] = collider_state.sort_buffer.i_g[i, i_b]
+                                n_active_hib = n_active_hib + 1
+                            else:
+                                collider_state.active_buffer_awake[n_active_awake, i_b] = collider_state.sort_buffer.i_g[
+                                    i, i_b
+                                ]
+                                n_active_awake = n_active_awake + 1
+                        else:
+                            i_g_to_remove = collider_state.sort_buffer.i_g[i, i_b]
+                            if is_incoming_geom_hibernated:
+                                for j in range(n_active_hib):
+                                    if collider_state.active_buffer_hib[j, i_b] == i_g_to_remove:
+                                        if j < n_active_hib - 1:
+                                            for k in range(j, n_active_hib - 1):
+                                                collider_state.active_buffer_hib[k, i_b] = collider_state.active_buffer_hib[
+                                                    k + 1, i_b
+                                                ]
+                                        n_active_hib = n_active_hib - 1
+                                        break
+                            else:
+                                for j in range(n_active_awake):
+                                    if collider_state.active_buffer_awake[j, i_b] == i_g_to_remove:
+                                        if j < n_active_awake - 1:
+                                            for k in range(j, n_active_awake - 1):
+                                                collider_state.active_buffer_awake[k, i_b] = (
+                                                    collider_state.active_buffer_awake[k + 1, i_b]
+                                                )
+                                        n_active_awake = n_active_awake - 1
+                                        break
+            collider_state.n_broad_pairs[i_b] = n_broad
