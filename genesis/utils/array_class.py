@@ -651,6 +651,13 @@ class StructColliderState(metaclass=BASE_METACLASS):
     narrowphase_work_queues: StructNarrowphaseWorkQueues
     contact_sort_key: V_ANNOTATION
     contact_sort_idx: V_ANNOTATION
+    # Grid-based broadphase fields (center-based + 27-neighbor query)
+    grid_cell_key: V_ANNOTATION       # hash of grid cell for each geom (center-based)
+    grid_cell_count: V_ANNOTATION     # count of geoms per cell
+    grid_cell_start: V_ANNOTATION     # start index in sorted array per cell
+    grid_sorted_geom_id: V_ANNOTATION # geom indices sorted by cell
+    grid_scatter_idx: V_ANNOTATION    # temp index for atomic scatter
+    grid_total_entries: V_ANNOTATION  # total number of entries
 
 
 def get_collider_state(
@@ -681,6 +688,9 @@ def get_collider_state(
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
 
+    # Grid-based broadphase hash table size (power of 2)
+    grid_hash_table_size = 1024
+
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
         active_buffer=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
@@ -709,6 +719,13 @@ def get_collider_state(
         ),
         contact_sort_key=V(dtype=gs.qd_float, shape=(max(max_contact_pairs, 1), _B)),
         contact_sort_idx=V(dtype=gs.qd_int, shape=(max(max_contact_pairs, 1), _B)),
+        # Grid-based broadphase arrays (center-based: 1 cell per geom)
+        grid_cell_key=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
+        grid_cell_count=V(dtype=gs.qd_int, shape=(grid_hash_table_size, _B)),
+        grid_cell_start=V(dtype=gs.qd_int, shape=(grid_hash_table_size, _B)),
+        grid_sorted_geom_id=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
+        grid_scatter_idx=V(dtype=gs.qd_int, shape=(grid_hash_table_size, _B)),
+        grid_total_entries=V(dtype=gs.qd_int, shape=(_B,)),
     )
 
 
@@ -1710,6 +1727,7 @@ class StructGeomsState(metaclass=BASE_METACLASS):
     max_buffer_idx: V_ANNOTATION
     hibernated: V_ANNOTATION
     friction_ratio: V_ANNOTATION
+    active_buffer_idx: V_ANNOTATION  # Index in active_buffer for O(1) removal
 
 
 def get_geoms_state(solver):
@@ -1726,6 +1744,7 @@ def get_geoms_state(solver):
         max_buffer_idx=V(dtype=gs.qd_int, shape=shape),
         hibernated=V(dtype=gs.qd_int, shape=shape),
         friction_ratio=V(dtype=gs.qd_float, shape=shape),
+        active_buffer_idx=V(dtype=gs.qd_int, shape=shape),  # Index in active_buffer for O(1) removal
     )
 
 
