@@ -1770,6 +1770,14 @@ def func_safe_gjk_support(
     function perturbs the support direction to find the best support points that guarantee non-degenerate simplex
     in the GJK algorithm.
 
+    The support count (number of candidate support vertices tied for the maximum dot product) is only evaluated once
+    for the original direction (i=0). For perturbed directions (i=1..8), we skip the count and go straight to
+    computing support points and checking simplex validity. This is critical for performance because the count check
+    is ineffective for perturbed directions: the support field is discretized on a spherical grid, and an EPS-scale
+    perturbation maps to the same grid cells, yielding the same count every time. The previous approach recomputed
+    count for all 9 directions, wasting 8 evaluations that always returned > 1 for meshes with flat faces, without
+    ever using the perturbed support points.
+
     Parameters:
     ----------
     dir: gs.qd_vec3
@@ -1795,12 +1803,6 @@ def func_safe_gjk_support(
 
         # First order normalization based on Taylor series is accurate enough
         n_dir *= 2.0 - n_dir.dot(dir)
-
-        num_supports = func_count_support(geoms_info, support_field_info, i_ga, i_gb, quat_a, quat_b, n_dir)
-        if i > 0 and num_supports > 1:
-            # If this is a perturbed direction and we have more than one support point, we skip this iteration. If
-            # it was the original direction, we continue to find the support points to keep it as the baseline.
-            continue
 
         # Use the current direction to find the support points.
         for j in range(2):
@@ -1838,14 +1840,17 @@ def func_safe_gjk_support(
         mink = obj1 - obj2
 
         if i == 0:
+            # Only check support count for the original direction. If unique, we are done.
+            num_supports = func_count_support(geoms_info, support_field_info, i_ga, i_gb, quat_a, quat_b, n_dir)
             if num_supports > 1:
-                # If there were multiple valid support points, we move on to the next iteration to perturb the
-                # direction and find better support points.
+                # Ambiguous support (e.g. flat face) - keep as baseline, try perturbed directions.
                 continue
             else:
                 break
 
-        # If it was a perturbed direction, check if the support points have been found before.
+        # For perturbed directions, check if the support points have been found before or would form a
+        # degenerate simplex. The count is skipped because an EPS perturbation doesn't change which
+        # support-field grid cells are looked up, so it would return the same value as i=0.
         if i == 8:
             # If this was the last iteration, we don't check if it has been found before.
             break

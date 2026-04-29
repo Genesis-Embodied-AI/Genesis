@@ -154,9 +154,9 @@ def _func_support_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh,
     for i4 in range(4):
         i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.qd_int(qd.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii)) % support_res
         else:
-            i = gs.qd_int(qd.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
             j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
@@ -331,7 +331,13 @@ def _func_count_supports_mesh(
     i_g,
 ):
     """
-    Count the number of valid support points for a mesh in the given direction.
+    Count the number of distinct support vertices tied for the maximum dot product in the given direction.
+
+    The support field is a spherical grid indexed by (theta, phi). We look up 4 neighboring cells using
+    floor/ceil of the continuous grid coordinates (ii, jj). When ii or jj is an integer (common for
+    axis-aligned directions), floor == ceil and multiple iterations map to the same cell. Without
+    deduplication the same vertex is counted multiple times, inflating the count and triggering
+    unnecessary perturbation in safe_gjk_support.
     """
     theta = qd.atan2(d_mesh[1], d_mesh[0])  # [-pi, pi]
     phi = qd.acos(d_mesh[2])  # [0, pi]
@@ -342,13 +348,17 @@ def _func_count_supports_mesh(
     ii = (theta + math.pi) / math.pi / 2 * support_res
     jj = phi / math.pi * support_res
 
-    count = gs.qd_int(0)
+    # Collect unique cells, deduplicating floor == ceil collisions
+    cell_idx = qd.Vector([-1, -1, -1, -1], dt=gs.qd_int)
+    cell_dot = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
+    n_unique = gs.qd_int(0)
+
     for i4 in range(4):
         i, j = gs.qd_int(0), gs.qd_int(0)
         if i4 % 2:
-            i = gs.qd_int(qd.math.ceil(ii) % support_res)
+            i = gs.qd_int(qd.math.ceil(ii)) % support_res
         else:
-            i = gs.qd_int(qd.math.floor(ii) % support_res)
+            i = gs.qd_int(qd.math.floor(ii)) % support_res
 
         if i4 // 2 > 0:
             j = gs.qd_int(qd.math.clamp(qd.math.ceil(jj), 0, support_res - 1))
@@ -360,13 +370,27 @@ def _func_count_supports_mesh(
                 j = 1
 
         support_idx = gs.qd_int(support_field_info.support_cell_start[i_g] + i * support_res + j)
-        _vid = support_field_info.support_vid[support_idx]
-        pos = support_field_info.support_v[support_idx]
-        dot = pos.dot(d_mesh)
 
-        if dot > dot_max:
+        # Skip duplicate cells (from floor == ceil on integer indices).
+        is_dup = False
+        for k in range(n_unique):
+            if cell_idx[k] == support_idx:
+                is_dup = True
+        if is_dup:
+            continue
+
+        pos = support_field_info.support_v[support_idx]
+        cell_dot[n_unique] = pos.dot(d_mesh)
+        cell_idx[n_unique] = support_idx
+        n_unique += 1
+
+    dot_max = gs.qd_float(-1e20)
+    count = gs.qd_int(0)
+    for k in range(n_unique):
+        if cell_dot[k] > dot_max:
             count = 1
-        elif dot == dot_max:
+            dot_max = cell_dot[k]
+        elif cell_dot[k] == dot_max:
             count += 1
 
     return count

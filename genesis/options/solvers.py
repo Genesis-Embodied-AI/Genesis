@@ -435,7 +435,9 @@ class RigidOptions(Options):
     iterations : int, optional
         Number of iterations for the constraint solver. Defaults to 50.
     tolerance : float, optional
-        Tolerance for the constraint solver. Defaults to 1e-6.
+        Tolerance for the constraint solver. If None, resolved based on the floating-point precision selected via
+        `gs.init(precision=...)`: 1e-5 for single precision ("32") and 1e-8 for double precision ("64"). Defaults
+        to None.
     ls_iterations : int, optional
         Number of line search iterations for the constraint solver. Defaults to 50.
     ls_tolerance : float, optional
@@ -500,7 +502,7 @@ class RigidOptions(Options):
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton
     iterations: PositiveInt = 50
-    tolerance: PositiveFloat = 1e-6
+    tolerance: PositiveFloat | None = None
     ls_iterations: PositiveInt = 50
     ls_tolerance: PositiveFloat = 1e-2
     noslip_iterations: NonNegativeInt = 0
@@ -521,12 +523,6 @@ class RigidOptions(Options):
     # Experimental options mainly intended for debug purpose and unit tests
     enable_multi_contact: StrictBool = True
     enable_mujoco_compatibility: StrictBool = False
-
-    # Linesearch strategy selection:
-    #   * None:  perf dispatch chooses between monolith + iterative and decomposed + parallel linesearch
-    #   * False: force monolith + iterative (Newton-guided) linesearch
-    #   * True:  force decomposed + parallel (grid search) linesearch
-    prefer_parallel_linesearch: StrictBool | None = None
 
     # GJK collision detection
     use_gjk_collision: StrictBool | None = None

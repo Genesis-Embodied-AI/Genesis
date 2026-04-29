@@ -144,6 +144,12 @@ class Renderer(object):
         if is_first_pass:
             self._update_context(scene, flags)
             all_ready = self.jit.update(scene)
+
+            # Flush queued buffer updates AFTER jit.update(scene) so that new
+            # nodes created by set_primitive -> _add_to_context already have
+            # their GPU buffers allocated and can receive the data.
+            self.jit.flush_buffer()
+
             if not all_ready:
                 # Shadow textures not yet initialized - skip this frame to avoid
                 # flickering. The caller should display the previous frame.

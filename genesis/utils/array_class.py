@@ -268,7 +268,10 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     mv: V_ANNOTATION
     jv: V_ANNOTATION
     quad_gauss: V_ANNOTATION
-    candidates: V_ANNOTATION
+    ls_alpha: V_ANNOTATION
+    ls_p0_cost: V_ANNOTATION
+    ls_alpha_newton: V_ANNOTATION
+    ls_gtol: V_ANNOTATION
     eq_sum: V_ANNOTATION
     ls_it: V_ANNOTATION
     ls_result: V_ANNOTATION
@@ -306,6 +309,10 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     bw_w: V_ANNOTATION
     # Timers for profiling
     timers: V_ANNOTATION
+    # Per-env flag: 0 = use incremental Hessian+Cholesky, 1 = use full tiled rebuild
+    use_full_hessian: V_ANNOTATION
+    # Solver loop iteration counter (0-indexed, increments each iteration in the graph loop)
+    solver_iter_counter: V_ANNOTATION
     # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
     graph_counter: qd.types.ndarray()
     early_exit_flag: V_ANNOTATION
@@ -350,7 +357,10 @@ def get_constraint_state(constraint_solver, solver):
         cg_beta=V(dtype=gs.qd_float, shape=(_B,)),
         cg_pg_dot_pMg=V(dtype=gs.qd_float, shape=(_B,)),
         quad_gauss=V(dtype=gs.qd_float, shape=(3, _B)),
-        candidates=V(dtype=gs.qd_float, shape=(12, _B)),
+        ls_alpha=V(dtype=gs.qd_float, shape=(_B,)),
+        ls_p0_cost=V(dtype=gs.qd_float, shape=(_B,)),
+        ls_alpha_newton=V(dtype=gs.qd_float, shape=(_B,)),
+        ls_gtol=V(dtype=gs.qd_float, shape=(_B,)),
         eq_sum=V(dtype=gs.qd_float, shape=(3, _B)),
         Ma=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
         Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
@@ -399,6 +409,8 @@ def get_constraint_state(constraint_solver, solver):
         bw_w=V(dtype=gs.qd_float, shape=maybe_shape((len_constraints_, _B), solver._requires_grad)),
         # Timers
         timers=V(dtype=qd.i64 if gs.backend != gs.metal else qd.i32, shape=(10, _B)),
+        use_full_hessian=V(dtype=qd.i32, shape=(_B,)),
+        solver_iter_counter=V(dtype=qd.i32, shape=()),
         graph_counter=qd.ndarray(qd.i32, shape=()),
         early_exit_flag=V(dtype=qd.i32, shape=()),
     )
@@ -2033,7 +2045,7 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     integrator: int
     solver_type: int
     requires_grad: bool
-    prefer_parallel_linesearch: int = -1  # -1 = None (auto), 0 = False, 1 = True
+    prefer_decomposed_solver: int = -1  # -1 = None (auto), 0 = False, 1 = True
     parallel_init: bool = False  # parallelize init over (constraints, envs) when GPU is not saturated by envs alone
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False

@@ -1301,8 +1301,16 @@ def _func_multicontact_mpr(
         collider_state.narrowphase_work_queues.gjk_i_gb[idx] = i_gb
         collider_state.narrowphase_work_queues.gjk_i_pair[idx] = i_pair
     else:
-        start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
-        if start_idx + n_con <= collider_info.max_contact_pairs[None]:
+        # Non-atomic pre-check to avoid reserving slots we cannot fill. A rare race between the read and the
+        # atomic_add below may still overshoot; in that case we write only the contacts that fit and set errno.
+        max_contact_pairs = collider_info.max_contact_pairs[None]
+        if collider_state.n_contacts[i_b] + n_con > max_contact_pairs:
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+        else:
+            start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
+            n_con = qd.math.clamp(max_contact_pairs - start_idx, 0, n_con)
+            if n_con == 0:
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
             for i in range(n_con):
                 i_c = start_idx + i
                 pos_i = qd.Vector(
@@ -1323,8 +1331,6 @@ def _func_multicontact_mpr(
                     collider_state,
                     collider_info,
                 )
-        else:
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @qd.func
@@ -1540,8 +1546,15 @@ def _func_multicontact_gjk_full(
                         n_con = n_con + 1
 
     if n_con > 0:
-        start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
-        if start_idx + n_con <= collider_info.max_contact_pairs[None]:
+        # Non-atomic pre-check (see comment in _func_multicontact_mpr).
+        max_contact_pairs = collider_info.max_contact_pairs[None]
+        if collider_state.n_contacts[i_b] + n_con > max_contact_pairs:
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+        else:
+            start_idx = qd.atomic_add(collider_state.n_contacts[i_b], n_con)
+            n_con = qd.math.clamp(max_contact_pairs - start_idx, 0, n_con)
+            if n_con == 0:
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
             for i in range(n_con):
                 i_c = start_idx + i
                 pos_i = qd.Vector(
@@ -1562,8 +1575,6 @@ def _func_multicontact_gjk_full(
                     collider_state,
                     collider_info,
                 )
-        else:
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @qd.kernel(fastcache=gs.use_fastcache)

@@ -4,17 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genesis-world"
-version = "0.4.5"
+version = "0.4.6"
 description = "A universal and generative physics engine"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "psutil",
-    "quadrants==0.5.2",
+    "quadrants==0.7.0",
     "pydantic>=2.11.0",
     "numpy>=1.26.4",
     "frozendict",
-    "trimesh",
+    # * 4.8.2 fixed linear/sRGB color conversion in `to_color()`.
+    "trimesh>=4.8.2",
     # Used for preprocessing .urdf.xacro files into plain URDF
     "xacro",
     # * No pre-compiled wheels are distributed for LibIGL v2.6.2 on Windows OS
@@ -79,6 +80,7 @@ dev = [
     "pytest",
     "pytest-xdist",
     "pytest-forked",
+    "pytest-timeout",
     "pytest-print",
     # Note that 'pytest-rerunfailures' is incompatible with 'pytest-forked'
     # - 16.0 is causing pytest-xdist to crash in case of failure or skipped tests
@@ -131,6 +133,8 @@ gui = [
 usd = [
     # Used for parsing `.usd` mesh files
     "usd-core==25.11",
+    # Used to serialize concurrent omni-kit bake operations (concurrent bootstrapping causes segfaults)
+    "filelock",
 ]
 
 [project.scripts]
@@ -184,6 +188,7 @@ addopts = [
     # "--max-worker-restart=0",
     "--durations=0",
     "--durations-min=100.0",
+    "--timeout=1000",  # Very large timeout, just in case of deadlock
     # Note that the retry mechanism is not compatible with "--forked".
     "-m not (benchmarks or examples)",
 ]

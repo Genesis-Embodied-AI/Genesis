@@ -1,5 +1,28 @@
 # Genesis Release Note
 
+## 0.4.6
+
+This release brings recent performance benefits that where CUDA only to all GPU backends while relaxing CUDA Toolkit requirement. Besides, all reported CUDA crashes have been fixed.
+
+### New Features
+
+* Add public API to Scene for drawing cameras frustum and trajectories. (@Mehak261124) (#2593)
+
+### Bug Fixes
+
+* Fix EGL context not properly destroy during scene destruction. (@duburcqa) (#2673)
+* Fix loading of GLB meshes missing normals or tex_coord. (@iory) (#2668)
+* Fix sparse solve bug when building hessian. (@erizmr) (#2670)
+* Fix contact overflow causing unbounded memory access. (@duburcqa) (#2688)
+
+### Miscellaneous
+
+* Enable parallel linesearch on all GPU backends. (@duburcqa, @hughperkins) (#2678, #2689, #2692)
+* Add public API to update debug markers. (@duburcqa) (#2665)
+* Make markers always foreground with XRAY effect. (@duburcqa) (#2666, #2685)
+* Speed up rigid constraint solver init. (@erizmr) (#2521)
+* More robust GPU detection in test infrastructure. (@Lidang-Jiang) (#2653)
+
 ## 0.4.5
 
 This release continues on the ongoing trend of rigid body simulation speed improvements. A few camera-related bugs and all known regression on Metal backend are now fixed.

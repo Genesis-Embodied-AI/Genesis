@@ -81,9 +81,6 @@ class Rasterizer(RBC):
             # Set the context
             self._renderer.make_current()
 
-            # Update the context if not already done before
-            self._context.jit.update_buffer(self._context.buffer)
-            self._context.buffer.clear()
             try:
                 if rgb or depth or normal:
                     retval = self._renderer.render(

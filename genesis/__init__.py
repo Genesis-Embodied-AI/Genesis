@@ -83,32 +83,6 @@ def init(
     if precision not in ("32", "64"):
         raise_exception(f"Unsupported precision type: ~~<{precision}>~~")
 
-    # Get device and backend
-    global device
-    if backend is None and debug:
-        backend_candidates = [_gs_backend.cpu]
-    elif backend is None or backend == _gs_backend.gpu:
-        backend_candidates = [_gs_backend.cuda, _gs_backend.amdgpu, _gs_backend.metal, _gs_backend.cpu]
-    else:
-        backend_candidates = [backend]
-    while backend_candidates:
-        _backend = backend_candidates.pop(0)
-        if os.environ.get(f"QD_ENABLE_{_backend.name.upper()}", "1") == "0":
-            continue
-        try:
-            device, device_name, total_mem, _backend = get_device(_backend)
-            is_cpu_fallback = backend == _gs_backend.gpu and _backend == _gs_backend.cpu
-            backend = _backend
-            break
-        except GenesisException as e:
-            if not backend_candidates:
-                raise_exception_from(f"Backend ~~<{_backend}>~~ not available on this machine.", e)
-    globals()["backend"] = backend
-
-    # Fallback to Torch CPU device if requested
-    if backend != _gs_backend.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
-        device, device_name, total_mem, _backend = get_device(_gs_backend.cpu)
-
     # Initialize the logger and print greeting message
     global logger
     if logging_level is None:
@@ -129,8 +103,32 @@ def init(
     logger.info(f"~<│{wave}>~ ~~~~<Genesis>~~~~ ~<{wave}│>~")
     logger.info(f"~<╰{'─' * (bar_width)}╯>~")
 
-    if is_cpu_fallback:
-        logger.warning(f"Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
+    # Get device and backend
+    global device
+    if backend is None and debug:
+        backend_candidates = [_gs_backend.cpu]
+    elif backend is None or backend == _gs_backend.gpu:
+        backend_candidates = [_gs_backend.cuda, _gs_backend.amdgpu, _gs_backend.metal, _gs_backend.cpu]
+    else:
+        backend_candidates = [backend]
+    while backend_candidates:
+        _backend = backend_candidates.pop(0)
+        if os.environ.get(f"QD_ENABLE_{_backend.name.upper()}", "1") == "0":
+            continue
+        try:
+            device, device_name, total_mem, _backend = get_device(_backend)
+            if backend == _gs_backend.gpu and _backend == _gs_backend.cpu:
+                logger.warning(f"Backend ~~<{backend}>~~ not available on this machine. Falling back to CPU.")
+            backend = _backend
+            break
+        except GenesisException as e:
+            if not backend_candidates:
+                raise_exception_from(f"Backend ~~<{_backend}>~~ not available on this machine.", e)
+    globals()["backend"] = backend
+
+    # Fallback to Torch CPU device if requested
+    if backend != _gs_backend.cpu and os.environ.get("GS_TORCH_FORCE_CPU_DEVICE") == "1":
+        device, device_name, total_mem, _backend = get_device(_gs_backend.cpu)
 
     # Configure Quadrants fast cache and array type
     global use_ndarray, use_fastcache, use_zerocopy

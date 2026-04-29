@@ -844,41 +844,24 @@ def test_usd_parse_nodegraph(usd_file):
 @pytest.mark.parametrize("backend", [gs.cuda])
 @pytest.mark.skipif(not HAS_OMNIVERSE_KIT_SUPPORT, reason=SKIP_NO_OMNIVERSE_KIT)
 def test_usd_bake(usd_file, tmp_path):
-    RETRY_NUM = 3 if "PYTEST_XDIST_WORKER" in os.environ else 0
-    RETRY_DELAY = 30.0
-
     asset_path = get_hf_dataset(pattern=os.path.join(os.path.dirname(usd_file), "*"), local_dir=tmp_path)
     usd_fullpath = os.path.join(asset_path, usd_file)
 
-    # Note that bootstrapping omni-kit by multiple workers concurrently is causing failure.
-    # There is no easy way to get around this limitation except retrying after some delay...
-    retry_idx = 0
-    while True:
-        is_stage = usd_file == "usd/franka_mocap_teleop/table_scene.usd"
-        usd_scene = build_usd_scene(
-            usd_fullpath,
-            scale=1.0,
-            vis_mode="visual",
-            is_stage=is_stage,
-            fixed=True,
-        )
+    is_stage = usd_file == "usd/franka_mocap_teleop/table_scene.usd"
+    usd_scene = build_usd_scene(
+        usd_fullpath,
+        scale=1.0,
+        vis_mode="visual",
+        is_stage=is_stage,
+        fixed=True,
+    )
 
-        is_any_baked = False
-        for vgeom in usd_scene.entities[0].vgeoms:
-            bake_success = vgeom.vmesh.metadata["bake_success"]
-            try:
-                assert bake_success
-            except AssertionError:
-                if retry_idx < RETRY_NUM:
-                    usd_scene.destroy()
-                    print(f"Failed to bake usd. Trying again in {RETRY_DELAY}s...")
-                    time.sleep(RETRY_DELAY)
-                    break
-                raise
-            is_any_baked |= bake_success
-        else:
-            assert is_any_baked
-            break
+    is_any_baked = False
+    for vgeom in usd_scene.entities[0].vgeoms:
+        bake_success = vgeom.vmesh.metadata["bake_success"]
+        assert bake_success
+        is_any_baked |= bake_success
+    assert is_any_baked
 
 
 @pytest.mark.required
