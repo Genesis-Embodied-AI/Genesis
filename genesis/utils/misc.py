@@ -583,7 +583,6 @@ def qd_to_numpy(
         ndim = len(value.shape)
         if transpose and ndim > 1:
             array = np.moveaxis(array, ndim - 1, 0)
-        return array
     if copy:
         array = array.copy()
 
