@@ -56,6 +56,7 @@ from .abd.misc import (
     kernel_update_geoms_render_T,
     kernel_update_vgeoms_render_T,
     kernel_bit_reduction,
+    kernel_bit_reduction_into,
     kernel_set_zero,
     kernel_clear_external_force,
 )
@@ -447,6 +448,24 @@ class RigidSolver(KinematicSolver):
         # rigid_solver.links_state, etc. regardless of the solver is active or not.
         self.data_manager = array_class.DataManager(self, kinematic_only=False)
         self._errno = self.data_manager.errno
+
+        self._defer_errno = (gs.backend == gs.amdgpu) and gs.use_zerocopy
+        if gs.backend == gs.amdgpu and not gs.use_zerocopy:
+            gs.logger.warning("Deferred check_errno path requires gs.use_zerocopy=True; falling back to the synchronous path.")
+        if self._defer_errno:
+            self._errno_reduced = array_class.V(dtype=gs.qd_int, shape=(2, 2))
+            self._errno_reduced_tc = qd_to_torch(self._errno_reduced)
+            self._errno_pinned = torch.zeros((2, 2), dtype=self._errno_reduced_tc.dtype, device="cpu", pin_memory=True)
+            # Pre-cache per-slot views to skip per-call PyTorch indexing in the hot path. These
+            # are zero-copy views, so reads/writes through them see the live underlying storage.
+            self._errno_pinned_slot = [self._errno_pinned[0], self._errno_pinned[1]]
+            self._errno_reduced_tc_slot = [self._errno_reduced_tc[0], self._errno_reduced_tc[1]]
+            self._errno_pinned_gen = [self._errno_pinned[0, 0], self._errno_pinned[1, 0]]
+            self._errno_pinned_val = [self._errno_pinned[0, 1], self._errno_pinned[1, 1]]
+            # Event to confirm DMA completion
+            self._errno_events = [torch.cuda.Event() for _ in range(2)]
+            self._errno_idx = 0
+            self._errno_gen = 1
 
         self._rigid_global_info = self.data_manager.rigid_global_info
         self._rigid_adjoint_cache = self.data_manager.rigid_adjoint_cache
@@ -964,11 +983,51 @@ class RigidSolver(KinematicSolver):
 
     def check_errno(self):
         # TODO: Add some class ErrorCode(IntEnum) to manage error codes x)
-        if gs.use_zerocopy:
+        if self._defer_errno:
+            self._check_errno_deferred()
+        elif gs.use_zerocopy:
             errno = np.bitwise_or.reduce(qd_to_numpy(self._errno))
+            self._raise_on_errno(errno)
         else:
             errno = kernel_bit_reduction(self._errno)
+            self._raise_on_errno(errno)
 
+    def _check_errno_deferred(self):
+        write_slot = self._errno_idx
+        read_slot = 1 - write_slot
+
+        kernel_bit_reduction_into(self._errno, self._errno_reduced, write_slot, self._errno_gen)
+        self._errno_pinned_slot[write_slot].copy_(self._errno_reduced_tc_slot[write_slot], non_blocking=True)
+        self._errno_events[write_slot].record()
+
+        if self._errno_events[read_slot].query():
+            snap_gen = self._errno_pinned_gen[read_slot].item()
+            if snap_gen == self._errno_gen:
+                errno = self._errno_pinned_val[read_slot].item()
+                self._raise_on_errno(errno)
+
+        self._errno_idx = read_slot
+
+    def _invalidate_deferred_errno(self):
+        if not self._defer_errno:
+            return
+        self._errno_gen += 1
+
+    def flush_errno(self):
+        if not self._defer_errno:
+            return
+        flush_slot = self._errno_idx
+        kernel_bit_reduction_into(self._errno, self._errno_reduced, flush_slot, self._errno_gen)
+        self._errno_pinned_slot[flush_slot].copy_(self._errno_reduced_tc_slot[flush_slot], non_blocking=True)
+        self._errno_events[flush_slot].record()
+        self._errno_events[flush_slot].synchronize()
+
+        snap_gen = self._errno_pinned_gen[flush_slot].item()
+        if snap_gen == self._errno_gen:
+            errno = self._errno_pinned_val[flush_slot].item()
+            self._raise_on_errno(errno)
+
+    def _raise_on_errno(self, errno):
         if errno & array_class.ErrorCode.OVERFLOW_CANDIDATE_CONTACTS:
             max_collision_pairs_broad = self.collider._collider_info.max_collision_pairs_broad[None]
             gs.raise_exception(
@@ -1525,6 +1584,10 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
+        # Drop any in-flight deferred-errno snapshot, otherwise the next check_errno may re-raise
+        # a pre-reset error against the freshly cleaned env.
+        self._invalidate_deferred_errno()
+
         if not partial:
             if not isinstance(envs_idx, torch.Tensor):
                 envs_idx = self._scene._sanitize_envs_idx(envs_idx)
@@ -1858,6 +1921,10 @@ class RigidSolver(KinematicSolver):
             kernel_set_qpos(qpos, qs_idx, envs_idx, self._rigid_global_info, self._static_rigid_sim_config)
             kernel_set_zero(envs_idx, self._errno)
 
+        # Drop any in-flight deferred-errno snapshot, otherwise the next check_errno may re-raise
+        # a pre-reset error against the freshly cleaned env.
+        self._invalidate_deferred_errno()
+
         if not skip_forward:
             if not isinstance(envs_idx, torch.Tensor):
                 envs_idx = self._scene._sanitize_envs_idx(envs_idx)
@@ -2062,6 +2129,10 @@ class RigidSolver(KinematicSolver):
                 torch.mps.synchronize()
         else:
             kernel_set_zero(envs_idx, self._errno)
+
+        # Drop any in-flight deferred-errno snapshot, otherwise the next check_errno may re-raise
+        # a pre-reset error against the freshly cleaned env.
+        self._invalidate_deferred_errno()
 
         kernel_forward_kinematics_links_geoms(
             envs_idx,
