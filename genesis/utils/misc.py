@@ -495,14 +495,21 @@ def qd_to_torch(
     try:
         tensor = value._T_tc if transpose else value._tc
     except AttributeError:
-        tc = value.to_torch(copy=False)
+        tc = value.to_torch(copy=None)
         if transpose:
             ndim = len(value.shape)
-            value._T_tc = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
-            tensor = value._T_tc
+            tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
         else:
-            value._tc = tc
             tensor = tc
+        # Cache only when gs.use_zerocopy is active — the tensor is then a
+        # zero-copy DLPack view that tracks future field mutations. When
+        # zerocopy is off, to_torch(copy=None) returns a kernel copy that
+        # would go stale, so we skip caching and re-convert every call.
+        if gs.use_zerocopy:
+            if transpose:
+                value._T_tc = tensor
+            else:
+                value._tc = tensor
     if copy:
         tensor = tensor.clone()
 
@@ -541,16 +548,21 @@ def qd_to_numpy(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
+    if not gs.use_zerocopy:
+        array = value.to_numpy()
+        ndim = len(value.shape)
+        if transpose and ndim > 1:
+            array = np.moveaxis(array, ndim - 1, 0)
+        return array
     try:
         array = value._T_np if transpose else value._np
     except AttributeError:
         try:
-            tc = value.to_torch(copy=False)
+            tc = value.to_torch(copy=None)
             value._np = tc.numpy()
             ndim = len(value.shape)
             value._T_np = tc.movedim(ndim - 1, 0).numpy() if ndim > 1 else value._np
-        except (RuntimeError, TypeError):
-            # GPU tensors can't produce zero-copy numpy views; mark so we don't retry.
+        except (RuntimeError, TypeError, ValueError):
             value._np = None
             value._T_np = None
         array = value._T_np if transpose else value._np
@@ -575,7 +587,7 @@ def qd_to_numpy(
         )
     else:
         mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
-    return tensor[mask]
+    return array[mask]
 
 
 def sanitize_index(
