@@ -640,12 +640,11 @@ def qd_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    if isinstance(value, qd.Tensor):
-        value = value._unwrap()
-
     # Try efficient shortcut first and only fallback to standard branching if necessary.
     # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
     if gs.use_zerocopy:
+        if isinstance(value, qd.Tensor):
+            value = value._unwrap()
         try:
             tensor = value._T_tc if transpose else value._tc
             # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
