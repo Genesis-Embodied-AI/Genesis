@@ -66,3 +66,31 @@ def test_backend_switching(backend, order):
     """
     for i, use_nd in enumerate(order):
         _run_cycle(use_nd=use_nd, cycle_idx=i)
+
+
+@pytest.mark.parametrize("backend", [None])
+def test_set_gravity_accepts_field_and_tensor():
+    """set_gravity uses ``gravity: qd.Tensor`` annotation which must accept both a raw qd.field() (subclass solvers)
+    and a qd.Tensor wrapper (base_solver).
+    """
+    os.environ["GS_ENABLE_NDARRAY"] = "0"
+    try:
+        gs.init(backend=gs.cpu, seed=0)
+
+        scene = gs.Scene(show_viewer=False)
+        scene.add_entity(gs.morphs.Plane())
+        scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5)))
+        scene.build()
+
+        solver = scene.sim.solvers[0]
+        if solver._gravity is None:
+            pytest.skip("Solver has no gravity")
+
+        new_gravity = [0.0, 0.0, -5.0]
+        solver.set_gravity(new_gravity)
+        result = solver.get_gravity()
+        np.testing.assert_allclose(result, new_gravity, atol=1e-6)
+
+    finally:
+        gs.destroy()
+        os.environ.pop("GS_ENABLE_NDARRAY", None)
