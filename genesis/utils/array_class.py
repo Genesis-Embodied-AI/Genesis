@@ -3,6 +3,7 @@ import math
 from enum import IntEnum
 
 import quadrants as qd
+from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 import numpy as np
 import torch
 
@@ -22,6 +23,7 @@ def maybe_shape(shape, is_on):
     return shape if is_on else ()
 
 
+@dataclass_transform(eq_default=True, order_default=True, kw_only_default=False, frozen_default=True)
 class _AutoInitMeta(type):
     """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
 
