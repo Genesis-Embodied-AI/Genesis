@@ -15,6 +15,13 @@ if not gs._initialized:
 _TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
+PLACEHOLDER = qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND)
+
+
+def maybe_shape(shape, is_on):
+    return shape if is_on else ()
+
+
 class _AutoInitMeta(type):
     """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
 
@@ -51,13 +58,6 @@ class _AutoInitMeta(type):
 
         namespace["__init__"] = __init__
         return super().__new__(cls, name, bases, namespace)
-
-
-PLACEHOLDER = qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND)
-
-
-def maybe_shape(shape, is_on):
-    return shape if is_on else ()
 
 
 def V_SCALAR_FROM(dtype, value):
