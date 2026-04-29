@@ -51,10 +51,7 @@ class Solver(RBC):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         gravity = torch.as_tensor(gravity, dtype=gs.tc_float, device=gs.device).expand((len(envs_idx), 3)).contiguous()
         assert gravity.shape == (len(envs_idx), 3), "Input gravity array should match (n_envs, 3)"
-        if isinstance(self._gravity, qd.Field):
-            _kernel_set_gravity_field(gravity, envs_idx, self._gravity)
-        else:
-            _kernel_set_gravity_ndarray(gravity, envs_idx, self._gravity)
+        _kernel_set_gravity(gravity, envs_idx, self._gravity)
 
     def get_gravity(self, envs_idx=None):
         tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
@@ -171,14 +168,7 @@ class Solver(RBC):
 
 
 @qd.kernel
-def _kernel_set_gravity_field(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.template()):
-    for i_b_ in range(envs_idx.shape[0]):
-        for j in qd.static(range(3)):
-            gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]
-
-
-@qd.kernel
-def _kernel_set_gravity_ndarray(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.types.ndarray()):
+def _kernel_set_gravity(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.Tensor):
     for i_b_ in range(envs_idx.shape[0]):
         for j in qd.static(range(3)):
             gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]
