@@ -19,7 +19,7 @@ class _AutoInitMeta(type):
     """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
 
     def __new__(cls, name, bases, namespace):
-        names = tuple(namespace.get("__annotations__", {}).keys())
+        names = tuple(namespace["__annotations__"].keys())
         defaults = {k: namespace[k] for k in names if k in namespace}
 
         def __init__(self, *args, **kwargs):
