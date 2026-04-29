@@ -696,9 +696,6 @@ def qd_to_numpy(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    if isinstance(value, qd.Tensor):
-        value = value._unwrap()
-
     tensor = qd_to_python(value, transpose, copy=copy, to_torch=False)
     if row_mask is None and col_mask is None:
         return tensor
