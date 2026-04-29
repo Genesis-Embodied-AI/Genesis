@@ -23,20 +23,29 @@ class _AutoInitMeta(type):
         defaults = {k: namespace[k] for k in names if k in namespace}
 
         def __init__(self, *args, **kwargs):
+            # Initialize assigned arguments from defaults
             assigned = defaults.copy()
+
+            # Assign positional arguments
             if len(args) > len(names):
                 raise TypeError(f"{name}() takes {len(names)} positional arguments but {len(args)} were given")
             for key, value in zip(names, args):
                 assigned[key] = value
+
+            # Assign keyword arguments
             for key, value in kwargs.items():
                 if key not in names:
                     raise TypeError(f"{name}() got unexpected keyword argument '{key}'")
                 if key in names[: len(args)]:
                     raise TypeError(f"{name}() got multiple values for argument '{key}'")
                 assigned[key] = value
+
+            # Check for missing arguments
             for key in names:
                 if key not in assigned:
                     raise TypeError(f"{name}() missing required argument: '{key}'")
+
+            # Set attributes
             for key, value in assigned.items():
                 setattr(self, key, value)
 
