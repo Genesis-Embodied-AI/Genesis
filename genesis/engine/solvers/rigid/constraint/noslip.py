@@ -84,7 +84,7 @@ def func_solve_mass_entity_row(
     i_row: qd.int32,
     i_e: qd.int32,
     i_b: qd.int32,
-    buf: qd.template(),
+    buf: qd.Tensor,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
@@ -379,7 +379,7 @@ def func_residual_constraint_force(
 def func_cost_change(
     i_b: int,
     Ac,
-    force: qd.template(),
+    force: qd.Tensor,
     force_start: int,
     old_force,
     res,

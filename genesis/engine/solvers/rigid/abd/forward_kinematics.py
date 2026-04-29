@@ -1352,7 +1352,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     contact_island_state: array_class.ContactIslandState,
-    errno: qd.template(),
+    errno: qd.Tensor,
 ):
     _B = entities_state.hibernated.shape[1]
 
