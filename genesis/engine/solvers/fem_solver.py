@@ -376,7 +376,7 @@ class FEMSolver(Solver):
         # Overwrite gravity because only field is supported for now
         if self._gravity is not None:
             gravity = self._gravity.to_numpy()
-            self._gravity = array_class.V(gs.qd_vec3, (self._B,))
+            self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
             self._gravity.from_numpy(gravity)
 
     @property

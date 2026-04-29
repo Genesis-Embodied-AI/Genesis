@@ -5,7 +5,6 @@ import numpy as np
 import quadrants as qd
 
 import genesis as gs
-import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import (
@@ -233,7 +232,7 @@ class PBDSolver(Solver):
         # Overwrite gravity because only field is supported for now
         if self._gravity is not None:
             gravity = self._gravity.to_numpy()
-            self._gravity = array_class.V(gs.qd_vec3, (self._B,))
+            self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
             self._gravity.from_numpy(gravity)
 
     # ------------------------------------------------------------------------------------
