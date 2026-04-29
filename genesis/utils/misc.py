@@ -495,17 +495,18 @@ def qd_to_torch(
     try:
         tensor = value._T_tc if transpose else value._tc
     except AttributeError:
-        tc = value.to_torch(copy=None)
+        try:
+            tc = value.to_torch(copy=False)
+            can_cache = True
+        except (ValueError, RuntimeError):
+            tc = value.to_torch()
+            can_cache = False
         if transpose:
             ndim = len(value.shape)
             tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
         else:
             tensor = tc
-        # Cache only when gs.use_zerocopy is active — the tensor is then a
-        # zero-copy DLPack view that tracks future field mutations. When
-        # zerocopy is off, to_torch(copy=None) returns a kernel copy that
-        # would go stale, so we skip caching and re-convert every call.
-        if gs.use_zerocopy:
+        if can_cache and gs.use_zerocopy:
             if transpose:
                 value._T_tc = tensor
             else:
@@ -553,12 +554,23 @@ def qd_to_numpy(
         ndim = len(value.shape)
         if transpose and ndim > 1:
             array = np.moveaxis(array, ndim - 1, 0)
-        return array
+        if row_mask is None and col_mask is None:
+            return array
+        raise_if_fancy = copy is False
+        if ndim < 2:
+            if row_mask is not None and col_mask is not None:
+                gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
+            mask = indices_to_mask(
+                row_mask if col_mask is None else col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy
+            )
+        else:
+            mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
+        return array[mask]
     try:
         array = value._T_np if transpose else value._np
     except AttributeError:
         try:
-            tc = value.to_torch(copy=None)
+            tc = value.to_torch(copy=False)
             value._np = tc.numpy()
             ndim = len(value.shape)
             value._T_np = tc.movedim(ndim - 1, 0).numpy() if ndim > 1 else value._np
