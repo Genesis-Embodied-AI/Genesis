@@ -362,9 +362,7 @@ def get_constraint_state(constraint_solver, solver):
         Ma_ws=V(gs.qd_float, (solver.n_dofs_, _B)),
         grad=V(gs.qd_float, (solver.n_dofs_, _B)),
         Mgrad=V(gs.qd_float, (solver.n_dofs_, _B)),
-        MinvJT=V(
-            gs.qd_float, maybe_shape(jac_shape, solver._options.noslip_iterations > 0)
-        ),
+        MinvJT=V(gs.qd_float, maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
         search=V(gs.qd_float, (solver.n_dofs_, _B)),
         qfrc_constraint=V(gs.qd_float, (solver.n_dofs_, _B)),
         qacc=V(gs.qd_float, (solver.n_dofs_, _B)),
@@ -394,9 +392,7 @@ def get_constraint_state(constraint_solver, solver):
         jac_relevant_dofs=V(gs.qd_int, jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(gs.qd_int, jac_n_relevant_dofs_shape),
         # Backward gradients
-        dL_dqacc=V(
-            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)
-        ),
+        dL_dqacc=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(
             gs.qd_float,
             maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad),
@@ -405,28 +401,16 @@ def get_constraint_state(constraint_solver, solver):
             gs.qd_float,
             maybe_shape((len_constraints_, solver.n_dofs_, _B), solver._requires_grad),
         ),
-        dL_daref=V(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
-        ),
-        dL_defc_D=V(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
-        ),
-        dL_dforce=V(
-            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)
-        ),
+        dL_daref=V(gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        dL_defc_D=V(gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        dL_dforce=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         bw_u=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         bw_r=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         bw_p=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         bw_Ap=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
-        bw_Ju=V(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
-        ),
-        bw_y=V(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
-        ),
-        bw_w=V(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
-        ),
+        bw_Ju=V(gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        bw_y=V(gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)),
+        bw_w=V(gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)),
         # Timers
         timers=V(qd.i64 if gs.backend != gs.metal else qd.i32, (10, _B)),
         use_full_hessian=V(qd.i32, (_B,)),
@@ -609,9 +593,7 @@ def get_contact_island_state(solver, collider):
         n_stack=V(gs.qd_int, (_B,)),
         entity_island=V(gs.qd_int, (n_entities, _B)),
         stack=V(gs.qd_int, (n_entities, _B)),
-        entity_idx_to_next_entity_idx_in_hibernated_island=V(
-            gs.qd_int, (n_entities, _B)
-        ),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(gs.qd_int, (n_entities, _B)),
     )
 
 
@@ -740,9 +722,7 @@ def get_collider_state(
         n_contacts_hibernated=V(gs.qd_int, (_B,)),
         first_time=V(gs.qd_bool, (_B,)),
         contact_cache=get_contact_cache(solver, n_possible_pairs),
-        broad_collision_pairs=V_VEC(
-            2, gs.qd_int, (max(max_collision_pairs_broad, 1), _B)
-        ),
+        broad_collision_pairs=V_VEC(2, gs.qd_int, (max(max_collision_pairs_broad, 1), _B)),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(_B, max(max_contact_pairs, 1), True, requires_grad),
         narrowphase_work_queues=get_narrowphase_work_queues(
@@ -1132,9 +1112,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
         contact_faces=get_contact_face(_B, max_contact_polygon_verts, is_active),
         contact_normals=get_contact_normal(_B, max_contact_polygon_verts, is_active),
         contact_halfspaces=get_contact_halfspace(_B, max_contact_polygon_verts, is_active),
-        contact_clipped_polygons=V_VEC(
-            3, gs.qd_float, (_B, 2, max_contact_polygon_verts)
-        ),
+        contact_clipped_polygons=V_VEC(3, gs.qd_float, (_B, 2, max_contact_polygon_verts)),
         multi_contact_flag=V(gs.qd_bool, (_B,)),
         # Final results
         witness=get_witness(_B, max_contacts_per_pair, is_active),
@@ -1147,9 +1125,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
         distance=V(gs.qd_float, (_B,)),
         diff_contact_input=get_diff_contact_input(_B, max(max_contacts_per_pair, 1), is_active, requires_grad),
         n_diff_contact_input=V(gs.qd_int, (_B,)),
-        diff_penetration=V(
-            gs.qd_float, maybe_shape((_B, max_contacts_per_pair), requires_grad)
-        ),
+        diff_penetration=V(gs.qd_float, maybe_shape((_B, max_contacts_per_pair), requires_grad)),
     )
 
 
