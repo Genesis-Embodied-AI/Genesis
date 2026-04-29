@@ -1,6 +1,7 @@
 import quadrants as qd
 
 import genesis as gs
+import genesis.utils.array_class as array_class
 
 from .base_solver import Solver
 

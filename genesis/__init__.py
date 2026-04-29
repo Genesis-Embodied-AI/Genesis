@@ -417,10 +417,13 @@ def destroy():
     logger = None
 
     # Clear global state
-    global _theme, device, backend, EPS
+    global _theme, device, backend, use_ndarray, use_fastcache, use_zerocopy, EPS
     _theme = None
     device = None
     backend = None
+    use_ndarray = None
+    use_fastcache = None
+    use_zerocopy = None
     EPS = None
 
 
