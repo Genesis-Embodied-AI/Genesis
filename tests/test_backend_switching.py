@@ -50,15 +50,19 @@ def _run_cycle(use_nd, cycle_idx):
 
 
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
-def test_backend_switching_ndarray_field_ndarray(backend):
-    """Three consecutive init/destroy cycles: ndarray -> field -> ndarray.
+@pytest.mark.parametrize(
+    "order",
+    [
+        (True, False, True),
+        (False, True, False),
+    ],
+    ids=["ndarray-field-ndarray", "field-ndarray-field"],
+)
+def test_backend_switching(backend, order):
+    """Three consecutive init/destroy cycles switching between backends.
 
     Each cycle builds a rigid-body scene (box on plane, 10 steps) and verifies
     that _tensor_backend() and V/V_VEC resolve the correct backend.
-
-    Note: field-first -> ndarray currently fails due to a Quadrants qd.reset()
-    limitation with AnyArray wrapping; starting with ndarray avoids this.
     """
-    _run_cycle(use_nd=True, cycle_idx=0)
-    _run_cycle(use_nd=False, cycle_idx=1)
-    _run_cycle(use_nd=True, cycle_idx=2)
+    for i, use_nd in enumerate(order):
+        _run_cycle(use_nd=use_nd, cycle_idx=i)
