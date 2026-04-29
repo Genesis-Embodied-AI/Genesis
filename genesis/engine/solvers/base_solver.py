@@ -51,7 +51,8 @@ class Solver(RBC):
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         gravity = torch.as_tensor(gravity, dtype=gs.tc_float, device=gs.device).expand((len(envs_idx), 3)).contiguous()
         assert gravity.shape == (len(envs_idx), 3), "Input gravity array should match (n_envs, 3)"
-        _kernel_set_gravity(gravity, envs_idx, self._gravity)
+        gravity_arg = self._gravity if type(self._gravity) is qd.VectorTensor else qd.wrap(self._gravity)
+        _kernel_set_gravity(gravity, envs_idx, gravity_arg)
 
     def get_gravity(self, envs_idx=None):
         tensor = qd_to_torch(self._gravity, envs_idx, transpose=True, copy=True)
@@ -170,7 +171,8 @@ class Solver(RBC):
 @qd.kernel
 def _kernel_set_gravity(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.Tensor):
     # qd.Tensor annotation accepts qd.Tensor wrappers, raw qd.field(), and raw qd.ndarray(). Subclass solvers store
-    # _gravity as raw qd.field(); base_solver stores it as qd.Tensor.
+    # _gravity as raw qd.field(); base_solver stores it as qd.Tensor. See test_set_gravity_accepts_field_and_tensor
+    # in tests/test_backend_switching.py.
     for i_b_ in range(envs_idx.shape[0]):
         for j in qd.static(range(3)):
             gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]
