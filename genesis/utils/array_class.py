@@ -1,7 +1,6 @@
 import dataclasses
 import math
 from enum import IntEnum
-from functools import partial
 
 import quadrants as qd
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
@@ -14,11 +13,21 @@ if not gs._initialized:
     gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
 
 
-_TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
+def _tensor_backend():
+    return qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
-V = partial(qd.tensor, backend=_TENSOR_BACKEND)
-V_VEC = partial(qd.Vector.tensor, backend=_TENSOR_BACKEND)
-V_MAT = partial(qd.Matrix.tensor, backend=_TENSOR_BACKEND)
+
+def V(*args, **kwargs):
+    return qd.tensor(*args, backend=_tensor_backend(), **kwargs)
+
+
+def V_VEC(*args, **kwargs):
+    return qd.Vector.tensor(*args, backend=_tensor_backend(), **kwargs)
+
+
+def V_MAT(*args, **kwargs):
+    return qd.Matrix.tensor(*args, backend=_tensor_backend(), **kwargs)
+
 
 PLACEHOLDER = V(gs.qd_float, ())
 
