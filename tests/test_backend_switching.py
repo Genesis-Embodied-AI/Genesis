@@ -42,6 +42,16 @@ def test_backend_switching_field_ndarray_field(backend):
             v = V_VEC(3, qd.f32, (2,))
             assert v.to_numpy().shape == (2, 3), f"Cycle {i}: unexpected V_VEC shape {v.to_numpy().shape}"
 
+            # Build and step a rigid-body scene for field cycles
+            # (ndarray doesn't support qd.grouped in rigid solver yet)
+            if not use_nd:
+                scene = gs.Scene(show_viewer=False)
+                scene.add_entity(gs.morphs.Plane())
+                scene.add_entity(gs.morphs.Box(size=(0.4, 0.4, 0.4), pos=(0.0, 0.0, 0.5)))
+                scene.build()
+                for _ in range(10):
+                    scene.step()
+
         finally:
             gs.destroy()
             if old_val is None:
