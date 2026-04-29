@@ -234,7 +234,10 @@ class MPMSolver(Solver):
                     "calculated based on `grid_density`). Simulation might be unstable."
                 )
 
-        # Overwrite gravity because only field is supported for now
+        # FIXME: _gravity must be a raw qd.field() because LegacyCoupler.mpm_grid_op accesses it via template attribute on a
+        # @qd.data_oriented class, and Quadrants doesn't support Ndarray attrs on data_oriented in kernel scope. Fix by either:
+        # (1) adding Ndarray support to data_oriented template resolution, or (2) migrating the solver to a frozen dataclass
+        # so _predeclare_struct_ndarrays can register the Ndarray.
         if self._gravity is not None:
             gravity = self._gravity.to_numpy()
             self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))

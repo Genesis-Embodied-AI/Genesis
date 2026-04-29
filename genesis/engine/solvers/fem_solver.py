@@ -373,7 +373,7 @@ class FEMSolver(Solver):
         if self.n_vertices_max > 0 and self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
 
-        # Overwrite gravity because only field is supported for now
+        # FIXME: _gravity must be a raw qd.field() — see comment in mpm_solver.py
         if self._gravity is not None:
             gravity = self._gravity.to_numpy()
             self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
