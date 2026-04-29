@@ -322,6 +322,7 @@ class RRT(PathPlanner):
                 configuration=qd.types.vector(self._entity.n_qs, gs.qd_float),
                 parent_idx=gs.qd_int,
             )
+            # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
             self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))
@@ -669,6 +670,7 @@ class RRTConnect(PathPlanner):
                 parent_idx=gs.qd_int,
                 child_idx=gs.qd_int,
             )
+            # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
             self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))

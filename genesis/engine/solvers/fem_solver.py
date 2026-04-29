@@ -320,6 +320,7 @@ class FEMSolver(Solver):
             link_init_quat=gs.qd_vec4,  # offset rotation of link
         )
 
+        # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
         self.vertex_constraints = vertex_constraint_info.field(
             shape=(self.n_vertices, self._B), needs_grad=False, layout=qd.Layout.AOS
         )

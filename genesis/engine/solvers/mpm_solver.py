@@ -184,6 +184,7 @@ class MPMSolver(Solver):
             link_local_pos=gs.qd_vec3,  # offset from link origin in link's local frame
         )
 
+        # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
         self.particle_constraints = particle_constraint_info.field(
             shape=(self._n_particles, self._B), needs_grad=False, layout=qd.Layout.AOS
         )
