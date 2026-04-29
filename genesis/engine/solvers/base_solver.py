@@ -39,7 +39,7 @@ class Solver(RBC):
         self._B = self._sim._B
         if self._init_gravity is not None:
             gravity = np.tile(np.asarray(self._init_gravity, dtype=gs.np_float), (self._B, 1))
-            self._gravity = qd.tensor(gs.qd_vec3, (self._B,), backend=array_class._TENSOR_BACKEND)
+            self._gravity = array_class.V(gs.qd_vec3, (self._B,))
             self._gravity.from_numpy(gravity)
 
     @gs.assert_built

@@ -1,6 +1,7 @@
 import dataclasses
 import math
 from enum import IntEnum
+from functools import partial
 
 import quadrants as qd
 from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
@@ -15,8 +16,11 @@ if not gs._initialized:
 
 _TENSOR_BACKEND = qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
+V = partial(qd.tensor, backend=_TENSOR_BACKEND)
+V_VEC = partial(qd.Vector.tensor, backend=_TENSOR_BACKEND)
+V_MAT = partial(qd.Matrix.tensor, backend=_TENSOR_BACKEND)
 
-PLACEHOLDER = qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND)
+PLACEHOLDER = V(gs.qd_float, ())
 
 
 def maybe_shape(shape, is_on):
@@ -63,7 +67,7 @@ class _AutoInitMeta(type):
 
 
 def V_SCALAR_FROM(dtype, value):
-    data = qd.tensor(dtype, (), backend=_TENSOR_BACKEND)
+    data = V(dtype, ())
     data.fill(value)
     return data
 
@@ -139,26 +143,26 @@ def get_rigid_global_info(solver, kinematic_only):
     # FIXME: Add a better split between kinematic and Genesis
     if kinematic_only:
         return StructRigidGlobalInfo(
-            envs_offset=qd.Vector.tensor(3, gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-            gravity=qd.Vector.tensor(3, gs.qd_float, (), backend=_TENSOR_BACKEND),
-            meaninertia=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-            n_awake_dofs=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-            n_awake_entities=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-            n_awake_links=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-            awake_dofs=qd.tensor(gs.qd_int, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-            awake_entities=qd.tensor(gs.qd_int, (solver.n_entities_, _B), backend=_TENSOR_BACKEND),
-            awake_links=qd.tensor(gs.qd_int, (solver.n_links_, _B), backend=_TENSOR_BACKEND),
-            qpos0=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND),
-            qpos=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND),
-            qpos_next=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND),
-            links_T=qd.Matrix.tensor(4, 4, gs.qd_float, (solver.n_links_,), backend=_TENSOR_BACKEND),
-            geoms_init_AABB=qd.Vector.tensor(3, gs.qd_float, (), backend=_TENSOR_BACKEND),
-            mass_mat=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-            mass_mat_L=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-            mass_mat_L_bw=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-            mass_mat_D_inv=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-            mass_mat_mask=qd.tensor(gs.qd_bool, (), backend=_TENSOR_BACKEND),
-            mass_parent_mask=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
+            envs_offset=V_VEC(3, gs.qd_float, (_B,)),
+            gravity=V_VEC(3, gs.qd_float, ()),
+            meaninertia=V(gs.qd_float, ()),
+            n_awake_dofs=V(gs.qd_int, (_B,)),
+            n_awake_entities=V(gs.qd_int, (_B,)),
+            n_awake_links=V(gs.qd_int, (_B,)),
+            awake_dofs=V(gs.qd_int, (solver.n_dofs_, _B)),
+            awake_entities=V(gs.qd_int, (solver.n_entities_, _B)),
+            awake_links=V(gs.qd_int, (solver.n_links_, _B)),
+            qpos0=V(gs.qd_float, (solver.n_qs_, _B)),
+            qpos=V(gs.qd_float, (solver.n_qs_, _B)),
+            qpos_next=V(gs.qd_float, (solver.n_qs_, _B)),
+            links_T=V_MAT(4, 4, gs.qd_float, (solver.n_links_,)),
+            geoms_init_AABB=V_VEC(3, gs.qd_float, ()),
+            mass_mat=V(gs.qd_float, ()),
+            mass_mat_L=V(gs.qd_float, ()),
+            mass_mat_L_bw=V(gs.qd_float, ()),
+            mass_mat_D_inv=V(gs.qd_float, ()),
+            mass_mat_mask=V(gs.qd_bool, ()),
+            mass_parent_mask=V(gs.qd_float, ()),
             substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
             iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
             tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
@@ -174,26 +178,26 @@ def get_rigid_global_info(solver, kinematic_only):
         )
 
     return StructRigidGlobalInfo(
-        envs_offset=qd.Vector.tensor(3, gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        gravity=qd.Vector.tensor(3, gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        meaninertia=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        n_awake_dofs=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_awake_entities=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_awake_links=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        awake_dofs=qd.tensor(gs.qd_int, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        awake_entities=qd.tensor(gs.qd_int, (solver.n_entities_, _B), backend=_TENSOR_BACKEND),
-        awake_links=qd.tensor(gs.qd_int, (solver.n_links_, _B), backend=_TENSOR_BACKEND),
-        qpos0=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND),
-        qpos=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qpos_next=qd.tensor(gs.qd_float, (solver.n_qs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        links_T=qd.Matrix.tensor(4, 4, gs.qd_float, (solver.n_links_,), backend=_TENSOR_BACKEND),
-        geoms_init_AABB=qd.Vector.tensor(3, gs.qd_float, (solver.n_geoms_, 8), backend=_TENSOR_BACKEND),
-        mass_mat=qd.tensor(gs.qd_float, mass_mat_shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_mat_L=qd.tensor(gs.qd_float, mass_mat_shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_mat_L_bw=qd.tensor(gs.qd_float, mass_mat_shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_mat_D_inv=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_mat_mask=qd.tensor(gs.qd_bool, (solver.n_entities_, _B), backend=_TENSOR_BACKEND),
-        mass_parent_mask=qd.tensor(gs.qd_float, (solver.n_dofs_, solver.n_dofs_), backend=_TENSOR_BACKEND),
+        envs_offset=V_VEC(3, gs.qd_float, (_B,)),
+        gravity=V_VEC(3, gs.qd_float, (_B,)),
+        meaninertia=V(gs.qd_float, (_B,)),
+        n_awake_dofs=V(gs.qd_int, (_B,)),
+        n_awake_entities=V(gs.qd_int, (_B,)),
+        n_awake_links=V(gs.qd_int, (_B,)),
+        awake_dofs=V(gs.qd_int, (solver.n_dofs_, _B)),
+        awake_entities=V(gs.qd_int, (solver.n_entities_, _B)),
+        awake_links=V(gs.qd_int, (solver.n_links_, _B)),
+        qpos0=V(gs.qd_float, (solver.n_qs_, _B)),
+        qpos=V(gs.qd_float, (solver.n_qs_, _B), needs_grad=requires_grad),
+        qpos_next=V(gs.qd_float, (solver.n_qs_, _B), needs_grad=requires_grad),
+        links_T=V_MAT(4, 4, gs.qd_float, (solver.n_links_,)),
+        geoms_init_AABB=V_VEC(3, gs.qd_float, (solver.n_geoms_, 8)),
+        mass_mat=V(gs.qd_float, mass_mat_shape, needs_grad=requires_grad),
+        mass_mat_L=V(gs.qd_float, mass_mat_shape, needs_grad=requires_grad),
+        mass_mat_L_bw=V(gs.qd_float, mass_mat_shape_bw, needs_grad=requires_grad),
+        mass_mat_D_inv=V(gs.qd_float, (solver.n_dofs_, _B), needs_grad=requires_grad),
+        mass_mat_mask=V(gs.qd_bool, (solver.n_entities_, _B)),
+        mass_parent_mask=V(gs.qd_float, (solver.n_dofs_, solver.n_dofs_)),
         substep_dt=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._substep_dt),
         iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=solver._options.iterations),
         tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=solver._options.tolerance),
@@ -324,104 +328,102 @@ def get_constraint_state(constraint_solver, solver):
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
     return StructConstraintState(
-        n_constraints=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        qd_n_equalities=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_constraints_equality=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_constraints_frictionloss=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        is_warmstart=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
-        improved=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
-        cost_ws=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        gauss=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        cost=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        prev_cost=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        gtol=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        ls_it=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        ls_result=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        cg_beta=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        cg_pg_dot_pMg=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        quad_gauss=qd.tensor(gs.qd_float, (3, _B), backend=_TENSOR_BACKEND),
-        ls_alpha=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        ls_p0_cost=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        ls_alpha_newton=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        ls_gtol=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        eq_sum=qd.tensor(gs.qd_float, (3, _B), backend=_TENSOR_BACKEND),
-        Ma=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        Ma_ws=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        grad=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        Mgrad=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        MinvJT=qd.tensor(
-            gs.qd_float, maybe_shape(jac_shape, solver._options.noslip_iterations > 0), backend=_TENSOR_BACKEND
+        n_constraints=V(gs.qd_int, (_B,)),
+        qd_n_equalities=V(gs.qd_int, (_B,)),
+        n_constraints_equality=V(gs.qd_int, (_B,)),
+        n_constraints_frictionloss=V(gs.qd_int, (_B,)),
+        is_warmstart=V(gs.qd_bool, (_B,)),
+        improved=V(gs.qd_bool, (_B,)),
+        cost_ws=V(gs.qd_float, (_B,)),
+        gauss=V(gs.qd_float, (_B,)),
+        cost=V(gs.qd_float, (_B,)),
+        prev_cost=V(gs.qd_float, (_B,)),
+        gtol=V(gs.qd_float, (_B,)),
+        ls_it=V(gs.qd_int, (_B,)),
+        ls_result=V(gs.qd_int, (_B,)),
+        cg_beta=V(gs.qd_float, (_B,)),
+        cg_pg_dot_pMg=V(gs.qd_float, (_B,)),
+        quad_gauss=V(gs.qd_float, (3, _B)),
+        ls_alpha=V(gs.qd_float, (_B,)),
+        ls_p0_cost=V(gs.qd_float, (_B,)),
+        ls_alpha_newton=V(gs.qd_float, (_B,)),
+        ls_gtol=V(gs.qd_float, (_B,)),
+        eq_sum=V(gs.qd_float, (3, _B)),
+        Ma=V(gs.qd_float, (solver.n_dofs_, _B)),
+        Ma_ws=V(gs.qd_float, (solver.n_dofs_, _B)),
+        grad=V(gs.qd_float, (solver.n_dofs_, _B)),
+        Mgrad=V(gs.qd_float, (solver.n_dofs_, _B)),
+        MinvJT=V(
+            gs.qd_float, maybe_shape(jac_shape, solver._options.noslip_iterations > 0)
         ),
-        search=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        qfrc_constraint=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        qacc=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        qacc_ws=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        qacc_prev=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        mv=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        cg_prev_grad=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        cg_prev_Mgrad=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        nt_vec=qd.tensor(gs.qd_float, (solver.n_dofs_, _B), backend=_TENSOR_BACKEND),
-        nt_H=qd.tensor(gs.qd_float, (_B, solver.n_dofs_, solver.n_dofs_), backend=_TENSOR_BACKEND),
-        incr_changed_idx=qd.tensor(gs.qd_int, (len_constraints_, _B), backend=_TENSOR_BACKEND),
-        incr_n_changed=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        efc_b=qd.tensor(gs.qd_float, efc_b_shape, backend=_TENSOR_BACKEND),
-        efc_AR=qd.tensor(gs.qd_float, efc_AR_shape, backend=_TENSOR_BACKEND),
+        search=V(gs.qd_float, (solver.n_dofs_, _B)),
+        qfrc_constraint=V(gs.qd_float, (solver.n_dofs_, _B)),
+        qacc=V(gs.qd_float, (solver.n_dofs_, _B)),
+        qacc_ws=V(gs.qd_float, (solver.n_dofs_, _B)),
+        qacc_prev=V(gs.qd_float, (solver.n_dofs_, _B)),
+        mv=V(gs.qd_float, (solver.n_dofs_, _B)),
+        cg_prev_grad=V(gs.qd_float, (solver.n_dofs_, _B)),
+        cg_prev_Mgrad=V(gs.qd_float, (solver.n_dofs_, _B)),
+        nt_vec=V(gs.qd_float, (solver.n_dofs_, _B)),
+        nt_H=V(gs.qd_float, (_B, solver.n_dofs_, solver.n_dofs_)),
+        incr_changed_idx=V(gs.qd_int, (len_constraints_, _B)),
+        incr_n_changed=V(gs.qd_int, (_B,)),
+        efc_b=V(gs.qd_float, efc_b_shape),
+        efc_AR=V(gs.qd_float, efc_AR_shape),
         # Tier-1 constraint state: allocated as qd.Tensor wrappers
         # (Phase-1 migration; see perso_hugh/doc/genesis_tensor_migration.md).
-        active=qd.tensor(gs.qd_bool, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        prev_active=qd.tensor(gs.qd_bool, (len_constraints_, _B), backend=_TENSOR_BACKEND),
-        diag=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        aref=qd.tensor(gs.qd_float, (len_constraints_, _B), backend=_TENSOR_BACKEND),
-        Jaref=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        efc_frictionloss=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        efc_force=qd.tensor(gs.qd_float, (len_constraints_, _B), backend=_TENSOR_BACKEND),
-        efc_D=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        jv=qd.tensor(gs.qd_float, shape=(len_constraints_, _B), backend=_TENSOR_BACKEND),
-        jac=qd.tensor(gs.qd_float, jac_shape, backend=_TENSOR_BACKEND),
-        jac_relevant_dofs=qd.tensor(gs.qd_int, jac_relevant_dofs_shape, backend=_TENSOR_BACKEND),
-        jac_n_relevant_dofs=qd.tensor(gs.qd_int, jac_n_relevant_dofs_shape, backend=_TENSOR_BACKEND),
+        active=V(gs.qd_bool, shape=(len_constraints_, _B)),
+        prev_active=V(gs.qd_bool, (len_constraints_, _B)),
+        diag=V(gs.qd_float, shape=(len_constraints_, _B)),
+        aref=V(gs.qd_float, (len_constraints_, _B)),
+        Jaref=V(gs.qd_float, shape=(len_constraints_, _B)),
+        efc_frictionloss=V(gs.qd_float, shape=(len_constraints_, _B)),
+        efc_force=V(gs.qd_float, (len_constraints_, _B)),
+        efc_D=V(gs.qd_float, shape=(len_constraints_, _B)),
+        jv=V(gs.qd_float, shape=(len_constraints_, _B)),
+        jac=V(gs.qd_float, jac_shape),
+        jac_relevant_dofs=V(gs.qd_int, jac_relevant_dofs_shape),
+        jac_n_relevant_dofs=V(gs.qd_int, jac_n_relevant_dofs_shape),
         # Backward gradients
-        dL_dqacc=qd.tensor(
-            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        dL_dqacc=V(
+            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)
         ),
-        dL_dM=qd.tensor(
+        dL_dM=V(
             gs.qd_float,
             maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad),
-            backend=_TENSOR_BACKEND,
         ),
-        dL_djac=qd.tensor(
+        dL_djac=V(
             gs.qd_float,
             maybe_shape((len_constraints_, solver.n_dofs_, _B), solver._requires_grad),
-            backend=_TENSOR_BACKEND,
         ),
-        dL_daref=qd.tensor(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        dL_daref=V(
+            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
         ),
-        dL_defc_D=qd.tensor(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        dL_defc_D=V(
+            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
         ),
-        dL_dforce=qd.tensor(
-            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        dL_dforce=V(
+            gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)
         ),
-        bw_u=qd.tensor(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND),
-        bw_r=qd.tensor(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND),
-        bw_p=qd.tensor(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND),
-        bw_Ap=qd.tensor(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad), backend=_TENSOR_BACKEND),
-        bw_Ju=qd.tensor(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        bw_u=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_r=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_p=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_Ap=V(gs.qd_float, maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
+        bw_Ju=V(
+            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
         ),
-        bw_y=qd.tensor(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        bw_y=V(
+            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
         ),
-        bw_w=qd.tensor(
-            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad), backend=_TENSOR_BACKEND
+        bw_w=V(
+            gs.qd_float, maybe_shape((len_constraints_, _B), solver._requires_grad)
         ),
         # Timers
-        timers=qd.tensor(qd.i64 if gs.backend != gs.metal else qd.i32, (10, _B), backend=_TENSOR_BACKEND),
-        use_full_hessian=qd.tensor(qd.i32, (_B,), backend=_TENSOR_BACKEND),
-        solver_iter_counter=qd.tensor(qd.i32, (), backend=_TENSOR_BACKEND),
+        timers=V(qd.i64 if gs.backend != gs.metal else qd.i32, (10, _B)),
+        use_full_hessian=V(qd.i32, (_B,)),
+        solver_iter_counter=V(qd.i32, ()),
         graph_counter=qd.ndarray(qd.i32, shape=()),
-        early_exit_flag=qd.tensor(qd.i32, (), backend=_TENSOR_BACKEND),
+        early_exit_flag=V(qd.i32, ()),
     )
 
 
@@ -448,17 +450,17 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
     max_contact_pairs_ = max(max_contact_pairs, 1)
 
     return StructContactData(
-        geom_a=qd.tensor(gs.qd_int, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        geom_b=qd.tensor(gs.qd_int, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        normal=qd.tensor(gs.qd_vec3, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        pos=qd.tensor(gs.qd_vec3, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        penetration=qd.tensor(gs.qd_float, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        friction=qd.tensor(gs.qd_float, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        sol_params=qd.Vector.tensor(7, gs.qd_float, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        force=qd.tensor(gs.qd_vec3, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        link_a=qd.tensor(gs.qd_int, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        link_b=qd.tensor(gs.qd_int, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
-        pair_idx=qd.tensor(gs.qd_int, (max_contact_pairs_, _B), backend=_TENSOR_BACKEND),
+        geom_a=V(gs.qd_int, (max_contact_pairs_, _B)),
+        geom_b=V(gs.qd_int, (max_contact_pairs_, _B)),
+        normal=V(gs.qd_vec3, (max_contact_pairs_, _B), needs_grad=requires_grad),
+        pos=V(gs.qd_vec3, (max_contact_pairs_, _B), needs_grad=requires_grad),
+        penetration=V(gs.qd_float, (max_contact_pairs_, _B), needs_grad=requires_grad),
+        friction=V(gs.qd_float, (max_contact_pairs_, _B)),
+        sol_params=V_VEC(7, gs.qd_float, (max_contact_pairs_, _B)),
+        force=V(gs.qd_vec3, (max_contact_pairs_, _B)),
+        link_a=V(gs.qd_int, (max_contact_pairs_, _B)),
+        link_b=V(gs.qd_int, (max_contact_pairs_, _B)),
+        pair_idx=V(gs.qd_int, (max_contact_pairs_, _B)),
     )
 
 
@@ -490,19 +492,19 @@ class StructDiffContactInput:
 def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active and requires_grad)
     return StructDiffContactInput(
-        geom_a=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        geom_b=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        local_pos1_a=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_pos1_b=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_pos1_c=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_pos2_a=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_pos2_b=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_pos2_c=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        w_local_pos1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        w_local_pos2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        ref_id=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        valid=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        ref_penetration=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=True),
+        geom_a=V(gs.qd_int, shape),
+        geom_b=V(gs.qd_int, shape),
+        local_pos1_a=V_VEC(3, gs.qd_float, shape),
+        local_pos1_b=V_VEC(3, gs.qd_float, shape),
+        local_pos1_c=V_VEC(3, gs.qd_float, shape),
+        local_pos2_a=V_VEC(3, gs.qd_float, shape),
+        local_pos2_b=V_VEC(3, gs.qd_float, shape),
+        local_pos2_c=V_VEC(3, gs.qd_float, shape),
+        w_local_pos1=V_VEC(3, gs.qd_float, shape),
+        w_local_pos2=V_VEC(3, gs.qd_float, shape),
+        ref_id=V(gs.qd_int, shape),
+        valid=V(gs.qd_int, shape),
+        ref_penetration=V(gs.qd_float, shape, needs_grad=True),
     )
 
 
@@ -517,9 +519,9 @@ def get_sort_buffer(solver):
     _B = solver._B
 
     return StructSortBuffer(
-        value=qd.tensor(gs.qd_float, (2 * solver.n_geoms_, _B), backend=_TENSOR_BACKEND),
-        i_g=qd.tensor(gs.qd_int, (2 * solver.n_geoms_, _B), backend=_TENSOR_BACKEND),
-        is_max=qd.tensor(gs.qd_bool, (2 * solver.n_geoms_, _B), backend=_TENSOR_BACKEND),
+        value=V(gs.qd_float, (2 * solver.n_geoms_, _B)),
+        i_g=V(gs.qd_int, (2 * solver.n_geoms_, _B)),
+        is_max=V(gs.qd_bool, (2 * solver.n_geoms_, _B)),
     )
 
 
@@ -531,7 +533,7 @@ class StructContactCache:
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
     return StructContactCache(
-        normal=qd.Vector.tensor(3, gs.qd_float, (n_possible_pairs, _B), backend=_TENSOR_BACKEND),
+        normal=V_VEC(3, gs.qd_float, (n_possible_pairs, _B)),
     )
 
 
@@ -547,9 +549,9 @@ def get_agg_list(solver):
     n_entities = max(solver.n_entities, 1)
 
     return StructAggList(
-        curr=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
-        n=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
-        start=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
+        curr=V(gs.qd_int, (n_entities, _B)),
+        n=V(gs.qd_int, (n_entities, _B)),
+        start=V(gs.qd_int, (n_entities, _B)),
     )
 
 
@@ -584,22 +586,22 @@ def get_contact_island_state(solver, collider):
     max_edges = max_contact_pairs + max_hibernation_edges
 
     return StructContactIslandState(
-        ci_edges=qd.tensor(gs.qd_int, (max_edges, 2, _B), backend=_TENSOR_BACKEND),
-        edge_id=qd.tensor(gs.qd_int, (max_edges * 2, _B), backend=_TENSOR_BACKEND),
-        constraint_list=qd.tensor(gs.qd_int, (max_contact_pairs, _B), backend=_TENSOR_BACKEND),
-        constraint_id=qd.tensor(gs.qd_int, (max_contact_pairs * 2, _B), backend=_TENSOR_BACKEND),
+        ci_edges=V(gs.qd_int, (max_edges, 2, _B)),
+        edge_id=V(gs.qd_int, (max_edges * 2, _B)),
+        constraint_list=V(gs.qd_int, (max_contact_pairs, _B)),
+        constraint_id=V(gs.qd_int, (max_contact_pairs * 2, _B)),
         entity_edge=get_agg_list(solver),
         island_col=get_agg_list(solver),
-        island_hibernated=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
+        island_hibernated=V(gs.qd_int, (n_entities, _B)),
         island_entity=get_agg_list(solver),
-        entity_id=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
-        n_edges=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_islands=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_stack=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        entity_island=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
-        stack=qd.tensor(gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND),
-        entity_idx_to_next_entity_idx_in_hibernated_island=qd.tensor(
-            gs.qd_int, (n_entities, _B), backend=_TENSOR_BACKEND
+        entity_id=V(gs.qd_int, (n_entities, _B)),
+        n_edges=V(gs.qd_int, (_B,)),
+        n_islands=V(gs.qd_int, (_B,)),
+        n_stack=V(gs.qd_int, (_B,)),
+        entity_island=V(gs.qd_int, (n_entities, _B)),
+        stack=V(gs.qd_int, (n_entities, _B)),
+        entity_idx_to_next_entity_idx_in_hibernated_island=V(
+            gs.qd_int, (n_entities, _B)
         ),
     )
 
@@ -629,25 +631,25 @@ class StructNarrowphaseWorkQueues:
 
 def get_narrowphase_work_queues(max_entries):
     return StructNarrowphaseWorkQueues(
-        mpr_i_b=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_i_ga=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_i_gb=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_i_pair=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_contact_pos_0=qd.Vector.tensor(3, gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_normal_0=qd.Vector.tensor(3, gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_penetration_0=qd.tensor(gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_i_b=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_i_ga=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_i_gb=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_i_pair=qd.tensor(gs.qd_int, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_contact_pos_0=qd.Vector.tensor(3, gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_normal_0=qd.Vector.tensor(3, gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        gjk_penetration_0=qd.tensor(gs.qd_float, (max_entries,), backend=_TENSOR_BACKEND),
-        mpr_queue_size=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        gjk_queue_size=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        gjk_queue_size_k2=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        mpr_work_counter=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        gjk_work_counter=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
+        mpr_i_b=V(gs.qd_int, (max_entries,)),
+        mpr_i_ga=V(gs.qd_int, (max_entries,)),
+        mpr_i_gb=V(gs.qd_int, (max_entries,)),
+        mpr_i_pair=V(gs.qd_int, (max_entries,)),
+        mpr_contact_pos_0=V_VEC(3, gs.qd_float, (max_entries,)),
+        mpr_normal_0=V_VEC(3, gs.qd_float, (max_entries,)),
+        mpr_penetration_0=V(gs.qd_float, (max_entries,)),
+        gjk_i_b=V(gs.qd_int, (max_entries,)),
+        gjk_i_ga=V(gs.qd_int, (max_entries,)),
+        gjk_i_gb=V(gs.qd_int, (max_entries,)),
+        gjk_i_pair=V(gs.qd_int, (max_entries,)),
+        gjk_contact_pos_0=V_VEC(3, gs.qd_float, (max_entries,)),
+        gjk_normal_0=V_VEC(3, gs.qd_float, (max_entries,)),
+        gjk_penetration_0=V(gs.qd_float, (max_entries,)),
+        mpr_queue_size=V(gs.qd_int, (1,)),
+        gjk_queue_size=V(gs.qd_int, (1,)),
+        gjk_queue_size_k2=V(gs.qd_int, (1,)),
+        mpr_work_counter=V(gs.qd_int, (1,)),
+        gjk_work_counter=V(gs.qd_int, (1,)),
     )
 
 
@@ -711,34 +713,34 @@ def get_collider_state(
 
     return StructColliderState(
         sort_buffer=get_sort_buffer(solver),
-        active_buffer=qd.tensor(gs.qd_int, (n_geoms, _B), backend=_TENSOR_BACKEND),
-        n_broad_pairs=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        active_buffer_awake=qd.tensor(gs.qd_int, (n_geoms, _B), backend=_TENSOR_BACKEND),
-        active_buffer_hib=qd.tensor(gs.qd_int, (n_geoms, _B), backend=_TENSOR_BACKEND),
-        box_depth=qd.tensor(gs.qd_float, box_depth_shape, backend=_TENSOR_BACKEND),
-        box_points=qd.Vector.tensor(3, gs.qd_float, box_points_shape, backend=_TENSOR_BACKEND),
-        box_pts=qd.Vector.tensor(3, gs.qd_float, box_pts_shape, backend=_TENSOR_BACKEND),
-        box_lines=qd.Vector.tensor(6, gs.qd_float, box_lines_shape, backend=_TENSOR_BACKEND),
-        box_linesu=qd.Vector.tensor(6, gs.qd_float, box_linesu_shape, backend=_TENSOR_BACKEND),
-        box_axi=qd.Vector.tensor(3, gs.qd_float, box_axi_shape, backend=_TENSOR_BACKEND),
-        box_ppts2=qd.tensor(gs.qd_float, box_ppts2_shape, backend=_TENSOR_BACKEND),
-        box_pu=qd.Vector.tensor(3, gs.qd_float, box_pu_shape, backend=_TENSOR_BACKEND),
-        xyz_max_min=qd.tensor(gs.qd_float, (6, _B), backend=_TENSOR_BACKEND),
-        prism=qd.Vector.tensor(3, gs.qd_float, (6, _B), backend=_TENSOR_BACKEND),
-        n_contacts=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_contacts_hibernated=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        first_time=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
+        active_buffer=V(gs.qd_int, (n_geoms, _B)),
+        n_broad_pairs=V(gs.qd_int, (_B,)),
+        active_buffer_awake=V(gs.qd_int, (n_geoms, _B)),
+        active_buffer_hib=V(gs.qd_int, (n_geoms, _B)),
+        box_depth=V(gs.qd_float, box_depth_shape),
+        box_points=V_VEC(3, gs.qd_float, box_points_shape),
+        box_pts=V_VEC(3, gs.qd_float, box_pts_shape),
+        box_lines=V_VEC(6, gs.qd_float, box_lines_shape),
+        box_linesu=V_VEC(6, gs.qd_float, box_linesu_shape),
+        box_axi=V_VEC(3, gs.qd_float, box_axi_shape),
+        box_ppts2=V(gs.qd_float, box_ppts2_shape),
+        box_pu=V_VEC(3, gs.qd_float, box_pu_shape),
+        xyz_max_min=V(gs.qd_float, (6, _B)),
+        prism=V_VEC(3, gs.qd_float, (6, _B)),
+        n_contacts=V(gs.qd_int, (_B,)),
+        n_contacts_hibernated=V(gs.qd_int, (_B,)),
+        first_time=V(gs.qd_bool, (_B,)),
         contact_cache=get_contact_cache(solver, n_possible_pairs),
-        broad_collision_pairs=qd.Vector.tensor(
-            2, gs.qd_int, (max(max_collision_pairs_broad, 1), _B), backend=_TENSOR_BACKEND
+        broad_collision_pairs=V_VEC(
+            2, gs.qd_int, (max(max_collision_pairs_broad, 1), _B)
         ),
         contact_data=get_contact_data(solver, max_contact_pairs, requires_grad),
         diff_contact_input=get_diff_contact_input(_B, max(max_contact_pairs, 1), True, requires_grad),
         narrowphase_work_queues=get_narrowphase_work_queues(
             max(max_collision_pairs_broad * _B, 1) if collider_static_config.has_non_box_plane_convex_convex else 1
         ),
-        contact_sort_key=qd.tensor(gs.qd_float, (max(max_contact_pairs, 1), _B), backend=_TENSOR_BACKEND),
-        contact_sort_idx=qd.tensor(gs.qd_int, (max(max_contact_pairs, 1), _B), backend=_TENSOR_BACKEND),
+        contact_sort_key=V(gs.qd_float, (max(max_contact_pairs, 1), _B)),
+        contact_sort_idx=V(gs.qd_int, (max(max_contact_pairs, 1), _B)),
     )
 
 
@@ -779,20 +781,20 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
         terrain_hf_shape = 1
 
     return StructColliderInfo(
-        vert_neighbors=qd.tensor(gs.qd_int, (max(n_vert_neighbors, 1),), backend=_TENSOR_BACKEND),
-        vert_neighbor_start=qd.tensor(gs.qd_int, (solver.n_verts_,), backend=_TENSOR_BACKEND),
-        vert_n_neighbors=qd.tensor(gs.qd_int, (solver.n_verts_,), backend=_TENSOR_BACKEND),
-        collision_pair_idx=qd.tensor(gs.qd_int, (solver.n_geoms_, solver.n_geoms_), backend=_TENSOR_BACKEND),
-        max_possible_pairs=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
-        max_collision_pairs=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
-        max_contact_pairs=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
-        max_collision_pairs_broad=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
+        vert_neighbors=V(gs.qd_int, (max(n_vert_neighbors, 1),)),
+        vert_neighbor_start=V(gs.qd_int, (solver.n_verts_,)),
+        vert_n_neighbors=V(gs.qd_int, (solver.n_verts_,)),
+        collision_pair_idx=V(gs.qd_int, (solver.n_geoms_, solver.n_geoms_)),
+        max_possible_pairs=V(gs.qd_int, ()),
+        max_collision_pairs=V(gs.qd_int, ()),
+        max_contact_pairs=V(gs.qd_int, ()),
+        max_collision_pairs_broad=V(gs.qd_int, ()),
         n_valid_pairs=V_SCALAR_FROM(dtype=gs.qd_int, value=n_valid_pairs),
-        valid_collision_pairs=qd.tensor(gs.qd_ivec2, (max(n_valid_pairs, 1),), backend=_TENSOR_BACKEND),
-        terrain_hf=qd.tensor(gs.qd_float, terrain_hf_shape, backend=_TENSOR_BACKEND),
-        terrain_rc=qd.tensor(gs.qd_int, (2,), backend=_TENSOR_BACKEND),
-        terrain_scale=qd.tensor(gs.qd_float, (2,), backend=_TENSOR_BACKEND),
-        terrain_xyz_maxmin=qd.tensor(gs.qd_float, (6,), backend=_TENSOR_BACKEND),
+        valid_collision_pairs=V(gs.qd_ivec2, (max(n_valid_pairs, 1),)),
+        terrain_hf=V(gs.qd_float, terrain_hf_shape),
+        terrain_rc=V(gs.qd_int, (2,)),
+        terrain_scale=V(gs.qd_float, (2,)),
+        terrain_xyz_maxmin=V(gs.qd_float, (6,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),
@@ -830,9 +832,9 @@ class StructMPRSimplexSupport:
 
 def get_mpr_simplex_support(B_):
     return StructMPRSimplexSupport(
-        v1=qd.Vector.tensor(3, gs.qd_float, (4, B_), backend=_TENSOR_BACKEND),
-        v2=qd.Vector.tensor(3, gs.qd_float, (4, B_), backend=_TENSOR_BACKEND),
-        v=qd.Vector.tensor(3, gs.qd_float, (4, B_), backend=_TENSOR_BACKEND),
+        v1=V_VEC(3, gs.qd_float, (4, B_)),
+        v2=V_VEC(3, gs.qd_float, (4, B_)),
+        v=V_VEC(3, gs.qd_float, (4, B_)),
     )
 
 
@@ -845,7 +847,7 @@ class StructMPRState:
 def get_mpr_state(B_):
     return StructMPRState(
         simplex_support=get_mpr_simplex_support(B_),
-        simplex_size=qd.tensor(gs.qd_int, (B_,), backend=_TENSOR_BACKEND),
+        simplex_size=V(gs.qd_int, (B_,)),
     )
 
 
@@ -882,13 +884,13 @@ class StructMDVertex:
 def get_gjk_simplex_vertex(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
     return StructMDVertex(
-        obj1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        obj2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_obj1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_obj2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        id1=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        id2=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        mink=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        obj1=V_VEC(3, gs.qd_float, shape),
+        obj2=V_VEC(3, gs.qd_float, shape),
+        local_obj1=V_VEC(3, gs.qd_float, shape),
+        local_obj2=V_VEC(3, gs.qd_float, shape),
+        id1=V(gs.qd_int, shape),
+        id2=V(gs.qd_int, shape),
+        mink=V_VEC(3, gs.qd_float, shape),
     )
 
 
@@ -896,13 +898,13 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
     shape = maybe_shape((_B, max_num_polytope_verts), is_active)
     return StructMDVertex(
-        obj1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        obj2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_obj1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        local_obj2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        id1=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        id2=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        mink=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        obj1=V_VEC(3, gs.qd_float, shape),
+        obj2=V_VEC(3, gs.qd_float, shape),
+        local_obj1=V_VEC(3, gs.qd_float, shape),
+        local_obj2=V_VEC(3, gs.qd_float, shape),
+        id1=V(gs.qd_int, shape),
+        id2=V(gs.qd_int, shape),
+        mink=V_VEC(3, gs.qd_float, shape),
     )
 
 
@@ -915,8 +917,8 @@ class StructGJKSimplex:
 def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
     return StructGJKSimplex(
-        nverts=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        dist=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        nverts=V(gs.qd_int, shape),
+        dist=V(gs.qd_float, shape),
     )
 
 
@@ -929,8 +931,8 @@ class StructGJKSimplexBuffer:
 def get_gjk_simplex_buffer(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
     return StructGJKSimplexBuffer(
-        normal=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        sdist=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        normal=V_VEC(3, gs.qd_float, shape),
+        sdist=V(gs.qd_float, shape),
     )
 
 
@@ -946,11 +948,11 @@ class StructEPAPolytope:
 def get_epa_polytope(_B, is_active):
     shape = maybe_shape((_B,), is_active)
     return StructEPAPolytope(
-        nverts=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        nfaces=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        nfaces_map=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        horizon_nedges=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        horizon_w=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        nverts=V(gs.qd_int, shape),
+        nfaces=V(gs.qd_int, shape),
+        nfaces_map=V(gs.qd_int, shape),
+        horizon_nedges=V(gs.qd_int, shape),
+        horizon_w=V_VEC(3, gs.qd_float, shape),
     )
 
 
@@ -967,12 +969,12 @@ class StructEPAPolytopeFace:
 def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     shape = maybe_shape((_B, polytope_max_faces), is_active)
     return StructEPAPolytopeFace(
-        verts_idx=qd.Vector.tensor(3, gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        adj_idx=qd.Vector.tensor(3, gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        normal=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        dist2=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        map_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        visited=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        verts_idx=V_VEC(3, gs.qd_int, shape),
+        adj_idx=V_VEC(3, gs.qd_int, shape),
+        normal=V_VEC(3, gs.qd_float, shape),
+        dist2=V(gs.qd_float, shape),
+        map_idx=V(gs.qd_int, shape),
+        visited=V(gs.qd_int, shape),
     )
 
 
@@ -985,8 +987,8 @@ class StructEPAPolytopeHorizonData:
 def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
     return StructEPAPolytopeHorizonData(
-        face_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        edge_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        face_idx=V(gs.qd_int, shape),
+        edge_idx=V(gs.qd_int, shape),
     )
 
 
@@ -1004,13 +1006,13 @@ class StructContactFace:
 def get_contact_face(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactFace(
-        vert1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        vert2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        endverts=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        normal1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        normal2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        id1=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        id2=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        vert1=V_VEC(3, gs.qd_float, shape),
+        vert2=V_VEC(3, gs.qd_float, shape),
+        endverts=V_VEC(3, gs.qd_float, shape),
+        normal1=V_VEC(3, gs.qd_float, shape),
+        normal2=V_VEC(3, gs.qd_float, shape),
+        id1=V(gs.qd_int, shape),
+        id2=V(gs.qd_int, shape),
     )
 
 
@@ -1024,9 +1026,9 @@ class StructContactNormal:
 def get_contact_normal(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactNormal(
-        endverts=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        normal=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        id=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        endverts=V_VEC(3, gs.qd_float, shape),
+        normal=V_VEC(3, gs.qd_float, shape),
+        id=V(gs.qd_int, shape),
     )
 
 
@@ -1039,8 +1041,8 @@ class StructContactHalfspace:
 def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
     return StructContactHalfspace(
-        normal=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        dist=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        normal=V_VEC(3, gs.qd_float, shape),
+        dist=V(gs.qd_float, shape),
     )
 
 
@@ -1053,8 +1055,8 @@ class StructWitness:
 def get_witness(_B, max_contacts_per_pair, is_active):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
     return StructWitness(
-        point_obj1=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        point_obj2=qd.Vector.tensor(3, gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        point_obj1=V_VEC(3, gs.qd_float, shape),
+        point_obj2=V_VEC(3, gs.qd_float, shape),
     )
 
 
@@ -1102,42 +1104,42 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
     return StructGJKState(
         # GJK simplex
-        support_mesh_prev_vertex_id=qd.tensor(gs.qd_int, (_B, 2), backend=_TENSOR_BACKEND),
+        support_mesh_prev_vertex_id=V(gs.qd_int, (_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active),
         simplex_buffer=get_gjk_simplex_buffer(_B, is_active),
         simplex=get_gjk_simplex(_B, is_active),
-        last_searched_simplex_vertex_id=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
+        last_searched_simplex_vertex_id=V(gs.qd_int, (_B,)),
         simplex_vertex_intersect=get_gjk_simplex_vertex(_B, is_active),
         simplex_buffer_intersect=get_gjk_simplex_buffer(_B, is_active),
-        nsimplex=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
+        nsimplex=V(gs.qd_int, (_B,)),
         # EPA polytope
         polytope=get_epa_polytope(_B, is_active),
         polytope_verts=get_epa_polytope_vertex(_B, gjk_info, is_active),
         polytope_faces=get_epa_polytope_face(_B, polytope_max_faces, is_active),
-        polytope_faces_map=qd.tensor(gs.qd_int, (_B, polytope_max_faces), backend=_TENSOR_BACKEND),
+        polytope_faces_map=V(gs.qd_int, (_B, polytope_max_faces)),
         polytope_horizon_data=get_epa_polytope_horizon_data(_B, 6 + gjk_info.epa_max_iterations[None], is_active),
         polytope_horizon_stack=get_epa_polytope_horizon_data(_B, polytope_max_faces * 3, is_active),
         # Multi-contact detection (MuJoCo compatibility)
         contact_faces=get_contact_face(_B, max_contact_polygon_verts, is_active),
         contact_normals=get_contact_normal(_B, max_contact_polygon_verts, is_active),
         contact_halfspaces=get_contact_halfspace(_B, max_contact_polygon_verts, is_active),
-        contact_clipped_polygons=qd.Vector.tensor(
-            3, gs.qd_float, (_B, 2, max_contact_polygon_verts), backend=_TENSOR_BACKEND
+        contact_clipped_polygons=V_VEC(
+            3, gs.qd_float, (_B, 2, max_contact_polygon_verts)
         ),
-        multi_contact_flag=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
+        multi_contact_flag=V(gs.qd_bool, (_B,)),
         # Final results
         witness=get_witness(_B, max_contacts_per_pair, is_active),
-        n_witness=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_contacts=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        contact_pos=qd.Vector.tensor(3, gs.qd_float, (_B, max_contacts_per_pair), backend=_TENSOR_BACKEND),
-        normal=qd.Vector.tensor(3, gs.qd_float, (_B, max_contacts_per_pair), backend=_TENSOR_BACKEND),
-        is_col=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
-        penetration=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
-        distance=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
+        n_witness=V(gs.qd_int, (_B,)),
+        n_contacts=V(gs.qd_int, (_B,)),
+        contact_pos=V_VEC(3, gs.qd_float, (_B, max_contacts_per_pair)),
+        normal=V_VEC(3, gs.qd_float, (_B, max_contacts_per_pair)),
+        is_col=V(gs.qd_bool, (_B,)),
+        penetration=V(gs.qd_float, (_B,)),
+        distance=V(gs.qd_float, (_B,)),
         diff_contact_input=get_diff_contact_input(_B, max(max_contacts_per_pair, 1), is_active, requires_grad),
-        n_diff_contact_input=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        diff_penetration=qd.tensor(
-            gs.qd_float, maybe_shape((_B, max_contacts_per_pair), requires_grad), backend=_TENSOR_BACKEND
+        n_diff_contact_input=V(gs.qd_int, (_B,)),
+        diff_penetration=V(
+            gs.qd_float, maybe_shape((_B, max_contacts_per_pair), requires_grad)
         ),
     )
 
@@ -1152,47 +1154,47 @@ def get_gjk_state_contact_only(_B):
     _dummy_B = 1
 
     return StructGJKState(
-        support_mesh_prev_vertex_id=qd.tensor(gs.qd_int, (_B, 2), backend=_TENSOR_BACKEND),
+        support_mesh_prev_vertex_id=V(gs.qd_int, (_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active=True),
         simplex_buffer=get_gjk_simplex_buffer(_B, is_active=True),
         simplex=get_gjk_simplex(_B, is_active=True),
-        last_searched_simplex_vertex_id=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
+        last_searched_simplex_vertex_id=V(gs.qd_int, (_B,)),
         simplex_vertex_intersect=get_gjk_simplex_vertex(_B, is_active=True),
         simplex_buffer_intersect=get_gjk_simplex_buffer(_B, is_active=True),
-        nsimplex=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
+        nsimplex=V(gs.qd_int, (_B,)),
         # EPA — dummy allocations, never accessed by func_gjk
         polytope=get_epa_polytope(_dummy_B, is_active=True),
         polytope_verts=StructMDVertex(
-            obj1=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-            obj2=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-            local_obj1=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-            local_obj2=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-            id1=qd.tensor(gs.qd_int, (1, 1), backend=_TENSOR_BACKEND),
-            id2=qd.tensor(gs.qd_int, (1, 1), backend=_TENSOR_BACKEND),
-            mink=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
+            obj1=V_VEC(3, gs.qd_float, (1, 1)),
+            obj2=V_VEC(3, gs.qd_float, (1, 1)),
+            local_obj1=V_VEC(3, gs.qd_float, (1, 1)),
+            local_obj2=V_VEC(3, gs.qd_float, (1, 1)),
+            id1=V(gs.qd_int, (1, 1)),
+            id2=V(gs.qd_int, (1, 1)),
+            mink=V_VEC(3, gs.qd_float, (1, 1)),
         ),
         polytope_faces=get_epa_polytope_face(_dummy_B, 1, is_active=True),
-        polytope_faces_map=qd.tensor(gs.qd_int, (1, 1), backend=_TENSOR_BACKEND),
+        polytope_faces_map=V(gs.qd_int, (1, 1)),
         polytope_horizon_data=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
         polytope_horizon_stack=get_epa_polytope_horizon_data(_dummy_B, 1, is_active=True),
         # Multi-contact — dummy
         contact_faces=get_contact_face(_dummy_B, 1, is_active=True),
         contact_normals=get_contact_normal(_dummy_B, 1, is_active=True),
         contact_halfspaces=get_contact_halfspace(_dummy_B, 1, is_active=True),
-        contact_clipped_polygons=qd.Vector.tensor(3, gs.qd_float, (1, 2, 1), backend=_TENSOR_BACKEND),
-        multi_contact_flag=qd.tensor(gs.qd_bool, (_B,), backend=_TENSOR_BACKEND),
+        contact_clipped_polygons=V_VEC(3, gs.qd_float, (1, 2, 1)),
+        multi_contact_flag=V(gs.qd_bool, (_B,)),
         # Results — full _B for fields func_gjk writes; dummy for EPA-only fields
         witness=get_witness(_B, 1, is_active=True),
-        n_witness=qd.tensor(gs.qd_int, (_B,), backend=_TENSOR_BACKEND),
-        n_contacts=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        contact_pos=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-        normal=qd.Vector.tensor(3, gs.qd_float, (1, 1), backend=_TENSOR_BACKEND),
-        is_col=qd.tensor(gs.qd_bool, (1,), backend=_TENSOR_BACKEND),
-        penetration=qd.tensor(gs.qd_float, (1,), backend=_TENSOR_BACKEND),
-        distance=qd.tensor(gs.qd_float, (_B,), backend=_TENSOR_BACKEND),
+        n_witness=V(gs.qd_int, (_B,)),
+        n_contacts=V(gs.qd_int, (1,)),
+        contact_pos=V_VEC(3, gs.qd_float, (1, 1)),
+        normal=V_VEC(3, gs.qd_float, (1, 1)),
+        is_col=V(gs.qd_bool, (1,)),
+        penetration=V(gs.qd_float, (1,)),
+        distance=V(gs.qd_float, (_B,)),
         diff_contact_input=get_diff_contact_input(_dummy_B, 1, is_active=False),
-        n_diff_contact_input=qd.tensor(gs.qd_int, (1,), backend=_TENSOR_BACKEND),
-        diff_penetration=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
+        n_diff_contact_input=V(gs.qd_int, (1,)),
+        diff_penetration=V(gs.qd_float, ()),
     )
 
 
@@ -1300,9 +1302,9 @@ class StructSupportFieldInfo:
 
 def get_support_field_info(n_geoms, n_support_cells, support_res):
     return StructSupportFieldInfo(
-        support_cell_start=qd.tensor(gs.qd_int, (max(n_geoms, 1),), backend=_TENSOR_BACKEND),
-        support_v=qd.Vector.tensor(3, gs.qd_float, (max(n_support_cells, 1),), backend=_TENSOR_BACKEND),
-        support_vid=qd.tensor(gs.qd_int, (max(n_support_cells, 1),), backend=_TENSOR_BACKEND),
+        support_cell_start=V(gs.qd_int, (max(n_geoms, 1),)),
+        support_v=V_VEC(3, gs.qd_float, (max(n_support_cells, 1),)),
+        support_vid=V(gs.qd_int, (max(n_support_cells, 1),)),
         support_res=V_SCALAR_FROM(dtype=gs.qd_int, value=support_res),
     )
 
@@ -1321,11 +1323,11 @@ class StructSDFGeomInfo:
 
 def get_sdf_geom_info(n_geoms):
     return StructSDFGeomInfo(
-        T_mesh_to_sdf=qd.Matrix.tensor(4, 4, gs.qd_float, (n_geoms,), backend=_TENSOR_BACKEND),
-        sdf_res=qd.Vector.tensor(3, gs.qd_int, (n_geoms,), backend=_TENSOR_BACKEND),
-        sdf_max=qd.tensor(gs.qd_float, (n_geoms,), backend=_TENSOR_BACKEND),
-        sdf_cell_size=qd.tensor(gs.qd_float, (n_geoms,), backend=_TENSOR_BACKEND),
-        sdf_cell_start=qd.tensor(gs.qd_int, (n_geoms,), backend=_TENSOR_BACKEND),
+        T_mesh_to_sdf=V_MAT(4, 4, gs.qd_float, (n_geoms,)),
+        sdf_res=V_VEC(3, gs.qd_int, (n_geoms,)),
+        sdf_max=V(gs.qd_float, (n_geoms,)),
+        sdf_cell_size=V(gs.qd_float, (n_geoms,)),
+        sdf_cell_start=V(gs.qd_int, (n_geoms,)),
     )
 
 
@@ -1347,10 +1349,10 @@ def get_sdf_info(n_geoms, n_cells):
 
     return StructSDFInfo(
         geoms_info=get_sdf_geom_info(max(n_geoms, 1)),
-        geoms_sdf_start=qd.tensor(gs.qd_int, (max(n_geoms, 1),), backend=_TENSOR_BACKEND),
-        geoms_sdf_val=qd.tensor(gs.qd_float, (max(n_cells, 1),), backend=_TENSOR_BACKEND),
-        geoms_sdf_grad=qd.Vector.tensor(3, gs.qd_float, (max(n_cells, 1),), backend=_TENSOR_BACKEND),
-        geoms_sdf_closest_vert=qd.tensor(gs.qd_int, (max(n_cells, 1),), backend=_TENSOR_BACKEND),
+        geoms_sdf_start=V(gs.qd_int, (max(n_geoms, 1),)),
+        geoms_sdf_val=V(gs.qd_float, (max(n_cells, 1),)),
+        geoms_sdf_grad=V_VEC(3, gs.qd_float, (max(n_cells, 1),)),
+        geoms_sdf_closest_vert=V(gs.qd_int, (max(n_cells, 1),)),
     )
 
 
@@ -1377,18 +1379,18 @@ def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
     return StructDofsInfo(
-        entity_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        stiffness=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        invweight=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        armature=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        damping=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        frictionloss=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        motion_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        motion_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        limit=qd.tensor(gs.qd_vec2, shape, backend=_TENSOR_BACKEND),
-        act_gain=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        act_bias=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        force_range=qd.tensor(gs.qd_vec2, shape, backend=_TENSOR_BACKEND),
+        entity_idx=V(gs.qd_int, shape),
+        stiffness=V(gs.qd_float, shape),
+        invweight=V(gs.qd_float, shape),
+        armature=V(gs.qd_float, shape),
+        damping=V(gs.qd_float, shape),
+        frictionloss=V(gs.qd_float, shape),
+        motion_ang=V(gs.qd_vec3, shape),
+        motion_vel=V(gs.qd_vec3, shape),
+        limit=V(gs.qd_vec2, shape),
+        act_gain=V(gs.qd_float, shape),
+        act_bias=V(gs.qd_vec3, shape),
+        force_range=V(gs.qd_vec2, shape),
     )
 
 
@@ -1432,35 +1434,35 @@ def get_dofs_state(solver):
     shape_bw = maybe_shape((2, *shape), requires_grad)
 
     return StructDofsState(
-        force=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_bias=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_passive=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_actuator=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_applied=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        act_length=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        pos=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        vel=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        vel_prev=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        vel_next=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        acc=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        acc_bw=qd.tensor(gs.qd_float, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        acc_smooth=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        acc_smooth_bw=qd.tensor(gs.qd_float, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_smooth=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        qf_constraint=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdof_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdof_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdofvel_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdofvel_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdofd_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdofd_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        f_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        f_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        ctrl_force=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        ctrl_pos=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        ctrl_vel=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        ctrl_mode=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        hibernated=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        force=V(gs.qd_float, shape, needs_grad=requires_grad),
+        qf_bias=V(gs.qd_float, shape, needs_grad=requires_grad),
+        qf_passive=V(gs.qd_float, shape, needs_grad=requires_grad),
+        qf_actuator=V(gs.qd_float, shape, needs_grad=requires_grad),
+        qf_applied=V(gs.qd_float, shape, needs_grad=requires_grad),
+        act_length=V(gs.qd_float, shape, needs_grad=requires_grad),
+        pos=V(gs.qd_float, shape, needs_grad=requires_grad),
+        vel=V(gs.qd_float, shape, needs_grad=requires_grad),
+        vel_prev=V(gs.qd_float, shape, needs_grad=requires_grad),
+        vel_next=V(gs.qd_float, shape, needs_grad=requires_grad),
+        acc=V(gs.qd_float, shape, needs_grad=requires_grad),
+        acc_bw=V(gs.qd_float, shape_bw, needs_grad=requires_grad),
+        acc_smooth=V(gs.qd_float, shape, needs_grad=requires_grad),
+        acc_smooth_bw=V(gs.qd_float, shape_bw, needs_grad=requires_grad),
+        qf_smooth=V(gs.qd_float, shape, needs_grad=requires_grad),
+        qf_constraint=V(gs.qd_float, shape, needs_grad=requires_grad),
+        cdof_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdof_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdofvel_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdofvel_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdofd_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdofd_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        f_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        f_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        ctrl_force=V(gs.qd_float, shape, needs_grad=requires_grad),
+        ctrl_pos=V(gs.qd_float, shape, needs_grad=requires_grad),
+        ctrl_vel=V(gs.qd_float, shape, needs_grad=requires_grad),
+        ctrl_mode=V(gs.qd_int, shape),
+        hibernated=V(gs.qd_int, shape),
     )
 
 
@@ -1521,48 +1523,48 @@ def get_links_state(solver):
     shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
     return StructLinksState(
-        cinr_inertial=qd.tensor(gs.qd_mat3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cinr_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cinr_quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cinr_mass=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        crb_inertial=qd.tensor(gs.qd_mat3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        crb_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        crb_quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        crb_mass=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdd_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cdd_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        pos_bw=qd.tensor(gs.qd_vec3, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        quat_bw=qd.tensor(gs.qd_vec4, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        i_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        i_pos_bw=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        i_quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_pos_bw=qd.tensor(gs.qd_vec3, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_quat_bw=qd.tensor(gs.qd_vec4, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        j_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cd_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cd_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cd_ang_bw=qd.tensor(gs.qd_vec3, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cd_vel_bw=qd.tensor(gs.qd_vec3, shape_bw, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_sum=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        root_COM=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        root_COM_bw=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        mass_shift=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        i_pos_shift=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cacc_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cacc_lin=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_applied_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_applied_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_coupling_ang=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        cfrc_coupling_vel=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        contact_force=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        hibernated=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        cinr_inertial=V(gs.qd_mat3, shape, needs_grad=requires_grad),
+        cinr_pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cinr_quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        cinr_mass=V(gs.qd_float, shape, needs_grad=requires_grad),
+        crb_inertial=V(gs.qd_mat3, shape, needs_grad=requires_grad),
+        crb_pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        crb_quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        crb_mass=V(gs.qd_float, shape, needs_grad=requires_grad),
+        cdd_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cdd_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        pos_bw=V(gs.qd_vec3, shape_bw, needs_grad=requires_grad),
+        quat_bw=V(gs.qd_vec4, shape_bw, needs_grad=requires_grad),
+        i_pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        i_pos_bw=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        i_quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        j_pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        j_quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        j_pos_bw=V(gs.qd_vec3, shape_bw, needs_grad=requires_grad),
+        j_quat_bw=V(gs.qd_vec4, shape_bw, needs_grad=requires_grad),
+        j_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        j_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cd_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cd_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cd_ang_bw=V(gs.qd_vec3, shape_bw, needs_grad=requires_grad),
+        cd_vel_bw=V(gs.qd_vec3, shape_bw, needs_grad=requires_grad),
+        mass_sum=V(gs.qd_float, shape, needs_grad=requires_grad),
+        root_COM=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        root_COM_bw=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        mass_shift=V(gs.qd_float, shape, needs_grad=requires_grad),
+        i_pos_shift=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cacc_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cacc_lin=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_applied_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_applied_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_coupling_ang=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        cfrc_coupling_vel=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        contact_force=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        hibernated=V(gs.qd_int, shape),
     )
 
 
@@ -1597,29 +1599,29 @@ def get_links_info(solver):
     links_info_shape = (solver.n_links_, solver._B) if solver._options.batch_links_info else solver.n_links_
 
     return StructLinksInfo(
-        parent_idx=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        root_idx=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        q_start=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        dof_start=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        joint_start=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        q_end=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        dof_end=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        joint_end=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        n_dofs=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        pos=qd.tensor(gs.qd_vec3, links_info_shape, backend=_TENSOR_BACKEND),
-        quat=qd.tensor(gs.qd_vec4, links_info_shape, backend=_TENSOR_BACKEND),
-        invweight=qd.tensor(gs.qd_vec2, links_info_shape, backend=_TENSOR_BACKEND),
-        is_fixed=qd.tensor(gs.qd_bool, links_info_shape, backend=_TENSOR_BACKEND),
-        inertial_pos=qd.tensor(gs.qd_vec3, links_info_shape, backend=_TENSOR_BACKEND),
-        inertial_quat=qd.tensor(gs.qd_vec4, links_info_shape, backend=_TENSOR_BACKEND),
-        inertial_i=qd.tensor(gs.qd_mat3, links_info_shape, backend=_TENSOR_BACKEND),
-        inertial_mass=qd.tensor(gs.qd_float, links_info_shape, backend=_TENSOR_BACKEND),
-        entity_idx=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
+        parent_idx=V(gs.qd_int, links_info_shape),
+        root_idx=V(gs.qd_int, links_info_shape),
+        q_start=V(gs.qd_int, links_info_shape),
+        dof_start=V(gs.qd_int, links_info_shape),
+        joint_start=V(gs.qd_int, links_info_shape),
+        q_end=V(gs.qd_int, links_info_shape),
+        dof_end=V(gs.qd_int, links_info_shape),
+        joint_end=V(gs.qd_int, links_info_shape),
+        n_dofs=V(gs.qd_int, links_info_shape),
+        pos=V(gs.qd_vec3, links_info_shape),
+        quat=V(gs.qd_vec4, links_info_shape),
+        invweight=V(gs.qd_vec2, links_info_shape),
+        is_fixed=V(gs.qd_bool, links_info_shape),
+        inertial_pos=V(gs.qd_vec3, links_info_shape),
+        inertial_quat=V(gs.qd_vec4, links_info_shape),
+        inertial_i=V(gs.qd_mat3, links_info_shape),
+        inertial_mass=V(gs.qd_float, links_info_shape),
+        entity_idx=V(gs.qd_int, links_info_shape),
         # Heterogeneous simulation support: per-link geom/vgeom index ranges
-        geom_start=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        geom_end=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        vgeom_start=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
-        vgeom_end=qd.tensor(gs.qd_int, links_info_shape, backend=_TENSOR_BACKEND),
+        geom_start=V(gs.qd_int, links_info_shape),
+        geom_end=V(gs.qd_int, links_info_shape),
+        vgeom_start=V(gs.qd_int, links_info_shape),
+        vgeom_end=V(gs.qd_int, links_info_shape),
     )
 
 
@@ -1642,14 +1644,14 @@ def get_joints_info(solver):
     shape = (solver.n_joints_, solver._B) if solver._options.batch_joints_info else (solver.n_joints_,)
 
     return StructJointsInfo(
-        type=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        sol_params=qd.tensor(gs.qd_vec7, shape, backend=_TENSOR_BACKEND),
-        q_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        dof_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        q_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        dof_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        n_dofs=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
+        type=V(gs.qd_int, shape),
+        sol_params=V(gs.qd_vec7, shape),
+        q_start=V(gs.qd_int, shape),
+        dof_start=V(gs.qd_int, shape),
+        q_end=V(gs.qd_int, shape),
+        dof_end=V(gs.qd_int, shape),
+        n_dofs=V(gs.qd_int, shape),
+        pos=V(gs.qd_vec3, shape),
     )
 
 
@@ -1664,8 +1666,8 @@ def get_joints_state(solver):
     requires_grad = solver._requires_grad
 
     return StructJointsState(
-        xanchor=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        xaxis=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
+        xanchor=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        xaxis=V(gs.qd_vec3, shape, needs_grad=requires_grad),
     )
 
 
@@ -1708,34 +1710,34 @@ def get_geoms_info(solver):
     shape = (solver.n_geoms_,)
 
     return StructGeomsInfo(
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        center=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND),
-        data=qd.tensor(gs.qd_vec7, shape, backend=_TENSOR_BACKEND),
-        link_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        type=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        friction=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        sol_params=qd.tensor(gs.qd_vec7, shape, backend=_TENSOR_BACKEND),
-        vert_num=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vert_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vert_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        verts_state_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        verts_state_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        face_num=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        face_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        face_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        edge_num=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        edge_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        edge_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        is_convex=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
-        contype=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        conaffinity=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        is_fixed=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
-        is_decomposed=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
-        needs_coup=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        coup_friction=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        coup_softness=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        coup_restitution=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, shape),
+        center=V(gs.qd_vec3, shape),
+        quat=V(gs.qd_vec4, shape),
+        data=V(gs.qd_vec7, shape),
+        link_idx=V(gs.qd_int, shape),
+        type=V(gs.qd_int, shape),
+        friction=V(gs.qd_float, shape),
+        sol_params=V(gs.qd_vec7, shape),
+        vert_num=V(gs.qd_int, shape),
+        vert_start=V(gs.qd_int, shape),
+        vert_end=V(gs.qd_int, shape),
+        verts_state_start=V(gs.qd_int, shape),
+        verts_state_end=V(gs.qd_int, shape),
+        face_num=V(gs.qd_int, shape),
+        face_start=V(gs.qd_int, shape),
+        face_end=V(gs.qd_int, shape),
+        edge_num=V(gs.qd_int, shape),
+        edge_start=V(gs.qd_int, shape),
+        edge_end=V(gs.qd_int, shape),
+        is_convex=V(gs.qd_bool, shape),
+        contype=V(gs.qd_int, shape),
+        conaffinity=V(gs.qd_int, shape),
+        is_fixed=V(gs.qd_bool, shape),
+        is_decomposed=V(gs.qd_bool, shape),
+        needs_coup=V(gs.qd_int, shape),
+        coup_friction=V(gs.qd_float, shape),
+        coup_softness=V(gs.qd_float, shape),
+        coup_restitution=V(gs.qd_float, shape),
     )
 
 
@@ -1757,15 +1759,15 @@ def get_geoms_state(solver):
     requires_grad = solver._static_rigid_sim_config.requires_grad
 
     return StructGeomsState(
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND, needs_grad=requires_grad),
-        aabb_min=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        aabb_max=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        verts_updated=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
-        min_buffer_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        max_buffer_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        hibernated=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        friction_ratio=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, shape, needs_grad=requires_grad),
+        quat=V(gs.qd_vec4, shape, needs_grad=requires_grad),
+        aabb_min=V(gs.qd_vec3, shape),
+        aabb_max=V(gs.qd_vec3, shape),
+        verts_updated=V(gs.qd_bool, shape),
+        min_buffer_idx=V(gs.qd_int, shape),
+        max_buffer_idx=V(gs.qd_int, shape),
+        hibernated=V(gs.qd_int, shape),
+        friction_ratio=V(gs.qd_float, shape),
     )
 
 
@@ -1786,12 +1788,12 @@ def get_verts_info(solver):
     shape = (solver.n_verts_,)
 
     return StructVertsInfo(
-        init_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        init_normal=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        geom_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        init_center_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        verts_state_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        is_fixed=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
+        init_pos=V(gs.qd_vec3, shape),
+        init_normal=V(gs.qd_vec3, shape),
+        geom_idx=V(gs.qd_int, shape),
+        init_center_pos=V(gs.qd_vec3, shape),
+        verts_state_idx=V(gs.qd_int, shape),
+        is_fixed=V(gs.qd_bool, shape),
     )
 
 
@@ -1808,8 +1810,8 @@ def get_faces_info(solver):
     shape = (solver.n_faces_,)
 
     return StructFacesInfo(
-        verts_idx=qd.tensor(gs.qd_ivec3, shape, backend=_TENSOR_BACKEND),
-        geom_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        verts_idx=V(gs.qd_ivec3, shape),
+        geom_idx=V(gs.qd_int, shape),
     )
 
 
@@ -1827,9 +1829,9 @@ def get_edges_info(solver):
     shape = (solver.n_edges_,)
 
     return StructEdgesInfo(
-        v0=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        v1=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        length=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
+        v0=V(gs.qd_int, shape),
+        v1=V(gs.qd_int, shape),
+        length=V(gs.qd_float, shape),
     )
 
 
@@ -1843,13 +1845,13 @@ class StructVertsState:
 
 def get_free_verts_state(solver):
     return StructVertsState(
-        pos=qd.tensor(gs.qd_vec3, (solver.n_free_verts_, solver._B), backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, (solver.n_free_verts_, solver._B)),
     )
 
 
 def get_fixed_verts_state(solver):
     return StructVertsState(
-        pos=qd.tensor(gs.qd_vec3, (solver.n_fixed_verts_,), backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, (solver.n_fixed_verts_,)),
     )
 
 
@@ -1867,9 +1869,9 @@ def get_vverts_info(solver):
     shape = (solver.n_vverts_,)
 
     return StructVvertsInfo(
-        init_pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        init_vnormal=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        vgeom_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        init_pos=V(gs.qd_vec3, shape),
+        init_vnormal=V(gs.qd_vec3, shape),
+        vgeom_idx=V(gs.qd_int, shape),
     )
 
 
@@ -1886,8 +1888,8 @@ def get_vfaces_info(solver):
     shape = (solver.n_vfaces_,)
 
     return StructVfacesInfo(
-        vverts_idx=qd.tensor(gs.qd_ivec3, shape, backend=_TENSOR_BACKEND),
-        vgeom_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
+        vverts_idx=V(gs.qd_ivec3, shape),
+        vgeom_idx=V(gs.qd_int, shape),
     )
 
 
@@ -1912,16 +1914,16 @@ def get_vgeoms_info(solver):
     shape = (solver.n_vgeoms_,)
 
     return StructVgeomsInfo(
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND),
-        link_idx=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vvert_num=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vvert_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vvert_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vface_num=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vface_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        vface_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        color=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, shape),
+        quat=V(gs.qd_vec4, shape),
+        link_idx=V(gs.qd_int, shape),
+        vvert_num=V(gs.qd_int, shape),
+        vvert_start=V(gs.qd_int, shape),
+        vvert_end=V(gs.qd_int, shape),
+        vface_num=V(gs.qd_int, shape),
+        vface_start=V(gs.qd_int, shape),
+        vface_end=V(gs.qd_int, shape),
+        color=V(gs.qd_vec4, shape),
     )
 
 
@@ -1938,8 +1940,8 @@ def get_vgeoms_state(solver):
     shape = (solver.n_vgeoms_, solver._B)
 
     return StructVgeomsState(
-        pos=qd.tensor(gs.qd_vec3, shape, backend=_TENSOR_BACKEND),
-        quat=qd.tensor(gs.qd_vec4, shape, backend=_TENSOR_BACKEND),
+        pos=V(gs.qd_vec3, shape),
+        quat=V(gs.qd_vec4, shape),
     )
 
 
@@ -1959,11 +1961,11 @@ def get_equalities_info(solver):
     shape = (solver.n_candidate_equalities_, solver._B)
 
     return StructEqualitiesInfo(
-        eq_obj1id=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        eq_obj2id=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        eq_data=qd.tensor(gs.qd_vec11, shape, backend=_TENSOR_BACKEND),
-        eq_type=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        sol_params=qd.tensor(gs.qd_vec7, shape, backend=_TENSOR_BACKEND),
+        eq_obj1id=V(gs.qd_int, shape),
+        eq_obj2id=V(gs.qd_int, shape),
+        eq_data=V(gs.qd_vec11, shape),
+        eq_type=V(gs.qd_int, shape),
+        sol_params=V(gs.qd_vec7, shape),
     )
 
 
@@ -1989,17 +1991,17 @@ def get_entities_info(solver):
     shape = (solver.n_entities_,)
 
     return StructEntitiesInfo(
-        dof_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        dof_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        n_dofs=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        link_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        link_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        n_links=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        geom_start=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        geom_end=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        n_geoms=qd.tensor(gs.qd_int, shape, backend=_TENSOR_BACKEND),
-        gravity_compensation=qd.tensor(gs.qd_float, shape, backend=_TENSOR_BACKEND),
-        is_local_collision_mask=qd.tensor(gs.qd_bool, shape, backend=_TENSOR_BACKEND),
+        dof_start=V(gs.qd_int, shape),
+        dof_end=V(gs.qd_int, shape),
+        n_dofs=V(gs.qd_int, shape),
+        link_start=V(gs.qd_int, shape),
+        link_end=V(gs.qd_int, shape),
+        n_links=V(gs.qd_int, shape),
+        geom_start=V(gs.qd_int, shape),
+        geom_end=V(gs.qd_int, shape),
+        n_geoms=V(gs.qd_int, shape),
+        gravity_compensation=V(gs.qd_float, shape),
+        is_local_collision_mask=V(gs.qd_bool, shape),
     )
 
 
@@ -2013,7 +2015,7 @@ class StructEntitiesState:
 
 def get_entities_state(solver):
     return StructEntitiesState(
-        hibernated=qd.tensor(gs.qd_int, (solver.n_entities_, solver._B), backend=_TENSOR_BACKEND),
+        hibernated=V(gs.qd_int, (solver.n_entities_, solver._B)),
     )
 
 
@@ -2035,22 +2037,19 @@ def get_rigid_adjoint_cache(solver):
     requires_grad = solver._requires_grad
 
     return StructRigidAdjointCache(
-        qpos=qd.tensor(
+        qpos=V(
             gs.qd_float,
             (substeps_local + 1, solver.n_qs_, solver._B),
-            backend=_TENSOR_BACKEND,
             needs_grad=requires_grad,
         ),
-        dofs_vel=qd.tensor(
+        dofs_vel=V(
             gs.qd_float,
             (substeps_local + 1, solver.n_dofs_, solver._B),
-            backend=_TENSOR_BACKEND,
             needs_grad=requires_grad,
         ),
-        dofs_acc=qd.tensor(
+        dofs_acc=V(
             gs.qd_float,
             (substeps_local + 1, solver.n_dofs_, solver._B),
-            backend=_TENSOR_BACKEND,
             needs_grad=requires_grad,
         ),
     )
@@ -2141,7 +2140,7 @@ class DataManager:
             self.geoms_state_adjoint_cache = get_geoms_state(solver)
 
         self.rigid_adjoint_cache = get_rigid_adjoint_cache(solver)
-        self.errno = qd.tensor(gs.qd_int, (solver._B,), backend=_TENSOR_BACKEND)
+        self.errno = V(gs.qd_int, (solver._B,))
 
 
 # =========================================== ViewerRaycastResult ===========================================
@@ -2158,11 +2157,11 @@ class StructViewerRaycastResult:
 
 def get_viewer_raycast_result():
     return StructViewerRaycastResult(
-        distance=qd.tensor(gs.qd_float, (), backend=_TENSOR_BACKEND),
-        geom_idx=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
-        hit_point=qd.Vector.tensor(3, gs.qd_float, (), backend=_TENSOR_BACKEND),
-        normal=qd.Vector.tensor(3, gs.qd_float, (), backend=_TENSOR_BACKEND),
-        env_idx=qd.tensor(gs.qd_int, (), backend=_TENSOR_BACKEND),
+        distance=V(gs.qd_float, ()),
+        geom_idx=V(gs.qd_int, ()),
+        hit_point=V_VEC(3, gs.qd_float, ()),
+        normal=V_VEC(3, gs.qd_float, ()),
+        env_idx=V(gs.qd_int, ()),
     )
 
 
