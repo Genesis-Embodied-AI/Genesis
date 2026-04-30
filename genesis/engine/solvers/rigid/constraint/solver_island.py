@@ -113,7 +113,7 @@ class ConstraintSolverIsland:
             self.n_constraints[i_b] = 0
 
     @qd.kernel
-    def resolve(self):
+    def resolve(self, entities_info: array_class.EntitiesInfo, rigid_global_info: array_class.RigidGlobalInfo):
         for i_b in range(self._B):
             for i_island in range(self.contact_island.n_islands[i_b]):
                 is_active = True
@@ -978,8 +978,8 @@ class ConstraintSolverIsland:
                 self.grad,
                 self.Mgrad,
                 None,
-                entities_info=self.entities_info,
-                rigid_global_info=self._solver.data_manager.rigid_global_info,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=self._solver._static_rigid_sim_config,
                 is_backward=False,
             )

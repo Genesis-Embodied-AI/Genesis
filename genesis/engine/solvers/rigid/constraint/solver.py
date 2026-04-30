@@ -232,7 +232,7 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-    def resolve(self):
+    def resolve(self, entities_info=None, rigid_global_info=None):
         func_solve_init(
             self._solver.dofs_info,
             self._solver.dofs_state,

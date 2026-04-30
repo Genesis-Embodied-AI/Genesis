@@ -1067,7 +1067,7 @@ class RigidSolver(KinematicSolver):
             else:
                 self.constraint_solver.add_inequality_constraints()
 
-            self.constraint_solver.resolve()
+            self.constraint_solver.resolve(self.entities_info, self._rigid_global_info)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
