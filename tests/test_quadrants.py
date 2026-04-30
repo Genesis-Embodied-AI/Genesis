@@ -136,18 +136,15 @@ def gs_static_child(args: list[str]):
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
 @pytest.mark.parametrize("use_ndarray", [False, True])
-@pytest.mark.parametrize("enable_fastcache", [False, True])
 @pytest.mark.parametrize("enable_multicontact, expected_num_contacts", [(False, 1), (True, 4)])
 def test_static(
     enable_multicontact: bool,
     expected_num_contacts: int,
-    enable_fastcache: bool,
     test_backend: str,
     use_ndarray: bool,
     tmp_path: pathlib.Path,
 ) -> None:
     for it in range(3):
-        # we iterate to make sure stuff is really being read from cache
         cmd_line = [
             sys.executable,
             "-m",
@@ -156,9 +153,9 @@ def test_static(
             "--expected-num-contacts",
             str(expected_num_contacts),
             "--expected-use-src-ll-cache",
-            "1" if enable_fastcache and use_ndarray else "0",
+            "1" if use_ndarray else "0",
             "--expected-src-ll-cache-hit",
-            "1" if enable_fastcache and use_ndarray and it > 0 else "0",
+            "1" if use_ndarray and it > 0 else "0",
             "--backend",
             test_backend,
         ]
@@ -167,7 +164,6 @@ def test_static(
         env = dict(os.environ)
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
         env["QD_OFFLINE_CACHE"] = "1"
         env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
@@ -225,9 +221,8 @@ def gs_num_envs_child(args: list[str]):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
 @pytest.mark.parametrize("test_backend", ["cpu", "gpu"])
-@pytest.mark.parametrize("enable_fastcache", [False, True])
 @pytest.mark.parametrize("use_ndarray", [False, True])
-def test_num_envs(use_ndarray: bool, enable_fastcache: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
+def test_num_envs(use_ndarray: bool, test_backend: str, tmp_path: pathlib.Path) -> None:
     # Change n_envs each time, and check effect on reading from cache
     for it, n_envs in enumerate([3, 5, 7]):
         cmd_line = [
@@ -243,19 +238,13 @@ def test_num_envs(use_ndarray: bool, enable_fastcache: bool, test_backend: str, 
         env = dict(os.environ)
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1" if use_ndarray else "0"
-        env["GS_ENABLE_FASTCACHE"] = "1" if enable_fastcache else "0"
         env["QD_OFFLINE_CACHE"] = "1"
         env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
-        # notes:
-        # - if we use fastcache, we won't get as far as fe-ll-cache
-        # - ndarray and fastcache therefore wont ever use fe-ll-cache (first time, nothing in cache; after that hit src-ll cache)
-        # - not use ndarray will always try using the fe-ll-cache, but cache will be empty on first it
-        #   but since we are changing num envs each time, using fields will never get a cache hit either
-        # soooo we are left only with (not fastcache) and (ndarray) and (it > 0)
-        expected_fe_ll_cache_hit = not enable_fastcache and use_ndarray and it > 0
-        # fields are not supported by src-ll-cache currently
-        expected_use_src_ll_cache = enable_fastcache and use_ndarray
-        expected_src_ll_cache_hit = enable_fastcache and use_ndarray and it > 0
+        # Fastcache is always on. For ndarray, fastcache (src-ll-cache) kicks in so fe-ll-cache is never reached.
+        # For fields, fastcache silently falls back but n_envs changes each iteration so no fe-ll-cache hit either.
+        expected_fe_ll_cache_hit = False
+        expected_use_src_ll_cache = use_ndarray
+        expected_src_ll_cache_hit = use_ndarray and it > 0
         if expected_fe_ll_cache_hit:
             cmd_line += ["--expected-fe-ll-cache-hit"]
         if expected_use_src_ll_cache:
@@ -361,7 +350,6 @@ def test_ndarray_no_compile(
         env = dict(os.environ)
         env.pop("GS_ENABLE_ZEROCOPY", None)
         env["GS_ENABLE_NDARRAY"] = "1"
-        env["GS_ENABLE_FASTCACHE"] = "1"
         env["QD_OFFLINE_CACHE"] = "1"
         env["QD_OFFLINE_CACHE_FILE_PATH"] = str(tmp_path)
 
