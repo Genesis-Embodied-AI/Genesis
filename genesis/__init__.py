@@ -135,7 +135,12 @@ def init(
     is_ndarray_disabled = os.environ.get("GS_ENABLE_NDARRAY", "1") == "0"
     _use_ndarray = not (is_ndarray_disabled or performance_mode)
     is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
-    _use_fastcache = not is_fastcache_disabled and _use_ndarray
+    if use_fastcache is None:
+        _use_fastcache = not is_fastcache_disabled and _use_ndarray
+    else:
+        _use_fastcache = use_fastcache
+        if use_fastcache and is_fastcache_disabled:
+            raise_exception("Genesis previous initialized. Quadrants fast cache mode cannot be disabled anymore.")
     use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue

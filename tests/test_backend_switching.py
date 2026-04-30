@@ -37,6 +37,7 @@ def test_backend_switching(backend, order):
     for cycle_idx, use_nd in enumerate(order):
         old_val = os.environ.get("GS_ENABLE_NDARRAY")
         os.environ["GS_ENABLE_NDARRAY"] = "1" if use_nd else "0"
+        os.environ["GS_ENABLE_FASTCACHE"] = "0"
 
         try:
             gs.init(backend=gs.cpu, seed=0)
