@@ -1577,7 +1577,7 @@ def _func_multicontact_gjk_full(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_narrowphase_multicontact_mixed(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1744,7 +1744,7 @@ def _func_enqueue_for_multicontact(
         collider_state.narrowphase_work_queues.mpr_penetration_0[idx] = penetration_0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_narrowphase_contact0(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -1996,7 +1996,7 @@ def _func_narrowphase_contact0(
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_narrow_phase_convex_vs_convex(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -2071,7 +2071,7 @@ def func_narrow_phase_convex_vs_convex(
                     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_narrow_phase_diff_convex_vs_convex(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -2143,7 +2143,7 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_narrow_phase_convex_specializations(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -2200,7 +2200,7 @@ def func_narrow_phase_convex_specializations(
                     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_narrow_phase_any_vs_terrain(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
@@ -2250,7 +2250,7 @@ def func_narrow_phase_any_vs_terrain(
                     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_narrow_phase_nonconvex_vs_nonterrain(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,

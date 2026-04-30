@@ -106,7 +106,7 @@ def update_qvel(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_mass_matrix(
     # Quadrants variables
     links_state: array_class.LinksState,
@@ -227,7 +227,7 @@ def func_forward_dynamics(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_dynamics(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -257,7 +257,7 @@ def kernel_forward_dynamics(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_acc(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,

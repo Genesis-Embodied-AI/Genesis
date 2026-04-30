@@ -24,7 +24,7 @@ from .misc import (
 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics_links_geoms(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -70,7 +70,7 @@ def kernel_forward_kinematics_links_geoms(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics_links_geoms(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -116,7 +116,7 @@ def kernel_masked_forward_kinematics_links_geoms(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -170,7 +170,7 @@ def kernel_forward_kinematics(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -224,7 +224,7 @@ def kernel_masked_forward_kinematics(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_velocity(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -251,7 +251,7 @@ def kernel_forward_velocity(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_velocity(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -791,7 +791,7 @@ def func_forward_kinematics_batch(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics_entity(
     i_e: qd.int32,
     envs_idx: qd.types.ndarray(),
@@ -962,7 +962,7 @@ def func_update_geoms(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_geoms(
     envs_idx: qd.types.ndarray(),
     entities_info: array_class.EntitiesInfo,
@@ -1214,7 +1214,7 @@ def func_forward_velocity(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_verts_for_geoms(
     geoms_idx: qd.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -1280,7 +1280,7 @@ def func_update_all_verts(
         func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_all_verts(
     geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
@@ -1319,7 +1319,7 @@ def kernel_update_geom_aabbs(
         geoms_state.aabb_max[i_g, i_b] = upper
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_vgeoms(
     vgeoms_info: array_class.VGeomsInfo,
     vgeoms_state: array_class.VGeomsState,
@@ -1698,7 +1698,7 @@ def func_update_cartesian_space(
                             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_cartesian_space(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,

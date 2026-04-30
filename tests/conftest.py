@@ -683,7 +683,7 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
-        monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
+
 
         # Wipe worker-specific cache entirely since there is no way to disable it
         numba_cache_dir = Path(os.environ["NUMBA_CACHE_DIR"])

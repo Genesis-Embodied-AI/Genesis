@@ -360,7 +360,7 @@ def _func_kinematic_contact_probe(
         output[cache_start + n_probes + probe_idx_in_sensor * 3 + 2, i_b] = force_local[2]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_kinematic_contact_probe(
     probe_positions_local: qd.types.ndarray(),
     probe_normals_local: qd.types.ndarray(),
@@ -409,7 +409,7 @@ def _kernel_kinematic_contact_probe(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_elastomer_displacement(
     skip_sensor: qd.types.ndarray(),
     probe_positions_local: qd.types.ndarray(),
@@ -695,7 +695,7 @@ def _elastomer_displacement_grid_fft_dilate(
         output[cache_start : cache_start + grid_size].copy_(out_block.T)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_elastomer_displacement_grid_shear_twist(
     probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),

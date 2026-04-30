@@ -48,7 +48,7 @@ logger: Logger | None = None
 device: torch.device | None = None
 backend: _gs_backend | None = None
 use_ndarray: bool | None = None
-use_fastcache: bool | None = None
+use_fastcache: bool = True
 use_zerocopy: bool | None = None
 EPS: float | None = None
 
@@ -134,14 +134,8 @@ def init(
     global use_ndarray, use_fastcache, use_zerocopy
     is_ndarray_disabled = os.environ.get("GS_ENABLE_NDARRAY", "1") == "0"
     _use_ndarray = not (is_ndarray_disabled or performance_mode)
-    is_fastcache_disabled = os.environ.get("GS_ENABLE_FASTCACHE", "1") == "0"
-    if use_fastcache is None:
-        _use_fastcache = not is_fastcache_disabled and _use_ndarray
-    else:
-        _use_fastcache = use_fastcache
-        if use_fastcache and is_fastcache_disabled:
-            raise_exception("Genesis previous initialized. Quadrants fast cache mode cannot be disabled anymore.")
-    use_ndarray, use_fastcache = _use_ndarray, _use_fastcache
+    use_ndarray = _use_ndarray
+    use_fastcache = True
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue
     _use_zerocopy = bool(int(os.environ["GS_ENABLE_ZEROCOPY"])) if "GS_ENABLE_ZEROCOPY" in os.environ else None

@@ -6,7 +6,7 @@ import genesis.utils.array_class as array_class
 import genesis.engine.solvers.rigid.rigid_solver as rigid_solver
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_build_efc_AR_b(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -120,7 +120,7 @@ def func_solve_mass_entity_row(
             buf[i_row, i_d, i_b] = curr_out
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_MinvJT(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -157,7 +157,7 @@ def kernel_compute_MinvJT(
                 func_solve_mass_entity_row(i_row, i_e, i_b, constraint_state.MinvJT, entities_info, rigid_global_info)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_AR_and_b(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
@@ -195,7 +195,7 @@ def kernel_compute_AR_and_b(
             constraint_state.efc_b[i_c, i_b] = v
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_noslip(
     collider_state: array_class.ColliderState,
     constraint_state: array_class.ConstraintState,
@@ -304,7 +304,7 @@ def kernel_noslip(
                 break
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_dual_finish(
     dofs_state: array_class.DofsState,
     entities_info: array_class.EntitiesInfo,
@@ -405,7 +405,7 @@ def func_cost_change(
     return change
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def compute_A_diag(
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,

@@ -17,7 +17,7 @@ import genesis.utils.array_class as array_class
 from .misc import func_apply_link_external_force, func_apply_link_external_torque
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_kinematic_state(
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
@@ -51,7 +51,7 @@ def kernel_get_kinematic_state(
             links_quat[i_b, i_l, j] = links_state.quat[i_l, i_b][j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_kinematic_state(
     envs_idx: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
@@ -86,7 +86,7 @@ def kernel_set_kinematic_state(
             links_state.quat[i_l, envs_idx[i_b_]][j] = links_quat[envs_idx[i_b_], i_l, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_state(
     qpos: qd.types.ndarray(),
     vel: qd.types.ndarray(),
@@ -131,7 +131,7 @@ def kernel_get_state(
         friction_ratio[i_b, i_l] = geoms_state.friction_ratio[i_l, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_state(
     envs_idx: qd.types.ndarray(),
     qpos: qd.types.ndarray(),
@@ -181,7 +181,7 @@ def kernel_set_state(
         geoms_state.friction_ratio[i_l, envs_idx[i_b_]] = friction_ratio[envs_idx[i_b_], i_l]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_state_grad(
     qpos_grad: qd.types.ndarray(),
     vel_grad: qd.types.ndarray(),
@@ -213,7 +213,7 @@ def kernel_get_state_grad(
             qd.atomic_add(links_state.quat.grad[i_l, i_b][j], links_quat_grad[i_b, i_l, j])
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_pos(
     relative: qd.template(),
     pos: qd.types.ndarray(),
@@ -247,7 +247,7 @@ def kernel_set_links_pos(
                     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_wake_up_entities_by_links(
     links_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -293,7 +293,7 @@ def kernel_wake_up_entities_by_links(
                 geoms_state.hibernated[i_g, i_b] = False
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_pos_grad(
     relative: qd.i32,
     pos_grad: qd.types.ndarray(),
@@ -321,7 +321,7 @@ def kernel_set_links_pos_grad(
                 rigid_global_info.qpos.grad[q_start + j, i_b] = 0.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_quat(
     relative: qd.template(),
     quat: qd.types.ndarray(),
@@ -374,7 +374,7 @@ def kernel_set_links_quat(
                     rigid_global_info.qpos[q_start + j + 3, i_b] = quat[i_b_, i_l_, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_quat_grad(
     relative: qd.template(),
     quat_grad: qd.types.ndarray(),
@@ -402,7 +402,7 @@ def kernel_set_links_quat_grad(
                 rigid_global_info.qpos.grad[q_start + j + 3, i_b] = 0.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_mass_shift(
     mass: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -415,7 +415,7 @@ def kernel_set_links_mass_shift(
         links_state.mass_shift[links_idx[i_l_], envs_idx[i_b_]] = mass[i_b_, i_l_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_COM_shift(
     com: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -429,7 +429,7 @@ def kernel_set_links_COM_shift(
             links_state.i_pos_shift[links_idx[i_l_], envs_idx[i_b_]][j] = com[i_b_, i_l_, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_links_inertial_mass(
     inertial_mass: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -446,7 +446,7 @@ def kernel_set_links_inertial_mass(
             links_info.inertial_mass[links_idx[i_l_]] = inertial_mass[i_l_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_adjust_link_inertia(
     ratio: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -473,7 +473,7 @@ def kernel_adjust_link_inertia(
                 links_info.invweight[links_idx[i_l_]][j] /= r
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_geoms_friction_ratio(
     friction_ratio: qd.types.ndarray(),
     geoms_idx: qd.types.ndarray(),
@@ -486,7 +486,7 @@ def kernel_set_geoms_friction_ratio(
         geoms_state.friction_ratio[geoms_idx[i_g_], envs_idx[i_b_]] = friction_ratio[i_b_, i_g_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_qpos(
     qpos: qd.types.ndarray(),
     qs_idx: qd.types.ndarray(),
@@ -499,7 +499,7 @@ def kernel_set_qpos(
         rigid_global_info.qpos[qs_idx[i_q_], envs_idx[i_b_]] = qpos[i_b_, i_q_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_global_sol_params(
     sol_params: qd.types.ndarray(),
     geoms_info: array_class.GeomsInfo,
@@ -529,7 +529,7 @@ def kernel_set_global_sol_params(
             equalities_info.sol_params[i_eq, i_b][j] = sol_params[j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_sol_params(
     constraint_type: qd.template(),
     sol_params: qd.types.ndarray(),
@@ -562,7 +562,7 @@ def kernel_set_sol_params(
                 equalities_info.sol_params[inputs_idx[i_eq_], envs_idx[i_b_]][j] = sol_params[i_b_, i_eq_, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_kp(
     kp: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -583,7 +583,7 @@ def kernel_set_dofs_kp(
             dofs_info.act_bias[dofs_idx[i_d_]][1] = -kp[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_kv(
     kv: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -600,7 +600,7 @@ def kernel_set_dofs_kv(
             dofs_info.act_bias[dofs_idx[i_d_]][2] = -kv[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_act_gain(
     act_gain: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -617,7 +617,7 @@ def kernel_set_dofs_act_gain(
             dofs_info.act_gain[dofs_idx[i_d_]] = act_gain[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_act_bias(
     bias0: qd.types.ndarray(),
     bias1: qd.types.ndarray(),
@@ -640,7 +640,7 @@ def kernel_set_dofs_act_bias(
             dofs_info.act_bias[dofs_idx[i_d_]][2] = bias2[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_force_range(
     lower: qd.types.ndarray(),
     upper: qd.types.ndarray(),
@@ -660,7 +660,7 @@ def kernel_set_dofs_force_range(
             dofs_info.force_range[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_stiffness(
     stiffness: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -677,7 +677,7 @@ def kernel_set_dofs_stiffness(
             dofs_info.stiffness[dofs_idx[i_d_]] = stiffness[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_armature(
     armature: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -694,7 +694,7 @@ def kernel_set_dofs_armature(
             dofs_info.armature[dofs_idx[i_d_]] = armature[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_damping(
     damping: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -711,7 +711,7 @@ def kernel_set_dofs_damping(
             dofs_info.damping[dofs_idx[i_d_]] = damping[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_frictionloss(
     frictionloss: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -728,7 +728,7 @@ def kernel_set_dofs_frictionloss(
             dofs_info.frictionloss[dofs_idx[i_d_]] = frictionloss[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_limit(
     lower: qd.types.ndarray(),
     upper: qd.types.ndarray(),
@@ -748,7 +748,7 @@ def kernel_set_dofs_limit(
             dofs_info.limit[dofs_idx[i_d_]][1] = upper[i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity(
     velocity: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -761,7 +761,7 @@ def kernel_set_dofs_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = velocity[i_b_, i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_velocity_grad(
     velocity_grad: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -775,7 +775,7 @@ def kernel_set_dofs_velocity_grad(
         dofs_state.vel.grad[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_zero_velocity(
     dofs_idx: qd.types.ndarray(),
     envs_idx: qd.types.ndarray(),
@@ -787,7 +787,7 @@ def kernel_set_dofs_zero_velocity(
         dofs_state.vel[dofs_idx[i_d_], envs_idx[i_b_]] = 0.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_dofs_position(
     position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -860,7 +860,7 @@ def kernel_set_dofs_position(
                     rigid_global_info.qpos[i_q, i_b] = rigid_global_info.qpos0[i_q, i_b] + dofs_state.pos[i_d, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_control_dofs_force(
     force: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -874,7 +874,7 @@ def kernel_control_dofs_force(
         dofs_state.ctrl_force[dofs_idx[i_d_], envs_idx[i_b_]] = force[i_b_, i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_control_dofs_velocity(
     velocity: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -891,7 +891,7 @@ def kernel_control_dofs_velocity(
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_control_dofs_position(
     position: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -909,7 +909,7 @@ def kernel_control_dofs_position(
         dofs_state.ctrl_vel[i_d, i_b] = 0.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_control_dofs_position_velocity(
     position: qd.types.ndarray(),
     velocity: qd.types.ndarray(),
@@ -928,7 +928,7 @@ def kernel_control_dofs_position_velocity(
         dofs_state.ctrl_vel[i_d, i_b] = velocity[i_b_, i_d_]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_links_vel(
     tensor: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -956,7 +956,7 @@ def kernel_get_links_vel(
             tensor[i_b_, i_l_, j] = vel[j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_links_acc(
     tensor: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -983,7 +983,7 @@ def kernel_get_links_acc(
             tensor[i_b_, i_l_, j] = acc_classic_lin[j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_dofs_control_force(
     tensor: qd.types.ndarray(),
     dofs_idx: qd.types.ndarray(),
@@ -1017,7 +1017,7 @@ def kernel_get_dofs_control_force(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_drone_rpm(
     propellers_link_idx: qd.types.ndarray(),
     propellers_rpm: qd.types.ndarray(),
@@ -1052,7 +1052,7 @@ def kernel_set_drone_rpm(
             func_apply_link_external_torque(torque, i_l, i_b, 1, 1, links_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_drone_propeller_vgeoms(
     propellers_vgeom_idxs: qd.types.ndarray(),
     propellers_revs: qd.types.ndarray(),
@@ -1080,12 +1080,12 @@ def kernel_update_drone_propeller_vgeoms(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_geom_friction(geoms_idx: qd.i32, friction: qd.f32, geoms_info: array_class.GeomsInfo):
     geoms_info.friction[geoms_idx] = friction
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_set_geoms_friction(
     friction: qd.types.ndarray(),
     geoms_idx: qd.types.ndarray(),

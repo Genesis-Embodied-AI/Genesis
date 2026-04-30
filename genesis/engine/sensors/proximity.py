@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_proximity(
     probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),

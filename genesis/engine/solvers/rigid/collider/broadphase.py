@@ -138,7 +138,7 @@ def func_collision_clear(
             collider_state.n_contacts[i_b] = 0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_broad_phase_sap(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -396,7 +396,7 @@ def _func_broad_phase_sap(
         collider_state.n_broad_pairs[i_b] = n_broad
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
