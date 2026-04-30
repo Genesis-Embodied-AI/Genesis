@@ -9,6 +9,9 @@ import torch
 
 import genesis as gs
 
+if not gs._initialized:
+    gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
+
 
 def _tensor_backend():
     return qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
