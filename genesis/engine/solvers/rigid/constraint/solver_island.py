@@ -977,7 +977,7 @@ class ConstraintSolverIsland:
                 i_b,
                 self.grad,
                 self.Mgrad,
-                array_class.PLACEHOLDER,
+                None,
                 entities_info=self.entities_info,
                 rigid_global_info=self._solver.data_manager.rigid_global_info,
                 static_rigid_sim_config=self._solver._static_rigid_sim_config,

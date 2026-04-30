@@ -815,7 +815,7 @@ def func_solve_mass_entity(
     i_b: qd.int32,
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.Tensor,
+    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -899,7 +899,7 @@ def func_solve_mass_batch(
     i_b: qd.int32,
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.Tensor,
+    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -938,7 +938,7 @@ def func_solve_mass_batch(
 def func_solve_mass(
     vec: qd.Tensor,
     out: qd.Tensor,
-    out_bw: qd.Tensor,  # Should not be None if backward
+    out_bw: qd.template(),  # None in forward mode, real tensor in backward mode
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),

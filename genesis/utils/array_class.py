@@ -26,7 +26,6 @@ def V_MAT(*args, **kwargs):
     return qd.Matrix.tensor(*args, backend=_tensor_backend(), **kwargs)
 
 
-PLACEHOLDER = qd.field(dtype=gs.qd_float, shape=())
 
 
 def maybe_shape(shape, is_on):
