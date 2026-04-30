@@ -37,7 +37,7 @@ def maybe_shape(shape, is_on):
 
 
 @dataclass_transform(eq_default=True, order_default=True, kw_only_default=False, frozen_default=True)
-class _AutoInitMeta(type):
+class AutoInitMeta(type):
     """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
 
     def __new__(cls, name, bases, namespace):
@@ -72,6 +72,7 @@ class _AutoInitMeta(type):
                 setattr(self, key, value)
 
         namespace["__init__"] = __init__
+
         return super().__new__(cls, name, bases, namespace)
 
 
@@ -787,7 +788,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
 
 
 @qd.data_oriented
-class StructColliderStaticConfig(metaclass=_AutoInitMeta):
+class StructColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
@@ -1262,7 +1263,7 @@ def get_gjk_info(**kwargs):
 
 
 @qd.data_oriented
-class StructGJKStaticConfig(metaclass=_AutoInitMeta):
+class StructGJKStaticConfig(metaclass=AutoInitMeta):
     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
     enable_mujoco_multi_contact: bool
@@ -2026,7 +2027,7 @@ def get_rigid_adjoint_cache(solver):
 
 
 @qd.data_oriented
-class StructRigidSimStaticConfig(metaclass=_AutoInitMeta):
+class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
