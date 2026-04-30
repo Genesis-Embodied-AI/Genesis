@@ -48,7 +48,6 @@ logger: Logger | None = None
 device: torch.device | None = None
 backend: _gs_backend | None = None
 use_ndarray: bool | None = None
-use_fastcache: bool = True
 use_zerocopy: bool | None = None
 EPS: float | None = None
 
@@ -131,11 +130,10 @@ def init(
         device, device_name, total_mem, _backend = get_device(_gs_backend.cpu)
 
     # Configure Quadrants fast cache and array type
-    global use_ndarray, use_fastcache, use_zerocopy
+    global use_ndarray, use_zerocopy
     is_ndarray_disabled = os.environ.get("GS_ENABLE_NDARRAY", "1") == "0"
     _use_ndarray = not (is_ndarray_disabled or performance_mode)
     use_ndarray = _use_ndarray
-    use_fastcache = True
 
     # Unlike dynamic vs static array mode, and fastcache, zero-copy can be toggle on/off between init without issue
     _use_zerocopy = bool(int(os.environ["GS_ENABLE_ZEROCOPY"])) if "GS_ENABLE_ZEROCOPY" in os.environ else None
@@ -304,8 +302,6 @@ def init(
         setattr(qd._logging, qd_name, getattr(logger, gs_name))
 
     # Dealing with default backend
-    if use_fastcache:
-        logger.debug("[Quadrants] Enabling pure kernels for fast cache mode.")
     if use_ndarray:
         logger.debug("[Quadrants] Enabling Quadrants dynamic array type to avoid scene-specific compilation.")
     if backend == _gs_backend.amdgpu:
