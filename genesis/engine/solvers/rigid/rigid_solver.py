@@ -367,6 +367,16 @@ class RigidSolver(KinematicSolver):
             sparse_solve=self._options.sparse_solve,
             integrator=self._integrator,
             solver_type=self._options.constraint_solver,
+            # Always populate PADDED shape constants so hot kernels can use them as compile-time
+            # literals via the qd.template() static config (eliminates _serial shape-lookup
+            # dispatches under gs.use_ndarray=True). These match the actual allocated array shapes
+            # (e.g. n_entities_ = max(1, n_entities)), so they're safe drop-in replacements for
+            # `<arr>.shape[0]` / `<arr>.shape[1]` reads inside kernels.
+            n_entities_=self.n_entities_,
+            n_links_=self.n_links_,
+            n_geoms_=self.n_geoms_,
+            n_dofs_=self.n_dofs_,
+            n_envs=self._B,
         )
 
         if self.is_active:

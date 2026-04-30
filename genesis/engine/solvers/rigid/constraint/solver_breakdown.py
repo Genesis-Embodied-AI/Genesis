@@ -13,7 +13,7 @@ def _kernel_linesearch(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: ti.template(),
 ):
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
@@ -35,11 +35,13 @@ def _kernel_cg_only_save_prev_grad(
     static_rigid_sim_config: ti.template(),
 ):
     """Save prev_grad and prev_Mgrad (CG only)"""
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-            solver.func_save_prev_grad(i_b, constraint_state=constraint_state)
+            solver.func_save_prev_grad(
+                i_b, constraint_state=constraint_state, static_rigid_sim_config=static_rigid_sim_config
+            )
 
 
 @ti.kernel(fastcache=gs.use_fastcache)
@@ -49,7 +51,7 @@ def _kernel_update_constraint_forces(
 ):
     """Compute active flags and efc_force, parallelized over (constraint, env)."""
     len_constraints = constraint_state.active.shape[0]
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
 
     for i_c, i_b in ti.ndrange(len_constraints, _B):
         if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
@@ -85,7 +87,7 @@ def _kernel_update_constraint_qfrc(
 ):
     """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env)."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
 
     for i_d, i_b in ti.ndrange(n_dofs, _B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
@@ -103,7 +105,7 @@ def _kernel_update_constraint_cost(
     static_rigid_sim_config: ti.template(),
 ):
     """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
 
     ti.loop_config(block_dim=32)
     for i_b in range(_B):
@@ -156,7 +158,11 @@ def _kernel_newton_only_nt_hessian(
     static_rigid_sim_config: ti.template(),
 ):
     """Step 4: Newton Hessian update (Newton only)"""
-    solver.func_hessian_direct_tiled(constraint_state=constraint_state, rigid_global_info=rigid_global_info)
+    solver.func_hessian_direct_tiled(
+        constraint_state=constraint_state,
+        rigid_global_info=rigid_global_info,
+        static_rigid_sim_config=static_rigid_sim_config,
+    )
     if ti.static(static_rigid_sim_config.enable_tiled_cholesky_hessian):
         solver.func_cholesky_factor_direct_tiled(
             constraint_state=constraint_state,
@@ -164,7 +170,7 @@ def _kernel_newton_only_nt_hessian(
             static_rigid_sim_config=static_rigid_sim_config,
         )
     else:
-        _B = constraint_state.jac.shape[2]
+        _B = static_rigid_sim_config.n_envs
         ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
         for i_b in range(_B):
             if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
@@ -182,7 +188,7 @@ def _kernel_update_gradient(
     static_rigid_sim_config: ti.template(),
 ):
     """Step 5: Update gradient"""
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
@@ -203,7 +209,7 @@ def _kernel_update_search_direction(
     static_rigid_sim_config: ti.template(),
 ):
     """Step 6: Check convergence and update search direction"""
-    _B = constraint_state.grad.shape[1]
+    _B = static_rigid_sim_config.n_envs
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:

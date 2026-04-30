@@ -214,6 +214,14 @@ class KinematicSolver(Solver):
             sparse_solve=False,
             integrator=gs.integrator.approximate_implicitfast,
             solver_type=0,
+            # Always populate PADDED shape constants so hot kernels can use them as compile-time
+            # literals via the qd.template() static config (eliminates _serial shape-lookup
+            # dispatches under gs.use_ndarray=True). Kinematic solver has no geoms.
+            n_entities_=self.n_entities_,
+            n_links_=self.n_links_,
+            n_geoms_=1,
+            n_dofs_=self.n_dofs_,
+            n_envs=self._B,
         )
 
     def _create_data_manager(self):

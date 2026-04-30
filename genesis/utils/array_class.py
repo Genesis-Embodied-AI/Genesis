@@ -239,6 +239,14 @@ class StructConstraintState(metaclass=BASE_METACLASS):
     aref: V_ANNOTATION
     jac_relevant_dofs: V_ANNOTATION
     jac_n_relevant_dofs: V_ANNOTATION
+    # C4 compact storage: per-row contiguous Jacobian values, parallel to
+    # jac_relevant_dofs. When sparse_solve=True, the hot CG kernels read from
+    # this array (shape [N_c, max_nz, B]) instead of the full dense
+    # jac[N_c, N_d, B], shrinking the working set by N_d/max_nz and improving
+    # L2 hit-rate. The dense jac is still allocated and written by adders, but
+    # not read by hot kernels in the sparse path. When sparse_solve=False this
+    # is allocated as (1,1,1) (unused), same gating as jac_relevant_dofs.
+    jac_compact_values: V_ANNOTATION
     n_constraints_equality: V_ANNOTATION
     n_constraints_frictionloss: V_ANNOTATION
     improved: V_ANNOTATION
@@ -380,6 +388,10 @@ def get_constraint_state(constraint_solver, solver):
         jac=V(dtype=gs.qd_float, shape=jac_shape),
         jac_relevant_dofs=V(dtype=gs.qd_int, shape=jac_relevant_dofs_shape),
         jac_n_relevant_dofs=V(dtype=gs.qd_int, shape=jac_n_relevant_dofs_shape),
+        # C4 compact storage: same shape as jac_relevant_dofs (full N_c×N_d×B
+        # when sparse_solve=True so we never need to bound max_nz, (1,1,1)
+        # otherwise to avoid wasted memory).
+        jac_compact_values=V(dtype=gs.qd_float, shape=jac_relevant_dofs_shape),
         # Backward gradients
         dL_dqacc=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, _B), solver._requires_grad)),
         dL_dM=V(dtype=gs.qd_float, shape=maybe_shape((solver.n_dofs_, solver.n_dofs_, _B), solver._requires_grad)),
@@ -2052,9 +2064,23 @@ class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
     max_n_dofs_per_entity: int = -1
     max_n_dofs_per_link: int = -1
     max_n_geoms_per_entity: int = -1
+    # Unpadded counts. Only populated when requires_grad=True (used by autograd backward
+    # static loops; see e.g. forward_kinematics.py BW branches).
     n_entities: int = -1
     n_links: int = -1
     n_geoms: int = -1
+    # Always-populated PADDED shape constants (n_xxx_ = max(1, n_xxx)) used to elide _serial
+    # shape-lookup dispatches in hot kernels under gs.use_ndarray=True. Reading these inside an
+    # @qd.kernel/@qd.func through the qd.template() static_rigid_sim_config arg yields a
+    # compile-time literal (no per-step shape descriptor read, no tiny scope kernel emitted by
+    # Quadrants). Trailing underscore mirrors the solver attribute naming convention
+    # (solver.n_entities_). These match the actual array allocation sizes, so they're safe drop-in
+    # replacements for `<arr>.shape[0]` / `<arr>.shape[1]` reads.
+    n_entities_: int = -1
+    n_links_: int = -1
+    n_geoms_: int = -1
+    n_dofs_: int = -1
+    n_envs: int = -1
 
 
 # =========================================== DataManager ===========================================
