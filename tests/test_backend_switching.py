@@ -20,6 +20,10 @@ MODULE = ".".join((FILE_PATH.parent.name, FILE_PATH.stem))
 
 
 @pytest.mark.parametrize("backend", [None])  # Disable genesis initialization at worker level
+# FIXME: Surprisingly, enable_fastcache=True passes even when switching backends. Fastcache is hardcoded at module load via
+# @qd.kernel(fastcache=gs.use_fastcache), so toggling it between init/destroy cycles shouldn't take effect. The fact that
+# these tests pass with fastcache=True likely hides a bug — either the guard silently keeps the old value, or fastcache is
+# ignored in field mode without error.
 @pytest.mark.parametrize("enable_fastcache", [False, True])
 @pytest.mark.parametrize(
     "order",
