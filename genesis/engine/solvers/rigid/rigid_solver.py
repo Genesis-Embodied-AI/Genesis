@@ -402,8 +402,8 @@ class RigidSolver(KinematicSolver):
 
                 lds_per_entity = tiled_n_dofs_per_entity * (tiled_n_dofs_per_entity + 1) * bytes_per_float
                 lds_total = tiled_n_dofs * (tiled_n_dofs + 1) * bytes_per_float
-                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity and lds_per_entity <= max_shared_bytes and self.n_envs <= 16384
-                enable_tiled_cholesky_hessian = 16 <= self.n_dofs and lds_total <= max_shared_bytes and self.n_envs <= 16384
+                enable_tiled_cholesky_mass_matrix = 8 <= max_n_dofs_per_entity and lds_per_entity <= max_shared_bytes
+                enable_tiled_cholesky_hessian = 16 <= self.n_dofs and lds_total <= max_shared_bytes
 
                 static_rigid_sim_config.update(
                     enable_tiled_cholesky_mass_matrix=enable_tiled_cholesky_mass_matrix,
