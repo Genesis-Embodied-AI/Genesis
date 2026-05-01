@@ -213,8 +213,17 @@ def _kernel_update_search_direction(
     ti.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=32)
     for i_b in range(_B):
         if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            # The decomposed CUDA path splits cost-update (Step 4) and the
+            # convergence check (Step 6) into separate kernels, so prev_cost
+            # has to be carried via constraint_state.prev_cost (written in
+            # _kernel_update_constraint_cost). Read it once and pass as a
+            # local arg to match func_terminate_or_update_descent_batch's
+            # new signature, where the inlined paths thread it as a local
+            # to avoid the field round-trip entirely.
+            prev_cost = constraint_state.prev_cost[i_b]
             solver.func_terminate_or_update_descent_batch(
                 i_b,
+                prev_cost,
                 rigid_global_info=rigid_global_info,
                 constraint_state=constraint_state,
                 static_rigid_sim_config=static_rigid_sim_config,
