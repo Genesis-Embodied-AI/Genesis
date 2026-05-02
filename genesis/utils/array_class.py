@@ -26,8 +26,6 @@ def V_MAT(*args, **kwargs):
     return qd.Matrix.tensor(*args, backend=_tensor_backend(), **kwargs)
 
 
-
-
 def maybe_shape(shape, is_on):
     return shape if is_on else ()
 

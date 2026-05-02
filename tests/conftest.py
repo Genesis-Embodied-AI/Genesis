@@ -684,7 +684,6 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
 
-
         # Wipe worker-specific cache entirely since there is no way to disable it
         numba_cache_dir = Path(os.environ["NUMBA_CACHE_DIR"])
         basetemp = request.config._tmp_path_factory.getbasetemp()
