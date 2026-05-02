@@ -528,6 +528,24 @@ def _get_or_build_numpy_view(value, transpose):
     return value._T_np if transpose else value._np
 
 
+def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
+    if row_mask is None and col_mask is None:
+        return out
+    raise_if_fancy = copy is False
+    if len(value.shape) < 2:
+        if row_mask is not None and col_mask is not None:
+            gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
+        mask = indices_to_mask(
+            row_mask if col_mask is None else col_mask,
+            to_torch=to_torch,
+            keepdim=keepdim,
+            raise_if_fancy=raise_if_fancy,
+        )
+    else:
+        mask = indices_to_mask(row_mask, col_mask, to_torch=to_torch, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
+    return out[mask]
+
+
 def qd_to_torch(
     value: qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
@@ -551,20 +569,7 @@ def qd_to_torch(
     tensor = _get_or_build_torch_view(value, transpose)
     if copy:
         tensor = tensor.clone()
-
-    if row_mask is None and col_mask is None:
-        return tensor
-
-    raise_if_fancy = copy is False
-    if len(value.shape) < 2:
-        if row_mask is not None and col_mask is not None:
-            gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
-        mask = indices_to_mask(
-            row_mask if col_mask is None else col_mask, to_torch=True, keepdim=keepdim, raise_if_fancy=raise_if_fancy
-        )
-    else:
-        mask = indices_to_mask(row_mask, col_mask, to_torch=True, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
-    return tensor[mask]
+    return _apply_masks(tensor, value, row_mask, col_mask, keepdim, copy, to_torch=True)
 
 
 def qd_to_numpy(
@@ -590,20 +595,7 @@ def qd_to_numpy(
     array = _get_or_build_numpy_view(value, transpose)
     if copy:
         array = array.copy()
-
-    if row_mask is None and col_mask is None:
-        return array
-
-    raise_if_fancy = copy is False
-    if len(value.shape) < 2:
-        if row_mask is not None and col_mask is not None:
-            gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
-        mask = indices_to_mask(
-            row_mask if col_mask is None else col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy
-        )
-    else:
-        mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
-    return array[mask]
+    return _apply_masks(array, value, row_mask, col_mask, keepdim, copy, to_torch=False)
 
 
 def sanitize_index(
