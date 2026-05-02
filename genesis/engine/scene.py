@@ -269,18 +269,6 @@ class Scene(RBC):
             gs.raise_exception("`renderer` should be an instance of `gs.renderers.Renderer`.")
 
         # Validate rigid_options against sim_options
-        if impl.current_cfg().debug:
-            if sim_options.requires_grad and not gs.use_ndarray:
-                gs.raise_exception(
-                    "Genesis debug mode together with performance mode is not supported when gradient computation is "
-                    "enabled, i.e. `sim_options.requires_grad=True`."
-                )
-        else:
-            if sim_options.requires_grad and gs.use_ndarray:
-                gs.logger.info(
-                    "Using Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
-                    "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
-                )
         if rigid_options.box_box_detection is None:
             rigid_options.box_box_detection = not sim_options.requires_grad
         elif rigid_options.box_box_detection and sim_options.requires_grad:

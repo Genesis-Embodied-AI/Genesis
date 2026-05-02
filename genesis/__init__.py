@@ -274,7 +274,9 @@ def init(
             fast_math=not debug,
             default_ip=qd_int,
             default_fp=qd_float,
-            # This feature is necessary to support auto-diff with non-static for-loop
+            # This feature is necessary to support auto-diff with non-static for-loop:
+            # * Up to 500MiB static upper-bound mem alloc per kernel before switching to tight runtime-based bound
+            ad_stack_sparse_threshold_bytes=200_000_000,
             ad_stack_experimental_enabled=True,
             **qd_init_kwargs,
         )

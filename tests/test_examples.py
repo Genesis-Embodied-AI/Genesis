@@ -28,8 +28,8 @@ IGNORE_SCRIPT_NAMES = {
     "multi_gpu.py",
     "single_franka_batch_render.py",  # FIXME: segfault on exit
     "fem_cube_linked_with_arm.py",  # FIXME: segfault on exit (corrupted double-linked list)
-    "differentiable_push.py",  # FIXME: legacy_coupler uses non-static range unsupported by Quadrants reverse-mode AD
-    "hibernation.py",  # FIXME: non-static range unsupported by Quadrants reverse-mode AD
+    "differentiable_push.py",
+    "hibernation.py",
 }
 if sys.platform != "linux":
     IGNORE_SCRIPT_NAMES |= {

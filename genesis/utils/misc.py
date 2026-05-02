@@ -526,34 +526,42 @@ def qd_to_torch(
 
     # Try efficient shortcut first and only fallback to standard branching if necessary.
     # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
+    is_copy = False
     if not gs.use_zerocopy:
         # Transpose if necessary and requested.
         # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
         # advanced masking, which would spare computation later on if expected from the user.
+        if copy is False:
+            gs.raise_exception("Specifying 'copy=False' is not supported by this method if 'gs.use_zerocopy=False'.")
         tensor = _maybe_transpose(value.to_torch(), value, transpose)
+        is_copy = True
     else:
         try:
             tensor = value._T_tc if transpose else value._tc
-            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
-            # See comment in `qd_to_python` for details on the MPS command queue race condition.
-            if gs.backend == gs.metal:
-                qd.sync()
-            if copy:
-                tensor = tensor.clone()
-                if gs.backend == gs.metal:
-                    torch.mps.synchronize()
+            is_copy = False
         except AttributeError:
             try:
                 tc = value.to_torch(copy=False)
             except (ValueError, RuntimeError):
+                if copy is False:
+                    raise
                 tensor = _maybe_transpose(value.to_torch(), value, transpose)
+                is_copy = True
             else:
                 value._tc = tc
                 value._T_tc = _maybe_transpose(tc, value, True)
                 tensor = value._T_tc if transpose else value._tc
+                is_copy = False
 
-    if copy:
-        tensor = tensor.clone()
+    if not is_copy:
+        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+        if gs.backend == gs.metal:
+            qd.sync()
+        if copy:
+            tensor = tensor.clone()
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
+
     return _apply_masks(tensor, value, row_mask, col_mask, keepdim, copy, to_torch=True)
 
 
@@ -586,29 +594,36 @@ def qd_to_numpy(
         # Transpose if necessary and requested.
         # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
         # advanced masking, which would spare computation later on if expected from the user.
+        if copy is False:
+            gs.raise_exception("Specifying 'copy=False' is not supported if 'gs.use_zerocopy=False'.")
         array = _maybe_transpose_np(value.to_numpy(), value, transpose)
+        is_copy = True
+    elif gs.backend != gs.cpu:
+        if copy is False:
+            gs.raise_exception("Specifying 'copy=False' is not supported by this method if 'gs.backend != gs.cpu'.")
+        array = tensor_to_array(qd_to_torch(value, transpose=transpose))
+        is_copy = True
     else:
         try:
-            cached = value._T_np if transpose else value._np
-            if cached is not None:
-                array = cached
-            else:
-                raise AttributeError
+            array = value._T_np if transpose else value._np
+            is_copy = False
         except AttributeError:
-            if gs.backend != gs.cpu:
+            try:
+                tc = value.to_torch(copy=False)
+            except (RuntimeError, TypeError, ValueError):
+                if copy is False:
+                    raise
                 array = _maybe_transpose_np(value.to_numpy(), value, transpose)
+                is_copy = True
             else:
-                try:
-                    tc = value.to_torch(copy=False)
-                except (RuntimeError, TypeError, ValueError):
-                    array = _maybe_transpose_np(value.to_numpy(), value, transpose)
-                else:
-                    value._np = tc.numpy()
-                    value._T_np = _maybe_transpose(tc, value, True).numpy()
-                    array = value._T_np if transpose else value._np
+                value._np = tc.numpy()
+                value._T_np = _maybe_transpose(tc, value, True).numpy()
+                array = value._T_np if transpose else value._np
+                is_copy = False
 
-    if copy:
+    if copy and not is_copy:
         array = array.copy()
+
     return _apply_masks(array, value, row_mask, col_mask, keepdim, copy, to_torch=False)
 
 
@@ -620,23 +635,17 @@ def qd_zero_grad(value) -> None:
     consecutive `loss.backward()` calls. Solvers call this from `reset_grad` to clear all owned adjoint storage without
     enumerating fields by name. Zeroing goes through `qd_to_torch(grad, copy=False).zero_()`, a contiguous in-place
     memset on the underlying device memory - no Quadrants kernel launch.
-
-    On struct inputs the walk recurses into nested struct attributes; raw `qd.Field`/`qd.Ndarray` slots are zeroed
-    directly. `None`, fields whose `.grad` is `None` (declared without `needs_grad`), and grad fields whose snode was
-    never materialised are skipped.
     """
     if value is None:
         return
 
     if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
-        try:
+        if value.has_grad():
             grad = value.grad
             if gs.use_zerocopy:
                 qd_to_torch(grad, copy=False).zero_()
             else:
                 grad.fill(0.0)
-        except AttributeError:
-            pass
         return
 
     cls = type(value)
