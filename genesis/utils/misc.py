@@ -471,6 +471,35 @@ def indices_to_mask(
     return tuple(mask)
 
 
+def _maybe_transpose(tc, value, transpose):
+    if not transpose or len(value.shape) <= 1:
+        return tc
+    return tc.movedim(len(value.shape) - 1, 0)
+
+
+def _get_or_build_torch_view(value, transpose):
+    """Return a (possibly cached) torch tensor for *value*, respecting gs.use_zerocopy."""
+    if not gs.use_zerocopy:
+        return _maybe_transpose(value.to_torch(), value, transpose)
+
+    try:
+        return value._T_tc if transpose else value._tc
+    except AttributeError:
+        pass
+
+    try:
+        tc = value.to_torch(copy=False)
+    except (ValueError, RuntimeError):
+        return _maybe_transpose(value.to_torch(), value, transpose)
+
+    tensor = _maybe_transpose(tc, value, transpose)
+    if transpose:
+        value._T_tc = tensor
+    else:
+        value._tc = tensor
+    return tensor
+
+
 def qd_to_torch(
     value: qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
@@ -491,33 +520,7 @@ def qd_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    if not gs.use_zerocopy:
-        tc = value.to_torch()
-        if transpose:
-            ndim = len(value.shape)
-            tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
-        else:
-            tensor = tc
-    else:
-        try:
-            tensor = value._T_tc if transpose else value._tc
-        except AttributeError:
-            try:
-                tc = value.to_torch(copy=False)
-                can_cache = True
-            except (ValueError, RuntimeError):
-                tc = value.to_torch()
-                can_cache = False
-            if transpose:
-                ndim = len(value.shape)
-                tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
-            else:
-                tensor = tc
-            if can_cache:
-                if transpose:
-                    value._T_tc = tensor
-                else:
-                    value._tc = tensor
+    tensor = _get_or_build_torch_view(value, transpose)
     if copy:
         tensor = tensor.clone()
 
