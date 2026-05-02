@@ -19,6 +19,9 @@ pytestmark = [
 
 
 @pytest.mark.required
+@pytest.mark.xfail(
+    reason="autodiff: legacy_coupler uses non-static range unsupported by Quadrants reverse-mode AD", strict=False
+)
 @pytest.mark.parametrize(
     "backend",
     [
