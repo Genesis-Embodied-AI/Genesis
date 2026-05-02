@@ -518,6 +518,9 @@ def _get_or_build_numpy_view(value, transpose):
     except AttributeError:
         pass
 
+    if gs.backend != gs.cpu:
+        return _maybe_transpose_np(value.to_numpy(), value, transpose)
+
     try:
         tc = value.to_torch(copy=False)
     except (RuntimeError, TypeError, ValueError):
