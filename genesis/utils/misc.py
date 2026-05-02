@@ -491,25 +491,33 @@ def qd_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    try:
-        tensor = value._T_tc if transpose else value._tc
-    except AttributeError:
-        try:
-            tc = value.to_torch(copy=False)
-            can_cache = True
-        except (ValueError, RuntimeError):
-            tc = value.to_torch()
-            can_cache = False
+    if not gs.use_zerocopy:
+        tc = value.to_torch()
         if transpose:
             ndim = len(value.shape)
             tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
         else:
             tensor = tc
-        if can_cache and gs.use_zerocopy:
+    else:
+        try:
+            tensor = value._T_tc if transpose else value._tc
+        except AttributeError:
+            try:
+                tc = value.to_torch(copy=False)
+                can_cache = True
+            except (ValueError, RuntimeError):
+                tc = value.to_torch()
+                can_cache = False
             if transpose:
-                value._T_tc = tensor
+                ndim = len(value.shape)
+                tensor = tc.movedim(ndim - 1, 0) if ndim > 1 else tc
             else:
-                value._tc = tensor
+                tensor = tc
+            if can_cache:
+                if transpose:
+                    value._T_tc = tensor
+                else:
+                    value._tc = tensor
     if copy:
         tensor = tensor.clone()
 
