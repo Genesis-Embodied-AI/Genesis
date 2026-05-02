@@ -711,7 +711,7 @@ def qd_to_numpy(
     return tensor[mask]
 
 
-def qd_zero_grad(value: "qd.Field | qd.Ndarray | object | None") -> None:
+def qd_zero_grad(value) -> None:
     """Zero the `.grad` buffers of a Quadrants field/ndarray, or every grad-bearing slot of a `dataclass` /
     `@qd.data_oriented` struct-of-arrays.
 
@@ -727,7 +727,7 @@ def qd_zero_grad(value: "qd.Field | qd.Ndarray | object | None") -> None:
     if value is None:
         return
 
-    if isinstance(value, (qd.Field, qd.Ndarray)):
+    if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
         try:
             grad = value.grad
             if gs.use_zerocopy:
