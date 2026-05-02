@@ -3407,7 +3407,7 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=gs.use_fastcache, fn_attrs={"amdgpu": {"amdgpu-waves-per-eu": "2,4"}})
 def func_solve_init(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
