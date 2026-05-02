@@ -390,7 +390,6 @@ def has_display() -> bool:
         return False
 
 
-
 def indices_to_mask(
     *indices: Any, keepdim: bool = True, to_torch: bool = True, boolean_mask: bool = False, raise_if_fancy: bool = False
 ) -> tuple[slice | int | torch.Tensor, ...]:
@@ -561,7 +560,10 @@ def qd_to_numpy(
             if row_mask is not None and col_mask is not None:
                 gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
             mask = indices_to_mask(
-                row_mask if col_mask is None else col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy
+                row_mask if col_mask is None else col_mask,
+                to_torch=False,
+                keepdim=keepdim,
+                raise_if_fancy=raise_if_fancy,
             )
         else:
             mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
