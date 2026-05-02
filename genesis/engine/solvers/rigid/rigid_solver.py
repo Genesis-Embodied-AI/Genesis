@@ -463,7 +463,7 @@ class RigidSolver(KinematicSolver):
                     n_geoms=self._n_geoms,
                 )
 
-        self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
+        self._static_rigid_sim_config = array_class.RigidSimStaticConfig(**static_rigid_sim_config)
 
         if self._static_rigid_sim_config.use_hibernation:
             if gs.use_ndarray:

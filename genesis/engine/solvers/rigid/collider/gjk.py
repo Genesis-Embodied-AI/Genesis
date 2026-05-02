@@ -71,7 +71,7 @@ class GJK:
             max_contacts_per_pair = 1
             max_contact_polygon_verts = 1
 
-        self._gjk_static_config = array_class.StructGJKStaticConfig(
+        self._gjk_static_config = array_class.GJKStaticConfig(
             enable_mujoco_multi_contact=enable_mujoco_multi_contact,
         )
 

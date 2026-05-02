@@ -724,15 +724,15 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
         if not is_benchmarks:
-            from genesis.utils.array_class import StructRigidSimStaticConfig
+            from genesis.utils.array_class import RigidSimStaticConfig
 
-            _StructRigidSimStaticConfig_init_orig = StructRigidSimStaticConfig.__init__
+            _RigidSimStaticConfig_init_orig = RigidSimStaticConfig.__init__
 
-            def _StructRigidSimStaticConfig_init(self, *args, **kwargs):
+            def _RigidSimStaticConfig_init(self, *args, **kwargs):
                 kwargs.setdefault("prefer_decomposed_solver", int(gs.backend != gs.cpu))
-                _StructRigidSimStaticConfig_init_orig(self, *args, **kwargs)
+                _RigidSimStaticConfig_init_orig(self, *args, **kwargs)
 
-            monkeypatch.setattr(StructRigidSimStaticConfig, "__init__", _StructRigidSimStaticConfig_init)
+            monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             device_idx = _torch_get_gpu_idx(gs.device.index)

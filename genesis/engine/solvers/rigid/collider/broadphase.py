@@ -99,7 +99,7 @@ def func_collision_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        # Copying all fields of class StructContactData individually
+                        # Copying all fields of class ContactData individually
                         # (fields mode doesn't support struct-level copy operations):
                         # fmt: off
                         collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]

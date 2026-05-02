@@ -197,7 +197,7 @@ class KinematicSolver(Solver):
 
     def _build_static_config(self):
         # Static config with all physics disabled
-        self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(
+        self._static_rigid_sim_config = array_class.RigidSimStaticConfig(
             backend=gs.backend,
             para_level=self.sim._para_level,
             requires_grad=False,
