@@ -500,6 +500,34 @@ def _get_or_build_torch_view(value, transpose):
     return tensor
 
 
+def _maybe_transpose_np(arr, value, transpose):
+    if not transpose or len(value.shape) <= 1:
+        return arr
+    return np.moveaxis(arr, len(value.shape) - 1, 0)
+
+
+def _get_or_build_numpy_view(value, transpose):
+    """Return a (possibly cached) numpy array for *value*, respecting gs.use_zerocopy."""
+    if not gs.use_zerocopy:
+        return _maybe_transpose_np(value.to_numpy(), value, transpose)
+
+    try:
+        cached = value._T_np if transpose else value._np
+        if cached is not None:
+            return cached
+    except AttributeError:
+        pass
+
+    try:
+        tc = value.to_torch(copy=False)
+    except (RuntimeError, TypeError, ValueError):
+        return _maybe_transpose_np(value.to_numpy(), value, transpose)
+
+    value._np = tc.numpy()
+    value._T_np = _maybe_transpose(tc, value, True).numpy()
+    return value._T_np if transpose else value._np
+
+
 def qd_to_torch(
     value: qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
@@ -559,43 +587,7 @@ def qd_to_numpy(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
-    if not gs.use_zerocopy:
-        array = value.to_numpy()
-        ndim = len(value.shape)
-        if transpose and ndim > 1:
-            array = np.moveaxis(array, ndim - 1, 0)
-        if row_mask is None and col_mask is None:
-            return array
-        raise_if_fancy = copy is False
-        if ndim < 2:
-            if row_mask is not None and col_mask is not None:
-                gs.raise_exception("Cannot specify both row and column masks for tensor with 1D batch.")
-            mask = indices_to_mask(
-                row_mask if col_mask is None else col_mask,
-                to_torch=False,
-                keepdim=keepdim,
-                raise_if_fancy=raise_if_fancy,
-            )
-        else:
-            mask = indices_to_mask(row_mask, col_mask, to_torch=False, keepdim=keepdim, raise_if_fancy=raise_if_fancy)
-        return array[mask]
-    try:
-        array = value._T_np if transpose else value._np
-    except AttributeError:
-        try:
-            tc = value.to_torch(copy=False)
-            value._np = tc.numpy()
-            ndim = len(value.shape)
-            value._T_np = tc.movedim(ndim - 1, 0).numpy() if ndim > 1 else value._np
-        except (RuntimeError, TypeError, ValueError):
-            value._np = None
-            value._T_np = None
-        array = value._T_np if transpose else value._np
-    if array is None:
-        array = value.to_numpy()
-        ndim = len(value.shape)
-        if transpose and ndim > 1:
-            array = np.moveaxis(array, ndim - 1, 0)
+    array = _get_or_build_numpy_view(value, transpose)
     if copy:
         array = array.copy()
 
