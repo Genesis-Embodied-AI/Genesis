@@ -92,7 +92,7 @@ class ErrorCode(IntEnum):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructRigidGlobalInfo:
+class RigidGlobalInfo:
     # *_bw: Cache for backward pass
     n_awake_dofs: qd.Tensor
     awake_dofs: qd.Tensor
@@ -146,7 +146,7 @@ def get_rigid_global_info(solver, kinematic_only):
 
     # FIXME: Add a better split between kinematic and Genesis
     if kinematic_only:
-        return StructRigidGlobalInfo(
+        return RigidGlobalInfo(
             envs_offset=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
             gravity=V_VEC(3, dtype=gs.qd_float, shape=()),
             meaninertia=V(dtype=gs.qd_float, shape=()),
@@ -181,7 +181,7 @@ def get_rigid_global_info(solver, kinematic_only):
             EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
         )
 
-    return StructRigidGlobalInfo(
+    return RigidGlobalInfo(
         envs_offset=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
         gravity=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
         meaninertia=V(dtype=gs.qd_float, shape=(_B,)),
@@ -221,7 +221,7 @@ def get_rigid_global_info(solver, kinematic_only):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructConstraintState:
+class ConstraintState:
     is_warmstart: qd.Tensor
     n_constraints: qd.Tensor
     qd_n_equalities: qd.Tensor
@@ -331,7 +331,7 @@ def get_constraint_state(constraint_solver, solver):
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
-    return StructConstraintState(
+    return ConstraintState(
         n_constraints=V(dtype=gs.qd_int, shape=(_B,)),
         qd_n_equalities=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.qd_int, shape=(_B,)),
@@ -413,7 +413,7 @@ def get_constraint_state(constraint_solver, solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactData:
+class ContactData:
     geom_a: qd.Tensor
     geom_b: qd.Tensor
     penetration: qd.Tensor
@@ -431,7 +431,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
     _B = solver._B
     max_contact_pairs_ = max(max_contact_pairs, 1)
 
-    return StructContactData(
+    return ContactData(
         geom_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         geom_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         normal=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
@@ -447,7 +447,7 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructDiffContactInput:
+class DiffContactInput:
     ### Non-differentiable input data
     # Geom id of the two geometries
     geom_a: qd.Tensor
@@ -473,7 +473,7 @@ class StructDiffContactInput:
 
 def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active and requires_grad)
-    return StructDiffContactInput(
+    return DiffContactInput(
         geom_a=V(dtype=gs.qd_int, shape=shape),
         geom_b=V(dtype=gs.qd_int, shape=shape),
         local_pos1_a=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -491,7 +491,7 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructSortBuffer:
+class SortBuffer:
     value: qd.Tensor
     i_g: qd.Tensor
     is_max: qd.Tensor
@@ -500,7 +500,7 @@ class StructSortBuffer:
 def get_sort_buffer(solver):
     _B = solver._B
 
-    return StructSortBuffer(
+    return SortBuffer(
         value=V(dtype=gs.qd_float, shape=(2 * solver.n_geoms_, _B)),
         i_g=V(dtype=gs.qd_int, shape=(2 * solver.n_geoms_, _B)),
         is_max=V(dtype=gs.qd_bool, shape=(2 * solver.n_geoms_, _B)),
@@ -508,19 +508,19 @@ def get_sort_buffer(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactCache:
+class ContactCache:
     normal: qd.Tensor
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
-    return StructContactCache(
+    return ContactCache(
         normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructAggList:
+class AggList:
     curr: qd.Tensor
     n: qd.Tensor
     start: qd.Tensor
@@ -530,7 +530,7 @@ def get_agg_list(solver):
     _B = solver._B
     n_entities = max(solver.n_entities, 1)
 
-    return StructAggList(
+    return AggList(
         curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
@@ -538,15 +538,15 @@ def get_agg_list(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactIslandState:
+class ContactIslandState:
     ci_edges: qd.Tensor
     edge_id: qd.Tensor
     constraint_list: qd.Tensor
     constraint_id: qd.Tensor
-    entity_edge: StructAggList
-    island_col: StructAggList
+    entity_edge: AggList
+    island_col: AggList
     island_hibernated: qd.Tensor
-    island_entity: StructAggList
+    island_entity: AggList
     entity_id: qd.Tensor
     n_edges: qd.Tensor
     n_islands: qd.Tensor
@@ -567,7 +567,7 @@ def get_contact_island_state(solver, collider):
     max_hibernation_edges = n_entities if solver._use_hibernation else 0
     max_edges = max_contact_pairs + max_hibernation_edges
 
-    return StructContactIslandState(
+    return ContactIslandState(
         ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
         edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
         constraint_list=V(dtype=gs.qd_int, shape=(max_contact_pairs, _B)),
@@ -587,7 +587,7 @@ def get_contact_island_state(solver, collider):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructNarrowphaseWorkQueues:
+class NarrowphaseWorkQueues:
     mpr_i_b: qd.Tensor
     mpr_i_ga: qd.Tensor
     mpr_i_gb: qd.Tensor
@@ -610,7 +610,7 @@ class StructNarrowphaseWorkQueues:
 
 
 def get_narrowphase_work_queues(max_entries):
-    return StructNarrowphaseWorkQueues(
+    return NarrowphaseWorkQueues(
         mpr_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
@@ -634,9 +634,9 @@ def get_narrowphase_work_queues(max_entries):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructColliderState:
-    sort_buffer: StructSortBuffer
-    contact_data: StructContactData
+class ColliderState:
+    sort_buffer: SortBuffer
+    contact_data: ContactData
     active_buffer: qd.Tensor
     n_broad_pairs: qd.Tensor
     broad_collision_pairs: qd.Tensor
@@ -655,10 +655,10 @@ class StructColliderState:
     n_contacts: qd.Tensor
     n_contacts_hibernated: qd.Tensor
     first_time: qd.Tensor
-    contact_cache: StructContactCache
+    contact_cache: ContactCache
     # Input data for differentiable contact detection used in the backward pass
-    diff_contact_input: StructDiffContactInput
-    narrowphase_work_queues: StructNarrowphaseWorkQueues
+    diff_contact_input: DiffContactInput
+    narrowphase_work_queues: NarrowphaseWorkQueues
     contact_sort_key: qd.Tensor
     contact_sort_idx: qd.Tensor
 
@@ -691,7 +691,7 @@ def get_collider_state(
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
 
-    return StructColliderState(
+    return ColliderState(
         sort_buffer=get_sort_buffer(solver),
         active_buffer=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
         n_broad_pairs=V(dtype=gs.qd_int, shape=(_B,)),
@@ -723,7 +723,7 @@ def get_collider_state(
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructColliderInfo:
+class ColliderInfo:
     vert_neighbors: qd.Tensor
     vert_neighbor_start: qd.Tensor
     vert_n_neighbors: qd.Tensor
@@ -758,7 +758,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
     else:
         terrain_hf_shape = 1
 
-    return StructColliderInfo(
+    return ColliderInfo(
         vert_neighbors=V(dtype=gs.qd_int, shape=(max(n_vert_neighbors, 1),)),
         vert_neighbor_start=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         vert_n_neighbors=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
@@ -782,7 +782,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
 
 
 @qd.data_oriented
-class StructColliderStaticConfig(metaclass=AutoInitMeta):
+class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
@@ -802,14 +802,14 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructMPRSimplexSupport:
+class MPRSimplexSupport:
     v1: qd.Tensor
     v2: qd.Tensor
     v: qd.Tensor
 
 
 def get_mpr_simplex_support(B_):
-    return StructMPRSimplexSupport(
+    return MPRSimplexSupport(
         v1=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
         v2=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
         v=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
@@ -817,27 +817,27 @@ def get_mpr_simplex_support(B_):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructMPRState:
-    simplex_support: StructMPRSimplexSupport
+class MPRState:
+    simplex_support: MPRSimplexSupport
     simplex_size: qd.Tensor
 
 
 def get_mpr_state(B_):
-    return StructMPRState(
+    return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructMPRInfo:
+class MPRInfo:
     CCD_EPS: qd.Tensor
     CCD_TOLERANCE: qd.Tensor
     CCD_ITERATIONS: qd.Tensor
 
 
 def get_mpr_info(**kwargs):
-    return StructMPRInfo(
+    return MPRInfo(
         CCD_EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EPS"]),
         CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_TOLERANCE"]),
         CCD_ITERATIONS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_ITERATIONS"]),
@@ -848,7 +848,7 @@ def get_mpr_info(**kwargs):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructMDVertex:
+class MDVertex:
     # Vertex of the Minkowski difference
     obj1: qd.Tensor
     obj2: qd.Tensor
@@ -861,7 +861,7 @@ class StructMDVertex:
 
 def get_gjk_simplex_vertex(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
-    return StructMDVertex(
+    return MDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         local_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -875,7 +875,7 @@ def get_gjk_simplex_vertex(_B, is_active):
 def get_epa_polytope_vertex(_B, gjk_info, is_active):
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
     shape = maybe_shape((_B, max_num_polytope_verts), is_active)
-    return StructMDVertex(
+    return MDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         local_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -887,35 +887,35 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGJKSimplex:
+class GJKSimplex:
     nverts: qd.Tensor
     dist: qd.Tensor
 
 
 def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return StructGJKSimplex(
+    return GJKSimplex(
         nverts=V(dtype=gs.qd_int, shape=shape),
         dist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGJKSimplexBuffer:
+class GJKSimplexBuffer:
     normal: qd.Tensor
     sdist: qd.Tensor
 
 
 def get_gjk_simplex_buffer(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
-    return StructGJKSimplexBuffer(
+    return GJKSimplexBuffer(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         sdist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEPAPolytope:
+class EPAPolytope:
     nverts: qd.Tensor
     nfaces: qd.Tensor
     nfaces_map: qd.Tensor
@@ -925,7 +925,7 @@ class StructEPAPolytope:
 
 def get_epa_polytope(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return StructEPAPolytope(
+    return EPAPolytope(
         nverts=V(dtype=gs.qd_int, shape=shape),
         nfaces=V(dtype=gs.qd_int, shape=shape),
         nfaces_map=V(dtype=gs.qd_int, shape=shape),
@@ -935,7 +935,7 @@ def get_epa_polytope(_B, is_active):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEPAPolytopeFace:
+class EPAPolytopeFace:
     verts_idx: qd.Tensor
     adj_idx: qd.Tensor
     normal: qd.Tensor
@@ -946,7 +946,7 @@ class StructEPAPolytopeFace:
 
 def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     shape = maybe_shape((_B, polytope_max_faces), is_active)
-    return StructEPAPolytopeFace(
+    return EPAPolytopeFace(
         verts_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
         adj_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -957,21 +957,21 @@ def get_epa_polytope_face(_B, polytope_max_faces, is_active):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEPAPolytopeHorizonData:
+class EPAPolytopeHorizonData:
     face_idx: qd.Tensor
     edge_idx: qd.Tensor
 
 
 def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
-    return StructEPAPolytopeHorizonData(
+    return EPAPolytopeHorizonData(
         face_idx=V(dtype=gs.qd_int, shape=shape),
         edge_idx=V(dtype=gs.qd_int, shape=shape),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactFace:
+class ContactFace:
     vert1: qd.Tensor
     vert2: qd.Tensor
     endverts: qd.Tensor
@@ -983,7 +983,7 @@ class StructContactFace:
 
 def get_contact_face(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactFace(
+    return ContactFace(
         vert1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         vert2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -995,7 +995,7 @@ def get_contact_face(_B, max_contact_polygon_verts, is_active):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactNormal:
+class ContactNormal:
     endverts: qd.Tensor
     normal: qd.Tensor
     id: qd.Tensor
@@ -1003,7 +1003,7 @@ class StructContactNormal:
 
 def get_contact_normal(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactNormal(
+    return ContactNormal(
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         id=V(dtype=gs.qd_int, shape=shape),
@@ -1011,55 +1011,55 @@ def get_contact_normal(_B, max_contact_polygon_verts, is_active):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructContactHalfspace:
+class ContactHalfspace:
     normal: qd.Tensor
     dist: qd.Tensor
 
 
 def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactHalfspace(
+    return ContactHalfspace(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         dist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructWitness:
+class Witness:
     point_obj1: qd.Tensor
     point_obj2: qd.Tensor
 
 
 def get_witness(_B, max_contacts_per_pair, is_active):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
-    return StructWitness(
+    return Witness(
         point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         point_obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
     )
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGJKState:
+class GJKState:
     support_mesh_prev_vertex_id: qd.Tensor
-    simplex_vertex: StructMDVertex
-    simplex_buffer: StructGJKSimplexBuffer
-    simplex: StructGJKSimplex
-    simplex_vertex_intersect: StructMDVertex
-    simplex_buffer_intersect: StructGJKSimplexBuffer
+    simplex_vertex: MDVertex
+    simplex_buffer: GJKSimplexBuffer
+    simplex: GJKSimplex
+    simplex_vertex_intersect: MDVertex
+    simplex_buffer_intersect: GJKSimplexBuffer
     nsimplex: qd.Tensor
     last_searched_simplex_vertex_id: qd.Tensor
-    polytope: StructEPAPolytope
-    polytope_verts: StructMDVertex
-    polytope_faces: StructEPAPolytopeFace
+    polytope: EPAPolytope
+    polytope_verts: MDVertex
+    polytope_faces: EPAPolytopeFace
     polytope_faces_map: qd.Tensor
-    polytope_horizon_data: StructEPAPolytopeHorizonData
-    polytope_horizon_stack: StructEPAPolytopeHorizonData
-    contact_faces: StructContactFace
-    contact_normals: StructContactNormal
-    contact_halfspaces: StructContactHalfspace
+    polytope_horizon_data: EPAPolytopeHorizonData
+    polytope_horizon_stack: EPAPolytopeHorizonData
+    contact_faces: ContactFace
+    contact_normals: ContactNormal
+    contact_halfspaces: ContactHalfspace
     contact_clipped_polygons: qd.Tensor
     multi_contact_flag: qd.Tensor
-    witness: StructWitness
+    witness: Witness
     n_witness: qd.Tensor
     n_contacts: qd.Tensor
     contact_pos: qd.Tensor
@@ -1068,7 +1068,7 @@ class StructGJKState:
     penetration: qd.Tensor
     distance: qd.Tensor
     # Differentiable contact detection
-    diff_contact_input: StructDiffContactInput
+    diff_contact_input: DiffContactInput
     n_diff_contact_input: qd.Tensor
     diff_penetration: qd.Tensor
 
@@ -1080,7 +1080,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
     max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]
 
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
-    return StructGJKState(
+    return GJKState(
         # GJK simplex
         support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active),
@@ -1127,7 +1127,7 @@ def get_gjk_state_contact_only(_B):
     """
     _dummy_B = 1
 
-    return StructGJKState(
+    return GJKState(
         support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active=True),
         simplex_buffer=get_gjk_simplex_buffer(_B, is_active=True),
@@ -1138,7 +1138,7 @@ def get_gjk_state_contact_only(_B):
         nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
         # EPA — dummy allocations, never accessed by func_gjk
         polytope=get_epa_polytope(_dummy_B, is_active=True),
-        polytope_verts=StructMDVertex(
+        polytope_verts=MDVertex(
             obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
             obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
             local_obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
@@ -1173,7 +1173,7 @@ def get_gjk_state_contact_only(_B):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGJKInfo:
+class GJKInfo:
     max_contacts_per_pair: qd.Tensor
     max_contact_polygon_verts: qd.Tensor
     # Maximum number of iterations for GJK and EPA algorithms
@@ -1227,7 +1227,7 @@ class StructGJKInfo:
 
 
 def get_gjk_info(**kwargs):
-    return StructGJKInfo(
+    return GJKInfo(
         max_contacts_per_pair=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contacts_per_pair"]),
         max_contact_polygon_verts=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contact_polygon_verts"]),
         gjk_max_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["gjk_max_iterations"]),
@@ -1257,7 +1257,7 @@ def get_gjk_info(**kwargs):
 
 
 @qd.data_oriented
-class StructGJKStaticConfig(metaclass=AutoInitMeta):
+class GJKStaticConfig(metaclass=AutoInitMeta):
     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
     enable_mujoco_multi_contact: bool
@@ -1267,7 +1267,7 @@ class StructGJKStaticConfig(metaclass=AutoInitMeta):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructSupportFieldInfo:
+class SupportFieldInfo:
     support_cell_start: qd.Tensor
     support_v: qd.Tensor
     support_vid: qd.Tensor
@@ -1275,7 +1275,7 @@ class StructSupportFieldInfo:
 
 
 def get_support_field_info(n_geoms, n_support_cells, support_res):
-    return StructSupportFieldInfo(
+    return SupportFieldInfo(
         support_cell_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         support_v=V_VEC(3, dtype=gs.qd_float, shape=(max(n_support_cells, 1),)),
         support_vid=V(dtype=gs.qd_int, shape=(max(n_support_cells, 1),)),
@@ -1287,7 +1287,7 @@ def get_support_field_info(n_geoms, n_support_cells, support_res):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructSDFGeomInfo:
+class SDFGeomInfo:
     T_mesh_to_sdf: qd.Tensor
     sdf_res: qd.Tensor
     sdf_max: qd.Tensor
@@ -1296,7 +1296,7 @@ class StructSDFGeomInfo:
 
 
 def get_sdf_geom_info(n_geoms):
-    return StructSDFGeomInfo(
+    return SDFGeomInfo(
         T_mesh_to_sdf=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_res=V_VEC(3, dtype=gs.qd_int, shape=(n_geoms,)),
         sdf_max=V(dtype=gs.qd_float, shape=(n_geoms,)),
@@ -1306,8 +1306,8 @@ def get_sdf_geom_info(n_geoms):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructSDFInfo:
-    geoms_info: StructSDFGeomInfo
+class SDFInfo:
+    geoms_info: SDFGeomInfo
     geoms_sdf_start: qd.Tensor
     geoms_sdf_val: qd.Tensor
     geoms_sdf_grad: qd.Tensor
@@ -1321,7 +1321,7 @@ def get_sdf_info(n_geoms, n_cells):
             "'sdf_cell_size' in 'gs.materials.Rigid' options."
         )
 
-    return StructSDFInfo(
+    return SDFInfo(
         geoms_info=get_sdf_geom_info(max(n_geoms, 1)),
         geoms_sdf_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         geoms_sdf_val=V(dtype=gs.qd_float, shape=(max(n_cells, 1),)),
@@ -1334,7 +1334,7 @@ def get_sdf_info(n_geoms, n_cells):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructDofsInfo:
+class DofsInfo:
     entity_idx: qd.Tensor
     stiffness: qd.Tensor
     invweight: qd.Tensor
@@ -1352,7 +1352,7 @@ class StructDofsInfo:
 def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
-    return StructDofsInfo(
+    return DofsInfo(
         entity_idx=V(dtype=gs.qd_int, shape=shape),
         stiffness=V(dtype=gs.qd_float, shape=shape),
         invweight=V(dtype=gs.qd_float, shape=shape),
@@ -1369,7 +1369,7 @@ def get_dofs_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructDofsState:
+class DofsState:
     # *_bw: Cache to avoid overwriting for backward pass
     force: qd.Tensor
     qf_bias: qd.Tensor
@@ -1407,7 +1407,7 @@ def get_dofs_state(solver):
     requires_grad = solver._requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
 
-    return StructDofsState(
+    return DofsState(
         force=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         qf_bias=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         qf_passive=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
@@ -1444,7 +1444,7 @@ def get_dofs_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructLinksState:
+class LinksState:
     # *_bw: Cache to avoid overwriting for backward pass
     cinr_inertial: qd.Tensor
     cinr_pos: qd.Tensor
@@ -1496,7 +1496,7 @@ def get_links_state(solver):
     requires_grad = solver._requires_grad
     shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
-    return StructLinksState(
+    return LinksState(
         cinr_inertial=V(dtype=gs.qd_mat3, shape=shape, needs_grad=requires_grad),
         cinr_pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cinr_quat=V(dtype=gs.qd_vec4, shape=shape, needs_grad=requires_grad),
@@ -1543,7 +1543,7 @@ def get_links_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructLinksInfo:
+class LinksInfo:
     parent_idx: qd.Tensor
     root_idx: qd.Tensor
     q_start: qd.Tensor
@@ -1572,7 +1572,7 @@ class StructLinksInfo:
 def get_links_info(solver):
     links_info_shape = (solver.n_links_, solver._B) if solver._options.batch_links_info else solver.n_links_
 
-    return StructLinksInfo(
+    return LinksInfo(
         parent_idx=V(dtype=gs.qd_int, shape=links_info_shape),
         root_idx=V(dtype=gs.qd_int, shape=links_info_shape),
         q_start=V(dtype=gs.qd_int, shape=links_info_shape),
@@ -1603,7 +1603,7 @@ def get_links_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructJointsInfo:
+class JointsInfo:
     type: qd.Tensor
     sol_params: qd.Tensor
     q_start: qd.Tensor
@@ -1617,7 +1617,7 @@ class StructJointsInfo:
 def get_joints_info(solver):
     shape = (solver.n_joints_, solver._B) if solver._options.batch_joints_info else (solver.n_joints_,)
 
-    return StructJointsInfo(
+    return JointsInfo(
         type=V(dtype=gs.qd_int, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         q_start=V(dtype=gs.qd_int, shape=shape),
@@ -1630,7 +1630,7 @@ def get_joints_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructJointsState:
+class JointsState:
     xanchor: qd.Tensor
     xaxis: qd.Tensor
 
@@ -1639,7 +1639,7 @@ def get_joints_state(solver):
     shape = (solver.n_joints_, solver._B)
     requires_grad = solver._requires_grad
 
-    return StructJointsState(
+    return JointsState(
         xanchor=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         xaxis=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
     )
@@ -1649,7 +1649,7 @@ def get_joints_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGeomsInfo:
+class GeomsInfo:
     pos: qd.Tensor
     center: qd.Tensor
     quat: qd.Tensor
@@ -1683,7 +1683,7 @@ class StructGeomsInfo:
 def get_geoms_info(solver):
     shape = (solver.n_geoms_,)
 
-    return StructGeomsInfo(
+    return GeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         center=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
@@ -1716,7 +1716,7 @@ def get_geoms_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructGeomsState:
+class GeomsState:
     pos: qd.Tensor
     quat: qd.Tensor
     aabb_min: qd.Tensor
@@ -1732,7 +1732,7 @@ def get_geoms_state(solver):
     shape = (solver.n_geoms_, solver._B)
     requires_grad = solver._static_rigid_sim_config.requires_grad
 
-    return StructGeomsState(
+    return GeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         quat=V(dtype=gs.qd_vec4, shape=shape, needs_grad=requires_grad),
         aabb_min=V(dtype=gs.qd_vec3, shape=shape),
@@ -1749,7 +1749,7 @@ def get_geoms_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVertsInfo:
+class VertsInfo:
     init_pos: qd.Tensor
     init_normal: qd.Tensor
     geom_idx: qd.Tensor
@@ -1761,7 +1761,7 @@ class StructVertsInfo:
 def get_verts_info(solver):
     shape = (solver.n_verts_,)
 
-    return StructVertsInfo(
+    return VertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
         init_normal=V(dtype=gs.qd_vec3, shape=shape),
         geom_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1775,7 +1775,7 @@ def get_verts_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructFacesInfo:
+class FacesInfo:
     verts_idx: qd.Tensor
     geom_idx: qd.Tensor
 
@@ -1783,7 +1783,7 @@ class StructFacesInfo:
 def get_faces_info(solver):
     shape = (solver.n_faces_,)
 
-    return StructFacesInfo(
+    return FacesInfo(
         verts_idx=V(dtype=gs.qd_ivec3, shape=shape),
         geom_idx=V(dtype=gs.qd_int, shape=shape),
     )
@@ -1793,7 +1793,7 @@ def get_faces_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEdgesInfo:
+class EdgesInfo:
     v0: qd.Tensor
     v1: qd.Tensor
     length: qd.Tensor
@@ -1802,7 +1802,7 @@ class StructEdgesInfo:
 def get_edges_info(solver):
     shape = (solver.n_edges_,)
 
-    return StructEdgesInfo(
+    return EdgesInfo(
         v0=V(dtype=gs.qd_int, shape=shape),
         v1=V(dtype=gs.qd_int, shape=shape),
         length=V(dtype=gs.qd_float, shape=shape),
@@ -1813,18 +1813,18 @@ def get_edges_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVertsState:
+class VertsState:
     pos: qd.Tensor
 
 
 def get_free_verts_state(solver):
-    return StructVertsState(
+    return VertsState(
         pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B)),
     )
 
 
 def get_fixed_verts_state(solver):
-    return StructVertsState(
+    return VertsState(
         pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,)),
     )
 
@@ -1833,7 +1833,7 @@ def get_fixed_verts_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVvertsInfo:
+class VVertsInfo:
     init_pos: qd.Tensor
     init_vnormal: qd.Tensor
     vgeom_idx: qd.Tensor
@@ -1842,7 +1842,7 @@ class StructVvertsInfo:
 def get_vverts_info(solver):
     shape = (solver.n_vverts_,)
 
-    return StructVvertsInfo(
+    return VVertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
         init_vnormal=V(dtype=gs.qd_vec3, shape=shape),
         vgeom_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1853,7 +1853,7 @@ def get_vverts_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVfacesInfo:
+class VFacesInfo:
     vverts_idx: qd.Tensor
     vgeom_idx: qd.Tensor
 
@@ -1861,7 +1861,7 @@ class StructVfacesInfo:
 def get_vfaces_info(solver):
     shape = (solver.n_vfaces_,)
 
-    return StructVfacesInfo(
+    return VFacesInfo(
         vverts_idx=V(dtype=gs.qd_ivec3, shape=shape),
         vgeom_idx=V(dtype=gs.qd_int, shape=shape),
     )
@@ -1871,7 +1871,7 @@ def get_vfaces_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVgeomsInfo:
+class VGeomsInfo:
     pos: qd.Tensor
     quat: qd.Tensor
     link_idx: qd.Tensor
@@ -1887,7 +1887,7 @@ class StructVgeomsInfo:
 def get_vgeoms_info(solver):
     shape = (solver.n_vgeoms_,)
 
-    return StructVgeomsInfo(
+    return VGeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
         link_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1905,7 +1905,7 @@ def get_vgeoms_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructVgeomsState:
+class VGeomsState:
     pos: qd.Tensor
     quat: qd.Tensor
 
@@ -1913,7 +1913,7 @@ class StructVgeomsState:
 def get_vgeoms_state(solver):
     shape = (solver.n_vgeoms_, solver._B)
 
-    return StructVgeomsState(
+    return VGeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
     )
@@ -1923,7 +1923,7 @@ def get_vgeoms_state(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEqualitiesInfo:
+class EqualitiesInfo:
     eq_obj1id: qd.Tensor
     eq_obj2id: qd.Tensor
     eq_data: qd.Tensor
@@ -1934,7 +1934,7 @@ class StructEqualitiesInfo:
 def get_equalities_info(solver):
     shape = (solver.n_candidate_equalities_, solver._B)
 
-    return StructEqualitiesInfo(
+    return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
         eq_data=V(dtype=gs.qd_vec11, shape=shape),
@@ -1947,7 +1947,7 @@ def get_equalities_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEntitiesInfo:
+class EntitiesInfo:
     dof_start: qd.Tensor
     dof_end: qd.Tensor
     n_dofs: qd.Tensor
@@ -1964,7 +1964,7 @@ class StructEntitiesInfo:
 def get_entities_info(solver):
     shape = (solver.n_entities_,)
 
-    return StructEntitiesInfo(
+    return EntitiesInfo(
         dof_start=V(dtype=gs.qd_int, shape=shape),
         dof_end=V(dtype=gs.qd_int, shape=shape),
         n_dofs=V(dtype=gs.qd_int, shape=shape),
@@ -1983,19 +1983,19 @@ def get_entities_info(solver):
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructEntitiesState:
+class EntitiesState:
     hibernated: qd.Tensor
 
 
 def get_entities_state(solver):
-    return StructEntitiesState(
+    return EntitiesState(
         hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
     )
 
 
 # =========================================== RigidAdjointCache ===========================================
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructRigidAdjointCache:
+class RigidAdjointCache:
     # This cache stores intermediate values during rigid body simulation to use Quadrants's AD. Quadrants's AD requires
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
@@ -2010,18 +2010,18 @@ def get_rigid_adjoint_cache(solver):
     substeps_local = solver._sim.substeps_local
     requires_grad = solver._requires_grad
 
-    return StructRigidAdjointCache(
+    return RigidAdjointCache(
         qpos=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_qs_, solver._B), needs_grad=requires_grad),
         dofs_vel=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
         dofs_acc=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
     )
 
 
-# =================================== StructRigidSimStaticConfig ===================================
+# =================================== RigidSimStaticConfig ===================================
 
 
 @qd.data_oriented
-class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+class RigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
@@ -2109,7 +2109,7 @@ class DataManager:
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
-class StructViewerRaycastResult:
+class RaycastResult:
     distance: qd.Tensor
     geom_idx: qd.Tensor
     hit_point: qd.Tensor
@@ -2118,7 +2118,7 @@ class StructViewerRaycastResult:
 
 
 def get_viewer_raycast_result():
-    return StructViewerRaycastResult(
+    return RaycastResult(
         distance=V(dtype=gs.qd_float, shape=()),
         geom_idx=V(dtype=gs.qd_int, shape=()),
         hit_point=V_VEC(3, dtype=gs.qd_float, shape=()),
@@ -2127,37 +2127,4 @@ def get_viewer_raycast_result():
     )
 
 
-DofsState = StructDofsState
-DofsInfo = StructDofsInfo
-GeomsState = StructGeomsState
-GeomsInfo = StructGeomsInfo
 GeomsInitAABB = qd.Tensor
-LinksState = StructLinksState
-LinksInfo = StructLinksInfo
-JointsInfo = StructJointsInfo
-JointsState = StructJointsState
-VertsState = StructVertsState
-VertsInfo = StructVertsInfo
-EdgesInfo = StructEdgesInfo
-FacesInfo = StructFacesInfo
-VVertsInfo = StructVvertsInfo
-VFacesInfo = StructVfacesInfo
-VGeomsInfo = StructVgeomsInfo
-VGeomsState = StructVgeomsState
-EntitiesState = StructEntitiesState
-EntitiesInfo = StructEntitiesInfo
-EqualitiesInfo = StructEqualitiesInfo
-RigidGlobalInfo = StructRigidGlobalInfo
-ColliderState = StructColliderState
-ColliderInfo = StructColliderInfo
-MPRState = StructMPRState
-MPRInfo = StructMPRInfo
-SupportFieldInfo = StructSupportFieldInfo
-ConstraintState = StructConstraintState
-GJKState = StructGJKState
-GJKInfo = StructGJKInfo
-SDFInfo = StructSDFInfo
-ContactIslandState = StructContactIslandState
-DiffContactInput = StructDiffContactInput
-RigidAdjointCache = StructRigidAdjointCache
-RaycastResult = StructViewerRaycastResult
