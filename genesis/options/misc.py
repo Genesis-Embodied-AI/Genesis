@@ -1,6 +1,9 @@
 from typing import Literal
 
-from pydantic import Field, StrictBool, StrictInt
+from pydantic import Field, StrictBool, StrictInt, model_validator
+from typing_extensions import Self
+
+import genesis as gs
 
 from genesis.typing import NonNegativeInt, PositiveInt, Vec4FType
 
@@ -45,3 +48,17 @@ class CoacdOptions(Options):
     extrude_margin: float = 0.1
     apx_mode: Literal["ch", "box"] = "ch"
     seed: NonNegativeInt = 0
+
+    @model_validator(mode="after")
+    def _warn_pca_misalignment(self) -> Self:
+        # Upstream CoACD applies a PCA transformation to the input mesh but does not transform the
+        # decomposed convex hulls back, so the resulting collision body is misaligned with the
+        # original mesh. See https://github.com/SarahWeiii/CoACD/issues/100.
+        if self.pca:
+            gs.logger.warning(
+                "'CoacdOptions.pca=True' produces collision bodies that are misaligned with the "
+                "original mesh due to an upstream CoACD bug "
+                "(https://github.com/SarahWeiii/CoACD/issues/100). Set 'pca=False' until the "
+                "upstream fix lands to avoid unstable physics."
+            )
+        return self

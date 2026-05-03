@@ -1,8 +1,32 @@
 """Tests for the entity naming system."""
 
+from unittest.mock import patch
+
 import pytest
 
 import genesis as gs
+
+
+@pytest.mark.required
+def test_coacd_options_warn_when_pca_true():
+    """Constructing CoacdOptions with pca=True must warn about the upstream misalignment bug."""
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            gs.options.CoacdOptions(pca=True)
+            assert mock_warning.call_count == 1
+            (message,), _ = mock_warning.call_args
+            assert "pca=True" in message
+            assert "SarahWeiii/CoACD/issues/100" in message
+
+
+@pytest.mark.required
+def test_coacd_options_no_warning_for_pca_false_default():
+    """Default-constructed CoacdOptions and pca=False must not warn."""
+    with patch.object(gs, "logger", create=True) as mock_logger:
+        with patch.object(mock_logger, "warning") as mock_warning:
+            gs.options.CoacdOptions()
+            gs.options.CoacdOptions(pca=False)
+            mock_warning.assert_not_called()
 
 
 @pytest.mark.required
