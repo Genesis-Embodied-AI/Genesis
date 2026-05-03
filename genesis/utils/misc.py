@@ -534,6 +534,14 @@ def qd_to_torch(
     else:
         try:
             tensor = value._T_tc if transpose else value._tc
+            # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually.
+            # See comment in `qd_to_python` for details on the MPS command queue race condition.
+            if gs.backend == gs.metal:
+                qd.sync()
+            if copy:
+                tensor = tensor.clone()
+                if gs.backend == gs.metal:
+                    torch.mps.synchronize()
         except AttributeError:
             try:
                 tc = value.to_torch(copy=False)
