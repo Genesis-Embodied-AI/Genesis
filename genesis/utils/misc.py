@@ -489,7 +489,7 @@ def _get_or_build_torch_view(value, transpose):
 
     try:
         tc = value.to_torch(copy=False)
-    except (TypeError, ValueError, RuntimeError):
+    except (ValueError, RuntimeError):
         return _maybe_transpose(value.to_torch(), value, transpose)
 
     tensor = _maybe_transpose(tc, value, transpose)
@@ -569,6 +569,8 @@ def qd_to_torch(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
+    if isinstance(value, qd.Tensor):
+        value = value._unwrap()
     tensor = _get_or_build_torch_view(value, transpose)
     if copy:
         tensor = tensor.clone()
@@ -595,6 +597,8 @@ def qd_to_numpy(
         copy (bool, optional): Wether to enforce returning a copy no matter what. None to avoid copy if possible
         without raising an exception if not.
     """
+    if isinstance(value, qd.Tensor):
+        value = value._unwrap()
     array = _get_or_build_numpy_view(value, transpose)
     if copy:
         array = array.copy()
