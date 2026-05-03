@@ -489,7 +489,7 @@ def _get_or_build_torch_view(value, transpose):
 
     try:
         tc = value.to_torch(copy=False)
-    except (ValueError, RuntimeError):
+    except (TypeError, ValueError, RuntimeError):
         return _maybe_transpose(value.to_torch(), value, transpose)
 
     tensor = _maybe_transpose(tc, value, transpose)
