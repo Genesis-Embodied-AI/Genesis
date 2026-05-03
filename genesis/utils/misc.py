@@ -550,7 +550,7 @@ def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
 
 
 def qd_to_torch(
-    value: qd.Field | qd.Ndarray,
+    value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     keepdim: bool = True,
@@ -576,7 +576,7 @@ def qd_to_torch(
 
 
 def qd_to_numpy(
-    value: qd.Field | qd.Ndarray,
+    value: qd.Tensor | qd.Field | qd.Ndarray,
     row_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     col_mask: int | range | slice | tuple[int, ...] | list[int] | torch.Tensor | np.ndarray | None = None,
     keepdim: bool = True,
@@ -599,6 +599,46 @@ def qd_to_numpy(
     if copy:
         array = array.copy()
     return _apply_masks(array, value, row_mask, col_mask, keepdim, copy, to_torch=False)
+
+
+def qd_zero_grad(value) -> None:
+    """Zero the `.grad` buffers of a Quadrants field/ndarray, or every grad-bearing slot of a `dataclass` /
+    `@qd.data_oriented` struct-of-arrays.
+
+    Reverse-mode accumulation in Genesis writes through `qd.atomic_add`, so adjoint buffers must start at zero between
+    consecutive `loss.backward()` calls. Solvers call this from `reset_grad` to clear all owned adjoint storage without
+    enumerating fields by name. Zeroing goes through `qd_to_torch(grad, copy=False).zero_()`, a contiguous in-place
+    memset on the underlying device memory - no Quadrants kernel launch.
+
+    On struct inputs the walk recurses into nested struct attributes; raw `qd.Field`/`qd.Ndarray` slots are zeroed
+    directly. `None`, fields whose `.grad` is `None` (declared without `needs_grad`), and grad fields whose snode was
+    never materialised are skipped.
+    """
+    if value is None:
+        return
+
+    if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
+        try:
+            grad = value.grad
+            if gs.use_zerocopy:
+                qd_to_torch(grad, copy=False).zero_()
+            else:
+                grad.fill(0.0)
+        except AttributeError:
+            pass
+        return
+
+    cls = type(value)
+    try:
+        annotations = cls.__dict__["__annotations__"]
+    except KeyError as err:
+        raise_exception_from(
+            f"qd_zero_grad: expected `qd.Field`, `qd.Ndarray`, or a `dataclass` / `@qd.data_oriented` "
+            f"struct-of-arrays; got `{cls.__name__}`.",
+            cause=err,
+        )
+    for attr_name in annotations:
+        qd_zero_grad(getattr(value, attr_name, None))
 
 
 def sanitize_index(

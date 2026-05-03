@@ -24,7 +24,7 @@ from .misc import (
 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics_links_geoms(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -49,8 +49,8 @@ def kernel_forward_kinematics_links_geoms(
             joints_info=joints_info,
             dofs_state=dofs_state,
             dofs_info=dofs_info,
-            geoms_info=geoms_info,
             geoms_state=geoms_state,
+            geoms_info=geoms_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -70,7 +70,7 @@ def kernel_forward_kinematics_links_geoms(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics_links_geoms(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -95,8 +95,8 @@ def kernel_masked_forward_kinematics_links_geoms(
                 joints_info=joints_info,
                 dofs_state=dofs_state,
                 dofs_info=dofs_info,
-                geoms_info=geoms_info,
                 geoms_state=geoms_state,
+                geoms_info=geoms_info,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
@@ -116,7 +116,7 @@ def kernel_masked_forward_kinematics_links_geoms(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -170,7 +170,7 @@ def kernel_forward_kinematics(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_kinematics(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -224,7 +224,7 @@ def kernel_masked_forward_kinematics(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_velocity(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -251,7 +251,7 @@ def kernel_forward_velocity(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_forward_velocity(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -791,7 +791,7 @@ def func_forward_kinematics_batch(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_kinematics_entity(
     i_e: qd.int32,
     envs_idx: qd.types.ndarray(),
@@ -829,8 +829,8 @@ def func_update_geoms_entity(
     i_e,
     i_b,
     entities_info: array_class.EntitiesInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -868,8 +868,8 @@ def func_update_geoms_entity(
 def func_update_geoms_batch(
     i_b,
     entities_info: array_class.EntitiesInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -909,8 +909,8 @@ def func_update_geoms_batch(
                 i_e,
                 i_b,
                 entities_info,
-                geoms_info,
                 geoms_state,
+                geoms_info,
                 links_state,
                 rigid_global_info,
                 static_rigid_sim_config,
@@ -922,8 +922,8 @@ def func_update_geoms_batch(
 @qd.func
 def func_update_geoms(
     entities_info: array_class.EntitiesInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -937,8 +937,8 @@ def func_update_geoms(
             func_update_geoms_batch(
                 i_b,
                 entities_info,
-                geoms_info,
                 geoms_state,
+                geoms_info,
                 links_state,
                 rigid_global_info,
                 static_rigid_sim_config,
@@ -952,8 +952,8 @@ def func_update_geoms(
                 i_e,
                 i_b,
                 entities_info,
-                geoms_info,
                 geoms_state,
+                geoms_info,
                 links_state,
                 rigid_global_info,
                 static_rigid_sim_config,
@@ -962,12 +962,12 @@ def func_update_geoms(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_geoms(
     envs_idx: qd.types.ndarray(),
     entities_info: array_class.EntitiesInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -979,8 +979,8 @@ def kernel_update_geoms(
         func_update_geoms_batch(
             i_b,
             entities_info,
-            geoms_info,
             geoms_state,
+            geoms_info,
             links_state,
             rigid_global_info,
             static_rigid_sim_config,
@@ -1214,7 +1214,7 @@ def func_forward_velocity(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_verts_for_geoms(
     geoms_idx: qd.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -1266,8 +1266,8 @@ def func_update_verts_for_geom(
 
 @qd.func
 def func_update_all_verts(
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
@@ -1280,17 +1280,17 @@ def func_update_all_verts(
         func_update_verts_for_geom(i_g, i_b, geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_all_verts(
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     verts_info: array_class.VertsInfo,
     free_verts_state: array_class.VertsState,
     fixed_verts_state: array_class.VertsState,
     static_rigid_sim_config: qd.template(),
 ):
     func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
 
@@ -1319,7 +1319,7 @@ def kernel_update_geom_aabbs(
         geoms_state.aabb_max[i_g, i_b] = upper
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_vgeoms(
     vgeoms_info: array_class.VGeomsInfo,
     vgeoms_state: array_class.VGeomsState,
@@ -1352,7 +1352,7 @@ def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
     contact_island_state: array_class.ContactIslandState,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     _B = entities_state.hibernated.shape[1]
 
@@ -1506,8 +1506,8 @@ def func_update_cartesian_space_entity(
     joints_info: array_class.JointsInfo,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -1546,8 +1546,8 @@ def func_update_cartesian_space_entity(
         i_e,
         i_b,
         entities_info=entities_info,
-        geoms_info=geoms_info,
         geoms_state=geoms_state,
+        geoms_info=geoms_info,
         links_state=links_state,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,
@@ -1565,8 +1565,8 @@ def func_update_cartesian_space_batch(
     joints_info: array_class.JointsInfo,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -1608,8 +1608,8 @@ def func_update_cartesian_space_batch(
                 joints_info,
                 dofs_state,
                 dofs_info,
-                geoms_info,
                 geoms_state,
+                geoms_info,
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
@@ -1626,8 +1626,8 @@ def func_update_cartesian_space(
     joints_info: array_class.JointsInfo,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -1650,8 +1650,8 @@ def func_update_cartesian_space(
                 joints_info,
                 dofs_state,
                 dofs_info,
-                geoms_info,
                 geoms_state,
+                geoms_info,
                 entities_info,
                 rigid_global_info,
                 static_rigid_sim_config,
@@ -1688,8 +1688,8 @@ def func_update_cartesian_space(
                                 joints_info,
                                 dofs_state,
                                 dofs_info,
-                                geoms_info,
                                 geoms_state,
+                                geoms_info,
                                 entities_info,
                                 rigid_global_info,
                                 static_rigid_sim_config,
@@ -1698,7 +1698,7 @@ def func_update_cartesian_space(
                             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_cartesian_space(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -1706,8 +1706,8 @@ def kernel_update_cartesian_space(
     joints_info: array_class.JointsInfo,
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
-    geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -1721,8 +1721,8 @@ def kernel_update_cartesian_space(
         joints_info=joints_info,
         dofs_state=dofs_state,
         dofs_info=dofs_info,
-        geoms_info=geoms_info,
         geoms_state=geoms_state,
+        geoms_info=geoms_info,
         entities_info=entities_info,
         rigid_global_info=rigid_global_info,
         static_rigid_sim_config=static_rigid_sim_config,

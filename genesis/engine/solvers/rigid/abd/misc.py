@@ -59,7 +59,7 @@ def func_wakeup_entity_and_its_temp_island(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_invweight(
     envs_idx: qd.types.ndarray(),
     links_invweight: qd.types.ndarray(),
@@ -99,7 +99,7 @@ def kernel_init_invweight(
                 dofs_info.invweight[i_d] = dofs_invweight[i_d]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_meaninertia(
     envs_idx: qd.types.ndarray(),
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -123,7 +123,7 @@ def kernel_init_meaninertia(
             rigid_global_info.meaninertia[i_b] = 1.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_dof_fields(
     # input np array
     entity_idx: qd.types.ndarray(),
@@ -183,7 +183,7 @@ def kernel_init_dof_fields(
             rigid_global_info.n_awake_dofs[i_b] = n_dofs
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_link_fields(
     links_parent_idx: qd.types.ndarray(),
     links_root_idx: qd.types.ndarray(),
@@ -275,7 +275,7 @@ def kernel_init_link_fields(
             rigid_global_info.n_awake_links[i_b] = n_links
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_links_vgeom(
     i_l: qd.i32,
     links_vgeom_start: qd.types.ndarray(),
@@ -291,7 +291,7 @@ def kernel_update_heterogeneous_links_vgeom(
         links_info.vgeom_end[i_l, i_b] = links_vgeom_end[i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_heterogeneous_link_info(
     i_l: qd.i32,
     links_geom_start: qd.types.ndarray(),
@@ -325,7 +325,7 @@ def kernel_update_heterogeneous_link_info(
             links_info.inertial_i[i_l, i_b][j1, j2] = links_inertial_i[i_b, j1, j2]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_joint_fields(
     joints_type: qd.types.ndarray(),
     joints_sol_params: qd.types.ndarray(),
@@ -354,7 +354,7 @@ def kernel_init_joint_fields(
             joints_info.pos[I_j][j] = joints_pos[i_j, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vert_fields(
     verts: qd.types.ndarray(),
     faces: qd.types.ndarray(),
@@ -401,7 +401,7 @@ def kernel_init_vert_fields(
         edges_info.length[i_ed] = (verts_info.init_pos[edges[i_ed, 0]] - verts_info.init_pos[edges[i_ed, 1]]).norm()
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vvert_fields(
     vverts: qd.types.ndarray(),
     vfaces: qd.types.ndarray(),
@@ -430,7 +430,7 @@ def kernel_init_vvert_fields(
         vfaces_info.vgeom_idx[i_vf] = vverts_vgeom_idx[vfaces[i_vf, 0]]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_geom_fields(
     geoms_pos: qd.types.ndarray(),
     geoms_center: qd.types.ndarray(),
@@ -533,7 +533,7 @@ def kernel_init_geom_fields(
         geoms_state.friction_ratio[i_g, i_b] = 1.0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_vgeom_fields(
     vgeoms_pos: qd.types.ndarray(),
     vgeoms_quat: qd.types.ndarray(),
@@ -570,7 +570,7 @@ def kernel_init_vgeom_fields(
             vgeoms_info.color[i_vg][j] = vgeoms_color[i_vg, j]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_entity_fields(
     entities_dof_start: qd.types.ndarray(),
     entities_dof_end: qd.types.ndarray(),
@@ -619,7 +619,7 @@ def kernel_init_entity_fields(
             rigid_global_info.n_awake_entities[i_b] = n_entities
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_init_equality_fields(
     equalities_type: qd.types.ndarray(),
     equalities_eq_obj1id: qd.types.ndarray(),
@@ -650,7 +650,7 @@ def kernel_init_equality_fields(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_apply_links_external_force(
     force: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -666,7 +666,7 @@ def kernel_apply_links_external_force(
         func_apply_link_external_force(force_i, links_idx[i_l_], envs_idx[i_b_], ref, local, links_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_apply_links_external_torque(
     torque: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
@@ -762,7 +762,7 @@ def func_clear_external_force(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_geoms_render_T(
     geoms_render_T: qd.types.ndarray(),
     geoms_state: array_class.GeomsState,
@@ -783,7 +783,7 @@ def kernel_update_geoms_render_T(
                 geoms_render_T[(i_g, i_b, *J)] = qd.cast(geom_T[J], qd.float32)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_vgeoms_render_T(
     vgeoms_render_T: qd.types.ndarray(),
     vgeoms_info: array_class.VGeomsInfo,
@@ -811,29 +811,29 @@ def kernel_update_vgeoms_render_T(
 # --------------------------------------------------------------------------------------
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def kernel_bit_reduction(tensor: array_class.V_ANNOTATION) -> qd.i32:
+@qd.kernel(fastcache=True)
+def kernel_bit_reduction(tensor: qd.Tensor) -> qd.i32:
     flag = qd.i32(0)
     for i in range(tensor.shape[0]):
         flag = qd.atomic_or(flag, tensor[i])
     return flag
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: array_class.V_ANNOTATION):
+@qd.kernel(fastcache=True)
+def kernel_set_zero(envs_idx: qd.types.ndarray(), tensor: qd.Tensor):
     for i_b_ in range(envs_idx.shape[0]):
         tensor[i_b_] = 0
 
 
 @qd.func
-def func_atomic_add_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_atomic_add_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         qd.atomic_add(field[I], value)
     return value
 
 
 @qd.func
-def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_add_safe_backward(field: qd.Tensor, I, value, cond: qd.template()):
     # Use (expensive) atomic add in backward for differentiability -- when there is race condition on the field to
     # write, use atomic add directly. For reference, see official Quadrants documentation:
     # https://docs.taichi-lang.org/docs/differentiable_programming#global-data-access-rules
@@ -844,19 +844,19 @@ def func_add_safe_backward(field: array_class.V_ANNOTATION, I, value, cond: qd.t
 
 
 @qd.func
-def func_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     return field[I] if qd.static(cond) else value
 
 
 @qd.func
-def func_write_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return value
 
 
 @qd.func
-def func_write_and_read_field_if(field: array_class.V_ANNOTATION, I, value, cond: qd.template()):
+def func_write_and_read_field_if(field: qd.Tensor, I, value, cond: qd.template()):
     if qd.static(cond):
         field[I] = value
     return field[I] if qd.static(cond) else value
@@ -868,7 +868,7 @@ def func_check_index_range(idx: qd.i32, min: qd.i32, max: qd.i32, cond: qd.templ
     return (idx >= min and idx < max) if qd.static(cond) else True
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_clear_external_force(
     links_state: array_class.LinksState,
     rigid_global_info: array_class.RigidGlobalInfo,

@@ -439,8 +439,8 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
@@ -709,7 +709,7 @@ class RRTConnect(PathPlanner):
     @qd.kernel
     def _kernel_rrt_connect_step1(
         self,
-        qpos: array_class.V_ANNOTATION,
+        qpos: qd.Tensor,
         forward_pass: qd.i32,
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
@@ -809,8 +809,8 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,

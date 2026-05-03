@@ -1546,7 +1546,7 @@ def slerp(q0, q1, t):
     if isinstance(q0, np.ndarray):
         return _np_slerp(q0, q1, t)
     if isinstance(q0, torch.Tensor):
-        return _tc_slerp(q0, q1, torch.as_tensor(t, dtype=gs.tc_float, device=gs.device), gs.EPS)
+        return _tc_slerp(q0, q1, torch.as_tensor(t, dtype=gs.tc_float, device=q0.device), gs.EPS)
     gs.raise_exception(f"the input must be either torch.Tensor or np.ndarray. got: {type(q0)=}")
 
 

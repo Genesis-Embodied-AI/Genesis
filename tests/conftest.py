@@ -674,16 +674,18 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
     if isinstance(backend, str):
         backend = getattr(gs.constants.backend, backend)
 
-    logging_level = request.config.getoption("--log-cli-level", logging.INFO)
+    dev_mode = request.config.getoption("--dev")
+    logging_level = request.config.getoption("--log-cli-level")
+    if logging_level is None:
+        logging_level = logging.DEBUG if dev_mode else logging.INFO
     if debug is None:
-        debug = request.config.getoption("--dev")
+        debug = dev_mode
 
     if not cache:
         monkeypatch.setenv("QD_OFFLINE_CACHE", "0")
         # FIXME: Must set temporary cache even if caching is forcibly disabled because this flag is not always honored
         monkeypatch.setenv("QD_OFFLINE_CACHE_FILE_PATH", str(tmp_path / ".cache" / "quadrants"))
         monkeypatch.setenv("GS_CACHE_FILE_PATH", str(tmp_path / ".cache" / "genesis"))
-        monkeypatch.setenv("GS_ENABLE_FASTCACHE", "0")
 
         # Wipe worker-specific cache entirely since there is no way to disable it
         numba_cache_dir = Path(os.environ["NUMBA_CACHE_DIR"])
@@ -725,15 +727,15 @@ def initialize_genesis(request, monkeypatch, tmp_path, backend, precision, perfo
         expr = Expression.compile(request.config.option.markexpr)
         is_benchmarks = expr.evaluate(MarkMatcher.from_markers((pytest.mark.benchmarks,)))
         if not is_benchmarks:
-            from genesis.utils.array_class import StructRigidSimStaticConfig
+            from genesis.utils.array_class import RigidSimStaticConfig
 
-            _StructRigidSimStaticConfig_init_orig = StructRigidSimStaticConfig.__init__
+            _RigidSimStaticConfig_init_orig = RigidSimStaticConfig.__init__
 
-            def _StructRigidSimStaticConfig_init(self, *args, **kwargs):
+            def _RigidSimStaticConfig_init(self, *args, **kwargs):
                 kwargs.setdefault("prefer_decomposed_solver", int(gs.backend != gs.cpu))
-                _StructRigidSimStaticConfig_init_orig(self, *args, **kwargs)
+                _RigidSimStaticConfig_init_orig(self, *args, **kwargs)
 
-            monkeypatch.setattr(StructRigidSimStaticConfig, "__init__", _StructRigidSimStaticConfig_init)
+            monkeypatch.setattr(RigidSimStaticConfig, "__init__", _RigidSimStaticConfig_init)
 
         if gs.backend != gs.cpu and gs.device.index is not None:
             device_idx = _torch_get_gpu_idx(gs.device.index)

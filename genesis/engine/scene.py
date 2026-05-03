@@ -277,11 +277,6 @@ class Scene(RBC):
                 )
         else:
             if sim_options.requires_grad and gs.use_ndarray:
-                if gs.backend == gs.metal:
-                    gs.raise_exception(
-                        "Metal backend does not support gradient computation with Quadrants dynamic array mode. "
-                        "Please use field mode instead, i.e. 'gs.init(..., performance_mode=True)'."
-                    )
                 gs.logger.info(
                     "Using Quadrants dynamic array mode while enabling gradient computation is not recommended. Please "
                     "enable performance mode at init for efficiency, i.e. 'gs.init(..., performance_mode=True)'."
@@ -1465,7 +1460,7 @@ class Scene(RBC):
         arrays: dict[str, np.ndarray] = {}
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (qd.Field, qd.Ndarray)):
+            if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
                 arrays[".".join((self.__class__.__name__, name))] = value.to_numpy()
 
         for solver in self.active_solvers:
@@ -1505,7 +1500,7 @@ class Scene(RBC):
         arrays = state["arrays"]
 
         for name, value in self.__dict__.items():
-            if isinstance(value, (qd.Field, qd.Ndarray)):
+            if isinstance(value, (qd.Tensor, qd.Field, qd.Ndarray)):
                 key = ".".join((self.__class__.__name__, name))
                 if key in arrays:
                     value.from_numpy(arrays[key])

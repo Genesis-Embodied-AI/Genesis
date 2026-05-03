@@ -35,7 +35,7 @@ def func_plane_box_contact(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
     collider_static_config: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
@@ -108,7 +108,7 @@ def func_box_box_contact(
     collider_info: array_class.ColliderInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     collider_static_config: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     Use Mujoco's box-box contact detection algorithm for more stable collision detection.

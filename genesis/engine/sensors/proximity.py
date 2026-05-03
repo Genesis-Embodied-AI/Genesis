@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _kernel_proximity(
     probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
@@ -58,7 +58,7 @@ def _kernel_proximity(
     n_batches = output.shape[-1]
 
     func_update_all_verts(
-        geoms_info, geoms_state, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
+        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
 
     for i_p, i_b in qd.ndrange(total_n_probes, n_batches):

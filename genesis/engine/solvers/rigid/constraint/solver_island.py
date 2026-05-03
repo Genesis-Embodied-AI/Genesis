@@ -113,7 +113,7 @@ class ConstraintSolverIsland:
             self.n_constraints[i_b] = 0
 
     @qd.kernel
-    def resolve(self):
+    def resolve(self, entities_info: array_class.EntitiesInfo, rigid_global_info: array_class.RigidGlobalInfo):
         for i_b in range(self._B):
             for i_island in range(self.contact_island.n_islands[i_b]):
                 is_active = True
@@ -122,8 +122,8 @@ class ConstraintSolverIsland:
                 if is_active:
                     self.add_collision_constraints_and_wakeup_entities(i_island, i_b)
                     self.add_joint_limit_constraints(i_island, i_b)
-                    self._func_init_solver(i_island, i_b)
-                    self._func_solve(i_island, i_b)
+                    self._func_init_solver(i_island, i_b, entities_info, rigid_global_info)
+                    self._func_solve(i_island, i_b, entities_info, rigid_global_info)
                     self._func_update_qacc(i_island, i_b)
                     self._func_update_contact_force(i_island, i_b)
 
@@ -556,13 +556,19 @@ class ConstraintSolverIsland:
                 self.qacc_ws[i_d, i_b] = self.qacc[i_d, i_b]
 
     @qd.func
-    def _func_solve(self, i_island: int, i_b: int):
+    def _func_solve(
+        self,
+        i_island: int,
+        i_b: int,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
+    ):
         # this safeguard seems not necessary in normal execution
         # if self.n_constraints[i_b] > 0 or self.cost_ws[i_b] < self.cost[i_b]:
         if self.n_constraints[i_b] > 0:
             tol_scaled = (self._solver.meaninertia[i_b] * qd.max(1, self._solver.n_dofs)) * self.tolerance
             for it in range(self.iterations):
-                self._func_solve_body(i_island, i_b)
+                self._func_solve_body(i_island, i_b, entities_info, rigid_global_info)
                 if not self.improved[i_b]:
                     break
 
@@ -848,7 +854,9 @@ class ConstraintSolverIsland:
         return flag, p_alpha, p_cost, p_deriv_0, p_deriv_1, p_next_alpha, p_next_cost, p_next_deriv_0, p_next_deriv_1
 
     @qd.func
-    def _func_solve_body(self, island, i_b):
+    def _func_solve_body(
+        self, island, i_b, entities_info: array_class.EntitiesInfo, rigid_global_info: array_class.RigidGlobalInfo
+    ):
         alpha = self._func_linesearch(island, i_b)
 
         if qd.abs(alpha) < gs.EPS:
@@ -875,7 +883,7 @@ class ConstraintSolverIsland:
             self._func_update_constraint(island, i_b, self.qacc, self.Ma, self.cost)
 
             if qd.static(self._solver_type == gs.constraint_solver.CG):
-                self._func_update_gradient(island, i_b)
+                self._func_update_gradient(island, i_b, entities_info, rigid_global_info)
 
                 self.cg_beta[i_b] = gs.qd_float(0.0)
                 self.cg_pg_dot_pMg[i_b] = gs.qd_float(0.0)
@@ -900,7 +908,7 @@ class ConstraintSolverIsland:
                 if improvement > 0:
                     # TODO
                     self._func_nt_hessian_incremental(island, i_b)
-                    self._func_update_gradient(island, i_b)
+                    self._func_update_gradient(island, i_b, entities_info, rigid_global_info)
 
                     for i_island_entity in range(self.contact_island.island_entity.n[island, i_b]):
                         i_e_ = self.contact_island.island_entity.start[island, i_b] + i_island_entity
@@ -957,7 +965,9 @@ class ConstraintSolverIsland:
             )
 
     @qd.func
-    def _func_update_gradient(self, island, i_b):
+    def _func_update_gradient(
+        self, island, i_b, entities_info: array_class.EntitiesInfo, rigid_global_info: array_class.RigidGlobalInfo
+    ):
         for i_island_entity in range(self.contact_island.island_entity.n[island, i_b]):
             i_e_ = self.contact_island.island_entity.start[island, i_b] + i_island_entity
             i_e = self.contact_island.entity_id[i_e_, i_b]
@@ -977,9 +987,9 @@ class ConstraintSolverIsland:
                 i_b,
                 self.grad,
                 self.Mgrad,
-                array_class.PLACEHOLDER,
-                entities_info=self.entities_info,
-                rigid_global_info=self._solver.data_manager.rigid_global_info,
+                None,
+                entities_info=entities_info,
+                rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=self._solver._static_rigid_sim_config,
                 is_backward=False,
             )
@@ -1013,7 +1023,13 @@ class ConstraintSolverIsland:
                 Ma[i_d1, i_b] = Ma_
 
     @qd.func
-    def _func_init_solver(self, i_island: int, i_b: int):
+    def _func_init_solver(
+        self,
+        i_island: int,
+        i_b: int,
+        entities_info: array_class.EntitiesInfo,
+        rigid_global_info: array_class.RigidGlobalInfo,
+    ):
         # check if warm start
         self.initialize_Jaref(self.qacc_ws, i_b)
         self.initialize_Ma(self.Ma_ws, self.qacc_ws, i_island, i_b)
@@ -1040,7 +1056,7 @@ class ConstraintSolverIsland:
         if qd.static(self._solver_type == gs.constraint_solver.Newton):
             self._func_nt_hessian_direct(i_island, i_b)
 
-        self._func_update_gradient(i_island, i_b)
+        self._func_update_gradient(i_island, i_b, entities_info, rigid_global_info)
 
         for i_island_entity in range(self.contact_island.island_entity.n[i_island, i_b]):
             i_e_ = self.contact_island.island_entity.start[i_island, i_b] + i_island_entity
