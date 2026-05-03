@@ -524,7 +524,12 @@ def qd_to_torch(
     if isinstance(value, qd.Tensor):
         value = value._unwrap()
 
+    # Try efficient shortcut first and only fallback to standard branching if necessary.
+    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
     if not gs.use_zerocopy:
+        # Transpose if necessary and requested.
+        # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
+        # advanced masking, which would spare computation later on if expected from the user.
         tensor = _maybe_transpose(value.to_torch(), value, transpose)
     else:
         try:
@@ -567,7 +572,12 @@ def qd_to_numpy(
     if isinstance(value, qd.Tensor):
         value = value._unwrap()
 
+    # Try efficient shortcut first and only fallback to standard branching if necessary.
+    # FIXME: Ideally one should detect if slicing would require a copy to avoid enforcing copy here.
     if not gs.use_zerocopy:
+        # Transpose if necessary and requested.
+        # Note that it is worth transposing here before slicing, as it preserve row-major memory alignment in case of
+        # advanced masking, which would spare computation later on if expected from the user.
         array = _maybe_transpose_np(value.to_numpy(), value, transpose)
     else:
         try:
