@@ -477,58 +477,10 @@ def _maybe_transpose(tc, value, transpose):
     return tc.movedim(len(value.shape) - 1, 0)
 
 
-def _get_or_build_torch_view(value, transpose):
-    """Return a (possibly cached) torch tensor for *value*, respecting gs.use_zerocopy."""
-    if not gs.use_zerocopy:
-        return _maybe_transpose(value.to_torch(), value, transpose)
-
-    try:
-        return value._T_tc if transpose else value._tc
-    except AttributeError:
-        pass
-
-    try:
-        tc = value.to_torch(copy=False)
-    except (ValueError, RuntimeError):
-        return _maybe_transpose(value.to_torch(), value, transpose)
-
-    tensor = _maybe_transpose(tc, value, transpose)
-    if transpose:
-        value._T_tc = tensor
-    else:
-        value._tc = tensor
-    return tensor
-
-
 def _maybe_transpose_np(arr, value, transpose):
     if not transpose or len(value.shape) <= 1:
         return arr
     return np.moveaxis(arr, len(value.shape) - 1, 0)
-
-
-def _get_or_build_numpy_view(value, transpose):
-    """Return a (possibly cached) numpy array for *value*, respecting gs.use_zerocopy."""
-    if not gs.use_zerocopy:
-        return _maybe_transpose_np(value.to_numpy(), value, transpose)
-
-    try:
-        cached = value._T_np if transpose else value._np
-        if cached is not None:
-            return cached
-    except AttributeError:
-        pass
-
-    if gs.backend != gs.cpu:
-        return _maybe_transpose_np(value.to_numpy(), value, transpose)
-
-    try:
-        tc = value.to_torch(copy=False)
-    except (RuntimeError, TypeError, ValueError):
-        return _maybe_transpose_np(value.to_numpy(), value, transpose)
-
-    value._np = tc.numpy()
-    value._T_np = _maybe_transpose(tc, value, True).numpy()
-    return value._T_np if transpose else value._np
 
 
 def _apply_masks(out, value, row_mask, col_mask, keepdim, copy, *, to_torch):
@@ -571,7 +523,22 @@ def qd_to_torch(
     """
     if isinstance(value, qd.Tensor):
         value = value._unwrap()
-    tensor = _get_or_build_torch_view(value, transpose)
+
+    if not gs.use_zerocopy:
+        tensor = _maybe_transpose(value.to_torch(), value, transpose)
+    else:
+        try:
+            tensor = value._T_tc if transpose else value._tc
+        except AttributeError:
+            try:
+                tc = value.to_torch(copy=False)
+            except (ValueError, RuntimeError):
+                tensor = _maybe_transpose(value.to_torch(), value, transpose)
+            else:
+                value._tc = tc
+                value._T_tc = _maybe_transpose(tc, value, True)
+                tensor = value._T_tc if transpose else value._tc
+
     if copy:
         tensor = tensor.clone()
     return _apply_masks(tensor, value, row_mask, col_mask, keepdim, copy, to_torch=True)
@@ -599,7 +566,29 @@ def qd_to_numpy(
     """
     if isinstance(value, qd.Tensor):
         value = value._unwrap()
-    array = _get_or_build_numpy_view(value, transpose)
+
+    if not gs.use_zerocopy:
+        array = _maybe_transpose_np(value.to_numpy(), value, transpose)
+    else:
+        try:
+            cached = value._T_np if transpose else value._np
+            if cached is not None:
+                array = cached
+            else:
+                raise AttributeError
+        except AttributeError:
+            if gs.backend != gs.cpu:
+                array = _maybe_transpose_np(value.to_numpy(), value, transpose)
+            else:
+                try:
+                    tc = value.to_torch(copy=False)
+                except (RuntimeError, TypeError, ValueError):
+                    array = _maybe_transpose_np(value.to_numpy(), value, transpose)
+                else:
+                    value._np = tc.numpy()
+                    value._T_np = _maybe_transpose(tc, value, True).numpy()
+                    array = value._T_np if transpose else value._np
+
     if copy:
         array = array.copy()
     return _apply_masks(array, value, row_mask, col_mask, keepdim, copy, to_torch=False)
