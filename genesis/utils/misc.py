@@ -538,7 +538,6 @@ def qd_to_torch(
     else:
         try:
             tensor = value._T_tc if transpose else value._tc
-            is_copy = False
         except AttributeError:
             try:
                 tc = value.to_torch(copy=False)

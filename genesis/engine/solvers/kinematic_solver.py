@@ -801,8 +801,6 @@ class KinematicSolver(Solver):
                 assign_indexed_tensor(data, mask, qpos)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
         else:
             qpos, qs_idx, envs_idx = self._sanitize_io_variables(
                 qpos, qs_idx, self.n_qs, "qs_idx", envs_idx, skip_allocation=True
@@ -869,8 +867,6 @@ class KinematicSolver(Solver):
                     assign_indexed_tensor(vel, mask, velocity)
                 if mask and isinstance(mask[0], torch.Tensor):
                     envs_idx = mask[0].reshape((-1,))
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
             if not skip_forward and not isinstance(envs_idx, torch.Tensor):
                 envs_idx = self._scene._sanitize_envs_idx(envs_idx)
         else:
