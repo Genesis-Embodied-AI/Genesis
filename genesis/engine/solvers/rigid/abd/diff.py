@@ -27,7 +27,7 @@ def func_copy_next_to_curr(
     dofs_state: array_class.DofsState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     n_qs = rigid_global_info.qpos.shape[0]
     n_dofs = dofs_state.vel.shape[0]
@@ -79,7 +79,7 @@ def func_copy_next_to_curr_grad(
         rigid_global_info.qpos[i_q, i_b] = rigid_adjoint_cache.qpos[f, i_q, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_save_adjoint_cache(
     f: qd.int32,
     dofs_state: array_class.DofsState,
@@ -134,7 +134,7 @@ def func_load_adjoint_cache(
         rigid_global_info.qpos[i_q, i_b] = rigid_adjoint_cache.qpos[f, i_q, i_b]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_prepare_backward_substep(
     f: qd.int32,
     links_state: array_class.LinksState,
@@ -197,7 +197,7 @@ def kernel_prepare_backward_substep(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_begin_backward_substep(
     f: qd.int32,
     links_state: array_class.LinksState,
@@ -332,7 +332,7 @@ def func_copy_cartesian_space(
         geoms_state_adjoint_cache.verts_updated[I] = geoms_state.verts_updated[I]
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_copy_acc(
     f: qd.int32,
     dofs_state: array_class.DofsState,

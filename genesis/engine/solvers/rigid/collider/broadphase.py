@@ -99,7 +99,7 @@ def func_collision_clear(
                 ):
                     i_c_hibernated = collider_state.n_contacts_hibernated[i_b]
                     if i_c != i_c_hibernated:
-                        # Copying all fields of class StructContactData individually
+                        # Copying all fields of class ContactData individually
                         # (fields mode doesn't support struct-level copy operations):
                         # fmt: off
                         collider_state.contact_data.geom_a[i_c_hibernated, i_b] = collider_state.contact_data.geom_a[i_c, i_b]
@@ -138,7 +138,7 @@ def func_collision_clear(
             collider_state.n_contacts[i_b] = 0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_broad_phase_sap(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -150,7 +150,7 @@ def _func_broad_phase_sap(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     Sweep and Prune (SAP) for broad-phase collision detection.
@@ -396,7 +396,7 @@ def _func_broad_phase_sap(
         collider_state.n_broad_pairs[i_b] = n_broad
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def _func_broad_phase_all_vs_all(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -408,7 +408,7 @@ def _func_broad_phase_all_vs_all(
     collider_state: array_class.ColliderState,
     equalities_info: array_class.EqualitiesInfo,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     """
     All-vs-all broad-phase collision detection.

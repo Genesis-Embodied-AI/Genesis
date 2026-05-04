@@ -106,7 +106,7 @@ def update_qvel(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_compute_mass_matrix(
     # Quadrants variables
     links_state: array_class.LinksState,
@@ -227,7 +227,7 @@ def func_forward_dynamics(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_forward_dynamics(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -257,7 +257,7 @@ def kernel_forward_dynamics(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_update_acc(
     dofs_state: array_class.DofsState,
     links_info: array_class.LinksInfo,
@@ -813,9 +813,9 @@ def func_factor_mass(
 def func_solve_mass_entity(
     i_e: qd.int32,
     i_b: qd.int32,
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -897,9 +897,9 @@ def func_solve_mass_entity(
 @qd.func
 def func_solve_mass_batch(
     i_b: qd.int32,
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.template(),
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -936,9 +936,9 @@ def func_solve_mass_batch(
 
 @qd.func
 def func_solve_mass(
-    vec: array_class.V_ANNOTATION,
-    out: array_class.V_ANNOTATION,
-    out_bw: array_class.V_ANNOTATION,  # Should not be None if backward
+    vec: qd.Tensor,
+    out: qd.Tensor,
+    out_bw: qd.template(),  # None in forward mode, real tensor in backward mode
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),

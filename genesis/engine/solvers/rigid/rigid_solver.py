@@ -16,6 +16,7 @@ from genesis.utils.misc import (
     DeprecationError,
     qd_to_torch,
     qd_to_numpy,
+    qd_zero_grad,
     indices_to_mask,
     broadcast_tensor,
     sanitize_indexed_tensor,
@@ -261,7 +262,7 @@ class RigidSolver(KinematicSolver):
         self.collider = None
         self.constraint_solver = None
 
-        self.qpos: qd.Field | qd.Ndarray | None = None
+        self.qpos: qd.Tensor | qd.Field | qd.Ndarray | None = None
 
         self._is_backward: bool = False
 
@@ -463,7 +464,7 @@ class RigidSolver(KinematicSolver):
                     n_geoms=self._n_geoms,
                 )
 
-        self._static_rigid_sim_config = array_class.StructRigidSimStaticConfig(**static_rigid_sim_config)
+        self._static_rigid_sim_config = array_class.RigidSimStaticConfig(**static_rigid_sim_config)
 
         if self._static_rigid_sim_config.use_hibernation:
             if gs.use_ndarray:
@@ -1067,7 +1068,7 @@ class RigidSolver(KinematicSolver):
             else:
                 self.constraint_solver.add_inequality_constraints()
 
-            self.constraint_solver.resolve()
+            self.constraint_solver.resolve(self.entities_info, self._rigid_global_info)
 
     def _func_forward_dynamics(self):
         kernel_forward_dynamics(
@@ -1127,8 +1128,8 @@ class RigidSolver(KinematicSolver):
         kernel_update_geoms(
             envs_idx,
             self.entities_info,
-            self.geoms_info,
             self.geoms_state,
+            self.geoms_info,
             self.links_state,
             self._rigid_global_info,
             self._static_rigid_sim_config,
@@ -1233,6 +1234,20 @@ class RigidSolver(KinematicSolver):
 
             # Run Genesis rigid simulation step for non-IPC couplers
             self.substep(f)
+
+    def reset_grad(self):
+        # Rigid additionally owns `geoms_state`, `entities_state`, and the `*_adjoint_cache` structs written by the
+        # backward substep chain. All carry `needs_grad=True` fields that accumulate via `atomic_add` during backward,
+        # so they must start at zero between consecutive `loss.backward()`s.
+        super().reset_grad()
+        if self._requires_grad:
+            qd_zero_grad(self.geoms_state)
+            qd_zero_grad(self.entities_state)
+            qd_zero_grad(self.dofs_state_adjoint_cache)
+            qd_zero_grad(self.links_state_adjoint_cache)
+            qd_zero_grad(self.joints_state_adjoint_cache)
+            qd_zero_grad(self.geoms_state_adjoint_cache)
+            qd_zero_grad(self._rigid_adjoint_cache)
 
     def substep_pre_coupling_grad(self, f):
         # Change to backward mode
@@ -2744,7 +2759,7 @@ class RigidSolver(KinematicSolver):
         return gs.List(equality for entity in self._entities for equality in entity.equalities)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_step_1(
     links_state: array_class.LinksState,
     links_info: array_class.LinksInfo,
@@ -2771,8 +2786,8 @@ def kernel_step_1(
             joints_info=joints_info,
             dofs_state=dofs_state,
             dofs_info=dofs_info,
-            geoms_info=geoms_info,
             geoms_state=geoms_state,
+            geoms_info=geoms_info,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2808,7 +2823,7 @@ def kernel_step_1(
     )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_step_2(
     dofs_state: array_class.DofsState,
     dofs_info: array_class.DofsInfo,
@@ -2825,7 +2840,7 @@ def kernel_step_2(
     static_rigid_sim_config: qd.template(),
     contact_island_state: array_class.ContactIslandState,
     is_backward: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     # Position, Velocity and Acceleration data must be consistent when computing links acceleration, otherwise it
     # would not corresponds to anyting physical. There is no other way than doing this right before integration,
@@ -2899,8 +2914,8 @@ def kernel_step_2(
                 joints_info=joints_info,
                 dofs_state=dofs_state,
                 dofs_info=dofs_info,
-                geoms_info=geoms_info,
                 geoms_state=geoms_state,
+                geoms_info=geoms_info,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,

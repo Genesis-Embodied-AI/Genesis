@@ -162,7 +162,7 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
-        self._collider_static_config = array_class.StructColliderStaticConfig(
+        self._collider_static_config = array_class.ColliderStaticConfig(
             has_terrain=has_terrain,
             has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
