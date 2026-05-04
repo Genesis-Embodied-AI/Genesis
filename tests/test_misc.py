@@ -128,9 +128,13 @@ def test_surface_shortcut_resolution_is_idempotent():
 
     Pydantic re-runs ``model_validator(mode="after")`` validators when an
     instance is nested inside another model. Without idempotency, the second
-    pass sees both the shortcut (e.g. ``color``) and the resolved texture
-    field (``diffuse_texture``) populated and raises
+    pass would see both the shortcut (e.g. ``color``) and the resolved
+    texture field (``diffuse_texture``) populated and raise
     ``"'color' and 'diffuse_texture' cannot both be set."``.
+
+    The shortcut fields stay readable on the constructed instance — downstream
+    consumers (e.g. the Nyx scene exporter) read ``surface.color``,
+    ``surface.roughness``, etc. directly to populate material params.
     """
     from pydantic import BaseModel
     from genesis.options.surfaces import Surface
@@ -138,25 +142,26 @@ def test_surface_shortcut_resolution_is_idempotent():
     class Wrapper(BaseModel):
         surface: Surface
 
-    # Plastic-family: color → diffuse_texture, roughness (default) → roughness_texture.
+    # Plastic-family: color → diffuse_texture, roughness (default 1.0) → roughness_texture.
     rough = gs.surfaces.Rough(color=(0.4, 0.4, 0.4))
-    assert rough.color is None, "color shortcut should be cleared after resolution"
-    assert rough.roughness is None, "roughness shortcut should be cleared after resolution"
+    assert rough.color == (0.4, 0.4, 0.4), "color shortcut must remain readable after resolution"
+    assert rough.roughness == 1.0, "roughness shortcut must remain readable after resolution"
     assert rough.diffuse_texture.color == (0.4, 0.4, 0.4)
     assert rough.roughness_texture.color == (1.0,)
     Wrapper(surface=rough)  # used to raise
+    assert rough.color == (0.4, 0.4, 0.4)  # unchanged after re-validation
 
     # Glass: color → specular_texture, plus the thickness shortcut.
     glass = gs.surfaces.Glass(color=(0.6, 0.8, 1.0), thickness=0.02)
-    assert glass.color is None
-    assert glass.thickness is None
+    assert glass.color == (0.6, 0.8, 1.0)
+    assert glass.thickness == 0.02
     assert glass.specular_texture.color == (0.6, 0.8, 1.0)
     assert glass.thickness_texture.color == (0.02,)
     Wrapper(surface=glass)
 
     # BSDF: exercise multiple shortcuts simultaneously (color, roughness, metallic).
     bsdf = gs.surfaces.BSDF(color=(0.2, 0.3, 0.4), roughness=0.3, metallic=0.5)
-    assert bsdf.color is None and bsdf.roughness is None and bsdf.metallic is None
+    assert bsdf.color == (0.2, 0.3, 0.4) and bsdf.roughness == 0.3 and bsdf.metallic == 0.5
     assert bsdf.diffuse_texture.color == (0.2, 0.3, 0.4)
     assert bsdf.roughness_texture.color == (0.3,)
     assert bsdf.metallic_texture.color == (0.5,)
@@ -164,7 +169,7 @@ def test_surface_shortcut_resolution_is_idempotent():
 
     # Emit: color → emissive_texture.
     emit = gs.surfaces.Emission(color=(1.0, 1.0, 0.0))
-    assert emit.color is None
+    assert emit.color == (1.0, 1.0, 0.0)
     assert emit.emissive_texture.color == (1.0, 1.0, 0.0)
     Wrapper(surface=emit)
 

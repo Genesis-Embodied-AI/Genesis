@@ -3,7 +3,7 @@ from typing import ClassVar, Literal
 from typing_extensions import Self
 
 import numpy as np
-from pydantic import Field, StrictBool, model_validator
+from pydantic import Field, PrivateAttr, StrictBool, model_validator
 
 import genesis as gs
 from genesis.typing import FArrayType, UnitInterval, ValidFloat
@@ -95,11 +95,20 @@ class Surface(Options):
     generate_foam: StrictBool = False
     foam_options: FoamOptions = Field(default_factory=FoamOptions)
 
+    # Private guard: ensures ``_resolve_shortcuts`` runs at most once per instance
+    # so re-validation (e.g., when the surface is nested in another Pydantic
+    # model) doesn't re-route shortcuts and trip "'X' and 'X_texture' cannot
+    # both be set." Kept private so downstream consumers can still read the
+    # shortcut fields (``color``, ``roughness``, ...) after construction.
+    _shortcuts_resolved: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def _resolve_shortcuts(self) -> Self:
-        # Sync ``default_roughness`` with the ``roughness`` shortcut before
-        # the shortcut is consumed below. Skip when ``default_roughness`` is
-        # explicitly set so a user override always wins.
+        if self._shortcuts_resolved:
+            return self
+
+        # Sync ``default_roughness`` with the ``roughness`` shortcut, unless
+        # ``default_roughness`` was explicitly set (user override wins).
         if self.roughness is not None and "default_roughness" not in self.model_fields_set:
             self.default_roughness = float(self.roughness)
 
@@ -108,16 +117,16 @@ class Surface(Options):
             if getattr(self, color_target) is not None:
                 gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
             setattr(self, color_target, ColorTexture(color=tuple(self.color)))
-            # Idempotency: route the shortcut into the texture field exactly once.
-            # Without this, re-validation (e.g., when the surface is nested inside
-            # another Pydantic model) would see both ``color`` and the texture
-            # field populated and raise the "cannot both be set" error.
-            self.color = None
 
+        # ``thickness`` is a Glass-only field; the loop tolerates it on other
+        # surfaces because ``getattr(..., None)`` returns ``None`` and the
+        # ``texture_field in self.model_fields`` guard skips when the texture
+        # field isn't declared on the subclass.
         for shortcut, texture_field in (
             ("opacity", "opacity_texture"),
             ("roughness", "roughness_texture"),
             ("metallic", "metallic_texture"),
+            ("thickness", "thickness_texture"),
         ):
             value = getattr(self, shortcut, None)
             if value is not None:
@@ -125,15 +134,14 @@ class Surface(Options):
                     if getattr(self, texture_field) is not None:
                         gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
                     setattr(self, texture_field, ColorTexture(color=(float(value),)))
-                    setattr(self, shortcut, None)
 
         if self.emissive is not None:
             if "emissive_texture" in self.model_fields:
                 if self.emissive_texture is not None:
                     gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
                 self.emissive_texture = ColorTexture(color=tuple(self.emissive))
-                self.emissive = None
 
+        self._shortcuts_resolved = True
         return self
 
     @property
@@ -326,14 +334,10 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
-        # Handle thickness shortcut. Clear ``thickness`` after routing it into
-        # ``thickness_texture`` so re-validation (e.g., the surface nested in
-        # another Pydantic model) doesn't trip the "cannot both be set" check.
-        if self.thickness is not None:
-            if self.thickness_texture is not None:
-                gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
-            self.thickness_texture = ColorTexture(color=(float(self.thickness),))
-            self.thickness = None
+        # ``thickness`` shortcut handling lives in ``Surface._resolve_shortcuts``
+        # alongside the other shortcuts (and is gated by the same idempotency
+        # flag). The remaining work here is texture-shape normalization, which
+        # is naturally idempotent.
 
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
