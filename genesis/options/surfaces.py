@@ -97,11 +97,22 @@ class Surface(Options):
 
     @model_validator(mode="after")
     def _resolve_shortcuts(self) -> Self:
+        # Sync ``default_roughness`` with the ``roughness`` shortcut before
+        # the shortcut is consumed below. Skip when ``default_roughness`` is
+        # explicitly set so a user override always wins.
+        if self.roughness is not None and "default_roughness" not in self.model_fields_set:
+            self.default_roughness = float(self.roughness)
+
         color_target = type(self)._color_target
         if self.color is not None:
             if getattr(self, color_target) is not None:
                 gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
             setattr(self, color_target, ColorTexture(color=tuple(self.color)))
+            # Idempotency: route the shortcut into the texture field exactly once.
+            # Without this, re-validation (e.g., when the surface is nested inside
+            # another Pydantic model) would see both ``color`` and the texture
+            # field populated and raise the "cannot both be set" error.
+            self.color = None
 
         for shortcut, texture_field in (
             ("opacity", "opacity_texture"),
@@ -114,16 +125,14 @@ class Surface(Options):
                     if getattr(self, texture_field) is not None:
                         gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
                     setattr(self, texture_field, ColorTexture(color=(float(value),)))
+                    setattr(self, shortcut, None)
 
         if self.emissive is not None:
             if "emissive_texture" in self.model_fields:
                 if self.emissive_texture is not None:
                     gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
                 self.emissive_texture = ColorTexture(color=tuple(self.emissive))
-
-        # Sync default_roughness with roughness shortcut unless explicitly set
-        if self.roughness is not None and "default_roughness" not in self.model_fields_set:
-            self.default_roughness = float(self.roughness)
+                self.emissive = None
 
         return self
 
@@ -317,11 +326,14 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
-        # Handle thickness shortcut
+        # Handle thickness shortcut. Clear ``thickness`` after routing it into
+        # ``thickness_texture`` so re-validation (e.g., the surface nested in
+        # another Pydantic model) doesn't trip the "cannot both be set" check.
         if self.thickness is not None:
             if self.thickness_texture is not None:
                 gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
             self.thickness_texture = ColorTexture(color=(float(self.thickness),))
+            self.thickness = None
 
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
