@@ -95,11 +95,6 @@ class Surface(Options):
     generate_foam: StrictBool = False
     foam_options: FoamOptions = Field(default_factory=FoamOptions)
 
-    # Private guard: ensures ``_resolve_shortcuts`` runs at most once per instance
-    # so re-validation (e.g., when the surface is nested in another Pydantic
-    # model) doesn't re-route shortcuts and trip "'X' and 'X_texture' cannot
-    # both be set." Kept private so downstream consumers can still read the
-    # shortcut fields (``color``, ``roughness``, ...) after construction.
     _shortcuts_resolved: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
@@ -107,8 +102,6 @@ class Surface(Options):
         if self._shortcuts_resolved:
             return self
 
-        # Sync ``default_roughness`` with the ``roughness`` shortcut, unless
-        # ``default_roughness`` was explicitly set (user override wins).
         if self.roughness is not None and "default_roughness" not in self.model_fields_set:
             self.default_roughness = float(self.roughness)
 
@@ -118,10 +111,6 @@ class Surface(Options):
                 gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
             setattr(self, color_target, ColorTexture(color=tuple(self.color)))
 
-        # ``thickness`` is a Glass-only field; the loop tolerates it on other
-        # surfaces because ``getattr(..., None)`` returns ``None`` and the
-        # ``texture_field in self.model_fields`` guard skips when the texture
-        # field isn't declared on the subclass.
         for shortcut, texture_field in (
             ("opacity", "opacity_texture"),
             ("roughness", "roughness_texture"),
@@ -334,11 +323,6 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
-        # ``thickness`` shortcut handling lives in ``Surface._resolve_shortcuts``
-        # alongside the other shortcuts (and is gated by the same idempotency
-        # flag). The remaining work here is texture-shape normalization, which
-        # is naturally idempotent.
-
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
             self.specular_texture.check_dim(3)
