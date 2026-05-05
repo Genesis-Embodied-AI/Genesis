@@ -1484,7 +1484,7 @@ def func_update_acc(
     BW = qd.static(is_backward)
 
     # Assume this is the outermost loop
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL, block_dim=64)
     for i_0, i_b in (
         qd.ndrange(1, static_rigid_sim_config.n_envs)
         if qd.static(static_rigid_sim_config.use_hibernation)
@@ -1529,20 +1529,19 @@ def func_update_acc(
                         I_l = [i_l, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_l
                         i_p = links_info.parent_idx[I_l]
 
-                        if i_p == -1:
-                            links_state.cdd_vel[i_l, i_b] = -rigid_global_info.gravity[i_b] * (
-                                1 - entities_info.gravity_compensation[i_e]
-                            )
-                            links_state.cdd_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
+                        ls_cdd_vel = -rigid_global_info.gravity[i_b] * (
+                            1 - entities_info.gravity_compensation[i_e]
+                        )
+                        ls_cdd_ang = qd.Vector.zero(gs.qd_float, 3)
+                        ls_cacc_lin = qd.Vector.zero(gs.qd_float, 3) if qd.static(update_cacc) else gs.qd_float(0.0)
+                        ls_cacc_ang = qd.Vector.zero(gs.qd_float, 3) if qd.static(update_cacc) else gs.qd_float(0.0)
+
+                        if i_p != -1:
+                            ls_cdd_vel = links_state.cdd_vel[i_p, i_b]
+                            ls_cdd_ang = links_state.cdd_ang[i_p, i_b]
                             if qd.static(update_cacc):
-                                links_state.cacc_lin[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                                links_state.cacc_ang[i_l, i_b] = qd.Vector.zero(gs.qd_float, 3)
-                        else:
-                            links_state.cdd_vel[i_l, i_b] = links_state.cdd_vel[i_p, i_b]
-                            links_state.cdd_ang[i_l, i_b] = links_state.cdd_ang[i_p, i_b]
-                            if qd.static(update_cacc):
-                                links_state.cacc_lin[i_l, i_b] = links_state.cacc_lin[i_p, i_b]
-                                links_state.cacc_ang[i_l, i_b] = links_state.cacc_ang[i_p, i_b]
+                                ls_cacc_lin = links_state.cacc_lin[i_p, i_b]
+                                ls_cacc_ang = links_state.cacc_ang[i_p, i_b]
 
                         for i_d_ in (
                             range(links_info.dof_start[I_l], links_info.dof_end[I_l])
@@ -1556,22 +1555,17 @@ def func_update_acc(
                                 local_cdd_vel = dofs_state.cdofd_vel[i_d, i_b] * dofs_state.vel[i_d, i_b]
                                 local_cdd_ang = dofs_state.cdofd_ang[i_d, i_b] * dofs_state.vel[i_d, i_b]
 
-                                func_add_safe_backward(links_state.cdd_vel, [i_l, i_b], local_cdd_vel, BW)
-                                func_add_safe_backward(links_state.cdd_ang, [i_l, i_b], local_cdd_ang, BW)
+                                ls_cdd_vel = ls_cdd_vel + local_cdd_vel
+                                ls_cdd_ang = ls_cdd_ang + local_cdd_ang
                                 if qd.static(update_cacc):
-                                    func_add_safe_backward(
-                                        links_state.cacc_lin,
-                                        [i_l, i_b],
-                                        local_cdd_vel + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b],
-                                        BW,
-                                    )
-                                    func_add_safe_backward(
-                                        links_state.cacc_ang,
-                                        [i_l, i_b],
-                                        local_cdd_ang + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b],
-                                        BW,
-                                    )
+                                    ls_cacc_lin = ls_cacc_lin + local_cdd_vel + dofs_state.cdof_vel[i_d, i_b] * dofs_state.acc[i_d, i_b]
+                                    ls_cacc_ang = ls_cacc_ang + local_cdd_ang + dofs_state.cdof_ang[i_d, i_b] * dofs_state.acc[i_d, i_b]
 
+                        links_state.cdd_vel[i_l, i_b] = ls_cdd_vel
+                        links_state.cdd_ang[i_l, i_b] = ls_cdd_ang
+                        if qd.static(update_cacc):
+                            links_state.cacc_lin[i_l, i_b] = ls_cacc_lin
+                            links_state.cacc_ang[i_l, i_b] = ls_cacc_ang
 
 @qd.func
 def func_update_force(
