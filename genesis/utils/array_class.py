@@ -2064,8 +2064,16 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     # Because the layout change is implemented via ``qd.tensor(..., layout=)``,
     # canonical ``Jaref[i_c, i_b]`` indexing in kernel bodies remains correct
     # in both modes — the AST-level rewrite handles the permutation.
-    # Cooperative kernels are gated on this flag via ``qd.static(...)``,
-    # so it is fastcache-safe. See perso_hugh/doc/linesearch_shuffle.md.
+    # Cooperative kernels switch on this flag via ``qd.static(...)`` so the
+    # dead branch is DCE'd at compile time. The flag is fastcache-safe
+    # because ``RigidSimStaticConfig`` is ``@qd.data_oriented`` (see the
+    # decorator above): primitive member values of ``@qd.data_oriented``
+    # parameters are automatically included in the kernel's fastcache key,
+    # so flipping this bool produces a different key and a separately-cached
+    # compiled artifact. ``qd.static(...)`` itself does **not** affect
+    # cache keys — it is purely a compile-time-evaluation marker. See
+    # perso_hugh/doc/linesearch_shuffle.md and quadrants/docs/source/
+    # user_guide/fastcache.md ("Supported parameter types" table).
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
