@@ -2449,9 +2449,7 @@ def func_ls_point_fn_opt(
     t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt(
         i_b, alpha, alpha, alpha, constraint_state, 1
     )
-    return _func_ls_point_fn_opt_post(
-        i_b, 0, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False
-    )
+    return _func_ls_point_fn_opt_post(i_b, 0, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
 
 
 @qd.func
@@ -2549,9 +2547,7 @@ def func_ls_point_fn_opt_coop(
     t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_coop(
         i_b, tid, alpha, alpha, alpha, constraint_state, 1
     )
-    return _func_ls_point_fn_opt_post(
-        i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True
-    )
+    return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True)
 
 
 @qd.func
@@ -2561,9 +2557,15 @@ def _func_ls_point_fn_3alphas_post(
     alpha_0,
     alpha_1,
     alpha_2,
-    t0_0, t0_1, t0_2,
-    t1_0, t1_1, t1_2,
-    t2_0, t2_1, t2_2,
+    t0_0,
+    t0_1,
+    t0_2,
+    t1_0,
+    t1_1,
+    t1_2,
+    t2_0,
+    t2_1,
+    t2_2,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
@@ -2612,9 +2614,23 @@ def func_ls_point_fn_3alphas_opt(
         i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
     )
     return _func_ls_point_fn_3alphas_post(
-        i_b, 0, alpha_0, alpha_1, alpha_2,
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2,
-        constraint_state, rigid_global_info, False
+        i_b,
+        0,
+        alpha_0,
+        alpha_1,
+        alpha_2,
+        t0_0,
+        t0_1,
+        t0_2,
+        t1_0,
+        t1_1,
+        t1_2,
+        t2_0,
+        t2_1,
+        t2_2,
+        constraint_state,
+        rigid_global_info,
+        False,
     )
 
 
@@ -2633,9 +2649,23 @@ def func_ls_point_fn_3alphas_opt_coop(
         i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
     )
     return _func_ls_point_fn_3alphas_post(
-        i_b, tid, alpha_0, alpha_1, alpha_2,
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2,
-        constraint_state, rigid_global_info, True
+        i_b,
+        tid,
+        alpha_0,
+        alpha_1,
+        alpha_2,
+        t0_0,
+        t0_1,
+        t0_2,
+        t1_0,
+        t1_1,
+        t1_2,
+        t2_0,
+        t2_1,
+        t2_2,
+        constraint_state,
+        rigid_global_info,
+        True,
     )
 
 
@@ -2774,10 +2804,24 @@ def func_linesearch_refine(
                     done = True
                 else:
                     b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
-                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, alphas, costs, grads, hess,
+                        p1_alpha,
+                        p1_cost,
+                        p1_deriv_0,
+                        p1_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
                     )
                     b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
-                        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, alphas, costs, grads, hess,
+                        p2_alpha,
+                        p2_cost,
+                        p2_deriv_0,
+                        p2_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
                     )
                     if b1 == 0 and b2 == 0:
                         if costs[2] < p0_cost:
@@ -2832,7 +2876,11 @@ def func_linesearch_refine_coop(
         p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
         p2update = 1
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt_coop(
-            i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info,
+            i_b,
+            tid,
+            p1_alpha - p1_deriv_0 / p1_deriv_1,
+            constraint_state,
+            rigid_global_info,
         )
         if qd.abs(p1_deriv_0) < gtol:
             res_alpha = p1_alpha
@@ -2871,10 +2919,24 @@ def func_linesearch_refine_coop(
                     done = True
                 else:
                     b1, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p1_next = update_bracket_no_eval_local(
-                        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, alphas, costs, grads, hess,
+                        p1_alpha,
+                        p1_cost,
+                        p1_deriv_0,
+                        p1_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
                     )
                     b2, p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, p2_next = update_bracket_no_eval_local(
-                        p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1, alphas, costs, grads, hess,
+                        p2_alpha,
+                        p2_cost,
+                        p2_deriv_0,
+                        p2_deriv_1,
+                        alphas,
+                        costs,
+                        grads,
+                        hess,
                     )
                     if b1 == 0 and b2 == 0:
                         if costs[2] < p0_cost:
@@ -2954,8 +3016,7 @@ def func_linesearch_batch(
             res_alpha = p1_alpha
         else:
             res_alpha, ls_result = func_linesearch_refine(
-                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol,
-                constraint_state, rigid_global_info
+                i_b, p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1, p0_cost, gtol, constraint_state, rigid_global_info
             )
             constraint_state.ls_result[i_b] = ls_result
             # Status 7: both brackets stalled and midpoint cost >= p0_cost. Reject the non-improving alpha.
