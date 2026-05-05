@@ -379,16 +379,19 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
-        # Tier-1 constraint state: allocated as qd.Tensor wrappers, optionally
-        # with layout=(1, 0) to physically store as (_B, len_constraints_).
-        # Canonical shape stays (len_constraints_, _B); kernel-body indexing
-        # ``Jaref[i_c, i_b]`` is rewritten by the AST when layout != None.
-        active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=con_layout),
+        # Tier-1 constraint state: allocated as qd.Tensor wrappers. Only the
+        # three dominant linesearch contact-loop fields (Jaref, jv, efc_D) get
+        # ``layout=(1, 0)``. The other Tier-1 fields (efc_frictionloss, diag,
+        # active) keep canonical layout — they're only read by the friction
+        # branch and a few non-linesearch kernels, where the marginal benefit
+        # of coalescing is smaller than the cost of de-coalescing the
+        # consumers that currently coalesce on ``[i_c, i_b]``.
+        active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
-        diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
+        diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         aref=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         Jaref=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
-        efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
+        efc_frictionloss=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         efc_force=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
