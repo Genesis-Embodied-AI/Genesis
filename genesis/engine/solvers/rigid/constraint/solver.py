@@ -2340,7 +2340,7 @@ def func_ls_init_and_eval_p0_opt(
 
 
 @qd.func
-def _func_ls_quad_reduce_opt(
+def _func_ls_quad_reduce_opt_serial(
     i_b,
     alpha_0,
     alpha_1,
@@ -2446,7 +2446,7 @@ def func_ls_point_fn_opt(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Serial single-alpha linesearch evaluator."""
-    t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt(
+    t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_serial(
         i_b, alpha, alpha, alpha, constraint_state, 1
     )
     return _func_ls_point_fn_opt_post(i_b, 0, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
@@ -2462,7 +2462,7 @@ def _func_ls_quad_reduce_opt_coop(
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
-    """Cooperative (32-lane subgroup) variant of ``_func_ls_quad_reduce_opt``.
+    """Cooperative (32-lane subgroup) variant of ``_func_ls_quad_reduce_opt_serial``.
 
     All 32 lanes call this with their own ``tid``; the constraint loop is strided by 32, then each
     accumulator is reduced across the warp via ``subgroup.reduce_all_add(_, 5)`` so every lane ends
@@ -2610,7 +2610,7 @@ def func_ls_point_fn_3alphas_opt(
     rigid_global_info: array_class.RigidGlobalInfo,
 ):
     """Serial 3-alpha linesearch evaluator."""
-    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt(
+    t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_serial(
         i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
     )
     return _func_ls_point_fn_3alphas_post(
