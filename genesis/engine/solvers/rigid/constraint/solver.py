@@ -3109,8 +3109,12 @@ def func_update_constraint_batch(
     cost_i = gs.qd_float(0.0)
     gauss_i = gs.qd_float(0.0)
 
-    # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active
+    # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active.
+    # `Jaref[i_c, i_b]` is read up to 6 times in the original loop body; the DSL cannot
+    # safely CSE these reads across the intervening writes to `active`. Hoisting the
+    # value into a local makes it a single global load per iter.
     for i_c in range(constraint_state.n_constraints[i_b]):
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
         constraint_state.active[i_c, i_b] = True
@@ -3120,18 +3124,18 @@ def func_update_constraint_batch(
             f = constraint_state.efc_frictionloss[i_c, i_b]
             r = constraint_state.diag[i_c, i_b]
             rf = r * f
-            linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-            linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+            linear_neg = Jaref_c <= -rf
+            linear_pos = Jaref_c >= rf
             constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
             floss_force = linear_neg * f + linear_pos * -f
-            floss_cost_local = linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b])
-            floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + constraint_state.Jaref[i_c, i_b])
+            floss_cost_local = linear_neg * f * (-0.5 * rf - Jaref_c)
+            floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + Jaref_c)
             cost_i = cost_i + floss_cost_local
         elif nef <= i_c:  # Contact constraints
-            constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+            constraint_state.active[i_c, i_b] = Jaref_c < 0
 
         constraint_state.efc_force[i_c, i_b] = floss_force + (
-            -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+            -Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
         )
 
     if qd.static(static_rigid_sim_config.sparse_solve):
