@@ -3110,15 +3110,29 @@ def func_update_constraint_batch(
     gauss_i = gs.qd_float(0.0)
 
     # Beware 'active' does not refer to whether a constraint is active, but rather whether its quadratic cost is active.
-    # `Jaref[i_c, i_b]` is read up to 6 times in the original loop body; the DSL cannot
-    # safely CSE these reads across the intervening writes to `active`. Hoisting the
-    # value into a local makes it a single global load per iter.
+    #
+    # CSE Jaref_c, efc_D_c, active_c into locals so the AMDGPU backend
+    # doesn't have to recompute the (i_c * stride0 + i_b * stride1) address
+    # arithmetic + repeated HBM loads on every reuse within the iteration
+    # body. The previous form re-read constraint_state.Jaref[i_c, i_b] up
+    # to 5x per iter and constraint_state.active[i_c, i_b] after writing
+    # it (defeating load-CSE since the write made the compiler treat it
+    # as a may-alias). Hoisting to locals collapses each into one HBM
+    # load + one HBM store + several register-only uses.
+    #
+    # NOTE: We deliberately *do not* fuse the per-constraint quad cost
+    # contribution into this loop. The fused form changed FP rounding
+    # order in the cost reduction, steering the CG bracketing logic to
+    # slightly different alpha choices and accumulating simulation
+    # trajectory drift over long step counts.
     for i_c in range(constraint_state.n_constraints[i_b]):
         Jaref_c = constraint_state.Jaref[i_c, i_b]
+        efc_D_c = constraint_state.efc_D[i_c, i_b]
+
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
             constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-        constraint_state.active[i_c, i_b] = True
 
+        active_c = True
         floss_force = gs.qd_float(0.0)
         if ne <= i_c and i_c < nef:  # Friction constraints
             f = constraint_state.efc_frictionloss[i_c, i_b]
@@ -3126,17 +3140,15 @@ def func_update_constraint_batch(
             rf = r * f
             linear_neg = Jaref_c <= -rf
             linear_pos = Jaref_c >= rf
-            constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+            active_c = not (linear_neg or linear_pos)
             floss_force = linear_neg * f + linear_pos * -f
-            floss_cost_local = linear_neg * f * (-0.5 * rf - Jaref_c)
-            floss_cost_local = floss_cost_local + linear_pos * f * (-0.5 * rf + Jaref_c)
+            floss_cost_local = linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
             cost_i = cost_i + floss_cost_local
         elif nef <= i_c:  # Contact constraints
-            constraint_state.active[i_c, i_b] = Jaref_c < 0
+            active_c = Jaref_c < 0
 
-        constraint_state.efc_force[i_c, i_b] = floss_force + (
-            -Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-        )
+        constraint_state.active[i_c, i_b] = active_c
+        constraint_state.efc_force[i_c, i_b] = floss_force + (-Jaref_c * efc_D_c * active_c)
 
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_d in range(n_dofs):
@@ -3166,10 +3178,13 @@ def func_update_constraint_batch(
         cost_i = cost_i + v
 
     # D * (Jx - aref) ** 2
+    # Same CSE rationale: 3 separate HBM loads per constraint collapse
+    # into the same register-only multiply chain.
     for i_c in range(constraint_state.n_constraints[i_b]):
-        cost_i = cost_i + 0.5 * (
-            constraint_state.Jaref[i_c, i_b] ** 2 * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-        )
+        Jaref_c = constraint_state.Jaref[i_c, i_b]
+        efc_D_c = constraint_state.efc_D[i_c, i_b]
+        active_c = constraint_state.active[i_c, i_b]
+        cost_i = cost_i + 0.5 * (Jaref_c * Jaref_c * efc_D_c * active_c)
 
     constraint_state.gauss[i_b] = gauss_i
     cost[i_b] = cost_i
@@ -3328,8 +3343,12 @@ def func_terminate_or_update_descent_batch(
     tol_scaled = (rigid_global_info.meaninertia[i_b] * qd.max(1, n_dofs)) * rigid_global_info.tolerance[None]
     improvement = prev_cost - constraint_state.cost[i_b]
     grad_norm = gs.qd_float(0.0)
+    # Hoist grad[i_d, i_b] into a local so the multiply uses the same
+    # register operand twice instead of forcing two distinct HBM loads +
+    # redundant address recomputation.
     for i_d in range(n_dofs):
-        grad_norm = grad_norm + constraint_state.grad[i_d, i_b] * constraint_state.grad[i_d, i_b]
+        grad_d = constraint_state.grad[i_d, i_b]
+        grad_norm = grad_norm + grad_d * grad_d
     grad_norm = qd.sqrt(grad_norm)
     improved = grad_norm > tol_scaled and improvement > tol_scaled
     constraint_state.improved[i_b] = improved
@@ -3343,13 +3362,16 @@ def func_terminate_or_update_descent_batch(
             cg_beta = gs.qd_float(0.0)
             cg_pg_dot_pMg = gs.qd_float(0.0)
 
+            # CSE the four ndarray reads into per-iter locals so the
+            # AMDGPU backend doesn't repeat address arithmetic + the
+            # cg_prev_Mgrad reload on each reuse.
             for i_d in range(n_dofs):
-                cg_beta = cg_beta + constraint_state.grad[i_d, i_b] * (
-                    constraint_state.Mgrad[i_d, i_b] - constraint_state.cg_prev_Mgrad[i_d, i_b]
-                )
-                cg_pg_dot_pMg = cg_pg_dot_pMg + (
-                    constraint_state.cg_prev_Mgrad[i_d, i_b] * constraint_state.cg_prev_grad[i_d, i_b]
-                )
+                grad_d = constraint_state.grad[i_d, i_b]
+                Mgrad_d = constraint_state.Mgrad[i_d, i_b]
+                pMgrad_d = constraint_state.cg_prev_Mgrad[i_d, i_b]
+                pgrad_d = constraint_state.cg_prev_grad[i_d, i_b]
+                cg_beta = cg_beta + grad_d * (Mgrad_d - pMgrad_d)
+                cg_pg_dot_pMg = cg_pg_dot_pMg + pMgrad_d * pgrad_d
             cg_beta = qd.max(cg_beta / qd.max(rigid_global_info.EPS[None], cg_pg_dot_pMg), 0.0)
 
             constraint_state.cg_pg_dot_pMg[i_b] = cg_pg_dot_pMg
@@ -3695,8 +3717,20 @@ def func_solve_iter_post_linesearch(
     )
 
 
+# warmup=1 / active=1 is too noisy a sample budget to reliably pick
+# between variants whose runtimes are within a small constant factor
+# of each other -- the single-sample picker flips between candidates
+# from run to run on cold-cache first launches. Bump to warmup=3 /
+# active=5 so each variant gets 5 timing samples on a warm cache
+# before the picker decides, which is sufficient to lock in the
+# faster variant deterministically. Cost is a few extra solver
+# invocations per variant during the first dispatch evaluation;
+# amortized to nothing by `repeat_after_seconds=5`.
 @qd.perf_dispatch(
-    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)), warmup=1, active=1, repeat_after_seconds=5
+    get_geometry_hash=lambda *args, **kwargs: (*args, frozendict(kwargs)),
+    warmup=3,
+    active=5,
+    repeat_after_seconds=5,
 )
 def func_solve_body(
     entities_info: array_class.EntitiesInfo,
@@ -3709,7 +3743,16 @@ def func_solve_body(
 
 
 @func_solve_body.register(is_compatible=lambda *args, **kwargs: True)
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(
+    fastcache=gs.use_fastcache,
+    # Tell the AMDGPU backend that 1 wave / SIMD occupancy is acceptable
+    # so it can lift the VGPR-per-wave cap and hold this monolith's
+    # large live-range graph in registers instead of spilling to scratch
+    # (which then has to be reloaded from HBM on every use). The total
+    # wavefront count from this kernel is small enough that the lower
+    # occupancy doesn't cost us anything in parallelism.
+    fn_attrs={"amdgpu": {"amdgpu-waves-per-eu": "1,1"}} if gs.backend == gs.amdgpu else None,
+)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
