@@ -1604,6 +1604,85 @@ def test_set_root_pose(batch_fixed_verts, relative, show_viewer, tol):
                 quat_ref = quat_delta
             assert_allclose(quat, quat_ref, tol=tol)
 
+            if relative:
+                quat_rel_ref = quat_delta
+            else:
+                quat_rel_ref = gu.transform_quat_by_quat(gu.inv_quat(quat_zero), quat_delta)
+            assert_allclose(entity.get_quat(relative=True), quat_rel_ref, tol=tol)
+            # Verify get_quat(relative=False) matches get_quat() (preserves old behavior)
+            assert_allclose(entity.get_quat(relative=False), quat, tol=tol)
+
+
+@pytest.mark.required
+def test_get_quat_relative_heterogeneous_initial_quat(show_viewer, tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(batch_links_info=True),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    box = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1), euler=(0.0, 0.0, 0.0)),
+            gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1), euler=(0.0, 45.0, 0.0)),
+        ),
+    )
+    scene.build(n_envs=4)
+
+    quat_delta = torch.tensor(
+        [
+            [0.9238795, 0.3826834, 0.0, 0.0],
+            [0.8660254, 0.0, 0.5, 0.0],
+            [0.7071068, 0.0, 0.0, 0.7071068],
+            [1.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=gs.tc_float,
+        device=gs.device,
+    )
+    quat_delta = quat_delta / torch.linalg.norm(quat_delta, dim=-1, keepdim=True)
+
+    box.set_quat(quat_delta, relative=True)
+
+    assert_allclose(box.get_quat(relative=True), quat_delta, tol=tol)
+    assert_allclose(box.get_quat(envs_idx=[2, 3], relative=True), quat_delta[2:], tol=tol)
+
+
+@pytest.mark.required
+def test_get_quat_relative_non_parallel(show_viewer, tol):
+    scene = gs.Scene(show_viewer=show_viewer, show_FPS=False)
+    box = scene.add_entity(gs.morphs.Box(size=(0.04, 0.04, 0.04), pos=(0.0, 0.0, 0.1), euler=(0.0, 30.0, 0.0)))
+    scene.build()
+
+    quat_delta = torch.tensor([0.9238795, 0.0, 0.3826834, 0.0], dtype=gs.tc_float, device=gs.device)
+    quat_delta = quat_delta / torch.linalg.norm(quat_delta)
+
+    box.set_quat(quat_delta, relative=True)
+    quat_rel = box.get_quat(relative=True)
+    assert quat_rel.shape == quat_delta.shape
+    assert_allclose(quat_rel, quat_delta, tol=tol)
+
+
+@pytest.mark.required
+def test_get_quat_relative_non_parallel_batched_link_info(show_viewer, tol):
+    scene = gs.Scene(
+        rigid_options=gs.options.RigidOptions(batch_links_info=True),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    box = scene.add_entity(
+        gs.morphs.Box(
+            fixed=True,
+            batch_fixed_verts=True,
+            size=(0.04, 0.04, 0.04),
+            pos=(0.0, 0.0, 0.1),
+            euler=(0.0, 30.0, 0.0),
+        )
+    )
+    scene.build()
+
+    quat_rel = box.get_quat(relative=True)
+    assert quat_rel.shape == (4,)
+    assert_allclose(quat_rel, gu.identity_quat(), tol=tol)
+
 
 @pytest.mark.required
 def test_normalized_quat(show_viewer, tol):
@@ -5062,6 +5141,10 @@ def test_merge_entities(is_fixed, merge_fixed_links, show_viewer, tol, monkeypat
 
     attach_link = franka.get_link("attachment")
     assert_allclose(attach_link.get_pos(), hand.links[0].get_pos(), tol=gs.EPS)
+    hand_quat_rel = hand.get_quat(relative=True)
+    hand_init_quat = torch.as_tensor(hand.base_link.quat, dtype=gs.tc_float, device=gs.device)
+    hand_quat_rel_ref = gu.transform_quat_by_quat(gu.inv_quat(hand_init_quat), hand.get_quat())
+    assert_allclose(hand_quat_rel, hand_quat_rel_ref, tol=tol)
     offset_quat = gu.transform_quat_by_quat(hand.links[0].get_quat(), gu.inv_quat(attach_link.get_quat()))
     assert_allclose(gu.quat_to_xyz(offset_quat, rpy=False, degrees=True), EULER_OFFSET, tol=tol)
     for link in hand.links[slice(0, None) if merge_fixed_links else slice(1, -1)]:

@@ -1346,7 +1346,7 @@ class KinematicEntity(Entity):
         return self._solver.get_links_pos(self.base_link_idx, envs_idx)[..., 0, :]
 
     @gs.assert_built
-    def get_quat(self, envs_idx=None):
+    def get_quat(self, envs_idx=None, *, relative=False):
         """
         Returns quaternion of the entity's base link.
 
@@ -1354,13 +1354,52 @@ class KinematicEntity(Entity):
         ----------
         envs_idx : None | array_like, optional
             The indices of the environments. If None, all environments will be considered. Defaults to None.
+        relative : bool, optional
+            If True, return the quaternion relative to the initial (not current!) quaternion.
+            The returned quaternion ``delta`` satisfies
+            ``abs_quat == transform_quat_by_quat(init_quat, delta)``.
+            Equivalently, ``delta == transform_quat_by_quat(inv_quat(init_quat), abs_quat)``.
+            Defaults to False.
 
         Returns
         -------
         quat : torch.Tensor, shape (4,) or (n_envs, 4)
-            The quaternion of the entity's base link.
+            The quaternion of the entity's base link (absolute or relative).
         """
-        return self._solver.get_links_quat(self.base_link_idx, envs_idx)[..., 0, :]
+        abs_quat = self._solver.get_links_quat(self.base_link_idx, envs_idx)[..., 0, :]
+        if not relative:
+            return abs_quat
+
+        has_free_root_qpos = self.base_link.n_joints == 1 and self.base_link.joints[0].type == gs.JOINT_TYPE.FREE
+        if not has_free_root_qpos:
+            if self._solver._options.batch_links_info:
+                init_quat = qd_to_torch(
+                    self._solver.links_info.quat,
+                    envs_idx,
+                    self.base_link_idx,
+                    transpose=True,
+                    copy=True,
+                )
+                if self._solver.n_envs == 0:
+                    init_quat = init_quat[0, 0]
+                else:
+                    init_quat = init_quat[:, 0]
+            else:
+                init_quat = torch.as_tensor(self.base_link.quat, dtype=abs_quat.dtype, device=abs_quat.device)
+        else:
+            q_start = self.base_link.q_start
+            init_quat = qd_to_torch(
+                self._solver.qpos0,
+                envs_idx,
+                slice(q_start + 3, q_start + 7),
+                transpose=True,
+                copy=True,
+            )
+            if self._solver.n_envs == 0:
+                init_quat = init_quat[0]
+
+        init_quat = init_quat.to(dtype=abs_quat.dtype, device=abs_quat.device)
+        return gu.transform_quat_by_quat(gu.inv_quat(init_quat), abs_quat)
 
     @gs.assert_built
     def get_vel(self, envs_idx=None):
