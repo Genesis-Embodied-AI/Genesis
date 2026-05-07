@@ -164,6 +164,14 @@ def pytest_cmdline_main(config: pytest.Config) -> None:
     if show_viewer:
         config.option.numprocesses = 0
 
+    # Override `-n 0` to `-n 8` on AMD/ROCm hosts. The CI tester scripts that
+    # drive this suite live in another repo and pass `-n 0`; this rewrites it
+    # to a parallel default now that EGL is initialised lazily and concurrent
+    # `scene.build()` calls no longer race on `radeonsi` context creation.
+    # Explicit `-n N` (N != 0) and the viewer-forced `-n 0` above are preserved.
+    if not show_viewer and config.option.numprocesses == 0 and os.path.exists("/dev/kfd"):
+        config.option.numprocesses = 8
+
     # Force disabling reruns if debugger is enabled
     is_pdb_enabled = config.getoption("--pdb")
     if is_pdb_enabled:

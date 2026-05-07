@@ -25,23 +25,30 @@ class Rasterizer(RBC):
         if self._context is None:
             return
 
-        if self._offscreen:
-            # Select PyOpenGL backend for `pyrender.OffscreenRenderer`.
-            # If env variable is set, use specified platform if supported, otherwise some platform-specific default.
-            platform = os.environ.get("PYOPENGL_PLATFORM", "").strip() or ("egl" if sys.platform == "linux" else "pyglet")
-            if platform not in ("osmesa", "pyglet", "egl"):
-                gs.logger.warning(f"PYOPENGL_PLATFORM='{platform}' not supported. Falling back to 'pyglet'.")
-                platform = "pyglet"
-            if sys.platform == "win32" and platform == "osmesa":
-                gs.raise_exception("PYOPENGL_PLATFORM='osmesa' not supported on Windows OS. Falling back to 'pyglet'.")
-                platform = "pyglet"
-
-            # Start the viewer
-            self._renderer = pyrender.OffscreenRenderer(
-                pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
-            )
+        # OffscreenRenderer creation is deferred until first render call so that scene.build() does
+        # not initialize EGL when nothing is going to be rendered. Eager EGL init is unsafe under
+        # pytest-forked + xdist on AMD/Mesa (segfaults inside eglInitialize) and is otherwise wasted
+        # work for the common case of physics-only tests.
 
         self.visualizer = self._context.visualizer
+
+    def _ensure_renderer(self):
+        if not self._offscreen or self._renderer is not None:
+            return
+
+        # Select PyOpenGL backend for `pyrender.OffscreenRenderer`.
+        # If env variable is set, use specified platform if supported, otherwise some platform-specific default.
+        platform = os.environ.get("PYOPENGL_PLATFORM", "").strip() or ("egl" if sys.platform == "linux" else "pyglet")
+        if platform not in ("osmesa", "pyglet", "egl"):
+            gs.logger.warning(f"PYOPENGL_PLATFORM='{platform}' not supported. Falling back to 'pyglet'.")
+            platform = "pyglet"
+        if sys.platform == "win32" and platform == "osmesa":
+            gs.raise_exception("PYOPENGL_PLATFORM='osmesa' not supported on Windows OS. Falling back to 'pyglet'.")
+            platform = "pyglet"
+
+        self._renderer = pyrender.OffscreenRenderer(
+            pyopengl_platform=platform, seg_node_map=self._context.seg_node_map
+        )
 
     def add_camera(self, camera):
         self._camera_nodes[camera.uid] = self._context.add_node(
@@ -76,6 +83,7 @@ class Rasterizer(RBC):
         skip_markers = not camera.debug if isinstance(camera, Camera) else True
         if self._offscreen:
             # Set the context
+            self._ensure_renderer()
             self._renderer.make_current()
 
             # Update the context if not already done before
