@@ -29,8 +29,8 @@ def refresh_visual_transforms(scene, ctx):
     rigid_solver.update_geoms_render_T()
     rigid_solver.update_vgeoms()
     rigid_solver.update_vgeoms_render_T()
-    ctx.update_link_frame(ctx.buffer)
-    ctx.update_rigid(ctx.buffer)
+    ctx.update_link_frame()
+    ctx.update_rigid()
 
 
 def switch_entity_vis_mode(scene, ctx, entity, new_mode):
