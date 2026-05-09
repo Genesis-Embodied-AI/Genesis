@@ -102,6 +102,7 @@ class RasterizerContext:
         self.link_frame_nodes = dict()
         self.frustum_nodes = dict()  # nodes camera frustums
         self.rigid_nodes = dict()
+        self.skinned_nodes = dict()  # (env_idx, geom.uid) -> node, for entities with custom vverts
         self.static_nodes = dict()  # used across all frames
         self.dynamic_nodes = dict()  # nodes that live within single frame
         self.external_nodes = dict()  # nodes added by external user
@@ -175,6 +176,7 @@ class RasterizerContext:
             self.link_frame_nodes,
             self.frustum_nodes,
             self.rigid_nodes,
+            self.skinned_nodes,
             self.static_nodes,
             self.external_nodes,
         ):
@@ -207,20 +209,25 @@ class RasterizerContext:
             return np.intersect1d(geom_active_envs_idx, rendered_envs_idx)
         return rendered_envs_idx
 
+    def _seg_key_for_geom(self, geom):
+        if self.segmentation_level == "geom":
+            return (geom.entity.idx, geom.link.idx, geom.idx)
+        elif self.segmentation_level == "link":
+            return (geom.entity.idx, geom.link.idx)
+        elif self.segmentation_level == "entity":
+            return geom.entity.idx
+        gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+
     def add_rigid_node(self, geom, obj, **kwargs):
         rigid_node = self.add_node(obj, **kwargs)
         self.rigid_nodes[geom.uid] = rigid_node
+        self.create_node_seg(self._seg_key_for_geom(geom), rigid_node)
 
-        # create segemtation id
-        if self.segmentation_level == "geom":
-            seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
-        elif self.segmentation_level == "link":
-            seg_key = (geom.entity.idx, geom.link.idx)
-        elif self.segmentation_level == "entity":
-            seg_key = geom.entity.idx
-        else:
-            gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
-        self.create_node_seg(seg_key, rigid_node)
+    def add_skinned_node(self, geom, obj, i_b, **kwargs):
+        """Add a per-env node for a vgeom with custom vertex positions."""
+        skinned_node = self.add_node(obj, **kwargs)
+        self.skinned_nodes[(i_b, geom.uid)] = skinned_node
+        self.create_node_seg(self._seg_key_for_geom(geom), skinned_node)
 
     def add_static_node(self, entity, obj, i_b, **kwargs):
         static_node = self.add_node(obj, **kwargs)
@@ -470,6 +477,12 @@ class RasterizerContext:
                     geoms = entity.geoms
                     geoms_T = solver._geoms_render_T
 
+                # Custom vverts path: per-env vertex updates (e.g., SMPL skinned meshes)
+                if entity.has_custom_vverts:
+                    self._update_rigid_custom_vverts(entity, entity.vgeoms)
+                    continue
+
+                # Standard instanced transform path
                 for geom in geoms:
                     # Skip geoms that weren't added - in heterogeneous simulation, some geoms
                     # may not be rendered in any of the requested environments
@@ -495,6 +508,53 @@ class RasterizerContext:
                     self.jit.update_buffer(self._scene.get_buffer_id(node, "model"), geom_T.transpose((0, 2, 1)))
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
+
+    def _update_rigid_custom_vverts(self, entity, geoms):
+        """Per-env vertex buffer updates for entities with custom vverts (e.g., SMPL skin)."""
+        if not entity._custom_vverts_dirty:
+            return
+        entity._custom_vverts_dirty = False
+        custom_vverts = entity._custom_vverts  # shape: (B, n_vverts_entity, 3)
+
+        for geom in geoms:
+            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+            if len(geom_envs_idx) == 0:
+                continue
+
+            # Lazy migration: remove instanced rigid_node if present
+            if geom.uid in self.rigid_nodes:
+                old_node = self.rigid_nodes.pop(geom.uid)
+                self.remove_node_seg(old_node)
+                self.remove_node(old_node)
+
+            # Ensure per-env skinned nodes exist for all rendered envs
+            missing_envs = [idx for idx in geom_envs_idx if (idx, geom.uid) not in self.skinned_nodes]
+            if missing_envs:
+                mesh_trimesh = geom.get_trimesh()
+                for idx in missing_envs:
+                    self.add_skinned_node(
+                        geom,
+                        pyrender.Mesh.from_trimesh(
+                            mesh=mesh_trimesh,
+                            smooth=geom.surface.smooth,
+                            double_sided=geom.surface.double_sided,
+                        ),
+                        i_b=idx,
+                    )
+
+            # Entity-local vertex range for this vgeom
+            v_start = geom.vvert_start - entity.vvert_start
+            v_end = geom.vvert_end - entity.vvert_start
+
+            for idx in geom_envs_idx:
+                node = self.skinned_nodes[(idx, geom.uid)]
+                vverts = custom_vverts[idx, v_start:v_end, :] + self.scene.envs_offset[idx]
+
+                update_data = self._scene.reorder_vertices(node, vverts)
+                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                normal_data = self.jit.update_normal(node, update_data)
+                if normal_data is not None:
+                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
 
     def update_contact(self):
         if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):
