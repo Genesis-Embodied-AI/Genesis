@@ -322,6 +322,7 @@ class RRT(PathPlanner):
                 configuration=qd.types.vector(self._entity.n_qs, gs.qd_float),
                 parent_idx=gs.qd_int,
             )
+            # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
             self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))
@@ -438,8 +439,8 @@ class RRT(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,
@@ -669,6 +670,7 @@ class RRTConnect(PathPlanner):
                 parent_idx=gs.qd_int,
                 child_idx=gs.qd_int,
             )
+            # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
             self._rrt_node_info = self.struct_rrt_node_info.field(shape=(self._rrt_max_nodes, self._solver._B))
             self._rrt_tree_size = qd.field(dtype=gs.qd_int, shape=(self._solver._B,))
             self._rrt_is_active = qd.field(dtype=gs.qd_bool, shape=(self._solver._B,))
@@ -707,7 +709,7 @@ class RRTConnect(PathPlanner):
     @qd.kernel
     def _kernel_rrt_connect_step1(
         self,
-        qpos: array_class.V_ANNOTATION,
+        qpos: qd.Tensor,
         forward_pass: qd.i32,
         q_limit_lower: qd.types.ndarray(),
         q_limit_upper: qd.types.ndarray(),
@@ -807,8 +809,8 @@ class RRTConnect(PathPlanner):
                     gs.engine.solvers.rigid.rigid_solver.func_update_geoms_batch(
                         i_b,
                         entities_info,
-                        geoms_info,
                         geoms_state,
+                        geoms_info,
                         links_state,
                         rigid_global_info,
                         self._solver._static_rigid_sim_config,

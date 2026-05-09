@@ -232,7 +232,7 @@ class ConstraintSolver:
             self._solver._static_rigid_sim_config,
         )
 
-    def resolve(self):
+    def resolve(self, entities_info=None, rigid_global_info=None):
         func_solve_init(
             self._solver.dofs_info,
             self._solver.dofs_state,
@@ -468,7 +468,7 @@ class ConstraintSolver:
 # =====================================================================================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_get_equality_constraints(
     is_padded: qd.template(),
     iout: qd.types.ndarray(),
@@ -527,7 +527,7 @@ def kernel_get_equality_constraints(
 # ====================================== Reset and Clear Constraint Solver State ======================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def constraint_solver_kernel_reset(
     envs_idx: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
@@ -563,7 +563,7 @@ def func_clear_constraint_at_env(
             constraint_state.jac_n_relevant_dofs[i_c, i_b] = 0
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def constraint_solver_kernel_clear(
     envs_idx: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
@@ -581,7 +581,7 @@ def constraint_solver_kernel_clear(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def constraint_solver_kernel_masked_clear(
     envs_mask: qd.types.ndarray(),
     constraint_state: array_class.ConstraintState,
@@ -919,7 +919,7 @@ def func_equality_joint(
         _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def add_equality_constraints(
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -979,7 +979,7 @@ def add_equality_constraints(
                 )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def add_inequality_constraints(
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
@@ -1337,7 +1337,7 @@ def add_frictionloss_constraints(
 # ====================================== Runtime User-Specified Weld Constraints ======================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_add_weld_constraint(
     link1_idx: qd.i32,
     link2_idx: qd.i32,
@@ -1388,7 +1388,7 @@ def kernel_add_weld_constraint(
     return overflow
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_delete_weld_constraint(
     link1_idx: qd.i32,
     link2_idx: qd.i32,
@@ -2812,9 +2812,9 @@ def func_save_prev_grad(
 @qd.func
 def func_update_constraint_batch(
     i_b,
-    qacc: array_class.V_ANNOTATION,
-    Ma: array_class.V_ANNOTATION,
-    cost: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
+    Ma: qd.Tensor,
+    cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -2889,9 +2889,9 @@ def func_update_constraint_batch(
 
 @qd.func
 def func_update_constraint(
-    qacc: array_class.V_ANNOTATION,
-    Ma: array_class.V_ANNOTATION,
-    cost: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
+    Ma: qd.Tensor,
+    cost: qd.Tensor,
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
@@ -2932,7 +2932,7 @@ def func_update_gradient_batch(
             i_b,
             constraint_state.grad,
             constraint_state.Mgrad,
-            array_class.PLACEHOLDER,
+            None,
             entities_info=entities_info,
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
@@ -2970,7 +2970,7 @@ def func_update_gradient_tiled(
                 i_b,
                 constraint_state.grad,
                 constraint_state.Mgrad,
-                array_class.PLACEHOLDER,
+                None,
                 entities_info=entities_info,
                 rigid_global_info=rigid_global_info,
                 static_rigid_sim_config=static_rigid_sim_config,
@@ -3079,7 +3079,7 @@ def func_terminate_or_update_descent_batch(
 
 @qd.func
 def initialize_Jaref(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.Tensor,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3102,7 +3102,7 @@ def _initialize_Jaref_body(
     i_c,
     i_b,
     n_dofs,
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3119,7 +3119,7 @@ def _initialize_Jaref_body(
 
 @qd.func
 def _initialize_Jaref_per_env(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3134,7 +3134,7 @@ def _initialize_Jaref_per_env(
 
 @qd.func
 def _initialize_Jaref_parallel(
-    qacc: array_class.V_ANNOTATION,
+    qacc: qd.template(),
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3151,8 +3151,8 @@ def _initialize_Jaref_parallel(
 
 @qd.func
 def initialize_Ma(
-    Ma: array_class.V_ANNOTATION,
-    qacc: array_class.V_ANNOTATION,
+    Ma: qd.Tensor,
+    qacc: qd.Tensor,
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     rigid_global_info: array_class.RigidGlobalInfo,
@@ -3174,7 +3174,7 @@ def initialize_Ma(
 # ======================================================= Core ========================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_solve_init(
     dofs_info: array_class.DofsInfo,
     dofs_state: array_class.DofsState,
@@ -3420,7 +3420,7 @@ def func_solve_body(
 @func_solve_body.register(
     is_compatible=lambda *args, **kwargs: _get_static_config(*args, **kwargs).prefer_decomposed_solver != 1
 )
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_solve_body_monolith(
     entities_info: array_class.EntitiesInfo,
     dofs_info: array_class.DofsInfo,
@@ -3455,7 +3455,7 @@ def func_solve_body_monolith(
 # =====================================================================================================================
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_update_contact_force(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -3497,12 +3497,12 @@ def func_update_contact_force(
             )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_update_qacc(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
 ):
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]

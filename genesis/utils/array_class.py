@@ -1,45 +1,39 @@
 import dataclasses
 import math
 from enum import IntEnum
-from functools import partial
-from typing import TYPE_CHECKING
 
 import quadrants as qd
+from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 import numpy as np
 import torch
-from typing_extensions import dataclass_transform  # Made it into standard lib from Python 3.12
 
 import genesis as gs
 
-if not gs._initialized:
-    gs.raise_exception("Genesis hasn't been initialized. Did you call `gs.init()`?")
+
+def _tensor_backend():
+    return qd.Backend.NDARRAY if gs.use_ndarray else qd.Backend.FIELD
 
 
-if TYPE_CHECKING:
-    V_ANNOTATION = qd.Field | qd.Ndarray
-    V = V_ANNOTATION
-    V_VEC = V_ANNOTATION
-    V_MAT = V_ANNOTATION
-
-    DATA_ORIENTED = dataclasses.dataclass
-else:
-    V_ANNOTATION = qd.types.ndarray() if gs.use_ndarray else qd.template
-    V = qd.ndarray if gs.use_ndarray else qd.field
-    V_VEC = qd.Vector.ndarray if gs.use_ndarray else qd.Vector.field
-    V_MAT = qd.Matrix.ndarray if gs.use_ndarray else qd.Matrix.field
-
-    DATA_ORIENTED = partial(dataclasses.dataclass, frozen=True) if gs.use_ndarray else qd.data_oriented
+def V(*args, **kwargs):
+    return qd.tensor(*args, backend=_tensor_backend(), **kwargs)
 
 
-PLACEHOLDER = V(dtype=gs.qd_float, shape=())
+def V_VEC(*args, **kwargs):
+    return qd.Vector.tensor(*args, backend=_tensor_backend(), **kwargs)
+
+
+def V_MAT(*args, **kwargs):
+    return qd.Matrix.tensor(*args, backend=_tensor_backend(), **kwargs)
 
 
 def maybe_shape(shape, is_on):
     return shape if is_on else ()
 
 
-@dataclass_transform(eq_default=True, order_default=True, kw_only_default=False, frozen_default=True)
+@dataclass_transform(eq_default=True, kw_only_default=False, frozen_default=True)
 class AutoInitMeta(type):
+    """Metaclass that generates __init__ from annotations, like a mutable dataclass."""
+
     def __new__(cls, name, bases, namespace):
         names = tuple(namespace["__annotations__"].keys())
         defaults = {k: namespace[k] for k in names if k in namespace}
@@ -76,9 +70,6 @@ class AutoInitMeta(type):
         return super().__new__(cls, name, bases, namespace)
 
 
-BASE_METACLASS = type if gs.use_ndarray else AutoInitMeta
-
-
 def V_SCALAR_FROM(dtype, value):
     data = V(dtype=dtype, shape=())
     data.fill(value)
@@ -100,42 +91,42 @@ class ErrorCode(IntEnum):
 # =========================================== RigidGlobalInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructRigidGlobalInfo(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class RigidGlobalInfo:
     # *_bw: Cache for backward pass
-    n_awake_dofs: V_ANNOTATION
-    awake_dofs: V_ANNOTATION
-    n_awake_entities: V_ANNOTATION
-    awake_entities: V_ANNOTATION
-    n_awake_links: V_ANNOTATION
-    awake_links: V_ANNOTATION
-    qpos0: V_ANNOTATION
-    qpos: V_ANNOTATION
-    qpos_next: V_ANNOTATION
-    links_T: V_ANNOTATION
-    envs_offset: V_ANNOTATION
-    geoms_init_AABB: V_ANNOTATION
-    mass_mat: V_ANNOTATION
-    mass_mat_L: V_ANNOTATION
-    mass_mat_L_bw: V_ANNOTATION
-    mass_mat_D_inv: V_ANNOTATION
-    mass_mat_mask: V_ANNOTATION
-    meaninertia: V_ANNOTATION
-    mass_parent_mask: V_ANNOTATION
-    gravity: V_ANNOTATION
+    n_awake_dofs: qd.Tensor
+    awake_dofs: qd.Tensor
+    n_awake_entities: qd.Tensor
+    awake_entities: qd.Tensor
+    n_awake_links: qd.Tensor
+    awake_links: qd.Tensor
+    qpos0: qd.Tensor
+    qpos: qd.Tensor
+    qpos_next: qd.Tensor
+    links_T: qd.Tensor
+    envs_offset: qd.Tensor
+    geoms_init_AABB: qd.Tensor
+    mass_mat: qd.Tensor
+    mass_mat_L: qd.Tensor
+    mass_mat_L_bw: qd.Tensor
+    mass_mat_D_inv: qd.Tensor
+    mass_mat_mask: qd.Tensor
+    meaninertia: qd.Tensor
+    mass_parent_mask: qd.Tensor
+    gravity: qd.Tensor
     # Runtime constants
-    substep_dt: V_ANNOTATION
-    iterations: V_ANNOTATION
-    tolerance: V_ANNOTATION
-    ls_iterations: V_ANNOTATION
-    ls_tolerance: V_ANNOTATION
-    noslip_iterations: V_ANNOTATION
-    noslip_tolerance: V_ANNOTATION
-    n_equalities: V_ANNOTATION
-    n_candidate_equalities: V_ANNOTATION
-    hibernation_thresh_acc: V_ANNOTATION
-    hibernation_thresh_vel: V_ANNOTATION
-    EPS: V_ANNOTATION
+    substep_dt: qd.Tensor
+    iterations: qd.Tensor
+    tolerance: qd.Tensor
+    ls_iterations: qd.Tensor
+    ls_tolerance: qd.Tensor
+    noslip_iterations: qd.Tensor
+    noslip_tolerance: qd.Tensor
+    n_equalities: qd.Tensor
+    n_candidate_equalities: qd.Tensor
+    hibernation_thresh_acc: qd.Tensor
+    hibernation_thresh_vel: qd.Tensor
+    EPS: qd.Tensor
 
 
 def get_rigid_global_info(solver, kinematic_only):
@@ -155,7 +146,7 @@ def get_rigid_global_info(solver, kinematic_only):
 
     # FIXME: Add a better split between kinematic and Genesis
     if kinematic_only:
-        return StructRigidGlobalInfo(
+        return RigidGlobalInfo(
             envs_offset=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
             gravity=V_VEC(3, dtype=gs.qd_float, shape=()),
             meaninertia=V(dtype=gs.qd_float, shape=()),
@@ -190,7 +181,7 @@ def get_rigid_global_info(solver, kinematic_only):
             EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=gs.EPS),
         )
 
-    return StructRigidGlobalInfo(
+    return RigidGlobalInfo(
         envs_offset=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
         gravity=V_VEC(3, dtype=gs.qd_float, shape=(_B,)),
         meaninertia=V(dtype=gs.qd_float, shape=(_B,)),
@@ -229,93 +220,93 @@ def get_rigid_global_info(solver, kinematic_only):
 # =========================================== Constraint ===========================================
 
 
-@DATA_ORIENTED
-class StructConstraintState(metaclass=BASE_METACLASS):
-    is_warmstart: V_ANNOTATION
-    n_constraints: V_ANNOTATION
-    qd_n_equalities: V_ANNOTATION
-    jac: V_ANNOTATION
-    diag: V_ANNOTATION
-    aref: V_ANNOTATION
-    jac_relevant_dofs: V_ANNOTATION
-    jac_n_relevant_dofs: V_ANNOTATION
-    n_constraints_equality: V_ANNOTATION
-    n_constraints_frictionloss: V_ANNOTATION
-    improved: V_ANNOTATION
-    Jaref: V_ANNOTATION
-    Ma: V_ANNOTATION
-    Ma_ws: V_ANNOTATION
-    grad: V_ANNOTATION
-    Mgrad: V_ANNOTATION
-    MinvJT: V_ANNOTATION
-    search: V_ANNOTATION
-    efc_D: V_ANNOTATION
-    efc_frictionloss: V_ANNOTATION
-    efc_force: V_ANNOTATION
-    efc_b: V_ANNOTATION
-    efc_AR: V_ANNOTATION
-    active: V_ANNOTATION
-    prev_active: V_ANNOTATION
-    qfrc_constraint: V_ANNOTATION
-    qacc: V_ANNOTATION
-    qacc_ws: V_ANNOTATION
-    qacc_prev: V_ANNOTATION
-    cost_ws: V_ANNOTATION
-    gauss: V_ANNOTATION
-    cost: V_ANNOTATION
-    prev_cost: V_ANNOTATION
-    gtol: V_ANNOTATION
-    mv: V_ANNOTATION
-    jv: V_ANNOTATION
-    quad_gauss: V_ANNOTATION
-    ls_alpha: V_ANNOTATION
-    ls_p0_cost: V_ANNOTATION
-    ls_alpha_newton: V_ANNOTATION
-    ls_gtol: V_ANNOTATION
-    eq_sum: V_ANNOTATION
-    ls_it: V_ANNOTATION
-    ls_result: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ConstraintState:
+    is_warmstart: qd.Tensor
+    n_constraints: qd.Tensor
+    qd_n_equalities: qd.Tensor
+    jac: qd.Tensor
+    diag: qd.Tensor
+    aref: qd.Tensor
+    jac_relevant_dofs: qd.Tensor
+    jac_n_relevant_dofs: qd.Tensor
+    n_constraints_equality: qd.Tensor
+    n_constraints_frictionloss: qd.Tensor
+    improved: qd.Tensor
+    Jaref: qd.Tensor
+    Ma: qd.Tensor
+    Ma_ws: qd.Tensor
+    grad: qd.Tensor
+    Mgrad: qd.Tensor
+    MinvJT: qd.Tensor
+    search: qd.Tensor
+    efc_D: qd.Tensor
+    efc_frictionloss: qd.Tensor
+    efc_force: qd.Tensor
+    efc_b: qd.Tensor
+    efc_AR: qd.Tensor
+    active: qd.Tensor
+    prev_active: qd.Tensor
+    qfrc_constraint: qd.Tensor
+    qacc: qd.Tensor
+    qacc_ws: qd.Tensor
+    qacc_prev: qd.Tensor
+    cost_ws: qd.Tensor
+    gauss: qd.Tensor
+    cost: qd.Tensor
+    prev_cost: qd.Tensor
+    gtol: qd.Tensor
+    mv: qd.Tensor
+    jv: qd.Tensor
+    quad_gauss: qd.Tensor
+    ls_alpha: qd.Tensor
+    ls_p0_cost: qd.Tensor
+    ls_alpha_newton: qd.Tensor
+    ls_gtol: qd.Tensor
+    eq_sum: qd.Tensor
+    ls_it: qd.Tensor
+    ls_result: qd.Tensor
     # Optional CG fields
-    cg_prev_grad: V_ANNOTATION
-    cg_prev_Mgrad: V_ANNOTATION
-    cg_beta: V_ANNOTATION
-    cg_pg_dot_pMg: V_ANNOTATION
+    cg_prev_grad: qd.Tensor
+    cg_prev_Mgrad: qd.Tensor
+    cg_beta: qd.Tensor
+    cg_pg_dot_pMg: qd.Tensor
     # Optional Newton fields
     # Hessian matrix of the optimization problem as a dense 2D tensor.
     # Note that only the lower triangular part is updated for efficiency because this matrix is symmetric by definition.
     # As a result, the values of the strictly upper triangular part is undefined.
     # In practice, this variable is re-purposed to store the Cholesky factor L st H = L @ L.T to spare memory resources.
     # TODO: Optimize storage to only allocate memory half of the Hessian matrix to sparse memory resources.
-    nt_H: V_ANNOTATION
-    nt_vec: V_ANNOTATION
+    nt_H: qd.Tensor
+    nt_vec: qd.Tensor
     # Compacted list of constraints whose active state changed, used by incremental Cholesky update
     # to reduce GPU thread divergence by iterating only over constraints that need processing.
-    incr_changed_idx: V_ANNOTATION
-    incr_n_changed: V_ANNOTATION
+    incr_changed_idx: qd.Tensor
+    incr_n_changed: qd.Tensor
     # Backward gradients
-    dL_dqacc: V_ANNOTATION
-    dL_dM: V_ANNOTATION
-    dL_djac: V_ANNOTATION
-    dL_daref: V_ANNOTATION
-    dL_defc_D: V_ANNOTATION
-    dL_dforce: V_ANNOTATION
+    dL_dqacc: qd.Tensor
+    dL_dM: qd.Tensor
+    dL_djac: qd.Tensor
+    dL_daref: qd.Tensor
+    dL_defc_D: qd.Tensor
+    dL_dforce: qd.Tensor
     # Backward buffers for linear system solver
-    bw_u: V_ANNOTATION
-    bw_r: V_ANNOTATION
-    bw_p: V_ANNOTATION
-    bw_Ap: V_ANNOTATION
-    bw_Ju: V_ANNOTATION
-    bw_y: V_ANNOTATION
-    bw_w: V_ANNOTATION
+    bw_u: qd.Tensor
+    bw_r: qd.Tensor
+    bw_p: qd.Tensor
+    bw_Ap: qd.Tensor
+    bw_Ju: qd.Tensor
+    bw_y: qd.Tensor
+    bw_w: qd.Tensor
     # Timers for profiling
-    timers: V_ANNOTATION
+    timers: qd.Tensor
     # Per-env flag: 0 = use incremental Hessian+Cholesky, 1 = use full tiled rebuild
-    use_full_hessian: V_ANNOTATION
+    use_full_hessian: qd.Tensor
     # Solver loop iteration counter (0-indexed, increments each iteration in the graph loop)
-    solver_iter_counter: V_ANNOTATION
+    solver_iter_counter: qd.Tensor
     # Always ndarray (not field): graph_do_while requires the same physical ndarray on every call.
     graph_counter: qd.types.ndarray()
-    early_exit_flag: V_ANNOTATION
+    early_exit_flag: qd.Tensor
 
 
 def get_constraint_state(constraint_solver, solver):
@@ -340,7 +331,7 @@ def get_constraint_state(constraint_solver, solver):
         )
 
     # /!\ Changing allocation order of these tensors may reduce runtime speed by >10%  /!\
-    return StructConstraintState(
+    return ConstraintState(
         n_constraints=V(dtype=gs.qd_int, shape=(_B,)),
         qd_n_equalities=V(dtype=gs.qd_int, shape=(_B,)),
         n_constraints_equality=V(dtype=gs.qd_int, shape=(_B,)),
@@ -381,6 +372,8 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
+        # Tier-1 constraint state: allocated as qd.Tensor wrappers
+        # (Phase-1 migration; see perso_hugh/doc/genesis_tensor_migration.md).
         active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B)),
@@ -419,26 +412,26 @@ def get_constraint_state(constraint_solver, solver):
 # =========================================== Collider ===========================================
 
 
-@DATA_ORIENTED
-class StructContactData(metaclass=BASE_METACLASS):
-    geom_a: V_ANNOTATION
-    geom_b: V_ANNOTATION
-    penetration: V_ANNOTATION
-    normal: V_ANNOTATION
-    pos: V_ANNOTATION
-    friction: V_ANNOTATION
-    sol_params: V_ANNOTATION
-    force: V_ANNOTATION
-    link_a: V_ANNOTATION
-    link_b: V_ANNOTATION
-    pair_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactData:
+    geom_a: qd.Tensor
+    geom_b: qd.Tensor
+    penetration: qd.Tensor
+    normal: qd.Tensor
+    pos: qd.Tensor
+    friction: qd.Tensor
+    sol_params: qd.Tensor
+    force: qd.Tensor
+    link_a: qd.Tensor
+    link_b: qd.Tensor
+    pair_idx: qd.Tensor
 
 
 def get_contact_data(solver, max_contact_pairs, requires_grad):
     _B = solver._B
     max_contact_pairs_ = max(max_contact_pairs, 1)
 
-    return StructContactData(
+    return ContactData(
         geom_a=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         geom_b=V(dtype=gs.qd_int, shape=(max_contact_pairs_, _B)),
         normal=V(dtype=gs.qd_vec3, shape=(max_contact_pairs_, _B), needs_grad=requires_grad),
@@ -453,34 +446,34 @@ def get_contact_data(solver, max_contact_pairs, requires_grad):
     )
 
 
-@DATA_ORIENTED
-class StructDiffContactInput(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class DiffContactInput:
     ### Non-differentiable input data
     # Geom id of the two geometries
-    geom_a: V_ANNOTATION
-    geom_b: V_ANNOTATION
+    geom_a: qd.Tensor
+    geom_b: qd.Tensor
     # Local positions of the 3 vertices from the two geometries that define the face on the Minkowski difference
-    local_pos1_a: V_ANNOTATION
-    local_pos1_b: V_ANNOTATION
-    local_pos1_c: V_ANNOTATION
-    local_pos2_a: V_ANNOTATION
-    local_pos2_b: V_ANNOTATION
-    local_pos2_c: V_ANNOTATION
+    local_pos1_a: qd.Tensor
+    local_pos1_b: qd.Tensor
+    local_pos1_c: qd.Tensor
+    local_pos2_a: qd.Tensor
+    local_pos2_b: qd.Tensor
+    local_pos2_c: qd.Tensor
     # Local positions of the 1 vertex from the two geometries that define the support point for the face above
-    w_local_pos1: V_ANNOTATION
-    w_local_pos2: V_ANNOTATION
+    w_local_pos1: qd.Tensor
+    w_local_pos2: qd.Tensor
     # Reference id of the contact point, which is needed for the backward pass
-    ref_id: V_ANNOTATION
+    ref_id: qd.Tensor
     # Flag whether the contact data can be computed in numerically stable way in both the forward and backward passes
-    valid: V_ANNOTATION
+    valid: qd.Tensor
     ### Differentiable input data
     # Reference penetration depth, which is needed for computing the weight of the contact point
-    ref_penetration: V_ANNOTATION
+    ref_penetration: qd.Tensor
 
 
 def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=False):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active and requires_grad)
-    return StructDiffContactInput(
+    return DiffContactInput(
         geom_a=V(dtype=gs.qd_int, shape=shape),
         geom_b=V(dtype=gs.qd_int, shape=shape),
         local_pos1_a=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -497,70 +490,70 @@ def get_diff_contact_input(_B, max_contacts_per_pair, is_active, requires_grad=F
     )
 
 
-@DATA_ORIENTED
-class StructSortBuffer(metaclass=BASE_METACLASS):
-    value: V_ANNOTATION
-    i_g: V_ANNOTATION
-    is_max: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class SortBuffer:
+    value: qd.Tensor
+    i_g: qd.Tensor
+    is_max: qd.Tensor
 
 
 def get_sort_buffer(solver):
     _B = solver._B
 
-    return StructSortBuffer(
+    return SortBuffer(
         value=V(dtype=gs.qd_float, shape=(2 * solver.n_geoms_, _B)),
         i_g=V(dtype=gs.qd_int, shape=(2 * solver.n_geoms_, _B)),
         is_max=V(dtype=gs.qd_bool, shape=(2 * solver.n_geoms_, _B)),
     )
 
 
-@DATA_ORIENTED
-class StructContactCache(metaclass=BASE_METACLASS):
-    normal: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactCache:
+    normal: qd.Tensor
 
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
-    return StructContactCache(
+    return ContactCache(
         normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
     )
 
 
-@DATA_ORIENTED
-class StructAggList(metaclass=BASE_METACLASS):
-    curr: V_ANNOTATION
-    n: V_ANNOTATION
-    start: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class AggList:
+    curr: qd.Tensor
+    n: qd.Tensor
+    start: qd.Tensor
 
 
 def get_agg_list(solver):
     _B = solver._B
     n_entities = max(solver.n_entities, 1)
 
-    return StructAggList(
+    return AggList(
         curr=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         n=V(dtype=gs.qd_int, shape=(n_entities, _B)),
         start=V(dtype=gs.qd_int, shape=(n_entities, _B)),
     )
 
 
-@DATA_ORIENTED
-class StructContactIslandState(metaclass=BASE_METACLASS):
-    ci_edges: V_ANNOTATION
-    edge_id: V_ANNOTATION
-    constraint_list: V_ANNOTATION
-    constraint_id: V_ANNOTATION
-    entity_edge: StructAggList
-    island_col: StructAggList
-    island_hibernated: V_ANNOTATION
-    island_entity: StructAggList
-    entity_id: V_ANNOTATION
-    n_edges: V_ANNOTATION
-    n_islands: V_ANNOTATION
-    n_stack: V_ANNOTATION
-    entity_island: V_ANNOTATION
-    stack: V_ANNOTATION
-    entity_idx_to_next_entity_idx_in_hibernated_island: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactIslandState:
+    ci_edges: qd.Tensor
+    edge_id: qd.Tensor
+    constraint_list: qd.Tensor
+    constraint_id: qd.Tensor
+    entity_edge: AggList
+    island_col: AggList
+    island_hibernated: qd.Tensor
+    island_entity: AggList
+    entity_id: qd.Tensor
+    n_edges: qd.Tensor
+    n_islands: qd.Tensor
+    n_stack: qd.Tensor
+    entity_island: qd.Tensor
+    stack: qd.Tensor
+    entity_idx_to_next_entity_idx_in_hibernated_island: qd.Tensor
 
 
 def get_contact_island_state(solver, collider):
@@ -574,7 +567,7 @@ def get_contact_island_state(solver, collider):
     max_hibernation_edges = n_entities if solver._use_hibernation else 0
     max_edges = max_contact_pairs + max_hibernation_edges
 
-    return StructContactIslandState(
+    return ContactIslandState(
         ci_edges=V(dtype=gs.qd_int, shape=(max_edges, 2, _B)),
         edge_id=V(dtype=gs.qd_int, shape=(max_edges * 2, _B)),
         constraint_list=V(dtype=gs.qd_int, shape=(max_contact_pairs, _B)),
@@ -593,31 +586,31 @@ def get_contact_island_state(solver, collider):
     )
 
 
-@DATA_ORIENTED
-class StructNarrowphaseWorkQueues(metaclass=BASE_METACLASS):
-    mpr_i_b: V_ANNOTATION
-    mpr_i_ga: V_ANNOTATION
-    mpr_i_gb: V_ANNOTATION
-    mpr_i_pair: V_ANNOTATION
-    mpr_contact_pos_0: V_ANNOTATION
-    mpr_normal_0: V_ANNOTATION
-    mpr_penetration_0: V_ANNOTATION
-    gjk_i_b: V_ANNOTATION
-    gjk_i_ga: V_ANNOTATION
-    gjk_i_gb: V_ANNOTATION
-    gjk_i_pair: V_ANNOTATION
-    gjk_contact_pos_0: V_ANNOTATION
-    gjk_normal_0: V_ANNOTATION
-    gjk_penetration_0: V_ANNOTATION
-    mpr_queue_size: V_ANNOTATION
-    gjk_queue_size: V_ANNOTATION
-    gjk_queue_size_k2: V_ANNOTATION
-    mpr_work_counter: V_ANNOTATION
-    gjk_work_counter: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class NarrowphaseWorkQueues:
+    mpr_i_b: qd.Tensor
+    mpr_i_ga: qd.Tensor
+    mpr_i_gb: qd.Tensor
+    mpr_i_pair: qd.Tensor
+    mpr_contact_pos_0: qd.Tensor
+    mpr_normal_0: qd.Tensor
+    mpr_penetration_0: qd.Tensor
+    gjk_i_b: qd.Tensor
+    gjk_i_ga: qd.Tensor
+    gjk_i_gb: qd.Tensor
+    gjk_i_pair: qd.Tensor
+    gjk_contact_pos_0: qd.Tensor
+    gjk_normal_0: qd.Tensor
+    gjk_penetration_0: qd.Tensor
+    mpr_queue_size: qd.Tensor
+    gjk_queue_size: qd.Tensor
+    gjk_queue_size_k2: qd.Tensor
+    mpr_work_counter: qd.Tensor
+    gjk_work_counter: qd.Tensor
 
 
 def get_narrowphase_work_queues(max_entries):
-    return StructNarrowphaseWorkQueues(
+    return NarrowphaseWorkQueues(
         mpr_i_b=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_i_ga=V(dtype=gs.qd_int, shape=(max_entries,)),
         mpr_i_gb=V(dtype=gs.qd_int, shape=(max_entries,)),
@@ -640,34 +633,34 @@ def get_narrowphase_work_queues(max_entries):
     )
 
 
-@DATA_ORIENTED
-class StructColliderState(metaclass=BASE_METACLASS):
-    sort_buffer: StructSortBuffer
-    contact_data: StructContactData
-    active_buffer: V_ANNOTATION
-    n_broad_pairs: V_ANNOTATION
-    broad_collision_pairs: V_ANNOTATION
-    active_buffer_awake: V_ANNOTATION
-    active_buffer_hib: V_ANNOTATION
-    box_depth: V_ANNOTATION
-    box_points: V_ANNOTATION
-    box_pts: V_ANNOTATION
-    box_lines: V_ANNOTATION
-    box_linesu: V_ANNOTATION
-    box_axi: V_ANNOTATION
-    box_ppts2: V_ANNOTATION
-    box_pu: V_ANNOTATION
-    xyz_max_min: V_ANNOTATION
-    prism: V_ANNOTATION
-    n_contacts: V_ANNOTATION
-    n_contacts_hibernated: V_ANNOTATION
-    first_time: V_ANNOTATION
-    contact_cache: StructContactCache
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ColliderState:
+    sort_buffer: SortBuffer
+    contact_data: ContactData
+    active_buffer: qd.Tensor
+    n_broad_pairs: qd.Tensor
+    broad_collision_pairs: qd.Tensor
+    active_buffer_awake: qd.Tensor
+    active_buffer_hib: qd.Tensor
+    box_depth: qd.Tensor
+    box_points: qd.Tensor
+    box_pts: qd.Tensor
+    box_lines: qd.Tensor
+    box_linesu: qd.Tensor
+    box_axi: qd.Tensor
+    box_ppts2: qd.Tensor
+    box_pu: qd.Tensor
+    xyz_max_min: qd.Tensor
+    prism: qd.Tensor
+    n_contacts: qd.Tensor
+    n_contacts_hibernated: qd.Tensor
+    first_time: qd.Tensor
+    contact_cache: ContactCache
     # Input data for differentiable contact detection used in the backward pass
-    diff_contact_input: StructDiffContactInput
-    narrowphase_work_queues: StructNarrowphaseWorkQueues
-    contact_sort_key: V_ANNOTATION
-    contact_sort_idx: V_ANNOTATION
+    diff_contact_input: DiffContactInput
+    narrowphase_work_queues: NarrowphaseWorkQueues
+    contact_sort_key: qd.Tensor
+    contact_sort_idx: qd.Tensor
 
 
 def get_collider_state(
@@ -698,7 +691,7 @@ def get_collider_state(
     box_ppts2_shape = maybe_shape((4, 2, _B), static_rigid_sim_config.box_box_detection)
     box_pu_shape = maybe_shape((4, _B), static_rigid_sim_config.box_box_detection)
 
-    return StructColliderState(
+    return ColliderState(
         sort_buffer=get_sort_buffer(solver),
         active_buffer=V(dtype=gs.qd_int, shape=(n_geoms, _B)),
         n_broad_pairs=V(dtype=gs.qd_int, shape=(_B,)),
@@ -729,32 +722,32 @@ def get_collider_state(
     )
 
 
-@DATA_ORIENTED
-class StructColliderInfo(metaclass=BASE_METACLASS):
-    vert_neighbors: V_ANNOTATION
-    vert_neighbor_start: V_ANNOTATION
-    vert_n_neighbors: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ColliderInfo:
+    vert_neighbors: qd.Tensor
+    vert_neighbor_start: qd.Tensor
+    vert_n_neighbors: qd.Tensor
     # (i_ga, i_gb) -> dense pair index, or -1 if invalid. Used by SAP broadphase, narrowphase, and contact cache.
-    collision_pair_idx: V_ANNOTATION
-    max_possible_pairs: V_ANNOTATION
-    max_collision_pairs: V_ANNOTATION
-    max_contact_pairs: V_ANNOTATION
-    max_collision_pairs_broad: V_ANNOTATION
+    collision_pair_idx: qd.Tensor
+    max_possible_pairs: qd.Tensor
+    max_collision_pairs: qd.Tensor
+    max_contact_pairs: qd.Tensor
+    max_collision_pairs_broad: qd.Tensor
     # Compact list of valid collision pairs. Used by all-vs-all broadphase to dispatch valid pairs to GPU threads.
-    n_valid_pairs: V_ANNOTATION
-    valid_collision_pairs: V_ANNOTATION
+    n_valid_pairs: qd.Tensor
+    valid_collision_pairs: qd.Tensor
     # Terrain fields
-    terrain_hf: V_ANNOTATION
-    terrain_rc: V_ANNOTATION
-    terrain_scale: V_ANNOTATION
-    terrain_xyz_maxmin: V_ANNOTATION
+    terrain_hf: qd.Tensor
+    terrain_rc: qd.Tensor
+    terrain_scale: qd.Tensor
+    terrain_xyz_maxmin: qd.Tensor
     # multi contact perturbation and tolerance
-    mc_perturbation: V_ANNOTATION
-    mc_tolerance: V_ANNOTATION
-    mpr_to_gjk_overlap_ratio: V_ANNOTATION
+    mc_perturbation: qd.Tensor
+    mc_tolerance: qd.Tensor
+    mpr_to_gjk_overlap_ratio: qd.Tensor
     # differentiable contact tolerance
-    diff_pos_tolerance: V_ANNOTATION
-    diff_normal_tolerance: V_ANNOTATION
+    diff_pos_tolerance: qd.Tensor
+    diff_normal_tolerance: qd.Tensor
 
 
 def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_config, **kwargs):
@@ -765,7 +758,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
     else:
         terrain_hf_shape = 1
 
-    return StructColliderInfo(
+    return ColliderInfo(
         vert_neighbors=V(dtype=gs.qd_int, shape=(max(n_vert_neighbors, 1),)),
         vert_neighbor_start=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
         vert_n_neighbors=V(dtype=gs.qd_int, shape=(solver.n_verts_,)),
@@ -789,7 +782,7 @@ def get_collider_info(solver, n_vert_neighbors, n_valid_pairs, collider_static_c
 
 
 @qd.data_oriented
-class StructColliderStaticConfig(metaclass=AutoInitMeta):
+class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
@@ -808,43 +801,43 @@ class StructColliderStaticConfig(metaclass=AutoInitMeta):
 # =========================================== MPR ===========================================
 
 
-@DATA_ORIENTED
-class StructMPRSimplexSupport(metaclass=BASE_METACLASS):
-    v1: V_ANNOTATION
-    v2: V_ANNOTATION
-    v: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class MPRSimplexSupport:
+    v1: qd.Tensor
+    v2: qd.Tensor
+    v: qd.Tensor
 
 
 def get_mpr_simplex_support(B_):
-    return StructMPRSimplexSupport(
+    return MPRSimplexSupport(
         v1=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
         v2=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
         v=V_VEC(3, dtype=gs.qd_float, shape=(4, B_)),
     )
 
 
-@DATA_ORIENTED
-class StructMPRState(metaclass=BASE_METACLASS):
-    simplex_support: StructMPRSimplexSupport
-    simplex_size: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class MPRState:
+    simplex_support: MPRSimplexSupport
+    simplex_size: qd.Tensor
 
 
 def get_mpr_state(B_):
-    return StructMPRState(
+    return MPRState(
         simplex_support=get_mpr_simplex_support(B_),
         simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
     )
 
 
-@DATA_ORIENTED
-class StructMPRInfo(metaclass=BASE_METACLASS):
-    CCD_EPS: V_ANNOTATION
-    CCD_TOLERANCE: V_ANNOTATION
-    CCD_ITERATIONS: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class MPRInfo:
+    CCD_EPS: qd.Tensor
+    CCD_TOLERANCE: qd.Tensor
+    CCD_ITERATIONS: qd.Tensor
 
 
 def get_mpr_info(**kwargs):
-    return StructMPRInfo(
+    return MPRInfo(
         CCD_EPS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_EPS"]),
         CCD_TOLERANCE=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_TOLERANCE"]),
         CCD_ITERATIONS=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["CCD_ITERATIONS"]),
@@ -854,21 +847,21 @@ def get_mpr_info(**kwargs):
 # =========================================== GJK ===========================================
 
 
-@DATA_ORIENTED
-class StructMDVertex(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class MDVertex:
     # Vertex of the Minkowski difference
-    obj1: V_ANNOTATION
-    obj2: V_ANNOTATION
-    local_obj1: V_ANNOTATION
-    local_obj2: V_ANNOTATION
-    id1: V_ANNOTATION
-    id2: V_ANNOTATION
-    mink: V_ANNOTATION
+    obj1: qd.Tensor
+    obj2: qd.Tensor
+    local_obj1: qd.Tensor
+    local_obj2: qd.Tensor
+    id1: qd.Tensor
+    id2: qd.Tensor
+    mink: qd.Tensor
 
 
 def get_gjk_simplex_vertex(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
-    return StructMDVertex(
+    return MDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         local_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -882,7 +875,7 @@ def get_gjk_simplex_vertex(_B, is_active):
 def get_epa_polytope_vertex(_B, gjk_info, is_active):
     max_num_polytope_verts = 5 + gjk_info.epa_max_iterations[None]
     shape = maybe_shape((_B, max_num_polytope_verts), is_active)
-    return StructMDVertex(
+    return MDVertex(
         obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         local_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -893,46 +886,46 @@ def get_epa_polytope_vertex(_B, gjk_info, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructGJKSimplex(metaclass=BASE_METACLASS):
-    nverts: V_ANNOTATION
-    dist: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GJKSimplex:
+    nverts: qd.Tensor
+    dist: qd.Tensor
 
 
 def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return StructGJKSimplex(
+    return GJKSimplex(
         nverts=V(dtype=gs.qd_int, shape=shape),
         dist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructGJKSimplexBuffer(metaclass=BASE_METACLASS):
-    normal: V_ANNOTATION
-    sdist: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GJKSimplexBuffer:
+    normal: qd.Tensor
+    sdist: qd.Tensor
 
 
 def get_gjk_simplex_buffer(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
-    return StructGJKSimplexBuffer(
+    return GJKSimplexBuffer(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         sdist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytope(metaclass=BASE_METACLASS):
-    nverts: V_ANNOTATION
-    nfaces: V_ANNOTATION
-    nfaces_map: V_ANNOTATION
-    horizon_nedges: V_ANNOTATION
-    horizon_w: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EPAPolytope:
+    nverts: qd.Tensor
+    nfaces: qd.Tensor
+    nfaces_map: qd.Tensor
+    horizon_nedges: qd.Tensor
+    horizon_w: qd.Tensor
 
 
 def get_epa_polytope(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return StructEPAPolytope(
+    return EPAPolytope(
         nverts=V(dtype=gs.qd_int, shape=shape),
         nfaces=V(dtype=gs.qd_int, shape=shape),
         nfaces_map=V(dtype=gs.qd_int, shape=shape),
@@ -941,19 +934,19 @@ def get_epa_polytope(_B, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytopeFace(metaclass=BASE_METACLASS):
-    verts_idx: V_ANNOTATION
-    adj_idx: V_ANNOTATION
-    normal: V_ANNOTATION
-    dist2: V_ANNOTATION
-    map_idx: V_ANNOTATION
-    visited: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EPAPolytopeFace:
+    verts_idx: qd.Tensor
+    adj_idx: qd.Tensor
+    normal: qd.Tensor
+    dist2: qd.Tensor
+    map_idx: qd.Tensor
+    visited: qd.Tensor
 
 
 def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     shape = maybe_shape((_B, polytope_max_faces), is_active)
-    return StructEPAPolytopeFace(
+    return EPAPolytopeFace(
         verts_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
         adj_idx=V_VEC(3, dtype=gs.qd_int, shape=shape),
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -963,34 +956,34 @@ def get_epa_polytope_face(_B, polytope_max_faces, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructEPAPolytopeHorizonData(metaclass=BASE_METACLASS):
-    face_idx: V_ANNOTATION
-    edge_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EPAPolytopeHorizonData:
+    face_idx: qd.Tensor
+    edge_idx: qd.Tensor
 
 
 def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
-    return StructEPAPolytopeHorizonData(
+    return EPAPolytopeHorizonData(
         face_idx=V(dtype=gs.qd_int, shape=shape),
         edge_idx=V(dtype=gs.qd_int, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructContactFace(metaclass=BASE_METACLASS):
-    vert1: V_ANNOTATION
-    vert2: V_ANNOTATION
-    endverts: V_ANNOTATION
-    normal1: V_ANNOTATION
-    normal2: V_ANNOTATION
-    id1: V_ANNOTATION
-    id2: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactFace:
+    vert1: qd.Tensor
+    vert2: qd.Tensor
+    endverts: qd.Tensor
+    normal1: qd.Tensor
+    normal2: qd.Tensor
+    id1: qd.Tensor
+    id2: qd.Tensor
 
 
 def get_contact_face(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactFace(
+    return ContactFace(
         vert1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         vert2=V_VEC(3, dtype=gs.qd_float, shape=shape),
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
@@ -1001,83 +994,83 @@ def get_contact_face(_B, max_contact_polygon_verts, is_active):
     )
 
 
-@DATA_ORIENTED
-class StructContactNormal(metaclass=BASE_METACLASS):
-    endverts: V_ANNOTATION
-    normal: V_ANNOTATION
-    id: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactNormal:
+    endverts: qd.Tensor
+    normal: qd.Tensor
+    id: qd.Tensor
 
 
 def get_contact_normal(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactNormal(
+    return ContactNormal(
         endverts=V_VEC(3, dtype=gs.qd_float, shape=shape),
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         id=V(dtype=gs.qd_int, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructContactHalfspace(metaclass=BASE_METACLASS):
-    normal: V_ANNOTATION
-    dist: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class ContactHalfspace:
+    normal: qd.Tensor
+    dist: qd.Tensor
 
 
 def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return StructContactHalfspace(
+    return ContactHalfspace(
         normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
         dist=V(dtype=gs.qd_float, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructWitness(metaclass=BASE_METACLASS):
-    point_obj1: V_ANNOTATION
-    point_obj2: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class Witness:
+    point_obj1: qd.Tensor
+    point_obj2: qd.Tensor
 
 
 def get_witness(_B, max_contacts_per_pair, is_active):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
-    return StructWitness(
+    return Witness(
         point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
         point_obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
     )
 
 
-@DATA_ORIENTED
-class StructGJKState(metaclass=BASE_METACLASS):
-    support_mesh_prev_vertex_id: V_ANNOTATION
-    simplex_vertex: StructMDVertex
-    simplex_buffer: StructGJKSimplexBuffer
-    simplex: StructGJKSimplex
-    simplex_vertex_intersect: StructMDVertex
-    simplex_buffer_intersect: StructGJKSimplexBuffer
-    nsimplex: V_ANNOTATION
-    last_searched_simplex_vertex_id: V_ANNOTATION
-    polytope: StructEPAPolytope
-    polytope_verts: StructMDVertex
-    polytope_faces: StructEPAPolytopeFace
-    polytope_faces_map: V_ANNOTATION
-    polytope_horizon_data: StructEPAPolytopeHorizonData
-    polytope_horizon_stack: StructEPAPolytopeHorizonData
-    contact_faces: StructContactFace
-    contact_normals: StructContactNormal
-    contact_halfspaces: StructContactHalfspace
-    contact_clipped_polygons: V_ANNOTATION
-    multi_contact_flag: V_ANNOTATION
-    witness: StructWitness
-    n_witness: V_ANNOTATION
-    n_contacts: V_ANNOTATION
-    contact_pos: V_ANNOTATION
-    normal: V_ANNOTATION
-    is_col: V_ANNOTATION
-    penetration: V_ANNOTATION
-    distance: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GJKState:
+    support_mesh_prev_vertex_id: qd.Tensor
+    simplex_vertex: MDVertex
+    simplex_buffer: GJKSimplexBuffer
+    simplex: GJKSimplex
+    simplex_vertex_intersect: MDVertex
+    simplex_buffer_intersect: GJKSimplexBuffer
+    nsimplex: qd.Tensor
+    last_searched_simplex_vertex_id: qd.Tensor
+    polytope: EPAPolytope
+    polytope_verts: MDVertex
+    polytope_faces: EPAPolytopeFace
+    polytope_faces_map: qd.Tensor
+    polytope_horizon_data: EPAPolytopeHorizonData
+    polytope_horizon_stack: EPAPolytopeHorizonData
+    contact_faces: ContactFace
+    contact_normals: ContactNormal
+    contact_halfspaces: ContactHalfspace
+    contact_clipped_polygons: qd.Tensor
+    multi_contact_flag: qd.Tensor
+    witness: Witness
+    n_witness: qd.Tensor
+    n_contacts: qd.Tensor
+    contact_pos: qd.Tensor
+    normal: qd.Tensor
+    is_col: qd.Tensor
+    penetration: qd.Tensor
+    distance: qd.Tensor
     # Differentiable contact detection
-    diff_contact_input: StructDiffContactInput
-    n_diff_contact_input: V_ANNOTATION
-    diff_penetration: V_ANNOTATION
+    diff_contact_input: DiffContactInput
+    n_diff_contact_input: qd.Tensor
+    diff_penetration: qd.Tensor
 
 
 def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_grad=False):
@@ -1087,7 +1080,7 @@ def get_gjk_state(_B, static_rigid_sim_config, gjk_info, is_active, requires_gra
     max_contact_polygon_verts = gjk_info.max_contact_polygon_verts[None]
 
     # FIXME: Define GJKState and MujocoCompatGJKState that derives from the former but defines additional attributes
-    return StructGJKState(
+    return GJKState(
         # GJK simplex
         support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active),
@@ -1134,7 +1127,7 @@ def get_gjk_state_contact_only(_B):
     """
     _dummy_B = 1
 
-    return StructGJKState(
+    return GJKState(
         support_mesh_prev_vertex_id=V(dtype=gs.qd_int, shape=(_B, 2)),
         simplex_vertex=get_gjk_simplex_vertex(_B, is_active=True),
         simplex_buffer=get_gjk_simplex_buffer(_B, is_active=True),
@@ -1145,7 +1138,7 @@ def get_gjk_state_contact_only(_B):
         nsimplex=V(dtype=gs.qd_int, shape=(_B,)),
         # EPA — dummy allocations, never accessed by func_gjk
         polytope=get_epa_polytope(_dummy_B, is_active=True),
-        polytope_verts=StructMDVertex(
+        polytope_verts=MDVertex(
             obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
             obj2=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
             local_obj1=V_VEC(3, dtype=gs.qd_float, shape=(1, 1)),
@@ -1179,26 +1172,26 @@ def get_gjk_state_contact_only(_B):
     )
 
 
-@DATA_ORIENTED
-class StructGJKInfo(metaclass=BASE_METACLASS):
-    max_contacts_per_pair: V_ANNOTATION
-    max_contact_polygon_verts: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GJKInfo:
+    max_contacts_per_pair: qd.Tensor
+    max_contact_polygon_verts: qd.Tensor
     # Maximum number of iterations for GJK and EPA algorithms
-    gjk_max_iterations: V_ANNOTATION
-    epa_max_iterations: V_ANNOTATION
-    FLOAT_MIN: V_ANNOTATION
-    FLOAT_MIN_SQ: V_ANNOTATION
-    FLOAT_MAX: V_ANNOTATION
-    FLOAT_MAX_SQ: V_ANNOTATION
+    gjk_max_iterations: qd.Tensor
+    epa_max_iterations: qd.Tensor
+    FLOAT_MIN: qd.Tensor
+    FLOAT_MIN_SQ: qd.Tensor
+    FLOAT_MAX: qd.Tensor
+    FLOAT_MAX_SQ: qd.Tensor
     # Tolerance for stopping GJK and EPA algorithms when they converge (only for non-discrete geometries).
-    tolerance: V_ANNOTATION
+    tolerance: qd.Tensor
     # If the distance between two objects is smaller than this value, we consider them colliding.
-    collision_eps: V_ANNOTATION
+    collision_eps: qd.Tensor
     # In safe GJK, we do not allow degenerate simplex to happen, because it becomes the main reason of EPA errors.
     # To prevent degeneracy, we throw away the simplex that has smaller degeneracy measure (e.g. colinearity,
     # coplanarity) than this threshold.
-    simplex_max_degeneracy_sq: V_ANNOTATION
-    polytope_max_faces: V_ANNOTATION
+    simplex_max_degeneracy_sq: qd.Tensor
+    polytope_max_faces: qd.Tensor
     # Threshold for reprojection error when we compute the witness points from the polytope. In computing the
     # witness points, we project the origin onto the polytope faces and compute the barycentric coordinates of the
     # projected point. To confirm the projection is valid, we compute the projected point using the barycentric
@@ -1207,34 +1200,34 @@ class StructGJKInfo(metaclass=BASE_METACLASS):
     # We check both relative and absolute errors: the relative error catches numerically degenerate faces,
     # while the absolute error prevents false rejections on smooth geometries (e.g. spheres) where
     # polytope faces become extremely small near convergence, amplifying the relative error.
-    polytope_max_rel_reprojection_error: V_ANNOTATION
-    polytope_max_abs_reprojection_error: V_ANNOTATION
+    polytope_max_rel_reprojection_error: qd.Tensor
+    polytope_max_abs_reprojection_error: qd.Tensor
     # Tolerance for normal alignment between (face-face) or (edge-face). The normals should align within this
     # tolerance to be considered as a valid parallel contact.
-    contact_face_tol: V_ANNOTATION
-    contact_edge_tol: V_ANNOTATION
+    contact_face_tol: qd.Tensor
+    contact_edge_tol: qd.Tensor
     # Epsilon values for differentiable contact. [eps_boundary] denotes the maximum distance between the face
     # and the support point in the direction of the face normal. If this distance is 0, the face is on the
     # boundary of the Minkowski difference. For [eps_distance], the distance between the origin and the face
     # should not exceed this eps value plus the default EPA depth. For [eps_affine], the affine coordinates
     # of the origin's projection onto the face should not violate [0, 1] range by this eps value.
     # FIXME: Adjust these values based on the case study.
-    diff_contact_eps_boundary: V_ANNOTATION
-    diff_contact_eps_distance: V_ANNOTATION
-    diff_contact_eps_affine: V_ANNOTATION
+    diff_contact_eps_boundary: qd.Tensor
+    diff_contact_eps_distance: qd.Tensor
+    diff_contact_eps_affine: qd.Tensor
     # The minimum norm of the normal to be considered as a valid normal in the differentiable formulation.
-    diff_contact_min_normal_norm: V_ANNOTATION
+    diff_contact_min_normal_norm: qd.Tensor
     # The minimum penetration depth to be considered as a valid contact in the differentiable formulation.
     # The contact with penetration depth smaller than this value is ignored in the differentiable formulation.
     # This should be large enough to be safe from numerical errors, because in the backward pass, the computed
     # penetration depth could be different from the forward pass due to the numerical errors. If this value is
     # too small, the non-zero penetration depth could be falsely computed to 0 in the backward pass and thus
     # produce nan values for the contact normal.
-    diff_contact_min_penetration: V_ANNOTATION
+    diff_contact_min_penetration: qd.Tensor
 
 
 def get_gjk_info(**kwargs):
-    return StructGJKInfo(
+    return GJKInfo(
         max_contacts_per_pair=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contacts_per_pair"]),
         max_contact_polygon_verts=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["max_contact_polygon_verts"]),
         gjk_max_iterations=V_SCALAR_FROM(dtype=gs.qd_int, value=kwargs["gjk_max_iterations"]),
@@ -1264,7 +1257,7 @@ def get_gjk_info(**kwargs):
 
 
 @qd.data_oriented
-class StructGJKStaticConfig(metaclass=AutoInitMeta):
+class GJKStaticConfig(metaclass=AutoInitMeta):
     # This is disabled by default, because it is often less stable than the other multi-contact detection algorithm.
     # However, we keep the code here for compatibility with MuJoCo and for possible future use.
     enable_mujoco_multi_contact: bool
@@ -1273,16 +1266,16 @@ class StructGJKStaticConfig(metaclass=AutoInitMeta):
 # =========================================== SupportField ===========================================
 
 
-@DATA_ORIENTED
-class StructSupportFieldInfo(metaclass=BASE_METACLASS):
-    support_cell_start: V_ANNOTATION
-    support_v: V_ANNOTATION
-    support_vid: V_ANNOTATION
-    support_res: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class SupportFieldInfo:
+    support_cell_start: qd.Tensor
+    support_v: qd.Tensor
+    support_vid: qd.Tensor
+    support_res: qd.Tensor
 
 
 def get_support_field_info(n_geoms, n_support_cells, support_res):
-    return StructSupportFieldInfo(
+    return SupportFieldInfo(
         support_cell_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         support_v=V_VEC(3, dtype=gs.qd_float, shape=(max(n_support_cells, 1),)),
         support_vid=V(dtype=gs.qd_int, shape=(max(n_support_cells, 1),)),
@@ -1293,17 +1286,17 @@ def get_support_field_info(n_geoms, n_support_cells, support_res):
 # =========================================== SDF ===========================================
 
 
-@DATA_ORIENTED
-class StructSDFGeomInfo(metaclass=BASE_METACLASS):
-    T_mesh_to_sdf: V_ANNOTATION
-    sdf_res: V_ANNOTATION
-    sdf_max: V_ANNOTATION
-    sdf_cell_size: V_ANNOTATION
-    sdf_cell_start: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class SDFGeomInfo:
+    T_mesh_to_sdf: qd.Tensor
+    sdf_res: qd.Tensor
+    sdf_max: qd.Tensor
+    sdf_cell_size: qd.Tensor
+    sdf_cell_start: qd.Tensor
 
 
 def get_sdf_geom_info(n_geoms):
-    return StructSDFGeomInfo(
+    return SDFGeomInfo(
         T_mesh_to_sdf=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_res=V_VEC(3, dtype=gs.qd_int, shape=(n_geoms,)),
         sdf_max=V(dtype=gs.qd_float, shape=(n_geoms,)),
@@ -1312,13 +1305,13 @@ def get_sdf_geom_info(n_geoms):
     )
 
 
-@DATA_ORIENTED
-class StructSDFInfo(metaclass=BASE_METACLASS):
-    geoms_info: StructSDFGeomInfo
-    geoms_sdf_start: V_ANNOTATION
-    geoms_sdf_val: V_ANNOTATION
-    geoms_sdf_grad: V_ANNOTATION
-    geoms_sdf_closest_vert: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class SDFInfo:
+    geoms_info: SDFGeomInfo
+    geoms_sdf_start: qd.Tensor
+    geoms_sdf_val: qd.Tensor
+    geoms_sdf_grad: qd.Tensor
+    geoms_sdf_closest_vert: qd.Tensor
 
 
 def get_sdf_info(n_geoms, n_cells):
@@ -1328,7 +1321,7 @@ def get_sdf_info(n_geoms, n_cells):
             "'sdf_cell_size' in 'gs.materials.Rigid' options."
         )
 
-    return StructSDFInfo(
+    return SDFInfo(
         geoms_info=get_sdf_geom_info(max(n_geoms, 1)),
         geoms_sdf_start=V(dtype=gs.qd_int, shape=(max(n_geoms, 1),)),
         geoms_sdf_val=V(dtype=gs.qd_float, shape=(max(n_cells, 1),)),
@@ -1340,26 +1333,26 @@ def get_sdf_info(n_geoms, n_cells):
 # =========================================== DofsInfo and DofsState ===========================================
 
 
-@DATA_ORIENTED
-class StructDofsInfo(metaclass=BASE_METACLASS):
-    entity_idx: V_ANNOTATION
-    stiffness: V_ANNOTATION
-    invweight: V_ANNOTATION
-    armature: V_ANNOTATION
-    damping: V_ANNOTATION
-    frictionloss: V_ANNOTATION
-    motion_ang: V_ANNOTATION
-    motion_vel: V_ANNOTATION
-    limit: V_ANNOTATION
-    act_gain: V_ANNOTATION
-    act_bias: V_ANNOTATION
-    force_range: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class DofsInfo:
+    entity_idx: qd.Tensor
+    stiffness: qd.Tensor
+    invweight: qd.Tensor
+    armature: qd.Tensor
+    damping: qd.Tensor
+    frictionloss: qd.Tensor
+    motion_ang: qd.Tensor
+    motion_vel: qd.Tensor
+    limit: qd.Tensor
+    act_gain: qd.Tensor
+    act_bias: qd.Tensor
+    force_range: qd.Tensor
 
 
 def get_dofs_info(solver):
     shape = (solver.n_dofs_, solver._B) if solver._options.batch_dofs_info else (solver.n_dofs_,)
 
-    return StructDofsInfo(
+    return DofsInfo(
         entity_idx=V(dtype=gs.qd_int, shape=shape),
         stiffness=V(dtype=gs.qd_float, shape=shape),
         invweight=V(dtype=gs.qd_float, shape=shape),
@@ -1375,38 +1368,38 @@ def get_dofs_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructDofsState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class DofsState:
     # *_bw: Cache to avoid overwriting for backward pass
-    force: V_ANNOTATION
-    qf_bias: V_ANNOTATION
-    qf_passive: V_ANNOTATION
-    qf_actuator: V_ANNOTATION
-    qf_applied: V_ANNOTATION
-    act_length: V_ANNOTATION
-    pos: V_ANNOTATION
-    vel: V_ANNOTATION
-    vel_prev: V_ANNOTATION
-    vel_next: V_ANNOTATION
-    acc: V_ANNOTATION
-    acc_bw: V_ANNOTATION
-    acc_smooth: V_ANNOTATION
-    acc_smooth_bw: V_ANNOTATION
-    qf_smooth: V_ANNOTATION
-    qf_constraint: V_ANNOTATION
-    cdof_ang: V_ANNOTATION
-    cdof_vel: V_ANNOTATION
-    cdofvel_ang: V_ANNOTATION
-    cdofvel_vel: V_ANNOTATION
-    cdofd_ang: V_ANNOTATION
-    cdofd_vel: V_ANNOTATION
-    f_vel: V_ANNOTATION
-    f_ang: V_ANNOTATION
-    ctrl_force: V_ANNOTATION
-    ctrl_pos: V_ANNOTATION
-    ctrl_vel: V_ANNOTATION
-    ctrl_mode: V_ANNOTATION
-    hibernated: V_ANNOTATION
+    force: qd.Tensor
+    qf_bias: qd.Tensor
+    qf_passive: qd.Tensor
+    qf_actuator: qd.Tensor
+    qf_applied: qd.Tensor
+    act_length: qd.Tensor
+    pos: qd.Tensor
+    vel: qd.Tensor
+    vel_prev: qd.Tensor
+    vel_next: qd.Tensor
+    acc: qd.Tensor
+    acc_bw: qd.Tensor
+    acc_smooth: qd.Tensor
+    acc_smooth_bw: qd.Tensor
+    qf_smooth: qd.Tensor
+    qf_constraint: qd.Tensor
+    cdof_ang: qd.Tensor
+    cdof_vel: qd.Tensor
+    cdofvel_ang: qd.Tensor
+    cdofvel_vel: qd.Tensor
+    cdofd_ang: qd.Tensor
+    cdofd_vel: qd.Tensor
+    f_vel: qd.Tensor
+    f_ang: qd.Tensor
+    ctrl_force: qd.Tensor
+    ctrl_pos: qd.Tensor
+    ctrl_vel: qd.Tensor
+    ctrl_mode: qd.Tensor
+    hibernated: qd.Tensor
 
 
 def get_dofs_state(solver):
@@ -1414,7 +1407,7 @@ def get_dofs_state(solver):
     requires_grad = solver._requires_grad
     shape_bw = maybe_shape((2, *shape), requires_grad)
 
-    return StructDofsState(
+    return DofsState(
         force=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         qf_bias=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
         qf_passive=V(dtype=gs.qd_float, shape=shape, needs_grad=requires_grad),
@@ -1450,51 +1443,51 @@ def get_dofs_state(solver):
 # =========================================== LinksState and LinksInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructLinksState(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class LinksState:
     # *_bw: Cache to avoid overwriting for backward pass
-    cinr_inertial: V_ANNOTATION
-    cinr_pos: V_ANNOTATION
-    cinr_quat: V_ANNOTATION
-    cinr_mass: V_ANNOTATION
-    crb_inertial: V_ANNOTATION
-    crb_pos: V_ANNOTATION
-    crb_quat: V_ANNOTATION
-    crb_mass: V_ANNOTATION
-    cdd_vel: V_ANNOTATION
-    cdd_ang: V_ANNOTATION
-    pos: V_ANNOTATION
-    quat: V_ANNOTATION
-    pos_bw: V_ANNOTATION
-    quat_bw: V_ANNOTATION
-    i_pos: V_ANNOTATION
-    i_pos_bw: V_ANNOTATION
-    i_quat: V_ANNOTATION
-    j_pos: V_ANNOTATION
-    j_quat: V_ANNOTATION
-    j_pos_bw: V_ANNOTATION
-    j_quat_bw: V_ANNOTATION
-    j_vel: V_ANNOTATION
-    j_ang: V_ANNOTATION
-    cd_ang: V_ANNOTATION
-    cd_vel: V_ANNOTATION
-    cd_ang_bw: V_ANNOTATION
-    cd_vel_bw: V_ANNOTATION
-    mass_sum: V_ANNOTATION
-    root_COM: V_ANNOTATION  # COM of the kinematic tree
-    root_COM_bw: V_ANNOTATION
-    mass_shift: V_ANNOTATION
-    i_pos_shift: V_ANNOTATION
-    cacc_ang: V_ANNOTATION
-    cacc_lin: V_ANNOTATION
-    cfrc_ang: V_ANNOTATION
-    cfrc_vel: V_ANNOTATION
-    cfrc_applied_ang: V_ANNOTATION
-    cfrc_applied_vel: V_ANNOTATION
-    cfrc_coupling_ang: V_ANNOTATION
-    cfrc_coupling_vel: V_ANNOTATION
-    contact_force: V_ANNOTATION
-    hibernated: V_ANNOTATION
+    cinr_inertial: qd.Tensor
+    cinr_pos: qd.Tensor
+    cinr_quat: qd.Tensor
+    cinr_mass: qd.Tensor
+    crb_inertial: qd.Tensor
+    crb_pos: qd.Tensor
+    crb_quat: qd.Tensor
+    crb_mass: qd.Tensor
+    cdd_vel: qd.Tensor
+    cdd_ang: qd.Tensor
+    pos: qd.Tensor
+    quat: qd.Tensor
+    pos_bw: qd.Tensor
+    quat_bw: qd.Tensor
+    i_pos: qd.Tensor
+    i_pos_bw: qd.Tensor
+    i_quat: qd.Tensor
+    j_pos: qd.Tensor
+    j_quat: qd.Tensor
+    j_pos_bw: qd.Tensor
+    j_quat_bw: qd.Tensor
+    j_vel: qd.Tensor
+    j_ang: qd.Tensor
+    cd_ang: qd.Tensor
+    cd_vel: qd.Tensor
+    cd_ang_bw: qd.Tensor
+    cd_vel_bw: qd.Tensor
+    mass_sum: qd.Tensor
+    root_COM: qd.Tensor  # COM of the kinematic tree
+    root_COM_bw: qd.Tensor
+    mass_shift: qd.Tensor
+    i_pos_shift: qd.Tensor
+    cacc_ang: qd.Tensor
+    cacc_lin: qd.Tensor
+    cfrc_ang: qd.Tensor
+    cfrc_vel: qd.Tensor
+    cfrc_applied_ang: qd.Tensor
+    cfrc_applied_vel: qd.Tensor
+    cfrc_coupling_ang: qd.Tensor
+    cfrc_coupling_vel: qd.Tensor
+    contact_force: qd.Tensor
+    hibernated: qd.Tensor
 
 
 def get_links_state(solver):
@@ -1503,7 +1496,7 @@ def get_links_state(solver):
     requires_grad = solver._requires_grad
     shape_bw = (solver.n_links_, max(max_n_joints_per_link + 1, 1), solver._B)
 
-    return StructLinksState(
+    return LinksState(
         cinr_inertial=V(dtype=gs.qd_mat3, shape=shape, needs_grad=requires_grad),
         cinr_pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         cinr_quat=V(dtype=gs.qd_vec4, shape=shape, needs_grad=requires_grad),
@@ -1549,37 +1542,37 @@ def get_links_state(solver):
     )
 
 
-@DATA_ORIENTED
-class StructLinksInfo(metaclass=BASE_METACLASS):
-    parent_idx: V_ANNOTATION
-    root_idx: V_ANNOTATION
-    q_start: V_ANNOTATION
-    dof_start: V_ANNOTATION
-    joint_start: V_ANNOTATION
-    q_end: V_ANNOTATION
-    dof_end: V_ANNOTATION
-    joint_end: V_ANNOTATION
-    n_dofs: V_ANNOTATION
-    pos: V_ANNOTATION
-    quat: V_ANNOTATION
-    invweight: V_ANNOTATION
-    is_fixed: V_ANNOTATION
-    inertial_pos: V_ANNOTATION
-    inertial_quat: V_ANNOTATION
-    inertial_i: V_ANNOTATION
-    inertial_mass: V_ANNOTATION
-    entity_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class LinksInfo:
+    parent_idx: qd.Tensor
+    root_idx: qd.Tensor
+    q_start: qd.Tensor
+    dof_start: qd.Tensor
+    joint_start: qd.Tensor
+    q_end: qd.Tensor
+    dof_end: qd.Tensor
+    joint_end: qd.Tensor
+    n_dofs: qd.Tensor
+    pos: qd.Tensor
+    quat: qd.Tensor
+    invweight: qd.Tensor
+    is_fixed: qd.Tensor
+    inertial_pos: qd.Tensor
+    inertial_quat: qd.Tensor
+    inertial_i: qd.Tensor
+    inertial_mass: qd.Tensor
+    entity_idx: qd.Tensor
     # Heterogeneous simulation support: per-link geom/vgeom index ranges
-    geom_start: V_ANNOTATION
-    geom_end: V_ANNOTATION
-    vgeom_start: V_ANNOTATION
-    vgeom_end: V_ANNOTATION
+    geom_start: qd.Tensor
+    geom_end: qd.Tensor
+    vgeom_start: qd.Tensor
+    vgeom_end: qd.Tensor
 
 
 def get_links_info(solver):
     links_info_shape = (solver.n_links_, solver._B) if solver._options.batch_links_info else solver.n_links_
 
-    return StructLinksInfo(
+    return LinksInfo(
         parent_idx=V(dtype=gs.qd_int, shape=links_info_shape),
         root_idx=V(dtype=gs.qd_int, shape=links_info_shape),
         q_start=V(dtype=gs.qd_int, shape=links_info_shape),
@@ -1609,22 +1602,22 @@ def get_links_info(solver):
 # =========================================== JointsInfo and JointsState ===========================================
 
 
-@DATA_ORIENTED
-class StructJointsInfo(metaclass=BASE_METACLASS):
-    type: V_ANNOTATION
-    sol_params: V_ANNOTATION
-    q_start: V_ANNOTATION
-    dof_start: V_ANNOTATION
-    q_end: V_ANNOTATION
-    dof_end: V_ANNOTATION
-    n_dofs: V_ANNOTATION
-    pos: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class JointsInfo:
+    type: qd.Tensor
+    sol_params: qd.Tensor
+    q_start: qd.Tensor
+    dof_start: qd.Tensor
+    q_end: qd.Tensor
+    dof_end: qd.Tensor
+    n_dofs: qd.Tensor
+    pos: qd.Tensor
 
 
 def get_joints_info(solver):
     shape = (solver.n_joints_, solver._B) if solver._options.batch_joints_info else (solver.n_joints_,)
 
-    return StructJointsInfo(
+    return JointsInfo(
         type=V(dtype=gs.qd_int, shape=shape),
         sol_params=V(dtype=gs.qd_vec7, shape=shape),
         q_start=V(dtype=gs.qd_int, shape=shape),
@@ -1636,17 +1629,17 @@ def get_joints_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructJointsState(metaclass=BASE_METACLASS):
-    xanchor: V_ANNOTATION
-    xaxis: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class JointsState:
+    xanchor: qd.Tensor
+    xaxis: qd.Tensor
 
 
 def get_joints_state(solver):
     shape = (solver.n_joints_, solver._B)
     requires_grad = solver._requires_grad
 
-    return StructJointsState(
+    return JointsState(
         xanchor=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         xaxis=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
     )
@@ -1655,42 +1648,42 @@ def get_joints_state(solver):
 # =========================================== GeomsInfo and GeomsState ===========================================
 
 
-@DATA_ORIENTED
-class StructGeomsInfo(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
-    center: V_ANNOTATION
-    quat: V_ANNOTATION
-    data: V_ANNOTATION
-    link_idx: V_ANNOTATION
-    type: V_ANNOTATION
-    friction: V_ANNOTATION
-    sol_params: V_ANNOTATION
-    vert_num: V_ANNOTATION
-    vert_start: V_ANNOTATION
-    vert_end: V_ANNOTATION
-    verts_state_start: V_ANNOTATION
-    verts_state_end: V_ANNOTATION
-    face_num: V_ANNOTATION
-    face_start: V_ANNOTATION
-    face_end: V_ANNOTATION
-    edge_num: V_ANNOTATION
-    edge_start: V_ANNOTATION
-    edge_end: V_ANNOTATION
-    is_convex: V_ANNOTATION
-    contype: V_ANNOTATION
-    conaffinity: V_ANNOTATION
-    is_fixed: V_ANNOTATION
-    is_decomposed: V_ANNOTATION
-    needs_coup: V_ANNOTATION
-    coup_friction: V_ANNOTATION
-    coup_softness: V_ANNOTATION
-    coup_restitution: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GeomsInfo:
+    pos: qd.Tensor
+    center: qd.Tensor
+    quat: qd.Tensor
+    data: qd.Tensor
+    link_idx: qd.Tensor
+    type: qd.Tensor
+    friction: qd.Tensor
+    sol_params: qd.Tensor
+    vert_num: qd.Tensor
+    vert_start: qd.Tensor
+    vert_end: qd.Tensor
+    verts_state_start: qd.Tensor
+    verts_state_end: qd.Tensor
+    face_num: qd.Tensor
+    face_start: qd.Tensor
+    face_end: qd.Tensor
+    edge_num: qd.Tensor
+    edge_start: qd.Tensor
+    edge_end: qd.Tensor
+    is_convex: qd.Tensor
+    contype: qd.Tensor
+    conaffinity: qd.Tensor
+    is_fixed: qd.Tensor
+    is_decomposed: qd.Tensor
+    needs_coup: qd.Tensor
+    coup_friction: qd.Tensor
+    coup_softness: qd.Tensor
+    coup_restitution: qd.Tensor
 
 
 def get_geoms_info(solver):
     shape = (solver.n_geoms_,)
 
-    return StructGeomsInfo(
+    return GeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         center=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
@@ -1722,24 +1715,24 @@ def get_geoms_info(solver):
     )
 
 
-@DATA_ORIENTED
-class StructGeomsState(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
-    quat: V_ANNOTATION
-    aabb_min: V_ANNOTATION
-    aabb_max: V_ANNOTATION
-    verts_updated: V_ANNOTATION
-    min_buffer_idx: V_ANNOTATION
-    max_buffer_idx: V_ANNOTATION
-    hibernated: V_ANNOTATION
-    friction_ratio: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GeomsState:
+    pos: qd.Tensor
+    quat: qd.Tensor
+    aabb_min: qd.Tensor
+    aabb_max: qd.Tensor
+    verts_updated: qd.Tensor
+    min_buffer_idx: qd.Tensor
+    max_buffer_idx: qd.Tensor
+    hibernated: qd.Tensor
+    friction_ratio: qd.Tensor
 
 
 def get_geoms_state(solver):
     shape = (solver.n_geoms_, solver._B)
     requires_grad = solver._static_rigid_sim_config.requires_grad
 
-    return StructGeomsState(
+    return GeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape, needs_grad=requires_grad),
         quat=V(dtype=gs.qd_vec4, shape=shape, needs_grad=requires_grad),
         aabb_min=V(dtype=gs.qd_vec3, shape=shape),
@@ -1755,20 +1748,20 @@ def get_geoms_state(solver):
 # =========================================== VertsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVertsInfo(metaclass=BASE_METACLASS):
-    init_pos: V_ANNOTATION
-    init_normal: V_ANNOTATION
-    geom_idx: V_ANNOTATION
-    init_center_pos: V_ANNOTATION
-    verts_state_idx: V_ANNOTATION
-    is_fixed: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VertsInfo:
+    init_pos: qd.Tensor
+    init_normal: qd.Tensor
+    geom_idx: qd.Tensor
+    init_center_pos: qd.Tensor
+    verts_state_idx: qd.Tensor
+    is_fixed: qd.Tensor
 
 
 def get_verts_info(solver):
     shape = (solver.n_verts_,)
 
-    return StructVertsInfo(
+    return VertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
         init_normal=V(dtype=gs.qd_vec3, shape=shape),
         geom_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1781,16 +1774,16 @@ def get_verts_info(solver):
 # =========================================== FacesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructFacesInfo(metaclass=BASE_METACLASS):
-    verts_idx: V_ANNOTATION
-    geom_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class FacesInfo:
+    verts_idx: qd.Tensor
+    geom_idx: qd.Tensor
 
 
 def get_faces_info(solver):
     shape = (solver.n_faces_,)
 
-    return StructFacesInfo(
+    return FacesInfo(
         verts_idx=V(dtype=gs.qd_ivec3, shape=shape),
         geom_idx=V(dtype=gs.qd_int, shape=shape),
     )
@@ -1799,17 +1792,17 @@ def get_faces_info(solver):
 # =========================================== EdgesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEdgesInfo(metaclass=BASE_METACLASS):
-    v0: V_ANNOTATION
-    v1: V_ANNOTATION
-    length: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EdgesInfo:
+    v0: qd.Tensor
+    v1: qd.Tensor
+    length: qd.Tensor
 
 
 def get_edges_info(solver):
     shape = (solver.n_edges_,)
 
-    return StructEdgesInfo(
+    return EdgesInfo(
         v0=V(dtype=gs.qd_int, shape=shape),
         v1=V(dtype=gs.qd_int, shape=shape),
         length=V(dtype=gs.qd_float, shape=shape),
@@ -1819,19 +1812,19 @@ def get_edges_info(solver):
 # =========================================== VertsState ===========================================
 
 
-@DATA_ORIENTED
-class StructVertsState(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VertsState:
+    pos: qd.Tensor
 
 
 def get_free_verts_state(solver):
-    return StructVertsState(
+    return VertsState(
         pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B)),
     )
 
 
 def get_fixed_verts_state(solver):
-    return StructVertsState(
+    return VertsState(
         pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,)),
     )
 
@@ -1839,17 +1832,17 @@ def get_fixed_verts_state(solver):
 # =========================================== VvertsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVvertsInfo(metaclass=BASE_METACLASS):
-    init_pos: V_ANNOTATION
-    init_vnormal: V_ANNOTATION
-    vgeom_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VVertsInfo:
+    init_pos: qd.Tensor
+    init_vnormal: qd.Tensor
+    vgeom_idx: qd.Tensor
 
 
 def get_vverts_info(solver):
     shape = (solver.n_vverts_,)
 
-    return StructVvertsInfo(
+    return VVertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
         init_vnormal=V(dtype=gs.qd_vec3, shape=shape),
         vgeom_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1859,16 +1852,16 @@ def get_vverts_info(solver):
 # =========================================== VfacesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVfacesInfo(metaclass=BASE_METACLASS):
-    vverts_idx: V_ANNOTATION
-    vgeom_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VFacesInfo:
+    vverts_idx: qd.Tensor
+    vgeom_idx: qd.Tensor
 
 
 def get_vfaces_info(solver):
     shape = (solver.n_vfaces_,)
 
-    return StructVfacesInfo(
+    return VFacesInfo(
         vverts_idx=V(dtype=gs.qd_ivec3, shape=shape),
         vgeom_idx=V(dtype=gs.qd_int, shape=shape),
     )
@@ -1877,24 +1870,24 @@ def get_vfaces_info(solver):
 # =========================================== VgeomsInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructVgeomsInfo(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
-    quat: V_ANNOTATION
-    link_idx: V_ANNOTATION
-    vvert_num: V_ANNOTATION
-    vvert_start: V_ANNOTATION
-    vvert_end: V_ANNOTATION
-    vface_num: V_ANNOTATION
-    vface_start: V_ANNOTATION
-    vface_end: V_ANNOTATION
-    color: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VGeomsInfo:
+    pos: qd.Tensor
+    quat: qd.Tensor
+    link_idx: qd.Tensor
+    vvert_num: qd.Tensor
+    vvert_start: qd.Tensor
+    vvert_end: qd.Tensor
+    vface_num: qd.Tensor
+    vface_start: qd.Tensor
+    vface_end: qd.Tensor
+    color: qd.Tensor
 
 
 def get_vgeoms_info(solver):
     shape = (solver.n_vgeoms_,)
 
-    return StructVgeomsInfo(
+    return VGeomsInfo(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
         link_idx=V(dtype=gs.qd_int, shape=shape),
@@ -1911,16 +1904,16 @@ def get_vgeoms_info(solver):
 # =========================================== VGeomsState ===========================================
 
 
-@DATA_ORIENTED
-class StructVgeomsState(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
-    quat: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VGeomsState:
+    pos: qd.Tensor
+    quat: qd.Tensor
 
 
 def get_vgeoms_state(solver):
     shape = (solver.n_vgeoms_, solver._B)
 
-    return StructVgeomsState(
+    return VGeomsState(
         pos=V(dtype=gs.qd_vec3, shape=shape),
         quat=V(dtype=gs.qd_vec4, shape=shape),
     )
@@ -1929,19 +1922,19 @@ def get_vgeoms_state(solver):
 # =========================================== EqualitiesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEqualitiesInfo(metaclass=BASE_METACLASS):
-    eq_obj1id: V_ANNOTATION
-    eq_obj2id: V_ANNOTATION
-    eq_data: V_ANNOTATION
-    eq_type: V_ANNOTATION
-    sol_params: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EqualitiesInfo:
+    eq_obj1id: qd.Tensor
+    eq_obj2id: qd.Tensor
+    eq_data: qd.Tensor
+    eq_type: qd.Tensor
+    sol_params: qd.Tensor
 
 
 def get_equalities_info(solver):
     shape = (solver.n_candidate_equalities_, solver._B)
 
-    return StructEqualitiesInfo(
+    return EqualitiesInfo(
         eq_obj1id=V(dtype=gs.qd_int, shape=shape),
         eq_obj2id=V(dtype=gs.qd_int, shape=shape),
         eq_data=V(dtype=gs.qd_vec11, shape=shape),
@@ -1953,25 +1946,25 @@ def get_equalities_info(solver):
 # =========================================== EntitiesInfo ===========================================
 
 
-@DATA_ORIENTED
-class StructEntitiesInfo(metaclass=BASE_METACLASS):
-    dof_start: V_ANNOTATION
-    dof_end: V_ANNOTATION
-    n_dofs: V_ANNOTATION
-    link_start: V_ANNOTATION
-    link_end: V_ANNOTATION
-    n_links: V_ANNOTATION
-    geom_start: V_ANNOTATION
-    geom_end: V_ANNOTATION
-    n_geoms: V_ANNOTATION
-    gravity_compensation: V_ANNOTATION
-    is_local_collision_mask: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EntitiesInfo:
+    dof_start: qd.Tensor
+    dof_end: qd.Tensor
+    n_dofs: qd.Tensor
+    link_start: qd.Tensor
+    link_end: qd.Tensor
+    n_links: qd.Tensor
+    geom_start: qd.Tensor
+    geom_end: qd.Tensor
+    n_geoms: qd.Tensor
+    gravity_compensation: qd.Tensor
+    is_local_collision_mask: qd.Tensor
 
 
 def get_entities_info(solver):
     shape = (solver.n_entities_,)
 
-    return StructEntitiesInfo(
+    return EntitiesInfo(
         dof_start=V(dtype=gs.qd_int, shape=shape),
         dof_end=V(dtype=gs.qd_int, shape=shape),
         n_dofs=V(dtype=gs.qd_int, shape=shape),
@@ -1989,46 +1982,46 @@ def get_entities_info(solver):
 # =========================================== EntitiesState ===========================================
 
 
-@DATA_ORIENTED
-class StructEntitiesState(metaclass=BASE_METACLASS):
-    hibernated: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class EntitiesState:
+    hibernated: qd.Tensor
 
 
 def get_entities_state(solver):
-    return StructEntitiesState(
+    return EntitiesState(
         hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
     )
 
 
 # =========================================== RigidAdjointCache ===========================================
-@DATA_ORIENTED
-class StructRigidAdjointCache(metaclass=BASE_METACLASS):
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class RigidAdjointCache:
     # This cache stores intermediate values during rigid body simulation to use Quadrants's AD. Quadrants's AD requires
     # us not to overwrite the values that have been read during the forward pass, so we need to store the intemediate
     # values in this cache to avoid overwriting them. Specifically, after we compute next frame's qpos, dofs_vel, and
     # dofs_acc, we need to store them in this cache because we overwrite the values in the next frame. See how
     # [kernel_save_adjoint_cache] is used in [rigid_solver.py] to store the values in this cache.
-    qpos: V_ANNOTATION
-    dofs_vel: V_ANNOTATION
-    dofs_acc: V_ANNOTATION
+    qpos: qd.Tensor
+    dofs_vel: qd.Tensor
+    dofs_acc: qd.Tensor
 
 
 def get_rigid_adjoint_cache(solver):
     substeps_local = solver._sim.substeps_local
     requires_grad = solver._requires_grad
 
-    return StructRigidAdjointCache(
+    return RigidAdjointCache(
         qpos=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_qs_, solver._B), needs_grad=requires_grad),
         dofs_vel=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
         dofs_acc=V(dtype=gs.qd_float, shape=(substeps_local + 1, solver.n_dofs_, solver._B), needs_grad=requires_grad),
     )
 
 
-# =================================== StructRigidSimStaticConfig ===================================
+# =================================== RigidSimStaticConfig ===================================
 
 
 @qd.data_oriented
-class StructRigidSimStaticConfig(metaclass=AutoInitMeta):
+class RigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
     para_level: int
     enable_collision: bool
@@ -2115,17 +2108,17 @@ class DataManager:
 # =========================================== ViewerRaycastResult ===========================================
 
 
-@DATA_ORIENTED
-class StructViewerRaycastResult(metaclass=BASE_METACLASS):
-    distance: V_ANNOTATION
-    geom_idx: V_ANNOTATION
-    hit_point: V_ANNOTATION
-    normal: V_ANNOTATION
-    env_idx: V_ANNOTATION
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class RaycastResult:
+    distance: qd.Tensor
+    geom_idx: qd.Tensor
+    hit_point: qd.Tensor
+    normal: qd.Tensor
+    env_idx: qd.Tensor
 
 
 def get_viewer_raycast_result():
-    return StructViewerRaycastResult(
+    return RaycastResult(
         distance=V(dtype=gs.qd_float, shape=()),
         geom_idx=V(dtype=gs.qd_int, shape=()),
         hit_point=V_VEC(3, dtype=gs.qd_float, shape=()),
@@ -2134,37 +2127,4 @@ def get_viewer_raycast_result():
     )
 
 
-DofsState = StructDofsState if gs.use_ndarray else qd.template()
-DofsInfo = StructDofsInfo if gs.use_ndarray else qd.template()
-GeomsState = StructGeomsState if gs.use_ndarray else qd.template()
-GeomsInfo = StructGeomsInfo if gs.use_ndarray else qd.template()
-GeomsInitAABB = V_ANNOTATION
-LinksState = StructLinksState if gs.use_ndarray else qd.template()
-LinksInfo = StructLinksInfo if gs.use_ndarray else qd.template()
-JointsInfo = StructJointsInfo if gs.use_ndarray else qd.template()
-JointsState = StructJointsState if gs.use_ndarray else qd.template()
-VertsState = StructVertsState if gs.use_ndarray else qd.template()
-VertsInfo = StructVertsInfo if gs.use_ndarray else qd.template()
-EdgesInfo = StructEdgesInfo if gs.use_ndarray else qd.template()
-FacesInfo = StructFacesInfo if gs.use_ndarray else qd.template()
-VVertsInfo = StructVvertsInfo if gs.use_ndarray else qd.template()
-VFacesInfo = StructVfacesInfo if gs.use_ndarray else qd.template()
-VGeomsInfo = StructVgeomsInfo if gs.use_ndarray else qd.template()
-VGeomsState = StructVgeomsState if gs.use_ndarray else qd.template()
-EntitiesState = StructEntitiesState if gs.use_ndarray else qd.template()
-EntitiesInfo = StructEntitiesInfo if gs.use_ndarray else qd.template()
-EqualitiesInfo = StructEqualitiesInfo if gs.use_ndarray else qd.template()
-RigidGlobalInfo = StructRigidGlobalInfo if gs.use_ndarray else qd.template()
-ColliderState = StructColliderState if gs.use_ndarray else qd.template()
-ColliderInfo = StructColliderInfo if gs.use_ndarray else qd.template()
-MPRState = StructMPRState if gs.use_ndarray else qd.template()
-MPRInfo = StructMPRInfo if gs.use_ndarray else qd.template()
-SupportFieldInfo = StructSupportFieldInfo if gs.use_ndarray else qd.template()
-ConstraintState = StructConstraintState if gs.use_ndarray else qd.template()
-GJKState = StructGJKState if gs.use_ndarray else qd.template()
-GJKInfo = StructGJKInfo if gs.use_ndarray else qd.template()
-SDFInfo = StructSDFInfo if gs.use_ndarray else qd.template()
-ContactIslandState = StructContactIslandState if gs.use_ndarray else qd.template()
-DiffContactInput = StructDiffContactInput if gs.use_ndarray else qd.template()
-RigidAdjointCache = StructRigidAdjointCache if gs.use_ndarray else qd.template()
-RaycastResult = StructViewerRaycastResult if gs.use_ndarray else qd.template()
+GeomsInitAABB = qd.Tensor

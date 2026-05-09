@@ -30,7 +30,7 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
     return matres
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def collider_kernel_reset(
     envs_idx: qd.types.ndarray(),
     static_rigid_sim_config: qd.template(),
@@ -109,7 +109,7 @@ def func_collider_clear_env(
 
 
 # only used with hibernation ??
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_collider_clear(
     envs_idx: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -123,7 +123,7 @@ def kernel_collider_clear(
         func_collider_clear_env(i_b, links_state, links_info, static_rigid_sim_config, collider_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def kernel_masked_collider_clear(
     envs_mask: qd.types.ndarray(),
     links_state: array_class.LinksState,
@@ -136,7 +136,7 @@ def kernel_masked_collider_clear(
             func_collider_clear_env(i_b, links_state, links_info, static_rigid_sim_config, collider_state)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def collider_kernel_get_contacts(
     is_padded: qd.template(),
     iout: qd.types.ndarray(),
@@ -190,7 +190,7 @@ def func_add_contact(
     geoms_info: array_class.GeomsInfo,
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,
-    errno: array_class.V_ANNOTATION,
+    errno: qd.Tensor,
     use_atomic: qd.template() = False,
 ):
     i_c = 0
@@ -436,7 +436,7 @@ def func_rotate_frame(
     return new_pos, new_quat
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel(fastcache=True)
 def func_clamp_and_sort_contacts(
     collider_state: array_class.ColliderState,
     collider_info: array_class.ColliderInfo,

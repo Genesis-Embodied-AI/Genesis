@@ -320,6 +320,7 @@ class FEMSolver(Solver):
             link_init_quat=gs.qd_vec4,  # offset rotation of link
         )
 
+        # FIXME: AOS, which does not match other Genesis structs. Old, untested code. We prefer not to touch for now.
         self.vertex_constraints = vertex_constraint_info.field(
             shape=(self.n_vertices, self._B), needs_grad=False, layout=qd.Layout.AOS
         )
@@ -373,7 +374,7 @@ class FEMSolver(Solver):
         if self.n_vertices_max > 0 and self._enable_vertex_constraints and not self._constraints_initialized:
             self.init_constraints()
 
-        # Overwrite gravity because only field is supported for now
+        # FIXME: _gravity must be a raw qd.field() — see comment in mpm_solver.py
         if self._gravity is not None:
             gravity = self._gravity.to_numpy()
             self._gravity = qd.field(dtype=gs.qd_vec3, shape=(self._B,))
