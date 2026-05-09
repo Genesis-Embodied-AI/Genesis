@@ -399,6 +399,11 @@ class RigidSensorMetadataMixin:
     offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
     offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
 
+    # Per-sensor link resolution: supports sensors attached to entities in different solvers.
+    # Each entry corresponds to one sensor in registration order.
+    _sensor_link_solvers: list = field(default_factory=list)  # [solver | None] per sensor
+    _sensor_link_indices: list[int] = field(default_factory=list)  # solver-relative link idx per sensor
+
 
 RigidSensorMetadataMixinT = TypeVar("RigidSensorMetadataMixinT", bound=RigidSensorMetadataMixin)
 
@@ -415,21 +420,54 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
     def build(self):
         super().build()
 
+        sim = self._manager._sim
+
         if self._shared_metadata.solver is None:
-            self._shared_metadata.solver = self._manager._sim.rigid_solver
+            # Primary solver determines BVH geometry (collision or visual).
+            # Prefer rigid_solver (has collision geometry); fall back to kinematic.
+            if sim.rigid_solver.is_active:
+                self._shared_metadata.solver = sim.rigid_solver
+            elif sim.kinematic_solver.is_active:
+                self._shared_metadata.solver = sim.kinematic_solver
+            else:
+                self._shared_metadata.solver = sim.rigid_solver
 
-        batch_size = self._manager._sim._B
+        batch_size = sim._B
 
-        # If entity_idx is < 0, this is a static sensor (not attached to any link)
+        # If entity_idx is < 0, this is a static sensor (not attached to any link).
+        # The link pose is identity, but the user-provided pos_offset / euler_offset still
+        # define the sensor's pose in world space (raycaster bakes them into ray_starts at
+        # build time), so they must be appended like in the attached branch below.
         if self._options.entity_idx is None or self._options.entity_idx < 0:
             self._link = None
+            # Record static sensor: identity transform will be used for link pose.
+            self._shared_metadata._sensor_link_solvers.append(None)
+            self._shared_metadata._sensor_link_indices.append(-1)
+            self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, 0)
+            self._shared_metadata.offsets_pos = concat_with_tensor(
+                self._shared_metadata.offsets_pos,
+                self._options.pos_offset,
+                expand=(batch_size, 1, 3),
+                dim=1,
+            )
+            self._shared_metadata.offsets_quat = concat_with_tensor(
+                self._shared_metadata.offsets_quat,
+                euler_to_quat([self._options.euler_offset]),
+                expand=(batch_size, 1, 4),
+                dim=1,
+            )
             return
 
-        entity = self._shared_metadata.solver.entities[self._options.entity_idx]
+        entity = sim.entities[self._options.entity_idx]
         self._link = entity.links[self._options.link_idx_local]
-        self._shared_metadata.links_idx = concat_with_tensor(
-            self._shared_metadata.links_idx, self._options.link_idx_local + entity.link_start
-        )
+        link_idx = self._options.link_idx_local + entity.link_start
+
+        # Record per-sensor solver + link for cross-solver link resolution.
+        self._shared_metadata._sensor_link_solvers.append(entity.solver)
+        self._shared_metadata._sensor_link_indices.append(link_idx)
+
+        # Keep links_idx for backward compatibility with non-raycaster sensors.
+        self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, link_idx)
         self._shared_metadata.offsets_pos = concat_with_tensor(
             self._shared_metadata.offsets_pos,
             self._options.pos_offset,
