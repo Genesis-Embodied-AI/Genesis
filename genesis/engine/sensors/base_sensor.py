@@ -432,30 +432,14 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
             else:
                 self._shared_metadata.solver = sim.rigid_solver
 
-        batch_size = sim._B
-
         # If entity_idx is < 0, this is a static sensor (not attached to any link).
-        # The link pose is identity, but the user-provided pos_offset / euler_offset still
-        # define the sensor's pose in world space (raycaster bakes them into ray_starts at
-        # build time), so they must be appended like in the attached branch below.
+        # Only raycaster sensors formally support this; other rigid sensors (IMU, Contact,
+        # ContactForce, TemperatureGrid, Proximity) read poses/kinematics by bulk-indexing
+        # ``shared_metadata.links_idx`` and would silently track solver link 0 if we appended
+        # a placeholder here. Raycaster overrides ``build()`` to populate its own per-sensor
+        # metadata (offsets + ``_sensor_link_solvers`` / ``_sensor_link_indices``).
         if self._options.entity_idx is None or self._options.entity_idx < 0:
             self._link = None
-            # Record static sensor: identity transform will be used for link pose.
-            self._shared_metadata._sensor_link_solvers.append(None)
-            self._shared_metadata._sensor_link_indices.append(-1)
-            self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, 0)
-            self._shared_metadata.offsets_pos = concat_with_tensor(
-                self._shared_metadata.offsets_pos,
-                self._options.pos_offset,
-                expand=(batch_size, 1, 3),
-                dim=1,
-            )
-            self._shared_metadata.offsets_quat = concat_with_tensor(
-                self._shared_metadata.offsets_quat,
-                euler_to_quat([self._options.euler_offset]),
-                expand=(batch_size, 1, 4),
-                dim=1,
-            )
             return
 
         entity = sim.entities[self._options.entity_idx]
@@ -466,6 +450,7 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
         self._shared_metadata._sensor_link_solvers.append(entity.solver)
         self._shared_metadata._sensor_link_indices.append(link_idx)
 
+        batch_size = sim._B
         # Keep links_idx for backward compatibility with non-raycaster sensors.
         self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, link_idx)
         self._shared_metadata.offsets_pos = concat_with_tensor(

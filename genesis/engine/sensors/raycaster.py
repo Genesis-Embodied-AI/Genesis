@@ -17,6 +17,7 @@ from genesis.options.sensors import (
     RaycastPattern,
 )
 from genesis.utils.geom import (
+    euler_to_quat,
     qd_normalize,
     qd_transform_by_quat,
     qd_transform_by_trans_quat,
@@ -354,6 +355,29 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     def build(self):
         super().build()
 
+        # Static sensor (entity_idx<0): the base RigidSensorMixin.build only sets
+        # self._link=None and returns, so the per-sensor solver/index lists and the
+        # offsets arrays still need entries here for the raycaster's cross-solver
+        # gather and the [..., -1, :] read below to stay aligned. links_idx is left
+        # alone — it is consumed only by non-raycaster sensors.
+        if self._options.entity_idx is None or self._options.entity_idx < 0:
+            sim = self._manager._sim
+            batch_size = sim._B
+            self._shared_metadata._sensor_link_solvers.append(None)
+            self._shared_metadata._sensor_link_indices.append(-1)
+            self._shared_metadata.offsets_pos = concat_with_tensor(
+                self._shared_metadata.offsets_pos,
+                self._options.pos_offset,
+                expand=(batch_size, 1, 3),
+                dim=1,
+            )
+            self._shared_metadata.offsets_quat = concat_with_tensor(
+                self._shared_metadata.offsets_quat,
+                euler_to_quat([self._options.euler_offset]),
+                expand=(batch_size, 1, 4),
+                dim=1,
+            )
+
         # first lidar sensor initialization: build aabb and bvh
         if self._shared_metadata.bvh is None:
             self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
@@ -368,7 +392,12 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
 
             # Determine whether primary solver uses visual mesh for raycasting.
             # KinematicSolver has no collision geometry — always use visual BVH.
-            use_visual = not isinstance(solver, RigidSolver) or any(e.use_visual_raycasting for e in solver.entities)
+            # The rigid solver always stays on its collision BVH so that rigid bodies
+            # without ``use_visual_raycasting`` set keep their pre-existing raycast
+            # behaviour. If any rigid entity opts in, the rigid solver is added below
+            # as an *additional* visual BVH alongside its collision BVH; the merge
+            # kernel picks the closer hit.
+            use_visual = not isinstance(solver, RigidSolver)
             self._shared_metadata.use_visual_bvh = use_visual
 
             if use_visual:
@@ -380,9 +409,15 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
                 self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
             )
 
-            # Build extra BVHs for other active solvers that have visual raycasting entities
+            # Build extra visual BVHs for any active solver that has opted-in entities.
+            # When the primary solver is the rigid solver and a rigid entity opted in,
+            # we add a *second* BVH for the same solver: the primary stays on collision,
+            # and this extra one covers visual meshes for the opted-in entities.
             for other_solver in [sim.rigid_solver, sim.kinematic_solver]:
-                if other_solver is solver or not other_solver.is_active:
+                if not other_solver.is_active:
+                    continue
+                if other_solver is solver and use_visual:
+                    # Already covered by the primary visual BVH.
                     continue
                 if not any(e.use_visual_raycasting for e in other_solver.entities):
                     continue
