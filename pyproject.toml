@@ -128,7 +128,7 @@ render = [
     "open3d",
 ]
 gui = [
-    "imgui-bundle",
+    "imgui-bundle==1.92.5",
 ]
 usd = [
     # Used for parsing `.usd` mesh files
