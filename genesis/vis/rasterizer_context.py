@@ -477,8 +477,11 @@ class RasterizerContext:
                     geoms = entity.geoms
                     geoms_T = solver._geoms_render_T
 
-                # Custom vverts path: per-env vertex updates (e.g., SMPL skinned meshes)
-                if entity.has_custom_vverts:
+                # Custom vverts path: per-env vertex updates (e.g., SMPL skinned meshes).
+                # Only takes over when the entity is being rendered in 'visual' mode — collision
+                # and sdf modes still need the standard per-vgeom transform update below, since
+                # set_vverts only writes to the visual mesh.
+                if entity.has_custom_vverts and entity.surface.vis_mode == "visual":
                     self._update_rigid_custom_vverts(entity, entity.vgeoms)
                     continue
 
