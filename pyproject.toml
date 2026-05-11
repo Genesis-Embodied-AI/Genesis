@@ -125,7 +125,8 @@ docs = [
 ]
 render = [
     "pybind11[global]",
-    "open3d",
+    # Pre-compiled wheels are only published for cp38-cp312 on macOS (universal2), Linux x86_64, and Windows.
+    "open3d; python_version < '3.13' and platform_machine != 'aarch64'",
     # No pre-compiled wheels are published for Python 3.10, and the source build needs CMake.
     "imgui-bundle; python_version >= '3.11'",
 ]
