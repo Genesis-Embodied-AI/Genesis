@@ -20,10 +20,6 @@ except ImportError:
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
 def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
-    # ImGui font rasterization differs across platforms (freetype vs CoreText) and renderers. Loosen the tolerance
-    # so the same baseline matches on Linux and macOS.
-    png_snapshot.extension._std_err_threshold = 5.0
-
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             # Keep ``res`` small enough to fit the virtual display area of GitHub-hosted Apple M1 macos-15 runners:
