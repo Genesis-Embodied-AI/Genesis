@@ -61,6 +61,14 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         free_joint_pos_limit: float = 10.0,
         panel_width: int | None = None,
     ):
+        try:
+            import imgui_bundle  # noqa: F401
+        except ImportError:
+            gs.raise_exception(
+                "ImGuiOverlayPlugin requires the optional 'imgui-bundle' dependency. Install Genesis with the "
+                "'render' extras (pip install 'genesis-world[render]') or pip install imgui-bundle directly."
+            )
+
         super().__init__()
         self._controlled_env_idx = controlled_env_idx
         self._free_joint_pos_limit = free_joint_pos_limit
@@ -261,6 +269,17 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             platform_io.platform_set_clipboard_text_fn = _set_clipboard
             apply_dark_theme(imgui)
             self._available = True
+
+            # FIXME: ImGui's tab bar and auto-resize windows size themselves using the previous frame's measurements,
+            # so the very first frame snaps to default geometry and the second frame jumps to its steady-state size.
+            # Run one hidden UI pass here (no GL commit) so the first user-visible frame already has the settled
+            # layout. The root cause inside imgui-bundle should be investigated to remove this workaround.
+            io = imgui.get_io()
+            io.display_size = (float(self.viewer.width), float(self.viewer.height))
+            io.delta_time = 1.0 / 60.0
+            imgui.new_frame()
+            self._render_control_panel()
+            imgui.end_frame()
             # Try to load ImGuizmo for 3D gizmos
             try:
                 from imgui_bundle import imguizmo

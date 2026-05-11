@@ -89,8 +89,6 @@ dev = [
     "syrupy",
     "huggingface_hub[hf_xet]",
     "wandb",
-    # No pre-compiled wheels are published for Python 3.10, and the source build needs CMake.
-    "imgui-bundle; python_version >= '3.11'",
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
@@ -128,8 +126,6 @@ docs = [
 render = [
     "pybind11[global]",
     "open3d",
-]
-gui = [
     # No pre-compiled wheels are published for Python 3.10, and the source build needs CMake.
     "imgui-bundle; python_version >= '3.11'",
 ]
