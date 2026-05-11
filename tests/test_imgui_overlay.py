@@ -13,6 +13,13 @@ from genesis.vis.viewer_plugins.viewer_plugin import ViewerPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 
+try:
+    import imgui_bundle  # noqa: F401
+
+    _IMGUI_BUNDLE_AVAILABLE = True
+except ImportError:
+    _IMGUI_BUNDLE_AVAILABLE = False
+
 
 class _FrameCapturePlugin(ViewerPlugin):
     """Read the default framebuffer after all prior plugins (including ImGui) have drawn."""
@@ -33,6 +40,7 @@ class _FrameCapturePlugin(ViewerPlugin):
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
+@pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
 def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     # ImGui font rasterization differs across platforms (freetype vs CoreText) and renderers.
     # Loosen the tolerance so the same baseline matches on Linux and macOS.
