@@ -162,11 +162,14 @@ class IMUSensor(
         return gs.tc_float
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: IMUSharedMetadata, shared_ground_truth_cache: torch.Tensor
+    def _update_shared_cache(
+        cls,
+        shared_metadata: IMUSharedMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         """
-        Update the current ground truth values for all IMU sensors.
+        Update ground truth and pre-delay measured IMU values for all sensors of this class.
         """
         # Extract acceleration and gravity in world frame
         assert shared_metadata.solver is not None
@@ -201,36 +204,17 @@ class IMUSensor(
 
         # cache layout: (n_imus * 9, B)
         *batch_size, n_imus, _ = local_acc.shape
-        strided_ground_truth_cache = shared_ground_truth_cache.view(n_imus, 3, 3, *batch_size)
+        strided_ground_truth_cache = current_ground_truth_data_T.view(n_imus, 3, 3, *batch_size)
         strided_ground_truth_cache[:, 0].copy_(local_acc.permute(1, 2, 0))
         strided_ground_truth_cache[:, 1].copy_(local_ang.permute(1, 2, 0))
         strided_ground_truth_cache[:, 2].copy_(local_mag.permute(1, 2, 0))
 
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: IMUSharedMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        """
-        Update the current measured sensor data for all IMU sensors.
-        """
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.interpolate,
-        )
-
-        # apply rotation matrix to the shared cache
-        shared_cache_xyz_view = shared_cache.view(shared_cache.shape[0], -1, 3)
-        shared_cache_xyz_view.copy_(
-            torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
-        )
-
-        cls._apply_imperfections(shared_metadata, shared_cache)
+        # apply alignment rotation and imperfections to the measured data
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.copy_(current_ground_truth_data_T.T)
+        measured_xyz = measured.view(measured.shape[0], -1, 3)
+        measured_xyz.copy_(torch.matmul(shared_metadata.alignment_rot_matrix, measured_xyz.unsqueeze(-1)).squeeze(-1))
+        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

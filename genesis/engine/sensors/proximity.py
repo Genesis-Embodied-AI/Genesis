@@ -212,16 +212,19 @@ class ProximitySensor(
         self._nearest_points_slice = slice(slice_start, slice_start + self._n_probes)
 
     @classmethod
-    def reset(cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: ProximityMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         shared_metadata.nearest_positions[envs_idx] = shared_metadata.probe_positions
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor
+    def _update_shared_cache(
+        cls,
+        shared_metadata: ProximityMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         solver = shared_metadata.solver
-        shared_ground_truth_cache.zero_()
+        current_ground_truth_data_T.zero_()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -243,24 +246,11 @@ class ProximitySensor(
             solver.fixed_verts_state,
             solver.free_verts_state,
             shared_metadata.nearest_positions,
-            shared_ground_truth_cache,
+            current_ground_truth_data_T,
         )
-
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: ProximityMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.interpolate,
-        )
-        cls._apply_imperfections(shared_metadata, shared_cache)
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.copy_(current_ground_truth_data_T.T)
+        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None

@@ -230,8 +230,8 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
             )
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
@@ -243,8 +243,11 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
         return gs.tc_float
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
+    def _update_shared_cache(
+        cls,
+        shared_metadata: RaycasterSharedMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         cls._update_bvh(shared_metadata)
 
@@ -292,7 +295,7 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,
-                shared_ground_truth_cache,
+                current_ground_truth_data_T,
                 gs.EPS,
                 i > 0,
             )
@@ -313,15 +316,7 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                     *args_common,
                 )
 
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: RaycasterSharedMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
+        measured_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

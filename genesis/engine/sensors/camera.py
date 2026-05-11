@@ -247,20 +247,11 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
         return torch.uint8
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls,
-        shared_metadata: SharedSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-    ):
-        pass
-
-    @classmethod
     def _update_shared_cache(
         cls,
         shared_metadata: SharedSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         # No per-step measured-cache update for cameras (handled lazily on read()).
         pass

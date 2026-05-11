@@ -847,22 +847,6 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: KinematicTactileSensorMetadataMixinT,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.interpolate,
-        )
-        cls._apply_imperfections(shared_metadata, shared_cache)
-
     def _draw_debug_probes(self, context: "RasterizerContext", get_magnitude: Callable[[int], float]):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
@@ -947,13 +931,16 @@ class KinematicContactProbe(
         )
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: KinematicTactileSensorMetadataMixinT, shared_ground_truth_cache: torch.Tensor
+    def _update_shared_cache(
+        cls,
+        shared_metadata: KinematicTactileSensorMetadataMixinT,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         solver = shared_metadata.solver
         collider_state = solver.collider._collider_state
 
-        shared_ground_truth_cache.zero_()
+        current_ground_truth_data_T.zero_()
         _kernel_kinematic_contact_probe(
             shared_metadata.probe_positions,
             shared_metadata.probe_normals,
@@ -975,8 +962,11 @@ class KinematicContactProbe(
             solver.verts_info,
             solver.faces_info,
             gs.EPS,
-            shared_ground_truth_cache,
+            current_ground_truth_data_T,
         )
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.copy_(current_ground_truth_data_T.T)
+        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: data.penetration)
@@ -1098,10 +1088,11 @@ class ElastomerDisplacementSensor(
         self._shared_metadata.fft_kernel_list.append(kernel_fft)
 
     @classmethod
-    def _update_shared_ground_truth_cache(
+    def _update_shared_cache(
         cls,
         shared_metadata: ElastomerDisplacementSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
     ):
         solver = shared_metadata.solver
 
@@ -1135,9 +1126,9 @@ class ElastomerDisplacementSensor(
             shared_metadata.contact_buf,
             shared_metadata.contact_link_buf,
             gs.EPS,
-            shared_ground_truth_cache,
+            current_ground_truth_data_T,
         )
-
+        # use torch for fft
         _elastomer_displacement_grid_fft_dilate(
             shared_metadata.is_grid,
             shared_metadata.contact_buf,
@@ -1149,7 +1140,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.dilate_coefficient,
             shared_metadata.dilate_max_delta,
             shared_metadata.grid_dilate_out_buffer,
-            shared_ground_truth_cache,
+            current_ground_truth_data_T,
         )
         _kernel_elastomer_displacement_grid_shear_twist(
             shared_metadata.probe_positions,
@@ -1167,8 +1158,11 @@ class ElastomerDisplacementSensor(
             solver.links_state,
             solver._sim.dt,
             gs.EPS,
-            shared_ground_truth_cache,
+            current_ground_truth_data_T,
         )
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.copy_(current_ground_truth_data_T.T)
+        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: torch.linalg.norm(data, dim=-1))

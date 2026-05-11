@@ -10,10 +10,12 @@ from genesis.options.sensors import types as _sensor_types_namespace
 from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
+from .base_sensor import SharedSensorMetadata
+
 if TYPE_CHECKING:
     from genesis.vis.rasterizer_context import RasterizerContext
 
-    from .base_sensor import Sensor, SharedSensorMetadata
+    from .base_sensor import Sensor
 
 
 class SensorManager:
@@ -27,6 +29,8 @@ class SensorManager:
         self._ground_truth_cache: dict[type[torch.dtype], torch.Tensor] = {}
         self._cache: dict[type[torch.dtype], torch.Tensor] = {}
         self._gt_timeline_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
+        # Pre-delay instantaneous measured timeline; shares ring idx with _gt_timeline_ring per dtype.
+        self._measured_timeline_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
         self._measured_history_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
         # Linearized per-class history of shape (B, max_history_for_class, class_cache_size). Refreshed every step.
         # Lets read_sensors and per-sensor history reads return views instead of re-gathering from the ring.
@@ -150,6 +154,7 @@ class SensorManager:
             self._max_history_by_class[sensor_cls] = cls_max_history
 
         self._gt_timeline_ring.clear()
+        self._measured_timeline_ring.clear()
         self._measured_history_ring.clear()
         self._linearized_gt_history.clear()
         self._linearized_measured_history.clear()
@@ -165,7 +170,11 @@ class SensorManager:
             self._cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)
             delay_n = max(delay_depth_per_dtype.get(dtype, 1), 1)
             hist_n = max_history_per_dtype.get(dtype, 0)
-            self._gt_timeline_ring[dtype] = TensorRingBuffer(max(delay_n, hist_n), cache_shape, dtype=dtype)
+            ring_n = max(delay_n, hist_n)
+            self._gt_timeline_ring[dtype] = TensorRingBuffer(ring_n, cache_shape, dtype=dtype)
+            self._measured_timeline_ring[dtype] = TensorRingBuffer(
+                ring_n, cache_shape, dtype=dtype, idx=self._gt_timeline_ring[dtype]._idx
+            )
             if hist_n > 0:
                 self._measured_history_ring[dtype] = TensorRingBuffer(hist_n, cache_shape, dtype=dtype)
 
@@ -203,6 +212,7 @@ class SensorManager:
             self._ground_truth_cache[dtype][:, envs_idx] = 0.0
             self._cache[dtype][envs_idx] = 0.0
             self._gt_timeline_ring[dtype].buffer[:, envs_idx] = 0.0
+            self._measured_timeline_ring[dtype].buffer[:, envs_idx] = 0.0
             if dtype in self._measured_history_ring:
                 self._measured_history_ring[dtype].buffer[:, envs_idx] = 0.0
             for is_ground_truth in (False, True):
@@ -219,6 +229,45 @@ class SensorManager:
             cache_slice = self._cache_slices_by_type[sensor_cls]
             sensor_cls.reset(self._sensors_metadata[sensor_cls], self._ground_truth_cache[dtype][cache_slice], envs_idx)
 
+    def _apply_delay_to_shared_cache(
+        self,
+        shared_metadata: SharedSensorMetadata,
+        shared_cache: torch.Tensor,
+        source_ring: TensorRingBuffer,
+    ) -> None:
+        """Sample ``source_ring`` (pre-delay measured timeline) into ``shared_cache`` using delay_ts and jitter."""
+        if not shared_metadata.has_any_delay and not shared_metadata.has_any_jitter:
+            shared_cache.copy_(source_ring.at(0))
+            return
+
+        if shared_metadata.has_any_jitter:
+            shared_metadata.cur_jitter_ts.uniform_(0.0, 1.0).mul_(shared_metadata.jitter_ts)
+            cur_jitter_ts = shared_metadata.cur_jitter_ts
+        else:
+            cur_jitter_ts = None
+
+        interpolate = shared_metadata.interpolate
+        tensor_start = 0
+        envs_idx = self._sim._scene._envs_idx
+        for sensor_idx, (tensor_size, interp) in enumerate(zip(shared_metadata.cache_sizes, interpolate)):
+            cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
+            if cur_jitter_ts is not None:
+                cur_delay_ts = cur_delay_ts + cur_jitter_ts[:, sensor_idx]
+
+            cur_delay_ts_int = cur_delay_ts.to(dtype=torch.int64)
+
+            tensor_slice = slice(tensor_start, tensor_start + tensor_size)
+            sensor_cache = shared_cache[:, tensor_slice]
+            data_left = source_ring.at(cur_delay_ts_int, envs_idx, tensor_slice)
+            if interp:
+                ratio = torch.frac(cur_delay_ts)
+                data_right = source_ring.at(cur_delay_ts_int + 1, envs_idx, tensor_slice)
+                torch.lerp(data_left, data_right, ratio[:, None], out=sensor_cache)
+            else:
+                sensor_cache.copy_(data_left)
+
+            tensor_start += tensor_size
+
     def step(self):
         for ring in self._gt_timeline_ring.values():
             ring.rotate()
@@ -229,15 +278,13 @@ class SensorManager:
             dtype = sensor_cls._get_cache_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             gt_slice = self._ground_truth_cache[dtype][cache_slice]
-            sensor_cls._update_shared_ground_truth_cache(self._sensors_metadata[sensor_cls], gt_slice)
-            # GT timeline ring write is required: _apply_delay_to_shared_cache reads from the ring even at delay=0,
-            # so even noiseless/no-delay sensor classes need the current frame written each step.
+            measured_data_timeline = self._measured_timeline_ring[dtype][:, cache_slice]
+            sensor_cls._update_shared_cache(self._sensors_metadata[sensor_cls], gt_slice, measured_data_timeline)
             self._gt_timeline_ring[dtype][:, cache_slice].set(gt_slice.T)
-            sensor_cls._update_shared_cache(
+            self._apply_delay_to_shared_cache(
                 self._sensors_metadata[sensor_cls],
-                gt_slice.T,
                 self._cache[dtype][:, cache_slice],
-                self._gt_timeline_ring[dtype][:, cache_slice],
+                measured_data_timeline,
             )
             if dtype in self._measured_history_ring:
                 self._measured_history_ring[dtype][:, cache_slice].set(self._cache[dtype][:, cache_slice])

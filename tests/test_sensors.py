@@ -77,11 +77,11 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_shared_ground_truth_cache(cls, metadata, cache):
+            def _update_current_ground_truth_data_T(cls, metadata, cache):
                 pass
 
             @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline):
                 pass
 
             @classmethod
@@ -442,10 +442,13 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
+    DT = 1e-2
+    DELAY_STEPS = 2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
+            dt=DT,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -468,7 +471,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(1.0, 1.0, 1.0),  # volume = 1 m^3
-            pos=(0.0, 0.0, 0.51),
+            pos=(0.0, 0.0, 0.55),
         ),
         material=gs.materials.Rigid(
             rho=1.0,  # mass = 1.0 kg
@@ -530,7 +533,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
             noise=NOISE,
             bias=BIAS,
             random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
-            delay=0.05,
+            delay=DT * DELAY_STEPS,
             jitter=0.01,
             interpolate=True,
         )
@@ -555,7 +558,8 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box_3.set_dofs_position((-np.pi / 2, -np.pi / 4, -np.pi / 2), dofs_idx_local=slice(3, None))
 
     # Note that it is necessary to do a first step, because the initial state right after reset is not valid
-    scene.step()
+    for _ in range(DELAY_STEPS + 1):
+        scene.step()
 
     # Make sure that box CoM is valid
     assert_allclose(box.get_links_pos(ref="root_com")[..., :2], box_com_offset[:2], tol=tol)
@@ -566,14 +570,14 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor.read(), force_sensor_noisy.read_ground_truth(), tol=gs.EPS)
     assert_allclose(force_sensor_noisy.read(), BIAS, tol=NOISE * 3)
 
-    for _ in range(10):
+    for _ in range(20):
         scene.step()
 
     assert bool_sensor_floor.read().all(), "ContactSensor for floor should detect contact with the ground"
     assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
     assert_allclose(force_sensor_noisy.read(), force_sensor_noisy.read(), tol=gs.EPS)
 
-    for _ in range(90):
+    for _ in range(80):
         scene.step()
 
     assert bool_sensor_box_2.read().all(), "ContactSensor for box_2 should detect contact with the ground"
