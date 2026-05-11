@@ -412,8 +412,9 @@ def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
 
         assert_equal(contact_h.read(), cg)
 
-        cur_slice = 0 if n_envs == 0 else (slice(None), 0)
-        prev_slice = 0 if n_envs == 0 else (slice(None), 1)
+        batch_shape = () if n_envs == 0 else (slice(None),)
+        cur_slice = (*batch_shape, 0)
+        prev_slice = (*batch_shape, 1)
         assert_allclose(ig.lin_acc[cur_slice], imu_ref.read_ground_truth().lin_acc, tol=tol)
         assert_allclose(ig.ang_vel[cur_slice], imu_ref.read_ground_truth().ang_vel, tol=tol)
         assert_allclose(ig.mag[cur_slice], imu_ref.read_ground_truth().mag, tol=tol)
@@ -1656,3 +1657,195 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
         tol=tol,
         err_msg="When out of range, points should be the probe position in world frame",
     )
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Bulk read API ----------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_read_sensors_bulk_api(show_viewer, n_envs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box_a = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    box_b = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0.0, 0.2),
+        ),
+    )
+
+    # Diverse sensor set covering multiple dtypes (float for IMU/ContactForce, bool for Contact, uint8 for the static
+    # camera) and heterogeneous per-sensor cache sizes within the float dtype (9 cells for IMU vs 3 for ContactForce).
+    # Two IMUs on box_a, one IMU on box_b. ContactForce and Contact sensors on both boxes. A static camera not attached
+    # to any entity (entity_idx defaults to -1).
+    imu_a1 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_a2 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_b = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_b.idx,
+        ),
+    )
+    force_a = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_a.idx,
+        ),
+    )
+    force_b = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_b.idx,
+        ),
+    )
+    contact_a = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_a.idx,
+        ),
+    )
+    contact_b = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_b.idx,
+        ),
+    )
+    static_cam = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(32, 32),
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+    for _ in range(5):
+        scene.step()
+
+    # Scene-wide read returns every sensor class. Per-entity reads restrict to classes present on that entity, so the
+    # static camera class is excluded from both box_a and box_b reads.
+    scene_data = scene.read_sensors()
+    a_data = box_a.read_sensors()
+    b_data = box_b.read_sensors()
+    assert set(scene_data.keys()) == {
+        gs.sensors.types.IMU,
+        gs.sensors.types.ContactForce,
+        gs.sensors.types.Contact,
+        gs.sensors.types.RasterizerCameraOptions,
+    }
+    assert set(a_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+    assert set(b_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+
+    # Sensors within a class are sorted by entity_idx, so per-entity reads must match contiguous slices of the
+    # scene-wide read.
+    for type_tag, a_slice, b_slice in (
+        (gs.sensors.types.IMU, slice(0, 18), slice(18, 27)),
+        (gs.sensors.types.ContactForce, slice(0, 3), slice(3, 6)),
+        (gs.sensors.types.Contact, slice(0, 1), slice(1, 2)),
+    ):
+        assert_equal(a_data[type_tag], scene_data[type_tag][..., a_slice])
+        assert_equal(b_data[type_tag], scene_data[type_tag][..., b_slice])
+
+    # Individual sensor reads must agree with bulk reads at both scene and entity levels.
+    # IMU cache layout per sensor is 3 acc + 3 gyro + 3 mag in that order.
+    for local_idx, imu in enumerate((imu_a1, imu_a2, imu_b)):
+        base = local_idx * 9
+        imu_data = imu.read()
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    for entity_local_idx, imu in enumerate((imu_a1, imu_a2)):
+        base = entity_local_idx * 9
+        imu_data = imu.read()
+        assert_equal(a_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    # ContactForce returns a 3-vector per sensor.
+    for local_idx, force in enumerate((force_a, force_b)):
+        base = local_idx * 3
+        assert_equal(scene_data[gs.sensors.types.ContactForce][..., base : base + 3], force.read())
+    assert_equal(a_data[gs.sensors.types.ContactForce], force_a.read())
+    assert_equal(b_data[gs.sensors.types.ContactForce], force_b.read())
+    # Contact returns a bool per sensor.
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 0:1], contact_a.read())
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 1:2], contact_b.read())
+    assert_equal(a_data[gs.sensors.types.Contact], contact_a.read())
+    assert_equal(b_data[gs.sensors.types.Contact], contact_b.read())
+
+    # View vs copy: storage data_ptr is the discriminating metadata. Two copy=False reads must share storage (both
+    # views into the same backing cache), and the scene-level and entity-level views must share storage too. copy=True
+    # must always allocate fresh storage. Verified for both the float (IMU) and bool (Contact) dtypes.
+    for type_tag in (gs.sensors.types.IMU, gs.sensors.types.Contact):
+        scene_view = scene.read_sensors(copy=False)[type_tag]
+        entity_view = box_a.read_sensors(copy=False)[type_tag]
+        clone_a = scene.read_sensors(copy=True)[type_tag]
+        clone_b = scene.read_sensors(copy=True)[type_tag]
+        assert scene_view.untyped_storage().data_ptr() == entity_view.untyped_storage().data_ptr()
+        assert clone_a.untyped_storage().data_ptr() != scene_view.untyped_storage().data_ptr()
+        assert clone_b.untyped_storage().data_ptr() != scene_view.untyped_storage().data_ptr()
+        assert clone_a.untyped_storage().data_ptr() != clone_b.untyped_storage().data_ptr()
+
+    # Batching must be exercised end-to-end. For n_envs > 0, every per-env row of the bulk view must equal that env's
+    # individual sensor read.
+    if n_envs > 0:
+        for env_idx in range(n_envs):
+            assert_equal(scene.read_sensors()[gs.sensors.types.IMU][env_idx, 0:3], imu_a1.read().lin_acc[env_idx])
+            assert_equal(scene.read_sensors()[gs.sensors.types.Contact][env_idx, 0:1], contact_a.read()[env_idx])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_imu_resolution_only_quantizes(show_viewer, n_envs):
+    # IMU with only `*_resolution` set (no other noise/delay) returns acceleration components quantized to that
+    # resolution.
+    RESOLUTION = 0.5
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    imu = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            acc_resolution=RESOLUTION,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    for _ in range(3):
+        scene.step()
+
+    measured = imu.read().lin_acc
+    remainders = (measured / RESOLUTION) - torch.round(measured / RESOLUTION)
+    assert_allclose(remainders, 0.0, tol=gs.EPS)

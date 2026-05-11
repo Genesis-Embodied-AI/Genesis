@@ -14,8 +14,8 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.raycast_qd import get_triangle_vertices
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    ImperfectSensorMetadataMixin,
+    ImperfectSensorMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel
 def _kernel_proximity(
     probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
@@ -132,14 +132,14 @@ class ProximitySensorMetadataMixin:
 
 @dataclass
 class ProximityMetadata(
-    ProximitySensorMetadataMixin, RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata
+    ProximitySensorMetadataMixin, RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata
 ):
     """Shared metadata for the Proximity sensor class."""
 
 
 class ProximitySensor(
     RigidSensorMixin[ProximityMetadata],
-    NoisySensorMixin[ProximityMetadata],
+    ImperfectSensorMixin[ProximityMetadata],
     Sensor[ProximityOptions, ProximityMetadata, tuple],
 ):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
@@ -254,16 +254,13 @@ class ProximitySensor(
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+        cls._apply_imperfections(shared_metadata, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None

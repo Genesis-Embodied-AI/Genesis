@@ -122,7 +122,7 @@ class RigidSensorOptionsMixin(SensorOptions[SensorT]):
                 gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
-class NoisySensorOptionsMixin(SensorOptions[SensorT]):
+class ImperfectSensorOptionsMixin(SensorOptions[SensorT]):
     """
     Base options class for analog sensors that are attached to a RigidEntity.
 
@@ -188,7 +188,7 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
                 )
 
 
-class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], NoisySensorOptionsMixin["ContactForceSensor"]):
+class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], ImperfectSensorOptionsMixin["ContactForceSensor"]):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -244,7 +244,7 @@ class TemperatureProperties(NamedTuple):
 
 
 class TemperatureGrid(
-    RigidSensorOptionsMixin["TemperatureGridSensor"], NoisySensorOptionsMixin["TemperatureGridSensor"]
+    RigidSensorOptionsMixin["TemperatureGridSensor"], ImperfectSensorOptionsMixin["TemperatureGridSensor"]
 ):
     """
     Sensor that returns the temperature in Celsius of the associated RigidLink in its local frame.
@@ -291,7 +291,7 @@ class TemperatureGrid(
     debug_temperature_range: Vec2FType = (0.0, 100.0)
 
 
-class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSensor"]):
+class IMU(RigidSensorOptionsMixin["IMUSensor"], ImperfectSensorOptionsMixin["IMUSensor"]):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -388,7 +388,7 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], NoisySensorOptionsMixin["IMUSens
         self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
 
 
-class Proximity(RigidSensorOptionsMixin["ProximitySensor"], NoisySensorOptionsMixin["ProximitySensor"]):
+class Proximity(RigidSensorOptionsMixin["ProximitySensor"], ImperfectSensorOptionsMixin["ProximitySensor"]):
     """
     Proximity sensor that reports the nearest distances from probe positions to tracked mesh surfaces.
     The read() output will provide the distances, and the nearest points can be accessed with `sensor.nearest_points`.

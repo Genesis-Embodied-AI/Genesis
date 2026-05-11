@@ -66,7 +66,10 @@ class BaseCameraOptions(RigidSensorOptionsMixin[SensorT]):
 
     def model_post_init(self, context: Any) -> None:
         if self.history_length > 0:
-            gs.raise_exception("Camera sensors do not support history.")
+            gs.raise_exception(
+                "Camera sensors do not support `history_length`. The camera read path renders lazily on read() "
+                "and bypasses the shared sensor cache that backs the history buffer."
+            )
 
 
 class RasterizerCameraOptions(BaseCameraOptions["RasterizerCameraSensor"]):

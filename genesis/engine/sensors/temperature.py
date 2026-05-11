@@ -17,8 +17,8 @@ from genesis.utils import mesh as mu
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    ImperfectSensorMetadataMixin,
+    ImperfectSensorMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
@@ -220,7 +220,7 @@ def _qd_polygon_area_from_points_3d(
     return area
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -297,7 +297,7 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
     return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
+@qd.kernel
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -493,7 +493,7 @@ def _apply_T_measured_filter(
 
 
 @dataclass
-class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all temperature grid sensors."""
 
     ambient_temperature: float = 21.0
@@ -523,7 +523,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
 class TemperatureGridSensor(
     RigidSensorMixin[TemperatureGridSensorMetadata],
-    NoisySensorMixin[TemperatureGridSensorMetadata],
+    ImperfectSensorMixin[TemperatureGridSensorMetadata],
     Sensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
     def __init__(self, sensor_options: TemperatureGridOptions, sensor_idx: int, sensor_manager: "SensorManager"):
@@ -676,9 +676,6 @@ class TemperatureGridSensor(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
-    def _options_require_measured_cache(self) -> bool:
-        return super()._options_require_measured_cache() or (self._options.sensor_time_constant > gs.EPS)
-
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._options.grid_size,)
 
@@ -803,8 +800,7 @@ class TemperatureGridSensor(
             buffered_data.at(0),
         )
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+        cls._apply_imperfections(shared_metadata, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

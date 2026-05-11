@@ -647,6 +647,26 @@ class Scene(RBC):
         """
         return self._sim._sensor_manager.create_sensor(sensor_options)
 
+    @gs.assert_built
+    def read_sensors(self, envs_idx=None, copy: bool = False) -> "dict[type[Sensor], torch.Tensor]":
+        """
+        Read every sensor in the scene as a tensor per sensor class.
+
+        Parameters
+        ----------
+        envs_idx : array-like | int | slice | None
+            Environment selection. Integer/slice indexing returns a view along the batch axis; list/tensor
+            (fancy) indexing returns a copy.
+        copy : bool
+            When True, returned tensors are cloned. When False (default), they are views into the shared cache.
+
+        Returns
+        -------
+        dict[Type[Sensor], torch.Tensor]
+            For each sensor class present in the scene, a tensor of shape (B, [history,] class_cache_size).
+        """
+        return self._sim._sensor_manager.read_sensors(entity_idx=None, envs_idx=envs_idx, copy=copy)
+
     @gs.assert_unbuilt
     def start_recording(self, data_func: Callable, rec_options: "RecorderOptions") -> "Recorder":
         """

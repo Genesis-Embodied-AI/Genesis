@@ -16,8 +16,8 @@ from genesis.utils.geom import (
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    ImperfectSensorMetadataMixin,
+    ImperfectSensorMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
@@ -63,7 +63,7 @@ def _get_cross_axis_coupling_to_alignment_matrix(
 
 
 @dataclass
-class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+class IMUSharedMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
     """
     Shared metadata between all IMU sensors.
     """
@@ -83,7 +83,7 @@ class IMUData(NamedTuple):
 
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
-    NoisySensorMixin[IMUSharedMetadata],
+    ImperfectSensorMixin[IMUSharedMetadata],
     Sensor[IMUOptions, IMUSharedMetadata, IMUData],
 ):
     def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
@@ -101,21 +101,18 @@ class IMUSensor(
 
     @gs.assert_built
     def set_acc_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
-        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3, :, :] = rot_matrix
 
     @gs.assert_built
     def set_gyro_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
-        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 1, :, :] = rot_matrix
 
     @gs.assert_built
     def set_mag_cross_axis_coupling(self, cross_axis_coupling: CrossCouplingAxisType, envs_idx=None):
-        self._assert_measured_cache_will_update()
         envs_idx = self._sanitize_envs_idx(envs_idx)
         rot_matrix = _get_cross_axis_coupling_to_alignment_matrix(cross_axis_coupling)
         self._shared_metadata.alignment_rot_matrix[envs_idx, self._idx * 3 + 2, :, :] = rot_matrix
@@ -156,13 +153,6 @@ class IMUSensor(
         if self._options.draw_debug:
             self.quat_offset = self._shared_metadata.offsets_quat[0, self._idx]
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
-
-    def _options_require_measured_cache(self) -> bool:
-        return super()._options_require_measured_cache() or (
-            np.any(np.abs(self._options.acc_cross_axis_coupling) > gs.EPS)
-            or np.any(np.abs(self._options.gyro_cross_axis_coupling) > gs.EPS)
-            or np.any(np.abs(self._options.mag_cross_axis_coupling) > gs.EPS)
-        )
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (3,), (3,), (3,)
@@ -227,12 +217,10 @@ class IMUSensor(
         """
         Update the current measured sensor data for all IMU sensors.
         """
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
 
@@ -242,8 +230,7 @@ class IMUSensor(
             torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
         )
 
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+        cls._apply_imperfections(shared_metadata, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """
