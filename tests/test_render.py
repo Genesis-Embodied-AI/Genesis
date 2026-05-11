@@ -1957,3 +1957,33 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
     # Per-env sensor images must be invariant to env_spacing — the offset is purely for
     # visual separation in the interactive viewer and must be transparent to sensors.
     assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_render_offscreen_oversized_resolution(renderer):
+    # Verify that ``render_offscreen`` honors the user-requested viewport size even when it exceeds the available
+    # display area, by requesting a viewer larger than GitHub-hosted Apple M1 macos-15 runners can actually allocate
+    # and checking the returned image dimensions still match the request.
+    requested_res = (1920, 1440)
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=requested_res,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+    )
+    assert rgb.shape[:2] == (requested_res[1], requested_res[0])

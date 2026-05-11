@@ -26,9 +26,9 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
-            # Deliberately request a resolution that exceeds the virtual display area of GitHub-hosted Apple M1
-            # macos-15 runners, to make sure the offscreen FBO size always honors the user-specified resolution.
-            res=(960, 720),
+            # Keep ``res`` small enough to fit the virtual display area of GitHub-hosted Apple M1 macos-15 runners:
+            # the on-screen capture below reads from the window framebuffer, whose size the OS clamps to the display.
+            res=(640, 480),
             camera_pos=(2.0, 2.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
             # The capture path at the end of this test calls ``pyrender_viewer.on_draw`` and reads the window
