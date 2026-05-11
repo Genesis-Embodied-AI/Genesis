@@ -35,7 +35,6 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110 && \
 # Install Rust for build requirements
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-
 RUN python3 -m pip install --break-system-packages "pybind11[global]"
 
 # Install CMake
@@ -86,11 +85,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 
-# ------------------------ No root user --------------------------
-RUN useradd --shell /bin/bash -u 1001 -c "" -m user
-
 # --------------------------- Genesis ----------------------------
-RUN python3 -m pip install --break-system-packages --no-cache-dir open3d 
+RUN python3 -m pip install --break-system-packages --no-cache-dir open3d
 RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
     cd Genesis && \
     python3 -m pip install --break-system-packages . && \
@@ -116,37 +112,25 @@ COPY nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.json
 COPY nvidia_layers.json /etc/vulkan/implicit_layer.d/nvidia_layers.json
 
 # ---------------------- Custom Entrypoint -----------------------
+# Resolve a user matching the caller's host UID at startup. If no user owns that UID yet, create one; if one does
+# (including root), reuse it as-is. This avoids mutating the base image's accounts and works for any LOCAL_USER_ID.
 RUN cat <<'EOF' > /entrypoint.sh
 #!/bin/bash
-set -e
-
-detectUIDConflict() {
-    USER_NAME=user
-    TARGET_UID=${LOCAL_USER_ID:-1000}
-
-    EXISTING_USER=$(getent passwd "$TARGET_UID" | cut -d: -f1 || true)
-
-    if [ -n "$EXISTING_USER" ] && [ "$EXISTING_USER" != "$USER_NAME" ]; then
-        echo "UID $TARGET_UID already belongs to $EXISTING_USER — removing it"
-        userdel "$EXISTING_USER" || true
-    fi
-}
 
 if [ -n "${LOCAL_USER_ID}" ]; then
-  echo "Starting with UID: $LOCAL_USER_ID"
-
-  detectUIDConflict
-
-  usermod -u "$LOCAL_USER_ID" user
-
-  chown -R user:user /opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/ || true
-  # run as user
-  exec gosu user "$@"
+    USER_NAME=$(getent passwd "${LOCAL_USER_ID}" | cut -d: -f1)
+    if [ -z "${USER_NAME}" ]; then
+        USER_NAME=user
+        useradd --shell /bin/bash --uid "${LOCAL_USER_ID}" -m "${USER_NAME}"
+    fi
+    chown -R "${USER_NAME}" "/opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/" || true
+    exec gosu "${USER_NAME}" "$@"
 else
-  exec "$@"
+    exec "$@"
 fi
 EOF
 
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
