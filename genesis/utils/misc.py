@@ -144,6 +144,17 @@ def assert_built(method):
     return wrapper
 
 
+def with_lock(method):
+    """Acquire ``self._lock`` before running the wrapped method."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 def set_random_seed(seed):
     # Note: we don't set seed for quadrants, since Quadrants doesn't support stochastic operations in gradient computation.
     # Therefore, we only allow deterministic Quadrants operations.

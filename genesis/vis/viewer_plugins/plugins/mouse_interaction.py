@@ -1,6 +1,5 @@
-from functools import wraps
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Type
+from typing import TYPE_CHECKING, Any, Type
 
 import numpy as np
 from typing_extensions import override
@@ -8,7 +7,7 @@ from typing_extensions import override
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.mesh import create_cylinder, create_plane
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import tensor_to_array, with_lock
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
 from genesis.vis.keybindings import MouseButton
 
@@ -21,15 +20,6 @@ if TYPE_CHECKING:
 
 
 MIN_PICKABLE_MASS = 1e-3  # kg — links below this threshold are skipped to avoid numerical instability
-
-
-def with_lock(fun: Callable[..., Any]) -> Callable[..., Any]:
-    @wraps(fun)
-    def fun_safe(self: "MouseInteractionPlugin", *args: Any, **kwargs: Any) -> Any:
-        with self._lock:
-            return fun(self, *args, **kwargs)
-
-    return fun_safe
 
 
 class MouseInteractionPlugin(RaycasterViewerPlugin):

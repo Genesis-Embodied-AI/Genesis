@@ -6,22 +6,20 @@ Requires: pip install imgui-bundle
 
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 import genesis as gs
-from genesis.vis.scene_ops import (
-    FREE_JOINT_POS_LIMIT,
-    QUATERNION_COMPONENT_LIMIT,
-    build_entity_joint_data,
-    refresh_visual_transforms,
-    set_entity_wireframe as _shared_set_entity_wireframe,
-    switch_entity_vis_mode as _shared_switch_entity_vis_mode,
-)
-from genesis.vis.viewer_plugins import ViewerPlugin, EVENT_HANDLED, EVENT_HANDLE_STATE
+import genesis.utils.geom as gu
+from genesis.ext.pyrender.overlay.style import apply_dark_theme
+from genesis.ext.pyrender.overlay.types import _build_entity_joint_data, _EntityCacheEntry, _EntityJointData
+from genesis.utils.misc import tensor_to_array
+from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
 
 if TYPE_CHECKING:
+    from genesis.engine.entities.rigid_entity import RigidEntity
     from genesis.engine.scene import Scene
     from genesis.ext.pyrender.viewer import Viewer
 
@@ -55,13 +53,18 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
     def __init__(
         self,
-        show_sim_controls=True,
-        show_entity_browser=True,
-        show_visualization=True,
-        show_camera_controls=True,
-        rebuild_fn=None,
+        show_sim_controls: bool = True,
+        show_entity_browser: bool = True,
+        show_visualization: bool = True,
+        show_camera_controls: bool = True,
+        controlled_env_idx: int = 0,
+        free_joint_pos_limit: float = 10.0,
+        panel_width: int | None = None,
     ):
         super().__init__()
+        self._controlled_env_idx = controlled_env_idx
+        self._free_joint_pos_limit = free_joint_pos_limit
+        self._panel_width = panel_width
         self._imgui = None
         self._impl = None
         self._io = None
@@ -82,11 +85,12 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         self.show_visualization = show_visualization
         self.show_camera_controls = show_camera_controls
 
-        # Scene rebuild support
-        self._rebuild_fn = rebuild_fn
+        # Scene rebuild support: plugin maintains a local dict of pending entity kwargs that mirrors
+        # the live scene; the Scene editor panel mutates this dict and triggers rebuild via
+        # InteractiveScene.rebuild() from the main thread.
         self._rebuild_requested = False
-        self._specs_dirty = False
-        self._entity_specs = []  # populated at build time
+        self._pending_dirty = False
+        self._pending_entities_kwargs: dict[str, dict] = {}
         self._add_entity_file = ""
         self._add_entity_morph_type = 0  # index into _MORPH_TYPES
         self._add_entity_pos = [0.0, 0.0, 0.0]
@@ -129,7 +133,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         super().build(viewer, camera, scene)
         # Reset ImGui state so it re-initializes in the new viewer thread
         # (needed after scene rebuild creates a new viewer/OpenGL context)
-        # Don't destroy the old context here — it belonged to the old viewer
+        # Don't destroy the old context here, it belonged to the old viewer
         # thread and is already invalid after scene.destroy().
         if self._init_attempted:
             self._impl = None
@@ -137,9 +141,77 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             self._available = False
             self._init_attempted = False
             self._last_time = None
+        # Non-batched scenes (n_envs == 0) expect envs_idx=None on entity setters and return 1D qpos
+        # tensors. Collapse the controlled index to None so downstream code can pass it through
+        # unconditionally without branching on the batched/non-batched shape.
+        if scene.n_envs == 0:
+            self._controlled_env_idx = None
+        elif self._controlled_env_idx is not None and not (0 <= self._controlled_env_idx < scene.n_envs):
+            gs.raise_exception(
+                f"controlled_env_idx={self._controlled_env_idx} out of range for scene with n_envs={scene.n_envs}."
+            )
         # Cache entity data now (doesn't require OpenGL)
         self._cache_entity_data()
-        self._capture_entity_specs()
+        self._capture_pending_entities_kwargs()
+
+    def _refresh_visuals(self):
+        """Refresh render transforms after a GUI-driven mutation. Caller must hold the render lock."""
+        rigid_solver = self.scene.rigid_solver
+        if not rigid_solver.is_active:
+            return
+        rigid_solver.update_geoms_render_T()
+        rigid_solver.update_vgeoms()
+        rigid_solver.update_vgeoms_render_T()
+        ctx = self.viewer.context
+        ctx.update_link_frame()
+        ctx.update_rigid()
+
+    def _apply_entity_vis_mode(self, entity, mode: str):
+        """Switch the entity's rendered mesh between ``"visual"`` and ``"collision"``. Removes the previous
+        render nodes from the context, swaps ``entity.surface.vis_mode``, then rebuilds nodes from the
+        appropriate geom set."""
+        from genesis.ext import pyrender
+
+        if not isinstance(entity.surface, gs.surfaces.Surface):
+            return
+        old_mode = entity.surface.vis_mode
+        if old_mode == mode:
+            return
+
+        with self.viewer.render_lock:
+            ctx = self.viewer.context
+            rigid_solver = self.scene.rigid_solver
+
+            old_geoms = entity.vgeoms if old_mode == "visual" else entity.geoms
+            for geom in old_geoms:
+                if geom.uid in ctx.rigid_nodes:
+                    ctx.remove_node(ctx.rigid_nodes[geom.uid])
+                    del ctx.rigid_nodes[geom.uid]
+
+            entity.surface.vis_mode = mode
+            self._refresh_visuals()
+
+            is_collision = mode == "collision"
+            geoms, geoms_T = (
+                (entity.vgeoms, rigid_solver._vgeoms_render_T)
+                if mode == "visual"
+                else (entity.geoms, rigid_solver._geoms_render_T)
+            )
+            for geom in geoms:
+                geom_envs_idx = ctx._get_geom_active_envs_idx(geom, ctx.rendered_envs_idx)
+                if len(geom_envs_idx) == 0:
+                    continue
+                ctx.add_rigid_node(
+                    geom,
+                    pyrender.Mesh.from_trimesh(
+                        mesh=geom.get_trimesh(),
+                        poses=geoms_T[geom.idx][geom_envs_idx],
+                        smooth=geom.surface.smooth if not is_collision else False,
+                        double_sided=geom.surface.double_sided if not is_collision else False,
+                        is_floor=isinstance(entity._morph, gs.morphs.Plane),
+                        env_shared=not ctx.env_separate_rigid,
+                    ),
+                )
 
     def _init_imgui(self):
         """Initialize ImGui. Must be called from the viewer thread (e.g., in on_draw)."""
@@ -187,7 +259,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             platform_io = imgui.get_platform_io()
             platform_io.platform_get_clipboard_text_fn = _get_clipboard
             platform_io.platform_set_clipboard_text_fn = _set_clipboard
-            self._setup_style()
+            apply_dark_theme(imgui)
             self._available = True
             # Try to load ImGuizmo for 3D gizmos
             try:
@@ -205,186 +277,65 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         except Exception as e:
             print(f"ImGuiOverlayPlugin: Failed to initialize ImGui: {e}")
 
-    def _setup_style(self):
-        """Apply modern rounded dark theme."""
-        imgui = self._imgui
-        imgui.style_colors_dark()
-        style = imgui.get_style()
-        Col_ = imgui.Col_
-        sc = style.set_color_
-
-        # Geometry - modern rounded, borderless
-        style.window_rounding = 12.0
-        style.frame_rounding = 8.0
-        style.child_rounding = 10.0
-        style.popup_rounding = 10.0
-        style.scrollbar_rounding = 8.0
-        style.grab_rounding = 6.0
-        style.tab_rounding = 8.0
-        style.window_border_size = 0.0
-        style.frame_border_size = 0.0
-
-        # Spacing
-        style.window_padding = (12.0, 10.0)
-        style.frame_padding = (8.0, 5.0)
-        style.item_spacing = (8.0, 6.0)
-        style.item_inner_spacing = (6.0, 4.0)
-        style.scrollbar_size = 10.0
-        style.grab_min_size = 10.0
-
-        # Semi-transparent backgrounds
-        sc(Col_.window_bg, (0.11, 0.11, 0.14, 0.92))
-        sc(Col_.child_bg, (0.13, 0.13, 0.16, 0.60))
-        sc(Col_.popup_bg, (0.11, 0.11, 0.14, 0.96))
-
-        # Text
-        sc(Col_.text, (0.93, 0.94, 0.96, 1.0))
-        sc(Col_.text_disabled, (0.45, 0.47, 0.52, 1.0))
-
-        # Borders - subtle
-        sc(Col_.border, (0.25, 0.26, 0.30, 0.35))
-
-        # Frames (sliders, input fields) - frosted
-        sc(Col_.frame_bg, (0.18, 0.18, 0.22, 0.75))
-        sc(Col_.frame_bg_hovered, (0.24, 0.24, 0.30, 0.85))
-        sc(Col_.frame_bg_active, (0.28, 0.28, 0.36, 0.95))
-
-        # Title bar
-        sc(Col_.title_bg, (0.09, 0.09, 0.12, 0.95))
-        sc(Col_.title_bg_active, (0.12, 0.12, 0.16, 1.0))
-        sc(Col_.title_bg_collapsed, (0.09, 0.09, 0.12, 0.70))
-
-        # Buttons - accent blue with soft edges
-        sc(Col_.button, (0.22, 0.38, 0.58, 0.80))
-        sc(Col_.button_hovered, (0.28, 0.48, 0.70, 0.90))
-        sc(Col_.button_active, (0.20, 0.34, 0.52, 1.0))
-
-        # Headers (collapsing headers) - subtle highlight
-        sc(Col_.header, (0.18, 0.18, 0.24, 0.65))
-        sc(Col_.header_hovered, (0.26, 0.40, 0.58, 0.75))
-        sc(Col_.header_active, (0.24, 0.38, 0.56, 0.90))
-
-        # Interactive accents - bright blue
-        sc(Col_.check_mark, (0.45, 0.72, 0.95, 1.0))
-        sc(Col_.slider_grab, (0.38, 0.62, 0.88, 0.90))
-        sc(Col_.slider_grab_active, (0.45, 0.72, 0.95, 1.0))
-
-        # Scrollbar - minimal
-        sc(Col_.scrollbar_bg, (0.08, 0.08, 0.10, 0.30))
-        sc(Col_.scrollbar_grab, (0.30, 0.32, 0.38, 0.50))
-        sc(Col_.scrollbar_grab_hovered, (0.40, 0.42, 0.50, 0.70))
-        sc(Col_.scrollbar_grab_active, (0.48, 0.50, 0.58, 0.90))
-
-        # Tabs
-        sc(Col_.tab, (0.14, 0.14, 0.18, 0.70))
-        sc(Col_.tab_hovered, (0.28, 0.46, 0.66, 0.85))
-        sc(Col_.tab_selected, (0.22, 0.38, 0.58, 0.90))
-
-        # Separators - very subtle
-        sc(Col_.separator, (0.28, 0.30, 0.36, 0.30))
-        sc(Col_.separator_hovered, (0.38, 0.56, 0.78, 0.60))
-        sc(Col_.separator_active, (0.42, 0.64, 0.88, 0.85))
-
-        # Resize grip
-        sc(Col_.resize_grip, (0.28, 0.40, 0.58, 0.20))
-        sc(Col_.resize_grip_hovered, (0.35, 0.55, 0.78, 0.50))
-        sc(Col_.resize_grip_active, (0.40, 0.65, 0.90, 0.75))
-
-    def _get_entity_name(self, entity, idx: int) -> str:
-        """Extract a human-readable name for an entity, with index for disambiguation."""
-        return getattr(entity, "name", None) or f"Entity_{idx}"
-
     def _cache_entity_data(self):
         """Cache static joint metadata from all rigid entities."""
         self._entity_cache.clear()
-
-        if not hasattr(self.scene, "rigid_solver") or self.scene.rigid_solver is None:
-            return
-
         for entity in self.scene.rigid_solver.entities:
             if entity.n_dofs == 0:
                 # Still include for vis_mode toggle, but no joint data
-                self._entity_cache[entity.idx] = {
-                    "entity": entity,
-                    "name": self._get_entity_name(entity, entity.idx),
-                    "q_names": [],
-                    "q_limits": ([], []),
-                    "q_is_quaternion": [],
-                    "quat_groups": [],
-                    "has_free_joint": False,
-                    "free_joint_q_start": -1,
-                    "n_qs": 0,
-                    "n_dofs": 0,
-                }
+                self._entity_cache[entity.idx] = _EntityCacheEntry(
+                    entity=entity,
+                    name=entity.name,
+                    joint_data=_EntityJointData(
+                        q_names=[],
+                        q_limits=([], []),
+                        q_is_quaternion=[],
+                        quat_groups=[],
+                        has_free_joint=False,
+                        free_joint_q_start=-1,
+                    ),
+                    n_qs=0,
+                    n_dofs=0,
+                )
                 continue
 
-            jdata = build_entity_joint_data(entity)
-            if jdata["q_names"]:
-                self._entity_cache[entity.idx] = {
-                    "entity": entity,
-                    "name": self._get_entity_name(entity, entity.idx),
-                    "q_names": jdata["q_names"],
-                    "q_limits": (jdata["q_limits_lower"], jdata["q_limits_upper"]),
-                    "q_is_quaternion": jdata["q_is_quaternion"],
-                    "quat_groups": jdata["quat_groups"],
-                    "has_free_joint": jdata["has_free_joint"],
-                    "free_joint_q_start": jdata["free_joint_q_start"],
-                    "n_qs": len(jdata["q_names"]),
-                    "n_dofs": entity.n_dofs,
-                }
+            jdata = _build_entity_joint_data(entity, self._free_joint_pos_limit)
+            if jdata.q_names:
+                self._entity_cache[entity.idx] = _EntityCacheEntry(
+                    entity=entity,
+                    name=entity.name,
+                    joint_data=jdata,
+                    n_qs=len(jdata.q_names),
+                    n_dofs=entity.n_dofs,
+                )
 
-    def _capture_entity_specs(self):
-        """Capture current entity specs for rebuild support."""
-        self._entity_specs = []
-        if not hasattr(self.scene, "sim"):
-            return
-        for entity in self.scene.sim.entities:
-            morph = entity.morph
-            spec = {
-                "morph": morph,
-                "material": entity.material,
-                "surface": entity.surface,
-                "visualize_contact": getattr(entity, "visualize_contact", False),
-                "scale": getattr(morph, "scale", 1.0),
-            }
-            self._entity_specs.append(spec)
-
-    @property
-    def entity_specs(self):
-        """Current entity specs list (read by rebuild_fn)."""
-        return self._entity_specs
+    def _capture_pending_entities_kwargs(self):
+        """Capture current entity construction kwargs into ``self._pending_entities_kwargs`` for the Scene
+        editor panel. Keyed by entity name; values are the kwargs forwarded to ``scene.add_entity``."""
+        self._pending_entities_kwargs = {}
+        for entity in self.scene.entities:
+            kwargs: dict[str, Any] = {"morph": entity.morph}
+            if isinstance(entity, gs.engine.entities.RigidEntity):
+                kwargs["material"] = entity.material
+                kwargs["surface"] = entity.surface
+                kwargs["visualize_contact"] = entity.visualize_contact
+            self._pending_entities_kwargs[entity.name] = kwargs
 
     @property
     def rebuild_requested(self):
-        """True if the user clicked Rebuild. Check this in your main loop."""
+        """True if the user clicked Rebuild. Check this in your main loop and call
+        ``interactive_scene.rebuild(entities_kwargs=plugin.pending_entities_kwargs)``.
+        Reading the flag clears it."""
         if self._rebuild_requested:
             self._rebuild_requested = False
             return True
         return False
 
-    def _apply_qpos_update(self, entity, new_qpos, is_multi_env: bool) -> None:
-        """Apply qpos update to entity, handling single-env vs multi-env correctly.
-
-        Args:
-            entity: The RigidEntity to update.
-            new_qpos: Array-like of new joint positions.
-            is_multi_env: If True, pass envs_idx=0 to set_qpos. If False, omit envs_idx.
-        """
-        qpos_array = np.asarray(new_qpos)
-        if is_multi_env:
-            entity.set_qpos(qpos_array, envs_idx=0)
-        else:
-            entity.set_qpos(qpos_array)
-
-        refresh_visual_transforms(self.scene, self.viewer.gs_context)
-
-    def _switch_entity_vis_mode(self, entity, new_mode):
-        """Switch entity visualization between 'visual' and 'collision' at runtime."""
-        _shared_switch_entity_vis_mode(self.scene, self.viewer.gs_context, entity, new_mode)
-
-    def _set_entity_wireframe(self, entity, wireframe):
-        """Toggle wireframe rendering for all geom nodes of an entity."""
-        _shared_set_entity_wireframe(self.viewer.gs_context, entity, wireframe)
+    @property
+    def pending_entities_kwargs(self) -> dict[str, dict]:
+        """Snapshot of the entity kwargs currently displayed in the Scene editor panel. Pass to
+        ``InteractiveScene.rebuild`` to reconstruct the scene with the latest edits."""
+        return self._pending_entities_kwargs
 
     def _is_capturing(self) -> bool:
         """Check if ImGui or gizmo wants mouse/keyboard input."""
@@ -485,6 +436,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     def _render_control_panel(self):
         """Render unified control panel with all sections."""
         imgui = self._imgui
+        if self._panel_width is not None:
+            # Pin the width while letting the height autoresize to content.
+            imgui.set_next_window_size_constraints((self._panel_width, 0.0), (self._panel_width, float("inf")))
         imgui.begin("Genesis Control Panel", flags=imgui.WindowFlags_.always_auto_resize)
 
         if self.show_sim_controls:
@@ -506,10 +460,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     self._render_camera_controls()
                     imgui.end_tab_item()
 
-            if self._rebuild_fn is not None:
-                if imgui.begin_tab_item("Scene")[0]:
-                    self._render_scene_editor()
-                    imgui.end_tab_item()
+            if imgui.begin_tab_item("Scene")[0]:
+                self._render_scene_editor()
+                imgui.end_tab_item()
 
             imgui.end_tab_bar()
 
@@ -546,13 +499,12 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if imgui.button("Reset", size=(50, 0)):
             with self.viewer.render_lock:
                 self.scene.reset()
-                # Clear contact arrows from previous timesteps
-                self.viewer.gs_context.clear_dynamic_nodes(only_outdated=False)
+                self.viewer.context.clear_dynamic_nodes(only_outdated=False)
+                self._refresh_visuals()
 
         # Time display (frame count * dt = simulation time)
-        if hasattr(self.scene, "t"):
-            sim_time = self.scene.t * self.scene.sim.dt
-            imgui.text(f"Time: {sim_time:.3f}s  Step: {self.scene.t}")
+        sim_time = self.scene.t * self.scene.sim.dt
+        imgui.text(f"Time: {sim_time:.3f}s  Step: {self.scene.t}")
 
         # FPS display
         if self._fps_history:
@@ -560,8 +512,11 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             imgui.same_line()
             imgui.text(f"  FPS: {avg_fps:.0f}")
 
-        if hasattr(self.scene, "n_envs") and self.scene.n_envs > 1:
-            imgui.text_colored((1.0, 0.7, 0.0, 1.0), f"Note: Controlling env 0 of {self.scene.n_envs}")
+        if self.scene.n_envs > 1:
+            imgui.text_colored(
+                (1.0, 0.7, 0.0, 1.0),
+                f"Note: Controlling env {self._controlled_env_idx} of {self.scene.n_envs}",
+            )
 
         imgui.separator()
 
@@ -579,25 +534,18 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # World Frame
         changed, new_val = imgui.checkbox("World Frame", gs_context.world_frame_shown)
         if changed:
-            if new_val:
-                gs_context.on_world_frame()
-            else:
-                gs_context.off_world_frame()
+            (gs_context.on_world_frame if new_val else gs_context.off_world_frame)()
 
         # Link Frame
         changed, new_val = imgui.checkbox("Link Frame", gs_context.link_frame_shown)
         if changed:
-            if new_val:
-                gs_context.on_link_frame()
-            else:
-                gs_context.off_link_frame()
+            (gs_context.on_link_frame if new_val else gs_context.off_link_frame)()
 
         # Link Frame Size slider
         link_size = gs_context.link_frame_size
         changed_size, new_size = imgui.slider_float("Frame Size##link_frame_size", link_size, 0.02, 0.5, "%.2f")
-        if changed_size and gs_context.link_frame_size > 0:
-            scale = new_size / gs_context.link_frame_size
-            gs_context.link_frame_mesh.vertices *= scale
+        if changed_size and link_size > 0 and new_size > 0:
+            gs_context.link_frame_mesh.vertices *= new_size / link_size
             gs_context.link_frame_size = new_size
             if gs_context.link_frame_shown:
                 gs_context.off_link_frame()
@@ -606,10 +554,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         # Camera Frustum
         changed, new_val = imgui.checkbox("Camera Frustum", gs_context.camera_frustum_shown)
         if changed:
-            if new_val:
-                gs_context.on_camera_frustum()
-            else:
-                gs_context.off_camera_frustum()
+            (gs_context.on_camera_frustum if new_val else gs_context.off_camera_frustum)()
 
         # Face Normals
         changed, new_val = imgui.checkbox("Face Normals", render_flags["face_normals"])
@@ -639,13 +584,11 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         Matrix16 = gizmo.Matrix16
 
         data = self._entity_cache.get(self._gizmo_entity_idx)
-        if data is None or not data.get("has_free_joint"):
+        if data is None or not data.joint_data.has_free_joint:
             return
 
-        entity = data["entity"]
-        qs = data["free_joint_q_start"]
-
-        from scipy.spatial.transform import Rotation as R
+        entity = data.entity
+        qs = data.joint_data.free_joint_q_start
 
         # While actively dragging, use the cached matrix to avoid qpos round-trip jitter.
         # Only read from qpos when not dragging (to pick up external changes).
@@ -653,10 +596,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             obj_mat = self._gizmo_cached_matrix
         else:
             # Get current qpos
-            qpos_raw = entity.get_qpos()
-            qpos_np = qpos_raw.cpu().numpy() if hasattr(qpos_raw, "cpu") else np.asarray(qpos_raw)
-            is_multi_env = qpos_np.ndim == 2
-            qpos = qpos_np[0] if is_multi_env else qpos_np.flatten()
+            qpos = tensor_to_array(entity.get_qpos())
+            if self._controlled_env_idx is not None:
+                qpos = qpos[self._controlled_env_idx]
 
             # Extract position and quaternion from qpos
             pos = qpos[qs : qs + 3]
@@ -694,7 +636,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         )
 
         if modified:
-            # Extract new transform from modified matrix (column-major → row-major)
+            # Extract new transform from modified matrix (column-major -> row-major)
             new_mat = np.array(object_matrix.values).reshape(4, 4).T
             # Cache the matrix for next frame to avoid qpos round-trip jitter
             self._gizmo_cached_matrix = new_mat.copy()
@@ -705,10 +647,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             new_quat_wxyz = [new_quat_xyzw[3], new_quat_xyzw[0], new_quat_xyzw[1], new_quat_xyzw[2]]
 
             # Read current qpos for non-free-joint DOFs
-            qpos_raw = entity.get_qpos()
-            qpos_np = qpos_raw.cpu().numpy() if hasattr(qpos_raw, "cpu") else np.asarray(qpos_raw)
-            is_multi_env = qpos_np.ndim == 2
-            qpos = qpos_np[0] if is_multi_env else qpos_np.flatten()
+            qpos = tensor_to_array(entity.get_qpos())
+            if self._controlled_env_idx is not None:
+                qpos = qpos[self._controlled_env_idx]
 
             # Update only the free-joint DOFs
             new_qpos = list(qpos)
@@ -717,9 +658,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
             # Auto-pause on gizmo edit
             self.paused = True
-
             with self.viewer.render_lock:
-                self._apply_qpos_update(entity, new_qpos, is_multi_env)
+                entity.set_qpos(new_qpos, envs_idx=self._controlled_env_idx)
+                self._refresh_visuals()
         elif not gizmo.is_using():
             # Clear cache when drag ends so next interaction reads fresh qpos
             self._gizmo_cached_matrix = None
@@ -752,8 +693,6 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             cam_pos = np.array(list(new_pos)) if changed_pos else np.array(pos)
             cam_lookat = np.array(list(new_lookat)) if changed_lookat else np.array(lookat)
             # Build pose with fixed world-up to prevent unintuitive roll
-            from genesis.utils import geom as gu
-
             world_up = np.array([0.0, 0.0, 1.0])
             cam_pose = gu.pos_lookat_up_to_T(cam_pos, cam_lookat, world_up)
             self.scene.viewer._camera_up = cam_pose[:3, 1].copy()
@@ -853,33 +792,32 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         """Render scene editing controls (entity scale, add entity, rebuild)."""
         imgui = self._imgui
 
-        # Per-entity scale editing
-        for i, spec in enumerate(self._entity_specs):
-            morph = spec["morph"]
+        # Per-entity scale editing (FileMorph only; primitives carry size/radius/height instead).
+        to_remove: str | None = None
+        for name, kwargs in self._pending_entities_kwargs.items():
+            morph = kwargs["morph"]
             morph_name = type(morph).__name__
-            file_name = getattr(morph, "file", "")
+            file_name = morph.file if isinstance(morph, gs.morphs.FileMorph) else ""
 
-            imgui.text(f"{morph_name}: {file_name or '(builtin)'}")
+            imgui.text(f"{name} ({morph_name}): {file_name or '(builtin)'}")
 
-            # Scale editing
-            current_scale = spec["scale"]
-            if isinstance(current_scale, (list, tuple, np.ndarray)):
-                scale_val = float(current_scale[0]) if len(current_scale) > 0 else 1.0
-            else:
-                scale_val = float(current_scale)
-            changed, new_scale = imgui.drag_float(f"Scale##scale_{i}", scale_val, 0.01, 0.01, 100.0, "%.3f")
-            if changed:
-                spec["scale"] = new_scale
-                self._specs_dirty = True
+            if isinstance(morph, gs.morphs.FileMorph):
+                scale = morph.scale
+                scale_val = float(scale[0]) if isinstance(scale, (list, tuple, np.ndarray)) else float(scale)
+                changed, new_scale = imgui.drag_float(f"Scale##scale_{name}", scale_val, 0.01, 0.01, 100.0, "%.3f")
+                if changed:
+                    morph.scale = new_scale
+                    self._pending_dirty = True
 
-            # Remove button
-            imgui.same_line()
-            if imgui.button(f"X##remove_{i}"):
-                self._entity_specs.pop(i)
-                self._specs_dirty = True
-                break
+                imgui.same_line()
+            if imgui.button(f"X##remove_{name}"):
+                to_remove = name
 
             imgui.separator()
+
+        if to_remove is not None:
+            del self._pending_entities_kwargs[to_remove]
+            self._pending_dirty = True
 
         # Add entity section
         if imgui.collapsing_header("Add Entity##add_entity"):
@@ -955,30 +893,30 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     "Plane": lambda: gs.morphs.Plane(),
                 }
                 new_morph = morph_cls_map[morph_type]()
-                self._entity_specs.append(
-                    {
-                        "morph": new_morph,
-                        "material": None,
-                        "surface": None,
-                        "visualize_contact": False,
-                        "scale": scale,
-                    }
-                )
-                self._specs_dirty = True
+                # Generate a unique name based on the morph type.
+                base_name = morph_type
+                suffix = 0
+                name = base_name
+                while name in self._pending_entities_kwargs:
+                    suffix += 1
+                    name = f"{base_name}_{suffix}"
+                self._pending_entities_kwargs[name] = {
+                    "morph": new_morph,
+                    "material": None,
+                    "surface": None,
+                    "visualize_contact": False,
+                }
+                self._pending_dirty = True
             imgui.unindent()
 
-        # Rebuild button
-        if self._specs_dirty:
+        # Rebuild button. The actual rebuild runs on the main thread via the
+        # ``rebuild_requested`` property; doing it from the viewer thread would
+        # destroy the context we are rendering from.
+        if self._pending_dirty:
             imgui.text_colored((1.0, 0.7, 0.0, 1.0), "Changes pending")
         if imgui.button("Rebuild Scene", size=(150, 0)):
-            # Update morph scale values before rebuild
-            for spec in self._entity_specs:
-                morph = spec["morph"]
-                if hasattr(morph, "scale"):
-                    morph.scale = spec["scale"]
-            # Signal rebuild to main thread (don't call _rebuild_fn from viewer thread)
             self._rebuild_requested = True
-            self._specs_dirty = False
+            self._pending_dirty = False
 
     def _render_entity_browser(self):
         """Render entity list with joint sliders."""
@@ -989,9 +927,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             return
 
         for entity_idx, data in self._entity_cache.items():
-            entity = data["entity"]
+            entity = data.entity
             expanded = imgui.collapsing_header(
-                f"{data['name']}##entity_{entity_idx}", flags=imgui.TreeNodeFlags_.default_open
+                f"{data.name}##entity_{entity_idx}", flags=imgui.TreeNodeFlags_.default_open
             )
             if not expanded:
                 continue
@@ -999,7 +937,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             imgui.indent()
 
             # DOF count display
-            imgui.text(f"DOFs: {data['n_dofs']}")
+            imgui.text(f"DOFs: {data.n_dofs}")
 
             # Vis mode combo
             vis_modes = ["visual", "collision"]
@@ -1007,14 +945,24 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             current_mode_idx = vis_modes.index(current_mode) if current_mode in vis_modes else 0
             changed_mode, new_mode_idx = imgui.combo(f"Vis Mode##vis_{entity_idx}", current_mode_idx, vis_modes)
             if changed_mode:
-                self._switch_entity_vis_mode(entity, vis_modes[new_mode_idx])
+                self._apply_entity_vis_mode(entity, vis_modes[new_mode_idx])
 
-            # Per-entity wireframe toggle
+            # Per-entity wireframe toggle. Material lives on render primitives, so we walk the
+            # active geom set (vgeoms for visual mode, geoms otherwise) and flip the flag on each.
             is_wireframe = self._wireframe_state.get(entity_idx, False)
             changed_wf, new_wf = imgui.checkbox(f"Wireframe##wf_{entity_idx}", is_wireframe)
             if changed_wf:
                 self._wireframe_state[entity_idx] = new_wf
-                self._set_entity_wireframe(entity, new_wf)
+                ctx = self.viewer.context
+                geoms = entity.vgeoms if entity.surface.vis_mode == "visual" else entity.geoms
+                for geom in geoms:
+                    node = ctx.rigid_nodes.get(geom.uid)
+                    if node is None:
+                        continue
+                    for primitive in node.mesh.primitives:
+                        if primitive.material is not None:
+                            primitive.material.wireframe = new_wf
+                ctx._scene._meshes_updated = True
 
             # Visualize contact toggle
             show_contact = entity.visualize_contact
@@ -1025,7 +973,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     link._visualize_contact = new_contact
 
             # Gizmo toggle for free-joint entities
-            if data.get("has_free_joint") and self._gizmo is not None:
+            if data.joint_data.has_free_joint and self._gizmo is not None:
                 gizmo_active = self._gizmo_entity_idx == entity_idx
                 changed_gizmo, new_gizmo = imgui.checkbox(f"Gizmo##gizmo_{entity_idx}", gizmo_active)
                 if changed_gizmo:
@@ -1042,17 +990,10 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                         self._gizmo_operation = gizmo.OPERATION.rotate
 
             # Joint sections only for entities with DOFs
-            if data["n_dofs"] > 0:
-                # Get qpos - handle multi-env case by using only env 0
-                qpos_raw = entity.get_qpos()
-                qpos_np = qpos_raw.cpu().numpy() if hasattr(qpos_raw, "cpu") else np.asarray(qpos_raw)
-
-                # If multi-env (2D tensor with shape [n_envs, n_qs]), use only env 0
-                is_multi_env = qpos_np.ndim == 2
-                if is_multi_env:
-                    qpos = qpos_np[0]
-                else:
-                    qpos = qpos_np.flatten()
+            if data.n_dofs > 0:
+                qpos = tensor_to_array(entity.get_qpos())
+                if self._controlled_env_idx is not None:
+                    qpos = qpos[self._controlled_env_idx]
 
                 changed_any = False
                 new_qpos = list(qpos)
@@ -1063,7 +1004,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
                     # Euler/Quat toggle for free-joint entities
                     use_euler = False
-                    if data.get("has_free_joint"):
+                    if data.joint_data.has_free_joint:
                         rot_mode = self._rotation_mode.get(entity_idx, "quat")
                         if imgui.radio_button(f"Quaternion##rotmode_{entity_idx}", rot_mode == "quat"):
                             self._rotation_mode[entity_idx] = "quat"
@@ -1076,14 +1017,12 @@ class ImGuiOverlayPlugin(ViewerPlugin):
 
                     if use_euler:
                         # Euler mode: show position + euler angles from get_dofs_position
-                        changed_any = self._render_joints_euler_mode(
-                            entity, data, entity_idx, is_multi_env, qpos, new_qpos
-                        )
+                        changed_any = self._render_joints_euler_mode(entity, data, entity_idx, qpos, new_qpos)
                     else:
                         # Quat mode: show all qpos components
-                        lower, upper = data["q_limits"]
+                        lower, upper = data.joint_data.q_limits
                         for i, (name, val, lo, hi, is_quat) in enumerate(
-                            zip(data["q_names"], qpos, lower, upper, data["q_is_quaternion"])
+                            zip(data.joint_data.q_names, qpos, lower, upper, data.joint_data.q_is_quaternion)
                         ):
                             if is_quat:
                                 changed, new_val = imgui.drag_float(
@@ -1101,20 +1040,21 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 if changed_any:
                     # Auto-pause when user edits joints
                     self.paused = True
-                    if not (data.get("has_free_joint") and self._rotation_mode.get(entity_idx) == "euler"):
+                    if not (data.joint_data.has_free_joint and self._rotation_mode.get(entity_idx) == "euler"):
                         # Normalize any edited quaternion groups (quat mode only)
-                        for qstart, qend in data["quat_groups"]:
+                        for qstart, qend in data.joint_data.quat_groups:
                             q = np.array(new_qpos[qstart:qend])
                             norm = np.linalg.norm(q)
                             if norm > 1e-8:
                                 q /= norm
                                 new_qpos[qstart:qend] = q.tolist()
                     with self.viewer.render_lock:
-                        self._apply_qpos_update(entity, new_qpos, is_multi_env)
+                        entity.set_qpos(new_qpos, envs_idx=self._controlled_env_idx)
+                        self._refresh_visuals()
 
             imgui.unindent()
 
-    def _render_joints_euler_mode(self, entity, data, entity_idx, is_multi_env, qpos, new_qpos):
+    def _render_joints_euler_mode(self, entity, data, entity_idx, qpos, new_qpos):
         """Render free joint as position + euler angles, plus remaining joints normally.
 
         Free joint edits are applied immediately via set_dofs_position.
@@ -1123,17 +1063,22 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         """
         imgui = self._imgui
         non_free_changed = False
-        qs = data["free_joint_q_start"]
+        qs = data.joint_data.free_joint_q_start
 
         # Get dofs_position for euler angles
-        dofs_raw = entity.get_dofs_position()
-        dofs_np = dofs_raw.cpu().numpy() if hasattr(dofs_raw, "cpu") else np.asarray(dofs_raw)
-        dofs = dofs_np[0] if dofs_np.ndim == 2 else dofs_np.flatten()
+        dofs = tensor_to_array(entity.get_dofs_position())
+        if self._controlled_env_idx is not None:
+            dofs = dofs[self._controlled_env_idx]
 
         # Position (first 3 dofs = same as first 3 qpos for free joint)
         pos = [float(dofs[0]), float(dofs[1]), float(dofs[2])]
         changed_pos, new_pos = imgui.drag_float3(
-            f"Position##euler_pos_{entity_idx}", pos, 0.05, -FREE_JOINT_POS_LIMIT, FREE_JOINT_POS_LIMIT, "%.3f"
+            f"Position##euler_pos_{entity_idx}",
+            pos,
+            0.05,
+            -self._free_joint_pos_limit,
+            self._free_joint_pos_limit,
+            "%.3f",
         )
 
         # Euler angles (dofs 3-5, in radians, display as degrees)
@@ -1154,26 +1099,22 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 new_dofs[5] = np.radians(new_euler_deg[2])
 
             # Use set_dofs_position for the whole entity (handles euler->quat internally)
-            dofs_array = np.asarray(new_dofs)
             with self.viewer.render_lock:
-                if is_multi_env:
-                    entity.set_dofs_position(dofs_array, envs_idx=0)
-                else:
-                    entity.set_dofs_position(dofs_array)
-                refresh_visual_transforms(self.scene, self.viewer.gs_context)
+                entity.set_dofs_position(new_dofs, envs_idx=self._controlled_env_idx)
+                self._refresh_visuals()
 
             # Refresh new_qpos with updated free joint qpos (euler->quat conversion happened)
-            fresh_raw = entity.get_qpos()
-            fresh_qpos = fresh_raw.cpu().numpy() if hasattr(fresh_raw, "cpu") else np.asarray(fresh_raw)
-            fresh = fresh_qpos[0] if fresh_qpos.ndim == 2 else fresh_qpos.flatten()
+            fresh = tensor_to_array(entity.get_qpos())
+            if self._controlled_env_idx is not None:
+                fresh = fresh[self._controlled_env_idx]
             for i in range(qs, qs + 7):
                 new_qpos[i] = float(fresh[i])
 
         # Render remaining (non-free) joints normally
-        lower, upper = data["q_limits"]
+        lower, upper = data.joint_data.q_limits
         free_end = qs + 7  # free joint takes 7 qpos slots
         for i, (name, val, lo, hi, is_quat) in enumerate(
-            zip(data["q_names"], qpos, lower, upper, data["q_is_quaternion"])
+            zip(data.joint_data.q_names, qpos, lower, upper, data.joint_data.q_is_quaternion)
         ):
             if qs <= i < free_end:
                 continue  # Skip free joint components (handled above)

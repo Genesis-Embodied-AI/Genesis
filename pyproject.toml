@@ -89,6 +89,7 @@ dev = [
     "syrupy",
     "huggingface_hub[hf_xet]",
     "wandb",
+    "imgui-bundle",
     "ipython",
     # * Mujoco 3.3.6 made contact islands an opt-out option instead of opt-in,
     #   which requires setting the disableflags 'mjDSBL_ISLAND'.
@@ -128,7 +129,7 @@ render = [
     "open3d",
 ]
 gui = [
-    "imgui-bundle==1.92.5",
+    "imgui-bundle",
 ]
 usd = [
     # Used for parsing `.usd` mesh files

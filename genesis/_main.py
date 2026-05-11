@@ -378,10 +378,10 @@ def play(filename=None, collision=False, scale=1.0):
 
     scene.build()
 
-    from genesis.ext.pyrender.imgui_overlay import ImGuiOverlayPlugin
+    from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
     plugin = ImGuiOverlayPlugin()
-    scene.viewer._pyrender_viewer.register_plugin(plugin)
+    scene.viewer.add_plugin(plugin)
 
     while scene.viewer.is_alive():
         if plugin.should_step():

@@ -1,74 +1,43 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
 import io
-import os
 import sys
 import threading
 
-import numpy as np
-import OpenGL.error
 import pytest
 from PIL import Image
 
 import genesis as gs
-from genesis.ext.pyrender.imgui_overlay import ImGuiOverlayPlugin
+from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 from genesis.vis.viewer_plugins.viewer_plugin import ViewerPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 
-SNAPSHOT_FAILURE_DIR = os.path.join(os.path.dirname(__file__), "__snapshot_failures__")
-
 
 class _FrameCapturePlugin(ViewerPlugin):
-    """Test helper that reads the default framebuffer after all prior plugins (including ImGui) have drawn."""
+    """Read the default framebuffer after all prior plugins (including ImGui) have drawn."""
+
+    capture_next_frame = False
+    result = None
 
     def __init__(self):
         super().__init__()
-        self._armed = False
-        self._result = None
-        self._ready = threading.Event()
+        self.ready = threading.Event()
 
     def on_draw(self):
-        if self._armed:
-            renderer = self.viewer._renderer
-            viewport = self.viewer._viewport_size
-            self._result = renderer.jit.read_color_buf(*viewport, rgba=False)
-            self._armed = False
-            self._ready.set()
-
-    def capture(self, timeout=30.0):
-        self._ready.clear()
-        self._armed = True
-        self._ready.wait(timeout=timeout)
-        return self._result
-
-
-def _save_failure_images(received_arr, snapshot_data):
-    """Save received image and diff on snapshot mismatch for CI artifact upload."""
-    os.makedirs(SNAPSHOT_FAILURE_DIR, exist_ok=True)
-
-    received_img = Image.fromarray(received_arr)
-    received_img.save(os.path.join(SNAPSHOT_FAILURE_DIR, "received.png"))
-
-    try:
-        snapshot_img = Image.open(io.BytesIO(snapshot_data))
-        snapshot_arr = np.asarray(snapshot_img).astype(np.int16)
-        received_i16 = received_arr.astype(np.int16)
-        if snapshot_arr.shape == received_i16.shape:
-            diff = np.minimum(np.abs(snapshot_arr - received_i16), 255).astype(np.uint8)
-            Image.fromarray(diff).save(os.path.join(SNAPSHOT_FAILURE_DIR, "diff.png"))
-        snapshot_img.save(os.path.join(SNAPSHOT_FAILURE_DIR, "expected.png"))
-    except Exception:
-        pass
+        if self.capture_next_frame:
+            self.result = self.viewer._renderer.jit.read_color_buf(*self.viewer._viewport_size, rgba=False)
+            self.capture_next_frame = False
+            self.ready.set()
 
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
-@pytest.mark.xfail(
-    reason="ImGui overlay rendering varies across platforms (driver/font differences, missing imgui-bundle, non-threaded viewer on Mac)."
-)
-def test_imgui_overlay_screenshot(png_snapshot):
-    """Verify that the ImGui overlay renders visibly on top of the scene."""
+def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
+    # ImGui font rasterization differs across platforms (freetype vs CoreText) and renderers.
+    # Loosen the tolerance so the same baseline matches on Linux and macOS.
+    png_snapshot.extension._std_err_threshold = 5.0
+
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             res=(960, 720),
@@ -76,40 +45,60 @@ def test_imgui_overlay_screenshot(png_snapshot):
             camera_lookat=(0.0, 0.0, 0.5),
             run_in_thread=(sys.platform == "linux"),
         ),
+        vis_options=gs.options.VisOptions(
+            shadow=False,
+        ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
         ),
         show_viewer=True,
     )
-    scene.add_entity(gs.morphs.Plane(), name="plane")
-    scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"), name="panda")
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+        name="plane",
+    )
+    scene.add_entity(
+        morph=gs.morphs.MJCF(
+            file="xml/franka_emika_panda/panda.xml",
+        ),
+        name="panda",
+    )
 
-    imgui_plugin = ImGuiOverlayPlugin()
+    # Wrap ``on_draw`` at the class level (before instantiation) so the pyglet event registration
+    # in ``add_plugin`` picks up the wrapper. Reset ``_last_time`` after each call so the next
+    # frame's delta_time falls back to the deterministic 1/60 default instead of the wall clock.
+    original_on_draw = ImGuiOverlayPlugin.on_draw
+
+    def _on_draw_pinned_fps(self):
+        original_on_draw(self)
+        self._last_time = None
+
+    monkeypatch.setattr(ImGuiOverlayPlugin, "on_draw", _on_draw_pinned_fps)
+
+    # Pin the panel to a fixed width so changes in entity names / labels do not shift the layout.
+    imgui_plugin = ImGuiOverlayPlugin(panel_width=420)
     scene.viewer.add_plugin(imgui_plugin)
-
     capture_plugin = _FrameCapturePlugin()
     scene.viewer.add_plugin(capture_plugin)
 
     scene.build()
     scene.step()
 
-    # Fix FPS display to a constant value so the screenshot is deterministic across machines
-    imgui_plugin._fps_history = [55.0]
-
-    rgb_arr = capture_plugin.capture()
-    assert rgb_arr is not None
-    assert rgb_arr.ndim == 3 and rgb_arr.shape[2] == 3
-
     try:
-        img = Image.fromarray(rgb_arr)
+        # ImGui builds its font atlas lazily on first draw and tab bars settle to their final width
+        # only after a couple frames. Warm up a few frames before capturing so the recorded image is
+        # stable across runs.
+        for _ in range(3):
+            scene.viewer.update()
+
+        capture_plugin.capture_next_frame = True
+        # Drive one synchronous draw on the main-thread viewer (macOS/Windows). In threaded mode
+        # (Linux) this is a no-op and the viewer thread will draw at its own refresh cadence.
+        scene.viewer.update()
+        capture_plugin.ready.wait(timeout=30.0)
+        assert capture_plugin.result is not None
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        received_bytes = buf.getvalue()
-        assert received_bytes == png_snapshot
-    except AssertionError:
-        _save_failure_images(rgb_arr, png_snapshot if isinstance(png_snapshot, bytes) else b"")
-        if sys.platform == "darwin" and scene.visualizer._rasterizer._renderer._is_software:
-            pytest.xfail("Flaky on MacOS with Apple Software Renderer. Pixel-matching failure.")
-        raise
+        Image.fromarray(capture_plugin.result).save(buf, format="PNG")
+        assert buf.getvalue() == png_snapshot
     finally:
         scene.viewer.stop()
