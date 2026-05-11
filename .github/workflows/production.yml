@@ -102,13 +102,6 @@ jobs:
 
             # tmate -S /tmp/tmate.sock wait tmate-exit
           EOF
-      - name: Upload snapshot failure images
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snapshot-failures-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
-          path: tests/__snapshot_failures__/
-          if-no-files-found: ignore
       - name: Kill Slurm job
         if: always()
         run: |

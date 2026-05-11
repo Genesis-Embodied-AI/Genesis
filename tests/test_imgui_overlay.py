@@ -26,9 +26,15 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
+            # Deliberately request a resolution that exceeds the virtual display area of GitHub-hosted Apple M1
+            # macos-15 runners, to make sure the offscreen FBO size always honors the user-specified resolution.
             res=(960, 720),
             camera_pos=(2.0, 2.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
+            # The capture path at the end of this test calls ``pyrender_viewer.on_draw`` and reads the window
+            # framebuffer directly. That can only run on the thread that owns the GL context, so run the viewer
+            # in the test thread instead of its own background thread.
+            run_in_thread=False,
         ),
         vis_options=gs.options.VisOptions(
             shadow=False,
@@ -68,10 +74,14 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     scene.step()
 
     try:
+        # ``render_offscreen`` only renders the 3D scene (it is the path also used for in-scene camera captures while
+        # the interactive viewer is alive), so it deliberately skips the viewer's plugin loop and the ImGui overlay
+        # never appears in its output. Drive ``Viewer.on_draw`` synchronously from the test thread instead, which is
+        # only legal because ``run_in_thread=False`` keeps the viewer (and the GL context it owns) on this thread.
         pyrender_viewer = scene.viewer._pyrender_viewer
-        rgb, *_ = pyrender_viewer.render_offscreen(
-            pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
-        )
+        pyrender_viewer.switch_to()
+        pyrender_viewer.on_draw()
+        rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
         assert rgb_array_to_png_bytes(rgb) == png_snapshot
     finally:
         scene.viewer.stop()

@@ -1,7 +1,7 @@
 """
 ImGui overlay plugin for joint control and simulation controls.
 
-Requires: pip install imgui-bundle
+Requires the ``render`` optional extras: ``pip install 'genesis-world[render]'``.
 """
 
 import os
@@ -42,9 +42,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
     - Only controls environment 0 in batched simulations
 
     Usage:
-        scene.build()
         plugin = ImGuiOverlayPlugin()
-        scene.viewer._pyrender_viewer.register_plugin(plugin)
+        scene.viewer.add_plugin(plugin)
+        scene.build()
 
         while scene.viewer.is_alive():
             if plugin.should_step():
@@ -66,7 +66,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         except ImportError:
             gs.raise_exception(
                 "ImGuiOverlayPlugin requires the optional 'imgui-bundle' dependency. Install Genesis with the "
-                "'render' extras (pip install 'genesis-world[render]') or pip install imgui-bundle directly."
+                "'render' extras (pip install 'genesis-world[render]'). Pre-built wheels are not published for every "
+                "Python/OS combination (e.g. Python 3.10, Linux aarch64); on those platforms install manually via "
+                "'pip install imgui-bundle', which builds from source and requires CMake."
             )
 
         super().__init__()
