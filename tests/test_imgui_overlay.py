@@ -1,15 +1,12 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
-import io
-import sys
-
 import pytest
-from PIL import Image
 
 import genesis as gs
 from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
+from .utils import rgb_array_to_png_bytes
 
 try:
     import imgui_bundle  # noqa: F401
@@ -32,7 +29,6 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
             res=(960, 720),
             camera_pos=(2.0, 2.0, 1.5),
             camera_lookat=(0.0, 0.0, 0.5),
-            run_in_thread=(sys.platform == "linux"),
         ),
         vis_options=gs.options.VisOptions(
             shadow=False,
@@ -73,11 +69,9 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
 
     try:
         pyrender_viewer = scene.viewer._pyrender_viewer
-        pyrender_viewer.switch_to()
-        pyrender_viewer.on_draw()
-        rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
-        buf = io.BytesIO()
-        Image.fromarray(rgb).save(buf, format="PNG")
-        assert buf.getvalue() == png_snapshot
+        rgb, *_ = pyrender_viewer.render_offscreen(
+            pyrender_viewer._camera_node, pyrender_viewer._renderer, rgb=True, depth=False, seg=False, normal=False
+        )
+        assert rgb_array_to_png_bytes(rgb) == png_snapshot
     finally:
         scene.viewer.stop()
