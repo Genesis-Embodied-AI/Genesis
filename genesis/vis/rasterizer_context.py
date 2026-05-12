@@ -473,17 +473,103 @@ class RasterizerContext:
 
     def update_rigid(self):
         for solver in self._rigid_solvers():
+            # Hoist the is_custom view once per solver: every entity below probes it to decide between the
+            # instancing fast path and the per-env vverts-buffer path.
+            if solver.n_vverts > 0:
+                is_custom = qd_to_numpy(solver.vverts_info.is_custom)
+                if solver._options.batch_vverts_info:
+                    is_custom_per_entity = is_custom[:, self.rendered_envs_idx].any(axis=1)
+                else:
+                    is_custom_per_entity = is_custom
+            else:
+                is_custom_per_entity = None
             for entity in solver.entities:
                 if entity.surface.vis_mode == "visual":
                     geoms = entity.vgeoms
                     geoms_T = solver._vgeoms_render_T
-                    if entity.n_vverts > 0 and self._entity_has_custom_vverts(solver, entity):
-                        if entity.uid not in self._per_env_vverts_entity_uids:
-                            self._migrate_to_per_env_vverts(solver, entity)
-                        self._upload_per_env_vverts(solver, entity)
+                    needs_per_env = (
+                        entity.n_vverts > 0
+                        and is_custom_per_entity is not None
+                        and bool(is_custom_per_entity[entity.vvert_start])
+                    )
+                    is_in_per_env = entity.uid in self._per_env_vverts_entity_uids
+                    if needs_per_env and not is_in_per_env:
+                        # Migrate forward: tear down the instanced rigid_node for each of the entity's
+                        # vgeoms and build one per-env pyrender node per (env, vgeom).
+                        for geom in entity.vgeoms:
+                            old_node = self.rigid_nodes.pop(geom.uid, None)
+                            if old_node is not None:
+                                self.remove_node_seg(old_node)
+                                self.remove_node(old_node)
+
+                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                            if len(geom_envs_idx) == 0:
+                                continue
+
+                            mesh = geom.get_trimesh()
+                            for i_b in geom_envs_idx:
+                                node = self.add_node(
+                                    pyrender.Mesh.from_trimesh(
+                                        mesh=mesh,
+                                        smooth=geom.surface.smooth,
+                                        double_sided=geom.surface.double_sided,
+                                    ),
+                                )
+                                self.vverts_nodes[(i_b, geom.uid)] = node
+                                if self.segmentation_level == "geom":
+                                    seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
+                                elif self.segmentation_level == "link":
+                                    seg_key = (geom.entity.idx, geom.link.idx)
+                                elif self.segmentation_level == "entity":
+                                    seg_key = geom.entity.idx
+                                else:
+                                    gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+                                self.create_node_seg(seg_key, node)
+                        self._per_env_vverts_entity_uids.add(entity.uid)
+                    elif not needs_per_env and is_in_per_env:
+                        # Migrate back: drop the per-env nodes and reinstate the instanced rigid_node so
+                        # the standard transform-only update path below takes over again.
+                        for geom in entity.vgeoms:
+                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                            for i_b in geom_envs_idx:
+                                node = self.vverts_nodes.pop((i_b, geom.uid), None)
+                                if node is not None:
+                                    self.remove_node_seg(node)
+                                    self.remove_node(node)
+                            if len(geom_envs_idx) == 0:
+                                continue
+                            self.add_rigid_node(
+                                geom,
+                                pyrender.Mesh.from_trimesh(
+                                    mesh=geom.get_trimesh(),
+                                    poses=geoms_T[geom.idx][geom_envs_idx],
+                                    smooth=geom.surface.smooth,
+                                    double_sided=geom.surface.double_sided,
+                                ),
+                            )
+                        self._per_env_vverts_entity_uids.discard(entity.uid)
+
+                    if needs_per_env:
+                        # Push the entity's current vverts_state.pos slice to each per-env pyrender node.
+                        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                        envs_offset = self.scene.envs_offset
+                        for geom in entity.vgeoms:
+                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                            if len(geom_envs_idx) == 0:
+                                continue
+                            v_start = geom.vvert_start
+                            v_end = geom.vvert_end
+                            for env_i, i_b in enumerate(self.rendered_envs_idx):
+                                if i_b not in geom_envs_idx:
+                                    continue
+                                node = self.vverts_nodes[(i_b, geom.uid)]
+                                geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
+                                update_data = self._scene.reorder_vertices(node, geom_vverts.astype(np.float32))
+                                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                                normal_data = self.jit.update_normal(node, update_data)
+                                if normal_data is not None:
+                                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
                         continue
-                    if entity.uid in self._per_env_vverts_entity_uids:
-                        self._migrate_from_per_env_vverts(solver, entity, geoms_T)
                 else:
                     geoms = entity.geoms
                     geoms_T = solver._geoms_render_T
@@ -518,95 +604,6 @@ class RasterizerContext:
                     self.jit.update_buffer(self._scene.get_buffer_id(node, "model"), geom_T.transpose((0, 2, 1)))
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
-
-    def _entity_has_custom_vverts(self, solver, entity):
-        """Probe ``vverts_info.is_custom`` to decide whether any rendered env of this entity is currently
-        user-driven. Reads only the first vvert in the entity's range, assuming ``set_vverts`` writes a
-        contiguous block (which it always does)."""
-        is_custom = qd_to_numpy(solver.vverts_info.is_custom)
-        if solver._options.batch_vverts_info:
-            return bool(is_custom[entity.vvert_start, self.rendered_envs_idx].any())
-        return bool(is_custom[entity.vvert_start])
-
-    def _migrate_to_per_env_vverts(self, solver, entity):
-        """Tear down the instanced rigid_node for each of this entity's vgeoms and create one per-env
-        pyrender node per ``(env, vgeom)`` pair, ready for per-frame vertex uploads."""
-        for geom in entity.vgeoms:
-            old_node = self.rigid_nodes.pop(geom.uid, None)
-            if old_node is not None:
-                self.remove_node_seg(old_node)
-                self.remove_node(old_node)
-
-            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-            if len(geom_envs_idx) == 0:
-                continue
-
-            mesh = geom.get_trimesh()
-            for i_b in geom_envs_idx:
-                node = self.add_node(
-                    pyrender.Mesh.from_trimesh(
-                        mesh=mesh,
-                        smooth=geom.surface.smooth,
-                        double_sided=geom.surface.double_sided,
-                    ),
-                )
-                self.vverts_nodes[(i_b, geom.uid)] = node
-                if self.segmentation_level == "geom":
-                    seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
-                elif self.segmentation_level == "link":
-                    seg_key = (geom.entity.idx, geom.link.idx)
-                elif self.segmentation_level == "entity":
-                    seg_key = geom.entity.idx
-                else:
-                    gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
-                self.create_node_seg(seg_key, node)
-        self._per_env_vverts_entity_uids.add(entity.uid)
-
-    def _migrate_from_per_env_vverts(self, solver, entity, geoms_T):
-        """Reverse of :meth:`_migrate_to_per_env_vverts`. Reinstates the instanced ``rigid_node`` so the
-        standard transform-only update path takes over for this entity."""
-        for geom in entity.vgeoms:
-            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-            for i_b in geom_envs_idx:
-                node = self.vverts_nodes.pop((i_b, geom.uid), None)
-                if node is not None:
-                    self.remove_node_seg(node)
-                    self.remove_node(node)
-            if len(geom_envs_idx) == 0:
-                continue
-            self.add_rigid_node(
-                geom,
-                pyrender.Mesh.from_trimesh(
-                    mesh=geom.get_trimesh(),
-                    poses=geoms_T[geom.idx][geom_envs_idx],
-                    smooth=geom.surface.smooth,
-                    double_sided=geom.surface.double_sided,
-                ),
-            )
-        self._per_env_vverts_entity_uids.discard(entity.uid)
-
-    def _upload_per_env_vverts(self, solver, entity):
-        """Push the entity's current ``vverts_state.pos`` slice to each per-env pyrender node. Re-uploads
-        unconditionally every frame; cache invalidation is a follow-up."""
-        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
-        # ``vverts`` shape: ``(len(rendered_envs_idx), n_vverts_total, 3)``. Slice per vgeom below.
-        envs_offset = self.scene.envs_offset
-        for geom in entity.vgeoms:
-            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-            if len(geom_envs_idx) == 0:
-                continue
-            v_start = geom.vvert_start
-            v_end = geom.vvert_end
-            for env_i, i_b in enumerate(self.rendered_envs_idx):
-                if i_b not in geom_envs_idx:
-                    continue
-                node = self.vverts_nodes[(i_b, geom.uid)]
-                geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
-                update_data = self._scene.reorder_vertices(node, geom_vverts.astype(np.float32))
-                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
-                normal_data = self.jit.update_normal(node, update_data)
-                if normal_data is not None:
-                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
 
     def update_contact(self):
         if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):

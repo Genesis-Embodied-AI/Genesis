@@ -29,16 +29,14 @@ from .rigid.abd.misc import (
     kernel_update_vgeoms_render_T,
 )
 from .rigid.abd.forward_kinematics import (
-    kernel_clear_vverts,
     kernel_forward_kinematics,
     kernel_forward_velocity,
     kernel_masked_forward_kinematics,
     kernel_masked_forward_velocity,
-    kernel_set_vverts,
-    kernel_update_all_vverts,
     kernel_update_vgeoms,
 )
 from .rigid.abd.accessor import (
+    kernel_clear_vverts,
     kernel_get_kinematic_state,
     kernel_get_state_grad,
     kernel_set_kinematic_state,
@@ -51,6 +49,7 @@ from .rigid.abd.accessor import (
     kernel_set_links_pos,
     kernel_set_links_quat,
     kernel_set_qpos,
+    kernel_set_vverts,
     kernel_get_links_vel,
 )
 
@@ -93,7 +92,6 @@ class KinematicSolver(Solver):
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
-        self._set_vverts_warned = False
 
         self.collider = None
         self.constraint_solver = None
@@ -1019,56 +1017,63 @@ class KinematicSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def update_vgeoms(self):
-        kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
-        if self.n_vverts > 0:
-            kernel_update_all_vverts(
-                self.vverts_info, self.vverts_state, self.vgeoms_state, self._static_rigid_sim_config
-            )
+        kernel_update_vgeoms(
+            self.vgeoms_info,
+            self.vgeoms_state,
+            self.vverts_info,
+            self.vverts_state,
+            self.links_state,
+            self._static_rigid_sim_config,
+        )
 
     def set_vverts(self, vvert_start, vvert_end, vverts, envs_idx=None):
         """Write the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``, or clear it.
 
-        ``vverts`` is broadcast to ``(len(envs_idx), vvert_end - vvert_start, 3)`` via :func:`broadcast_tensor`,
-        so scalar / ``(3,)`` / ``(n_v, 3)`` / ``(B, n_v, 3)`` inputs are all accepted. ``envs_idx=None`` writes
-        every environment. ``vverts=None`` clears the override and lets FK take back over.
+        Accepted ``vverts`` shapes: scalar / ``(3,)`` / ``(n_v, 3)`` / ``(B, n_v, 3)``. ``vverts=None``
+        clears the override and lets FK take back over.
 
-        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``.
+        Any explicit ``envs_idx`` (even one that lists every env) is treated as partial and requires
+        ``KinematicOptions.batch_vverts_info=True``. Pass ``envs_idx=None`` to address all envs in the
+        non-batched mode.
         """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        is_partial = envs_idx.shape[0] != self._scene._envs_idx.shape[0]
-        if is_partial and not self._options.batch_vverts_info:
-            gs.raise_exception(
-                "Partial 'envs_idx' for 'set_vverts' requires 'KinematicOptions.batch_vverts_info=True'."
-            )
+        if envs_idx is not None and not self._options.batch_vverts_info:
+            gs.raise_exception("'envs_idx' for 'set_vverts' requires 'KinematicOptions.batch_vverts_info=True'.")
 
-        if vverts is None:
-            if gs.use_zerocopy:
-                is_custom = qd_to_torch(self.vverts_info.is_custom, transpose=True, copy=False)
-                if self._options.batch_vverts_info:
-                    is_custom[envs_idx, vvert_start:vvert_end] = 0
-                else:
-                    is_custom[vvert_start:vvert_end] = 0
-            else:
-                kernel_clear_vverts(vvert_start, vvert_end, envs_idx, self.vverts_info, self._static_rigid_sim_config)
-            return
-
-        target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
-        vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz"))
         if gs.use_zerocopy:
-            data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
-            data[envs_idx, vvert_start:vvert_end, :] = vverts
+            is_custom_value = int(vverts is not None)
             is_custom = qd_to_torch(self.vverts_info.is_custom, transpose=True, copy=False)
             if self._options.batch_vverts_info:
-                is_custom[envs_idx, vvert_start:vvert_end] = 1
+                is_custom_slice = is_custom[:, vvert_start:vvert_end]
+                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                    is_custom_slice.masked_fill_(envs_idx[:, None], is_custom_value)
+                elif envs_idx is None:
+                    is_custom_slice.fill_(is_custom_value)
+                else:
+                    is_custom_slice[indices_to_mask(envs_idx)] = is_custom_value
             else:
-                is_custom[vvert_start:vvert_end] = 1
+                is_custom[vvert_start:vvert_end] = is_custom_value
+
+            if vverts is not None:
+                data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
+                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                    pos_slice = data[:, vvert_start:vvert_end]
+                    if vverts.ndim == 3 and len(vverts) != len(pos_slice):
+                        pos_slice.masked_scatter_(envs_idx[:, None, None], vverts.view_as(vverts))
+                    else:
+                        vverts_b = broadcast_tensor(vverts, gs.tc_float, pos_slice.shape)
+                        torch.where(envs_idx[:, None, None], vverts_b, pos_slice, out=pos_slice)
+                else:
+                    vverts_mask = indices_to_mask(slice(vvert_start, vvert_end))
+                    pos_mask = (0, *vverts_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *vverts_mask)
+                    assign_indexed_tensor(data, pos_mask, vverts)
+            return
+
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        if vverts is None:
+            kernel_clear_vverts(vvert_start, vvert_end, envs_idx, self.vverts_info, self._static_rigid_sim_config)
         else:
-            if not self._set_vverts_warned:
-                gs.logger.warning(
-                    "'set_vverts' is being called on a backend without zero-copy support. Every call performs "
-                    "a full memcpy through a Quadrants kernel. Expected on older Apple Metal builds (pre-2.9.1)."
-                )
-                self._set_vverts_warned = True
+            target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
+            vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz"))
             kernel_set_vverts(
                 vverts, vvert_start, envs_idx, self.vverts_info, self.vverts_state, self._static_rigid_sim_config
             )
@@ -1078,9 +1083,8 @@ class KinematicSolver(Solver):
 
         Shape: ``(len(envs_idx), vvert_end - vvert_start, 3)``. ``envs_idx=None`` returns every environment.
         """
-        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=True)
-        return data[envs_idx, vvert_start:vvert_end, :]
+        tensor = qd_to_torch(self.vverts_state.pos, envs_idx, slice(vvert_start, vvert_end), transpose=True, copy=True)
+        return tensor[0] if self.n_envs == 0 else tensor
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -1928,20 +1928,14 @@ class KinematicEntity(Entity):
         Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Not supported for
         ``gs.morphs.Plane`` entities.
         """
-        self._set_vverts_range(self.vvert_start, self.vvert_start + self.n_vverts, vverts, envs_idx)
+        if isinstance(self._morph, gs.morphs.Plane):
+            gs.raise_exception("'set_vverts' is not supported for 'gs.morphs.Plane' entities.")
+        self._solver.set_vverts(self.vvert_start, self.vvert_start + self.n_vverts, vverts, envs_idx)
 
     @gs.assert_built
     def get_vverts(self, envs_idx=None):
         """Return a copy of this entity's visual vertex positions from ``vverts_state.pos``."""
-        return self._get_vverts_range(self.vvert_start, self.vvert_start + self.n_vverts, envs_idx)
-
-    def _set_vverts_range(self, vvert_start, vvert_end, vverts, envs_idx):
-        if isinstance(self._morph, gs.morphs.Plane):
-            gs.raise_exception("'set_vverts' is not supported for 'gs.morphs.Plane' entities.")
-        self._solver.set_vverts(vvert_start, vvert_end, vverts, envs_idx)
-
-    def _get_vverts_range(self, vvert_start, vvert_end, envs_idx):
-        return self._solver.get_vverts(vvert_start, vvert_end, envs_idx)
+        return self._solver.get_vverts(self.vvert_start, self.vvert_start + self.n_vverts, envs_idx)
 
     @property
     def links(self) -> list[RigidLink]:
