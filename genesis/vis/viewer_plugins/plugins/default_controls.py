@@ -35,6 +35,7 @@ class DefaultControlsPlugin(ViewerPlugin):
             Keybind("world_frame", Key.W, callback=self._toggle_world_frame, allow_overload=True),
             Keybind("link_frame", Key.L, callback=self._toggle_link_frame, allow_overload=True),
             Keybind("wireframe", Key.D, callback=self._toggle_wireframe, allow_overload=True),
+            Keybind("camera_mode", Key.O, callback=self._toggle_projection_mode, allow_overload=True),
             Keybind("camera_frustum", Key.C, callback=self._toggle_camera_frustum, allow_overload=True),
             Keybind("reload_shader", Key.P, callback=self._reload_shader, allow_overload=True),
             Keybind("fullscreen_mode", Key.F11, callback=self._toggle_fullscreen, allow_overload=True),
@@ -119,6 +120,17 @@ class DefaultControlsPlugin(ViewerPlugin):
 
     def _save_image(self):
         self.viewer._save_image()
+
+    def _toggle_projection_mode(self):
+        vf = self.viewer.viewer_flags
+        vf["use_perspective_cam"] = not vf["use_perspective_cam"]
+        node = self.viewer._camera_node
+        if vf["use_perspective_cam"]:
+            node.camera = self.viewer._default_persp_cam
+            self.viewer.set_message_text("Perspective camera")
+        else:
+            node.camera = self.viewer._default_orth_cam
+            self.viewer.set_message_text("Orthographic camera")
 
     def _toggle_wireframe(self):
         if self.viewer.render_flags["flip_wireframe"]:

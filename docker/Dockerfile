@@ -35,10 +35,10 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110 && \
 # Install Rust for build requirements
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-RUN pip install "pybind11[global]"
+RUN python3 -m pip install --break-system-packages "pybind11[global]"
 
 # Install CMake
-RUN pip install --no-cache-dir cmake==3.31.6
+RUN python3 -m pip install --break-system-packages --no-cache-dir cmake==3.31.6
 
 # Build LuisaRender
 WORKDIR /workspace
@@ -64,9 +64,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget \
+    gosu \
     bash-completion \
     libgl1 \
-    libgl1-mesa-glx \
+    libgl1-mesa-dri \
     libglu1-mesa \
     libegl-dev \
     libegl1 \
@@ -84,15 +85,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 
-# ------------------------ No root user --------------------------
-RUN useradd --shell /bin/bash -u 1001 -c "" -m user
-
 # --------------------------- Genesis ----------------------------
-RUN pip install --no-cache-dir open3d
+RUN python3 -m pip install --break-system-packages --no-cache-dir open3d
 RUN git clone https://github.com/Genesis-Embodied-AI/Genesis.git && \
     cd Genesis && \
-    pip install . && \
-    pip install --no-cache-dir PyOpenGL==3.1.5
+    python3 -m pip install --break-system-packages . && \
+    python3 -m pip install --break-system-packages --no-cache-dir PyOpenGL==3.1.5
 
 # -------------------- Surface Reconstruction --------------------
 # Set the LD_LIBRARY_PATH directly in the environment
@@ -114,13 +112,25 @@ COPY nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.json
 COPY nvidia_layers.json /etc/vulkan/implicit_layer.d/nvidia_layers.json
 
 # ---------------------- Custom Entrypoint -----------------------
-RUN echo '#!/bin/bash\n\
-if [ -n "${LOCAL_USER_ID}" ]; then\n\
-  echo "Starting with UID: $LOCAL_USER_ID"\n\
-  usermod -u $LOCAL_USER_ID user\n\
-  chown -R user:user /opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/\n\
-fi\n\
-exec /bin/bash' > /entrypoint.sh && \
-chmod +x /entrypoint.sh
+# Resolve a user matching the caller's host UID at startup. If no user owns that UID yet, create one; if one does
+# (including root), reuse it as-is. This avoids mutating the base image's accounts and works for any LOCAL_USER_ID.
+RUN cat <<'EOF' > /entrypoint.sh
+#!/bin/bash
+
+if [ -n "${LOCAL_USER_ID}" ]; then
+    USER_NAME=$(getent passwd "${LOCAL_USER_ID}" | cut -d: -f1)
+    if [ -z "${USER_NAME}" ]; then
+        USER_NAME=user
+        useradd --shell /bin/bash --uid "${LOCAL_USER_ID}" -m "${USER_NAME}"
+    fi
+    chown -R "${USER_NAME}" "/opt/conda/lib/python${PYTHON_VERSION}/site-packages/genesis/ext/LuisaRender/" || true
+    exec gosu "${USER_NAME}" "$@"
+else
+    exec "$@"
+fi
+EOF
+
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

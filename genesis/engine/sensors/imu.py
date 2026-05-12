@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
-from genesis.options.sensors import CrossCouplingAxisType, IMU as IMUOptions
+from genesis.options.sensors import IMU as IMUOptions
+from genesis.options.sensors import CrossCouplingAxisType
 from genesis.utils.geom import (
     inv_transform_by_quat,
     transform_by_quat,
@@ -15,8 +16,8 @@ from genesis.utils.geom import (
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    ImperfectSensorMetadataMixin,
+    ImperfectSensorMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
@@ -62,7 +63,7 @@ def _get_cross_axis_coupling_to_alignment_matrix(
 
 
 @dataclass
-class IMUSharedMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+class IMUSharedMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
     """
     Shared metadata between all IMU sensors.
     """
@@ -82,7 +83,7 @@ class IMUData(NamedTuple):
 
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
-    NoisySensorMixin[IMUSharedMetadata],
+    ImperfectSensorMixin[IMUSharedMetadata],
     Sensor[IMUOptions, IMUSharedMetadata, IMUData],
 ):
     def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
@@ -216,13 +217,10 @@ class IMUSensor(
         """
         Update the current measured sensor data for all IMU sensors.
         """
-        buffered_data.set(shared_ground_truth_cache)
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
 
@@ -232,8 +230,7 @@ class IMUSensor(
             torch.matmul(shared_metadata.alignment_rot_matrix, shared_cache_xyz_view.unsqueeze(-1)).squeeze(-1)
         )
 
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+        cls._apply_imperfections(shared_metadata, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

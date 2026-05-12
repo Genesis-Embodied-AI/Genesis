@@ -6,6 +6,13 @@ import genesis as gs
 
 
 @pytest.mark.required
+def test_coacd_options_pca_validation():
+    gs.options.CoacdOptions(pca=False)
+    with pytest.raises(gs.GenesisException, match="pca=True"):
+        gs.options.CoacdOptions(pca=True)
+
+
+@pytest.mark.required
 def test_scene_destroy_cleans_up_simulator():
     scene = gs.Scene(show_viewer=False)
     scene.add_entity(morph=gs.morphs.Plane())

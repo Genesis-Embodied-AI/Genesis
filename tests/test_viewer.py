@@ -60,7 +60,8 @@ def test_interactive_viewer_disable_viewer_defaults():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_default_viewer_plugin():
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_default_viewer_plugin(n_envs):
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
             camera_pos=(2.0, 0.0, 1.0),
@@ -85,7 +86,7 @@ def test_default_viewer_plugin():
             euler=(30, 40, 0),
         )
     )
-    scene.build()
+    scene.build(n_envs=n_envs)
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
@@ -233,7 +234,16 @@ def test_viewer_thread_crash_reports_traceback():
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-def test_mouse_interaction_plugin():
+@pytest.mark.parametrize(
+    "n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset",
+    [
+        (0, (0.0, 0.0), None, None, (0.0, 0.0, 0.0)),
+        # Two envs spaced along x so envs_offset is non-zero. Camera is positioned over env 1, so a viewport-center
+        # click must pick env 1 (exercising kernel_cast_ray's per-env offset transform) and leave env 0 untouched.
+        (2, (0.5, 0.0), 1, 1, (0.25, 0.0, 0.0)),
+    ],
+)
+def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_env_idx, target_offset):
     DT = 0.01
     MASS = 100.0
     BOX_LENGTH = 0.2
@@ -241,7 +251,8 @@ def test_mouse_interaction_plugin():
     DRAG_DY = 8
     SPRING_CONST = 1000.0
     CAM_FOV = 30
-    CAM_POS = (0.0, 0.6, 1.2)
+    target_offset = np.asarray(target_offset, dtype=gs.np_float)
+    CAM_POS = (target_offset[0], 0.6, 1.2)
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
@@ -252,8 +263,8 @@ def test_mouse_interaction_plugin():
             # Forces odd resolution so that mouse clicks are centered on pixels
             res=(2 * (CAM_RES[0] // 2) + 1, 2 * (CAM_RES[0] // 2) + 1),
             camera_pos=CAM_POS,
-            # looking to the top of the box
-            camera_lookat=(0.0, 0.0, BOX_LENGTH),
+            # looking to the top of the box at the target env
+            camera_lookat=(target_offset[0], target_offset[1], target_offset[2] + BOX_LENGTH),
             camera_fov=CAM_FOV,
             run_in_thread=(sys.platform == "linux"),
         ),
@@ -271,16 +282,24 @@ def test_mouse_interaction_plugin():
             rho=MASS / (BOX_LENGTH**3),
         ),
     )
-    _mouse_plugin = scene.viewer.add_plugin(
+    scene.viewer.add_plugin(
         gs.vis.viewer_plugins.MouseInteractionPlugin(
             use_force=True,
             spring_const=SPRING_CONST,
         )
     )
-    scene.build()
+    scene.build(
+        n_envs=n_envs,
+        env_spacing=env_spacing,
+        n_envs_per_row=n_envs_per_row,
+    )
 
     pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
     assert pyrender_viewer.is_active
+
+    # Sanity-check the scene actually applies the offset we want to exercise.
+    if target_env_idx is not None:
+        assert_allclose(scene.envs_offset[target_env_idx], target_offset, tol=gs.EPS)
 
     class EventCounterHandler:
         def __init__(self):
@@ -309,7 +328,9 @@ def test_mouse_interaction_plugin():
 
     assert_allclose(box.get_vel(), 0, tol=gs.EPS)
 
-    initial_pos = box.get_pos()
+    initial_pos = tensor_to_array(box.get_pos())
+    # Position of the env the cursor will pick (target_env_idx for multi-env, the only env otherwise).
+    initial_pos_target = initial_pos if target_env_idx is None else initial_pos[target_env_idx]
 
     viewport_size = pyrender_viewer._viewport_size
     x, y = viewport_size[0] // 2, viewport_size[1] // 2
@@ -318,6 +339,15 @@ def test_mouse_interaction_plugin():
     pyrender_viewer.dispatch_event("on_mouse_press", x, y, MouseButton.LEFT, 0)
     # Ensure event is processed
     wait_for_viewer_events(pyrender_viewer, check_event_count())
+
+    # Confirm the raycaster picked the expected env (requires envs_offset alignment in kernel_cast_ray).
+    if target_env_idx is not None:
+        plugin = next(
+            p for p in scene.viewer._viewer_plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin)
+        )
+        assert plugin._interact_env_idx == target_env_idx, (
+            f"Expected mouse to pick env {target_env_idx}, got env {plugin._interact_env_idx}"
+        )
 
     rgb_arrs = []
     for i in range(STEPS):
@@ -333,25 +363,39 @@ def test_mouse_interaction_plugin():
 
     assert not np.array_equal(rgb_arrs[0], rgb_arrs[1]), "Expected images to be different after dragging the object."
 
-    final_pos = box.get_pos()
-    final_vel = box.get_vel()
+    final_pos = tensor_to_array(box.get_pos())
+    final_vel = tensor_to_array(box.get_vel())
+    final_pos_target = final_pos if target_env_idx is None else final_pos[target_env_idx]
+    final_vel_target = final_vel if target_env_idx is None else final_vel[target_env_idx]
 
     assert_allclose(
-        final_vel[:2],
+        final_vel_target[:2],
         0.0,
         tol=0.002,
         err_msg="Final x and y velocities should be near zero since dragging only in z direction.",
     )
 
-    distance_to_box = np.linalg.norm(tensor_to_array(initial_pos) - CAM_POS)
+    distance_to_box = np.linalg.norm(initial_pos_target - CAM_POS)
     pixels_to_world = 2.0 * distance_to_box * np.tan(np.radians(CAM_FOV) / 2.0) / viewport_size[1]
     total_world_displacement = STEPS * DRAG_DY * pixels_to_world
 
-    displacement_z = final_pos[2] - initial_pos[2]
+    displacement_z = final_pos_target[2] - initial_pos_target[2]
     assert displacement_z > gs.EPS, "Box should have moved upward"
     assert displacement_z < total_world_displacement, (
         "Box displacement should be less than mouse displacement from spring lag"
     )
+
+    # Non-target envs (multi-env case) must not have moved.
+    if target_env_idx is not None:
+        for i in range(n_envs):
+            if i == target_env_idx:
+                continue
+            assert_allclose(
+                final_pos[i],
+                initial_pos[i],
+                tol=1e-3,
+                err_msg=f"Env {i} box must not move when picking env {target_env_idx}.",
+            )
 
     pyrender_viewer.dispatch_event("on_mouse_release", x, y, MouseButton.LEFT, 0)
     scene.step()
@@ -370,7 +414,7 @@ def test_mouse_interaction_plugin():
     expected_vel_z = avg_mouse_velocity * velocity_fraction
 
     assert_allclose(
-        final_vel[2],
+        final_vel_target[2],
         expected_vel_z,
         rtol=0.5,
         err_msg="Final z velocity does not match expected value based on spring dynamics.",

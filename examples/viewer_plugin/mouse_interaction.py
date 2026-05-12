@@ -10,9 +10,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_force", "-f", action="store_true", help="Apply spring forces instead of setting position"
     )
+    parser.add_argument("--num_envs", "-b", type=int, default=1, help="Number of environments to create")
     args = parser.parse_args()
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -51,7 +52,7 @@ if __name__ == "__main__":
         )
     )
 
-    scene.build()
+    scene.build(n_envs=args.num_envs)
 
     is_running = True
 
