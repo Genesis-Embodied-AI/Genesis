@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 import trimesh
@@ -8,7 +10,7 @@ import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
 from genesis.ext import pyrender
 from genesis.ext.pyrender.jit_render import JITRenderer
-from genesis.utils.misc import tensor_to_array, qd_to_numpy
+from genesis.utils.misc import broadcast_array, qd_to_numpy, tensor_to_array
 
 
 class SegmentationColorMap:
@@ -74,6 +76,24 @@ class SegmentationColorMap:
             self.idxc_to_color = rgb
 
 
+@dataclass
+class _CustomVverts:
+    """Per-entity state for the custom-vverts render path.
+
+    Encapsulates the three pieces of bookkeeping the rasterizer needs to drive per-frame vertex overrides
+    set via :meth:`RasterizerContext.set_custom_kinematic_entity_vverts`:
+
+    - ``buffer``: the user-supplied ``(B, n_vverts, 3)`` override array. None means the user has cleared
+      the override but migration back to the instanced render path hasn't run yet.
+    - ``active``: True iff the renderer is currently using per-env deformed nodes for this entity.
+    - ``dirty``: True iff the GL buffer must be re-uploaded on the next :meth:`update_rigid` pass.
+    """
+
+    buffer: np.ndarray | None
+    active: bool = False
+    dirty: bool = True
+
+
 class RasterizerContext:
     def __init__(self, options):
         self.show_world_frame = options.show_world_frame
@@ -102,7 +122,10 @@ class RasterizerContext:
         self.link_frame_nodes = dict()
         self.frustum_nodes = dict()  # nodes camera frustums
         self.rigid_nodes = dict()
-        self.skinned_nodes = dict()  # (env_idx, geom.uid) -> node, for entities with custom vverts
+        # (env_idx, geom.uid) -> per-env pyrender node for vgeoms driven by `set_custom_kinematic_entity_vverts`.
+        self.custom_vverts_nodes = dict()
+        # entity.uid -> :class:`_CustomVverts`: buffer + active / dirty bookkeeping for the custom-vverts path.
+        self._custom_vverts: dict = dict()
         self.static_nodes = dict()  # used across all frames
         self.dynamic_nodes = dict()  # nodes that live within single frame
         self.external_nodes = dict()  # nodes added by external user
@@ -176,13 +199,14 @@ class RasterizerContext:
             self.link_frame_nodes,
             self.frustum_nodes,
             self.rigid_nodes,
-            self.skinned_nodes,
+            self.custom_vverts_nodes,
             self.static_nodes,
             self.external_nodes,
         ):
             for external_node in node_registry.values():
                 self.remove_node(external_node)
             node_registry.clear()
+        self._custom_vverts.clear()
 
     def reset(self):
         self._t = -1
@@ -209,25 +233,83 @@ class RasterizerContext:
             return np.intersect1d(geom_active_envs_idx, rendered_envs_idx)
         return rendered_envs_idx
 
-    def _seg_key_for_geom(self, geom):
+    def add_geom_node(self, geom, obj, **kwargs):
+        """Add a pyrender node for ``geom``'s mesh and register its segmentation key, returning the node.
+
+        Callers store the result in whichever per-geom registry they track (``rigid_nodes`` for the
+        instanced transform path, ``custom_vverts_nodes`` for the per-env custom-vverts path).
+        """
+        node = self.add_node(obj, **kwargs)
         if self.segmentation_level == "geom":
-            return (geom.entity.idx, geom.link.idx, geom.idx)
+            seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
         elif self.segmentation_level == "link":
-            return (geom.entity.idx, geom.link.idx)
+            seg_key = (geom.entity.idx, geom.link.idx)
         elif self.segmentation_level == "entity":
-            return geom.entity.idx
-        gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+            seg_key = geom.entity.idx
+        else:
+            gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+        self.create_node_seg(seg_key, node)
+        return node
 
-    def add_rigid_node(self, geom, obj, **kwargs):
-        rigid_node = self.add_node(obj, **kwargs)
-        self.rigid_nodes[geom.uid] = rigid_node
-        self.create_node_seg(self._seg_key_for_geom(geom), rigid_node)
+    def set_custom_kinematic_entity_vverts(self, entity, vverts, envs_idx=None):
+        """Override the visual vertex positions of a kinematic entity for rendering only, or clear an
+        existing override by passing ``vverts=None``.
 
-    def add_skinned_node(self, geom, obj, i_b, **kwargs):
-        """Add a per-env node for a vgeom with custom vertex positions."""
-        skinned_node = self.add_node(obj, **kwargs)
-        self.skinned_nodes[(i_b, geom.uid)] = skinned_node
-        self.create_node_seg(self._seg_key_for_geom(geom), skinned_node)
+        The rasterizer switches the entity to a per-env render path that uploads ``vverts`` as the entity's
+        visual mesh positions every time the buffer is updated. The override is independent of physics
+        simulation - solver state is unaffected.
+
+        Parameters
+        ----------
+        entity : KinematicEntity
+            The kinematic entity (or any subclass, e.g. ``RigidEntity``) whose visual vertices to override.
+        vverts : None | float | np.ndarray | torch.Tensor
+            Vertex positions in world space, broadcastable to ``(B_target, entity.n_vverts, 3)`` where
+            ``B_target == len(envs_idx)`` (or the scene's environment count when ``envs_idx`` is None).
+            Scalars, ``(3,)``, and ``(n_vverts, 3)`` are accepted and broadcast. ``None`` clears the
+            override and restores the standard per-vgeom transform path on the next frame.
+        envs_idx : None | int | list | np.ndarray, optional
+            Environment indices to update. None updates every environment. Not supported for
+            non-parallelized scenes.
+        """
+        # gs.morphs.Plane uses a single-instance render with reflection that the per-env custom-vverts
+        # path cannot reproduce. Rather than silently degrade the render, refuse the override.
+        if isinstance(entity._morph, gs.morphs.Plane):
+            gs.raise_exception("Custom vverts override is not supported for 'gs.morphs.Plane' entities.")
+
+        state = self._custom_vverts.get(entity.uid)
+        if vverts is None:
+            if envs_idx is not None:
+                gs.raise_exception("Cannot clear custom vverts for a subset of environments.")
+            if state is None:
+                return
+            if state.active:
+                # Migration back will run on the next ``update_rigid``; keep the entry around to signal it.
+                state.buffer = None
+                state.dirty = True
+            else:
+                # The override was queued but never made it to the render path - just drop it.
+                del self._custom_vverts[entity.uid]
+            return
+
+        n_envs = entity._solver.n_envs
+        B = entity._solver._B
+        if envs_idx is None:
+            envs_idx_arr = np.arange(B, dtype=gs.np_int)
+        else:
+            if n_envs == 0:
+                gs.raise_exception("'envs_idx' is not supported for non-parallelized scene.")
+            envs_idx_arr = np.atleast_1d(envs_idx).astype(gs.np_int, copy=False)
+
+        if state is None:
+            state = _CustomVverts(buffer=np.zeros((B, entity.n_vverts, 3), dtype=gs.np_float))
+            self._custom_vverts[entity.uid] = state
+        elif state.buffer is None:
+            state.buffer = np.zeros((B, entity.n_vverts, 3), dtype=gs.np_float)
+        state.buffer[envs_idx_arr] = broadcast_array(
+            vverts, gs.np_float, (len(envs_idx_arr), entity.n_vverts, 3), ("envs", "vverts", "xyz")
+        )
+        state.dirty = True
 
     def add_static_node(self, entity, obj, i_b, **kwargs):
         static_node = self.add_node(obj, **kwargs)
@@ -451,7 +533,7 @@ class RasterizerContext:
                             geom_T = geom_T[:1]
                             env_shared = True
 
-                    self.add_rigid_node(
+                    self.rigid_nodes[geom.uid] = self.add_geom_node(
                         geom,
                         pyrender.Mesh.from_trimesh(
                             mesh=mesh,
@@ -477,12 +559,77 @@ class RasterizerContext:
                     geoms = entity.geoms
                     geoms_T = solver._geoms_render_T
 
-                # Custom vverts path: per-env vertex updates (e.g., SMPL skinned meshes).
-                # Only takes over when the entity is being rendered in 'visual' mode — collision
-                # and sdf modes still need the standard per-vgeom transform update below, since
-                # set_vverts only writes to the visual mesh.
-                if entity.has_custom_vverts and entity.surface.vis_mode == "visual":
-                    self._update_rigid_custom_vverts(entity, entity.vgeoms)
+                # Per-env vertex update path (e.g. SMPL skin), driven by ``set_custom_kinematic_entity_vverts``.
+                # Only takes over in 'visual' mode since the override only writes the visual mesh; collision
+                # / sdf still need the standard per-vgeom transform update below.
+                state = self._custom_vverts.get(entity.uid)
+                needs_custom = state is not None and state.buffer is not None and entity.surface.vis_mode == "visual"
+                if needs_custom and not state.active:
+                    # Migrate forward: drop the instanced rigid_node, build per-env custom-vverts nodes from
+                    # the static base trimesh. Subsequent frames just refresh their GL position / normal
+                    # buffers.
+                    for geom in entity.vgeoms:
+                        if geom.uid in self.rigid_nodes:
+                            old_node = self.rigid_nodes.pop(geom.uid)
+                            self.remove_node_seg(old_node)
+                            self.remove_node(old_node)
+                        geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                        if len(geom_envs_idx) == 0:
+                            continue
+                        mesh_trimesh = geom.get_trimesh()
+                        for idx in geom_envs_idx:
+                            self.custom_vverts_nodes[(idx, geom.uid)] = self.add_geom_node(
+                                geom,
+                                pyrender.Mesh.from_trimesh(
+                                    mesh=mesh_trimesh,
+                                    smooth=geom.surface.smooth,
+                                    double_sided=geom.surface.double_sided,
+                                ),
+                            )
+                    state.active = True
+                elif not needs_custom and state is not None and state.active:
+                    # Migrate back: tear down per-env custom-vverts nodes and recreate the instanced
+                    # rigid_node so the next frame falls into the standard transform path.
+                    for geom in entity.vgeoms:
+                        geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                        for idx in geom_envs_idx:
+                            node = self.custom_vverts_nodes.pop((idx, geom.uid), None)
+                            if node is not None:
+                                self.remove_node_seg(node)
+                                self.remove_node(node)
+                        self.rigid_nodes[geom.uid] = self.add_geom_node(
+                            geom,
+                            pyrender.Mesh.from_trimesh(
+                                mesh=geom.get_trimesh(),
+                                poses=solver._vgeoms_render_T[geom.idx][geom_envs_idx],
+                                smooth=geom.surface.smooth,
+                                double_sided=geom.surface.double_sided,
+                            ),
+                        )
+                    if state.buffer is None:
+                        del self._custom_vverts[entity.uid]
+                    else:
+                        # vis_mode flipped away from 'visual'; keep the buffer but mark inactive so the next
+                        # transition back into 'visual' re-migrates and re-uploads.
+                        state.active = False
+                        state.dirty = True
+                if needs_custom and state.dirty:
+                    for geom in entity.vgeoms:
+                        geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                        if len(geom_envs_idx) == 0:
+                            continue
+                        v_start = geom.vvert_start - entity.vvert_start
+                        v_end = geom.vvert_end - entity.vvert_start
+                        for idx in geom_envs_idx:
+                            node = self.custom_vverts_nodes[(idx, geom.uid)]
+                            geom_vverts = state.buffer[idx, v_start:v_end, :] + self.scene.envs_offset[idx]
+                            update_data = self._scene.reorder_vertices(node, geom_vverts)
+                            self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                            normal_data = self.jit.update_normal(node, update_data)
+                            if normal_data is not None:
+                                self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                    state.dirty = False
+                if needs_custom:
                     continue
 
                 # Standard instanced transform path
@@ -511,53 +658,6 @@ class RasterizerContext:
                     self.jit.update_buffer(self._scene.get_buffer_id(node, "model"), geom_T.transpose((0, 2, 1)))
                     if isinstance(entity._morph, gs.morphs.Plane):
                         self.set_reflection_mat(geom_T)
-
-    def _update_rigid_custom_vverts(self, entity, geoms):
-        """Per-env vertex buffer updates for entities with custom vverts (e.g., SMPL skin)."""
-        if not entity._custom_vverts_dirty:
-            return
-        entity._custom_vverts_dirty = False
-        custom_vverts = entity._custom_vverts  # shape: (B, n_vverts_entity, 3)
-
-        for geom in geoms:
-            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-            if len(geom_envs_idx) == 0:
-                continue
-
-            # Lazy migration: remove instanced rigid_node if present
-            if geom.uid in self.rigid_nodes:
-                old_node = self.rigid_nodes.pop(geom.uid)
-                self.remove_node_seg(old_node)
-                self.remove_node(old_node)
-
-            # Ensure per-env skinned nodes exist for all rendered envs
-            missing_envs = [idx for idx in geom_envs_idx if (idx, geom.uid) not in self.skinned_nodes]
-            if missing_envs:
-                mesh_trimesh = geom.get_trimesh()
-                for idx in missing_envs:
-                    self.add_skinned_node(
-                        geom,
-                        pyrender.Mesh.from_trimesh(
-                            mesh=mesh_trimesh,
-                            smooth=geom.surface.smooth,
-                            double_sided=geom.surface.double_sided,
-                        ),
-                        i_b=idx,
-                    )
-
-            # Entity-local vertex range for this vgeom
-            v_start = geom.vvert_start - entity.vvert_start
-            v_end = geom.vvert_end - entity.vvert_start
-
-            for idx in geom_envs_idx:
-                node = self.skinned_nodes[(idx, geom.uid)]
-                vverts = custom_vverts[idx, v_start:v_end, :] + self.scene.envs_offset[idx]
-
-                update_data = self._scene.reorder_vertices(node, vverts)
-                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
-                normal_data = self.jit.update_normal(node, update_data)
-                if normal_data is not None:
-                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
 
     def update_contact(self):
         if self.sim.rigid_solver.is_active and any(link.visualize_contact for link in self.sim.rigid_solver.links):

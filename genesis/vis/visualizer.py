@@ -157,6 +157,14 @@ class Visualizer(RBC):
             gs.raise_exception("`add_light` is specific to batch renderer.")
 
     @gs.assert_built
+    def set_custom_kinematic_entity_vverts(self, entity, vverts, envs_idx=None):
+        """Override the visual vertex positions of a kinematic entity for rendering only, or clear an
+        existing override by passing ``vverts=None``. See
+        :meth:`RasterizerContext.set_custom_kinematic_entity_vverts` for the full signature and broadcasting rules.
+        """
+        self._context.set_custom_kinematic_entity_vverts(entity, vverts, envs_idx=envs_idx)
+
+    @gs.assert_built
     def reset(self):
         self._t = -1
 

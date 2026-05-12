@@ -2,17 +2,14 @@
 Custom Visual Mesh in Genesis
 ==============================
 
-Demonstrates how to use ``set_vverts()`` on a ``KinematicEntity`` to update
-visual vertex positions at runtime.
+Demonstrates how to use ``Visualizer.set_custom_kinematic_entity_vverts`` to drive a kinematic entity's visual vertex
+positions at runtime. Only vertex positions change; mesh topology (faces) stays constant. Ideal for
+SMPL-style body models and other externally-skinned meshes.
 
-``set_vverts()`` is a fast path where only vertex positions change while the
-mesh topology (faces) stays constant. This is ideal for SMPL-style body
-models and other externally-skinned meshes.
-
-Requirements (only for SMPL demo)
-----------------------------------
-- ``smplx`` package  (``pip install smplx``)
-- SMPL model files   (download from https://smpl.is.tue.mpg.de)
+Requirements (SMPL demo only)
+-----------------------------
+- ``smplx`` package (``pip install smplx``)
+- SMPL model files (download from https://smpl.is.tue.mpg.de)
 
 Usage
 -----
@@ -34,9 +31,7 @@ import numpy as np
 import trimesh
 
 import genesis as gs
-
-
-# ----------------------------- helpers ---------------------------------
+from genesis.utils.misc import tensor_to_array
 
 
 def create_box_mesh(size=0.5, subdivisions=3):
@@ -44,7 +39,7 @@ def create_box_mesh(size=0.5, subdivisions=3):
     mesh = trimesh.creation.box(extents=(size, size, size))
     for _ in range(subdivisions):
         mesh = mesh.subdivide()
-    return mesh.vertices.astype(np.float32), mesh.faces.astype(np.int32)
+    return mesh.vertices.astype(gs.np_float), mesh.faces.astype(gs.np_int)
 
 
 def wave_deform(verts, t, amplitude=0.1, freq=3.0):
@@ -54,16 +49,35 @@ def wave_deform(verts, t, amplitude=0.1, freq=3.0):
     return deformed
 
 
-# ----------------------------- main ------------------------------------
-
-
 def main():
     parser = argparse.ArgumentParser(description="Custom visual mesh in Genesis")
-    parser.add_argument("-v", "--vis", action="store_true", help="Open interactive viewer")
-    parser.add_argument("-B", "--num_envs", type=int, default=0, help="Number of parallel envs (0 = unbatched)")
-    parser.add_argument("--smpl", action="store_true", help="Use SMPL body model (requires smplx)")
-    parser.add_argument("--model_path", type=str, default=None, help="Path to SMPL model directory")
+    parser.add_argument(
+        "-v",
+        "--vis",
+        action="store_true",
+        help="Open interactive viewer",
+    )
+    parser.add_argument(
+        "-B",
+        "--num_envs",
+        type=int,
+        default=0,
+        help="Number of parallel envs (0 = unbatched)",
+    )
+    parser.add_argument(
+        "--smpl",
+        action="store_true",
+        help="Use SMPL body model (requires smplx)",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default=None,
+        help="Path to SMPL model directory (required with --smpl)",
+    )
     args = parser.parse_args()
+    if args.smpl and args.model_path is None:
+        parser.error("--model_path is required when --smpl is set")
 
     gs.init(backend=gs.gpu)
 
@@ -74,41 +88,49 @@ def main():
             camera_fov=45,
             max_FPS=60,
         ),
-        rigid_options=gs.options.RigidOptions(dt=0.01, gravity=(0, 0, 0)),
+        rigid_options=gs.options.RigidOptions(
+            dt=0.01,
+            gravity=(0, 0, 0),
+        ),
         show_viewer=args.vis,
     )
 
     scene.add_entity(gs.morphs.Plane())
 
+    n_envs = args.num_envs
+    B = max(1, n_envs)
+
     if args.smpl:
-        # -------- SMPL path --------
         import smplx
         import torch
 
-        if args.model_path is None:
-            print("Error: --model_path is required for SMPL demo")
-            return
-
-        B = max(1, args.num_envs)
         smpl = smplx.SMPL(model_path=args.model_path, gender="neutral", batch_size=B)
 
-        # Export T-pose mesh for Genesis to load as rigid entity
-        output = smpl()
-        t_pose_verts = output.vertices.detach().cpu().numpy().squeeze()
-        faces = smpl.faces.astype(np.int32)
+        # Export T-pose mesh for Genesis to load as a rigid entity.
+        t_pose_verts = tensor_to_array(smpl().vertices.squeeze())
+        faces = smpl.faces.astype(gs.np_int)
         mesh = trimesh.Trimesh(vertices=t_pose_verts, faces=faces, process=False)
         tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
         mesh.export(tmp.name)
 
         entity = scene.add_entity(
-            morph=gs.morphs.Mesh(file=tmp.name, pos=(0, 0, 0), fixed=True),
+            morph=gs.morphs.Mesh(
+                file=tmp.name,
+                pos=(0, 0, 0),
+                fixed=True,
+            ),
             material=gs.materials.Kinematic(),
         )
 
-        cam = scene.add_camera(res=(640, 480), pos=(0, -3.0, 1.0), lookat=(0, 0, 0.8), fov=45)
+        cam = scene.add_camera(
+            res=(640, 480),
+            pos=(0, -3.0, 1.0),
+            lookat=(0, 0, 0.8),
+            fov=45,
+        )
 
-        if args.num_envs > 0:
-            scene.build(n_envs=args.num_envs)
+        if n_envs > 0:
+            scene.build(n_envs=n_envs)
         else:
             scene.build()
 
@@ -123,19 +145,12 @@ def main():
             body_pose[:, 9] = 0.3 * torch.clamp(torch.sin(torch.tensor(t)), min=0.0)
             body_pose[:, 12] = 0.3 * torch.clamp(-torch.sin(torch.tensor(t)), min=0.0)
 
-            output = smpl(body_pose=body_pose, return_verts=True)
-            verts = output.vertices  # (B, 6890, 3)
-
-            if args.num_envs > 0:
-                entity.set_vverts(verts)
-            else:
-                entity.set_vverts(verts[0])
+            verts = smpl(body_pose=body_pose, return_verts=True).vertices  # (B, n_vverts, 3)
+            scene.visualizer.set_custom_kinematic_entity_vverts(entity, verts)
 
             scene.step()
             cam.render()
-
     else:
-        # -------- Box wave-deformation path --------
         base_verts, base_faces = create_box_mesh(size=0.5, subdivisions=3)
         base_verts[:, 2] += 0.5  # lift above ground
 
@@ -143,25 +158,32 @@ def main():
         tmp = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
         mesh.export(tmp.name)
 
-        entity = scene.add_entity(morph=gs.morphs.Mesh(file=tmp.name, pos=(0, 0, 0), fixed=True))
+        entity = scene.add_entity(
+            morph=gs.morphs.Mesh(
+                file=tmp.name,
+                pos=(0, 0, 0),
+                fixed=True,
+            ),
+        )
 
-        cam = scene.add_camera(res=(640, 480), pos=(0, -2.5, 1.5), lookat=(0, 0, 0.5), fov=45)
+        cam = scene.add_camera(
+            res=(640, 480),
+            pos=(0, -2.5, 1.5),
+            lookat=(0, 0, 0.5),
+            fov=45,
+        )
 
-        if args.num_envs > 0:
-            scene.build(n_envs=args.num_envs)
+        if n_envs > 0:
+            scene.build(n_envs=n_envs)
         else:
             scene.build()
 
         os.unlink(tmp.name)
-        B = max(1, args.num_envs)
 
         for step in range(500):
             t = step * 0.05
-            if args.num_envs > 0:
-                all_verts = np.stack([wave_deform(base_verts, t + b * 0.5) for b in range(B)], axis=0)
-                entity.set_vverts(all_verts)
-            else:
-                entity.set_vverts(wave_deform(base_verts, t))
+            all_verts = np.stack([wave_deform(base_verts, t + b * 0.5) for b in range(B)], axis=0)
+            scene.visualizer.set_custom_kinematic_entity_vverts(entity, all_verts)
 
             scene.step()
             cam.render()

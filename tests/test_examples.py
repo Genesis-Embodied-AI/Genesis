@@ -17,6 +17,7 @@ ALLOW_PATTERNS = {
     "kinematic/**/*.py",
     "rigid/**/*.py",
     "render_async/**/*.py",
+    "rendering/custom_visual_mesh.py",
     "sap_coupling/**/*.py",
     "sensors/**/*.py",
     "tutorials/**/*.py",

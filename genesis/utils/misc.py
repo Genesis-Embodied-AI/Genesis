@@ -730,6 +730,64 @@ def sanitize_indices(
     return tuple(indices_)
 
 
+def _expand_shape(array, expected_shape):
+    """Reshape ``array`` to match the rank of ``expected_shape`` by inserting singleton dims, without
+    actually broadcasting. Accepts either a ``torch.Tensor`` or a ``numpy.ndarray`` - both expose the
+    ``.shape`` / ``.reshape`` / leading-axis indexing this routine relies on.
+
+    ``-1`` entries in ``expected_shape`` mean "any size"; the routine treats them as wildcards when
+    deciding which input dim aligns with which output dim.
+    """
+    tensor_shape = array.shape
+    tensor_ndim = len(tensor_shape)
+    expected_ndim = len(expected_shape)
+
+    if tensor_ndim == 0:
+        return array[None]
+    if tensor_ndim > expected_ndim:
+        gs.raise_exception(f"Invalid input shape: {tensor_shape}. Expecting at most {expected_ndim}D tensor.")
+    if tensor_ndim == expected_ndim:
+        return array
+    if all(d1 == d2 or d2 == -1 for d1, d2 in zip(tensor_shape, expected_shape[-tensor_ndim:])):
+        return array
+
+    # Search for the most-trailing valid assignment of input dims to output dim positions.
+    for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
+        curr_idx = 0
+        expanded_shape = []
+        for i in range(expected_ndim):
+            if i in dims_valid:
+                dim, size = array.shape[curr_idx], expected_shape[i]
+                if dim == size or dim == 1 or size == -1:
+                    expanded_shape.append(dim)
+                    curr_idx += 1
+                else:
+                    break
+            else:
+                expanded_shape.append(1)
+        else:
+            if curr_idx == tensor_ndim:
+                return array.reshape(expanded_shape)
+    return array
+
+
+def _raise_broadcast_shape_error(input_shape, expected_shape, dim_names, cause):
+    msg_err = f"Invalid input shape: {tuple(input_shape)}."
+    msg_infos: list[str] = []
+    for i, name in enumerate(dim_names):
+        size = expected_shape[i]
+        if size > 0 and i < len(input_shape) and (dim := input_shape[i]) != 1 and dim != size:
+            if name:
+                msg_infos.append(f"Dimension {i} consistent with len({name})={size}")
+            else:
+                msg_infos.append(f"Dimension {i} consistent with required size {size}")
+    if msg_infos:
+        msg_err += f" {' & '.join(msg_infos)}."
+    else:
+        msg_err += f" Expected shape: {tuple(expected_shape)}."
+    gs.raise_exception_from(msg_err, cause)
+
+
 def broadcast_tensor(
     tensor: "np.typing.ArrayLike | None",
     dtype: torch.dtype,
@@ -746,58 +804,38 @@ def broadcast_tensor(
             )
         return torch.empty(expected_shape, dtype=dtype, device=gs.device)
 
-    tensor_ = torch.as_tensor(tensor, dtype=dtype, device=gs.device)
-
-    tensor_shape = tensor_.shape
-    tensor_ndim = len(tensor_shape)
-    expected_ndim = len(expected_shape)
-
-    # Expand current tensor shape with extra dims of size 1 if necessary before expanding to expected shape
-    if tensor_ndim == 0:
-        tensor_ = tensor_[None]
-    elif tensor_ndim < expected_ndim and not all(
-        [d1 == d2 or d2 == -1 for d1, d2 in zip(tensor_shape, expected_shape[-tensor_ndim:])]
-    ):
-        # Try expanding first dimensions if priority
-        for dims_valid in tuple(combinations(range(expected_ndim), tensor_ndim))[::-1]:
-            curr_idx = 0
-            expanded_shape = []
-            for i in range(expected_ndim):
-                if i in dims_valid:
-                    dim, size = tensor_.shape[curr_idx], expected_shape[i]
-                    if dim == size or dim == 1 or size == -1:
-                        expanded_shape.append(dim)
-                        curr_idx += 1
-                    else:
-                        break
-                else:
-                    expanded_shape.append(1)
-            else:
-                if curr_idx == tensor_ndim:
-                    tensor_ = tensor_.reshape(expanded_shape)
-                    break
-    elif tensor_ndim > expected_ndim:
-        gs.raise_exception(f"Invalid input shape: {tensor_shape}. Expecting at most {expected_ndim}D tensor.")
-
+    tensor_ = _expand_shape(torch.as_tensor(tensor, dtype=dtype, device=gs.device), expected_shape)
     try:
-        tensor_ = tensor_.expand(expected_shape)
+        return tensor_.expand(expected_shape)
     except RuntimeError as e:
-        msg_err = f"Invalid input shape: {tuple(tensor_.shape)}."
-        msg_infos: list[str] = []
-        for i, name in enumerate(dim_names):
-            size = expected_shape[i]
-            if size > 0 and i < tensor_.ndim and (dim := tensor_.shape[i]) != 1 and dim != size:
-                if name:
-                    msg_infos.append(f"Dimension {i} consistent with len({name})={size}")
-                else:
-                    msg_infos.append(f"Dimension {i} consistent with required size {size}")
-        if msg_infos:
-            msg_err += f" {' & '.join(msg_infos)}."
-        else:
-            msg_err += f" Expected shape: {tuple(expected_shape)}."
-        gs.raise_exception_from(msg_err, e)
+        _raise_broadcast_shape_error(tensor_.shape, expected_shape, dim_names, e)
 
-    return tensor_
+
+def broadcast_array(
+    array: "np.typing.ArrayLike | None",
+    dtype: "np.typing.DTypeLike",
+    expected_shape: tuple[int, ...] | list[int],
+    dim_names: tuple[str, ...] | list[str] | None = None,
+) -> np.ndarray:
+    """Numpy counterpart to :func:`broadcast_tensor`. Matches the same shape-expansion semantics and ``-1``
+    wildcard convention, returning a (read-only) broadcast view via ``np.broadcast_to``.
+    """
+    if dim_names is None:
+        dim_names = ("",) * len(expected_shape)
+
+    if array is None:
+        if any(size == -1 for size in expected_shape):
+            gs.raise_exception(
+                "Array not pre-allocated and expected shape not fully specified but allocation is not skipped."
+            )
+        return np.empty(expected_shape, dtype=dtype)
+
+    array_ = _expand_shape(np.asarray(array, dtype=dtype), expected_shape)
+    resolved_shape = tuple(s if s != -1 else array_.shape[i] for i, s in enumerate(expected_shape))
+    try:
+        return np.broadcast_to(array_, resolved_shape)
+    except ValueError as e:
+        _raise_broadcast_shape_error(array_.shape, expected_shape, dim_names, e)
 
 
 def sanitize_indexed_tensor(

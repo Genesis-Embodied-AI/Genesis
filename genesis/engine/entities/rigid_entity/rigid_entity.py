@@ -102,10 +102,6 @@ class KinematicEntity(Entity):
         self._is_attached: bool = False
         self._variant_init_qpos: list[np.ndarray] | None = None
 
-        # Custom visual vertex state (set via set_vverts)
-        self._custom_vverts: np.ndarray | None = None  # (B, n_vverts, 3)
-        self._custom_vverts_dirty: bool = False
-
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -1919,71 +1915,6 @@ class KinematicEntity(Entity):
         if self.is_built:
             return self._vgeoms
         return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
-
-    # ------------------------------------------------------------------------------------
-    # ----------------------------- custom visual vertex API ----------------------------
-    # ------------------------------------------------------------------------------------
-
-    @property
-    def has_custom_vverts(self) -> bool:
-        """Whether this entity has custom per-frame visual vertex positions set via :meth:`set_vverts`."""
-        return self._custom_vverts is not None
-
-    @gs.assert_built
-    def set_vverts(self, vverts, envs_idx=None):
-        """
-        Set custom visual vertex positions for this entity (topology unchanged).
-
-        When set, the rasterizer will update vertex positions per-environment instead of
-        using per-vgeom transform matrices. This is intended for externally-skinned
-        meshes (e.g., SMPL) where vertex positions are computed outside the solver.
-
-        This only affects rendering and does not change physics simulation.
-
-        Parameters
-        ----------
-        vverts : np.ndarray | torch.Tensor
-            Vertex positions in world space.
-            Shape ``(n_vverts, 3)`` for unbatched scenes or single-env update, or
-            ``(B, n_vverts, 3)`` for batched scenes where ``B = len(envs_idx)``
-            (or ``n_envs`` if ``envs_idx`` is None).
-        envs_idx : None | int | list | np.ndarray, optional
-            Environment indices to update. If None, all environments are updated.
-            When a single int is given, ``vverts`` may be ``(n_vverts, 3)``.
-
-            Note: when called with a partial ``envs_idx`` on the first invocation, envs
-            that are not written stay at the world origin and may render as a collapsed
-            point. Either write all envs on the first call, or accept that look for
-            unwritten envs.
-        """
-        if isinstance(vverts, torch.Tensor):
-            vverts = vverts.detach().cpu().numpy()
-        vverts = np.asarray(vverts, dtype=gs.np_float)
-        B = self._solver._B
-
-        if self._custom_vverts is None:
-            self._custom_vverts = np.zeros((B, self.n_vverts, 3), dtype=gs.np_float)
-
-        if self._solver.n_envs == 0:
-            if vverts.shape != (self.n_vverts, 3):
-                gs.raise_exception(f"Expected vverts shape ({self.n_vverts}, 3), got {vverts.shape}")
-            self._custom_vverts[0] = vverts
-        else:
-            if envs_idx is not None:
-                envs_idx = np.atleast_1d(np.asarray(envs_idx, dtype=int))
-            else:
-                envs_idx = np.arange(B)
-            # Allow (n_vverts, 3) as shorthand when updating a single environment
-            if len(envs_idx) == 1 and vverts.ndim == 2 and vverts.shape == (self.n_vverts, 3):
-                vverts = vverts[np.newaxis]  # -> (1, n_vverts, 3)
-            if vverts.shape != (len(envs_idx), self.n_vverts, 3):
-                gs.raise_exception(f"Expected vverts shape ({len(envs_idx)}, {self.n_vverts}, 3), got {vverts.shape}")
-            self._custom_vverts[envs_idx] = vverts
-        self._custom_vverts_dirty = True
-
-    # ------------------------------------------------------------------------------------
-    # ------------------------------------ link / joint ----------------------------------
-    # ------------------------------------------------------------------------------------
 
     @property
     def links(self) -> list[RigidLink]:

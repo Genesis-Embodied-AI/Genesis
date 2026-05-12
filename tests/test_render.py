@@ -1987,3 +1987,51 @@ def test_render_offscreen_oversized_resolution(renderer):
         normal=False,
     )
     assert rgb.shape[:2] == (requested_res[1], requested_res[0])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_set_vverts(n_envs, renderer, show_viewer):
+    CAM_RES = (320, 240)
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    entity = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.2,
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+        ),
+    )
+    cam = scene.add_camera(
+        res=CAM_RES,
+        pos=(0.0, -1.5, 0.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build(n_envs=n_envs)
+
+    viz = scene.visualizer
+
+    # Baseline render with the standard transform path.
+    rgb_baseline = tensor_to_array(cam.render(rgb=True)[0]).astype(np.float32)
+
+    # Override every vertex to a single point well outside the camera frustum. The sphere collapses to a
+    # degenerate point and largely disappears from the framebuffer - a strong, easy-to-verify signal that the
+    # override is wired up.
+    viz.set_custom_kinematic_entity_vverts(entity, (0.0, 0.0, 10.0))
+    rgb_deformed = tensor_to_array(cam.render(rgb=True, force_render=True)[0]).astype(np.float32)
+    assert np.abs(rgb_deformed - rgb_baseline).mean() > 5.0, "deformation should produce a visible pixel diff"
+
+    # Partial batched write with scalar / array-like broadcast.
+    if n_envs > 0:
+        viz.set_custom_kinematic_entity_vverts(entity, 0.0, envs_idx=0)
+        viz.set_custom_kinematic_entity_vverts(entity, 1.0, envs_idx=[0, 2])
+
+    # ``set_custom_kinematic_entity_vverts(..., None)`` reinstates the instanced rigid_node and reproduces baseline.
+    viz.set_custom_kinematic_entity_vverts(entity, None)
+    rgb_restored = tensor_to_array(cam.render(rgb=True, force_render=True)[0]).astype(np.float32)
+    assert np.abs(rgb_restored - rgb_baseline).mean() < 1.0, "clearing vverts should restore the baseline render"
