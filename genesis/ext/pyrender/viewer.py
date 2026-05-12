@@ -109,6 +109,9 @@ class Viewer(pyglet.window.Window):
       - Scroll the mouse wheel, or
       - Hold the right mouse button and drag the cursor.
 
+    Keyboard shortcuts are registered by ``DefaultControlsPlugin`` (see
+    ``genesis/vis/viewer_plugins/plugins/default_controls.py``) and surfaced in the on-screen help overlay; press the
+    help key to toggle it.
 
     Note
     ----

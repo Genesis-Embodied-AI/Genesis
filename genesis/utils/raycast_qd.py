@@ -286,13 +286,16 @@ def kernel_cast_ray(
     ray_direction: qd.types.ndarray(ndim=1),  # (3,)
     max_range: float,
     envs_idx: qd.types.ndarray(ndim=1),  # [n_envs]
+    rigid_global_info: array_class.RigidGlobalInfo,
     result: array_class.RaycastResult,
     eps: float,
 ):
     """
     Quadrants kernel for casting a single ray.
 
-    This loops over all environments in envs_idx and stores the closest hit in result.
+    This loops over all environments in envs_idx and stores the closest hit in result. Each environment's BVH is built
+    in env-local coordinates, so the ray is shifted by -envs_offset[i_b] before the cast; the distance is invariant
+    under translation and the world hit point can be recovered from the original world ray.
     """
     # Setup ray
     ray_start_world = qd.math.vec3(ray_start[0], ray_start[1], ray_start[2])
@@ -312,8 +315,9 @@ def kernel_cast_ray(
 
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
+        env_offset = rigid_global_info.envs_offset[i_b]
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
-            ray_start=ray_start_world,
+            ray_start=ray_start_world - env_offset,
             ray_dir=ray_direction_world,
             max_range=closest_distance,
             i_b=i_b,
@@ -339,7 +343,7 @@ def kernel_cast_ray(
         # Find which geom this face belongs to
         i_g = faces_info.geom_idx[hit_face]
         result.geom_idx[None] = i_g
-        # Compute hit point
+        # Compute hit point in world coordinates (translation cancels out via ray_start_world)
         hit_point = ray_start_world + closest_distance * ray_direction_world
         result.hit_point[None] = hit_point
         # Store normal
@@ -450,6 +454,7 @@ class Raycaster:
             np.ascontiguousarray(ray_direction, dtype=gs.np_float),
             max_range,
             envs_idx if envs_idx is not None else self.envs_idx,
+            self.solver._rigid_global_info,
             self.result,
             gs.EPS,
         )

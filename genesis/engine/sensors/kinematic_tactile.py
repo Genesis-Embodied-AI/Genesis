@@ -878,9 +878,7 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
         link_quat = self._link.get_quat(env_idx).squeeze()
 
         data = self.read_ground_truth(env_idx)
-        magnitudes = tensor_to_array(get_magnitude(data))
-        if magnitudes.ndim > 1:
-            magnitudes = magnitudes[env_idx]
+        magnitudes = tensor_to_array(get_magnitude(data).squeeze(0))
 
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
         probe_global_idx = int(self._shared_metadata.sensor_probe_start[self._idx])
