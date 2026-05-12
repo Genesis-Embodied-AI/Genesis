@@ -15,6 +15,5 @@ uv pip install --upgrade pip setuptools wheel
 uv pip install omniverse-kit --index-url https://pypi.nvidia.com/
 uv pip install ".[dev,render,usd]" "pyuipc==0.0.7"
 # imgui-bundle has no pre-built wheel for Python 3.10 (which this runner uses) so it is excluded from the
-# ``[render]`` extras marker. Install it manually here, building from source via the CMake toolchain shipped
-# with the production container.
+# ``[render]`` extras marker. Install it manually.
 uv pip install imgui-bundle
