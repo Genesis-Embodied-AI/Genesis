@@ -365,12 +365,16 @@ class KinematicOptions(Options):
         Whether to batch link info. Automatically enabled for heterogeneous simulation. Defaults to False.
     batch_dofs_info : bool, optional
         Whether to batch DOF info. Defaults to False.
+    batch_vverts_info : bool, optional
+        Whether to batch visual-vertex info per environment. Required to use partial ``envs_idx`` with
+        :meth:`KinematicSolver.set_vverts` (i.e. per-env vertex overrides for SMPL-style scenes). Defaults to False.
     """
 
     dt: PositiveFloat | None = None
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
+    batch_vverts_info: StrictBool = False
 
 
 class ToolOptions(Options):
@@ -498,6 +502,7 @@ class RigidOptions(Options):
     batch_links_info: StrictBool = False
     batch_joints_info: StrictBool = False
     batch_dofs_info: StrictBool = False
+    batch_vverts_info: StrictBool = False
 
     # constraint solver
     constraint_solver: gs.constraint_solver = gs.constraint_solver.Newton

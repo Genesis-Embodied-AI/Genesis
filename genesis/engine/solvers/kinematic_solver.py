@@ -29,6 +29,7 @@ from .rigid.abd.misc import (
     kernel_update_vgeoms_render_T,
 )
 from .rigid.abd.forward_kinematics import (
+    kernel_clear_vverts,
     kernel_forward_kinematics,
     kernel_forward_velocity,
     kernel_masked_forward_kinematics,
@@ -206,6 +207,7 @@ class KinematicSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=False,
             batch_joints_info=False,
+            batch_vverts_info=self._options.batch_vverts_info,
             enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=False,
             enable_multi_contact=False,
@@ -1024,20 +1026,42 @@ class KinematicSolver(Solver):
             )
 
     def set_vverts(self, vvert_start, vvert_end, vverts, envs_idx=None):
-        """Write the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``.
+        """Write the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``, or clear it.
 
         ``vverts`` is broadcast to ``(len(envs_idx), vvert_end - vvert_start, 3)`` via :func:`broadcast_tensor`,
         so scalar / ``(3,)`` / ``(n_v, 3)`` / ``(B, n_v, 3)`` inputs are all accepted. ``envs_idx=None`` writes
-        every environment.
+        every environment. ``vverts=None`` clears the override and lets FK take back over.
 
-        On backends without zero-copy, falls back to a Quadrants kernel and warns once per build.
+        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``.
         """
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        is_partial = envs_idx.shape[0] != self._scene._envs_idx.shape[0]
+        if is_partial and not self._options.batch_vverts_info:
+            gs.raise_exception(
+                "Partial 'envs_idx' for 'set_vverts' requires 'KinematicOptions.batch_vverts_info=True'."
+            )
+
+        if vverts is None:
+            if gs.use_zerocopy:
+                is_custom = qd_to_torch(self.vverts_info.is_custom, transpose=True, copy=False)
+                if self._options.batch_vverts_info:
+                    is_custom[envs_idx, vvert_start:vvert_end] = 0
+                else:
+                    is_custom[vvert_start:vvert_end] = 0
+            else:
+                kernel_clear_vverts(vvert_start, vvert_end, envs_idx, self.vverts_info, self._static_rigid_sim_config)
+            return
+
         target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
         vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz"))
         if gs.use_zerocopy:
             data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
             data[envs_idx, vvert_start:vvert_end, :] = vverts
+            is_custom = qd_to_torch(self.vverts_info.is_custom, transpose=True, copy=False)
+            if self._options.batch_vverts_info:
+                is_custom[envs_idx, vvert_start:vvert_end] = 1
+            else:
+                is_custom[vvert_start:vvert_end] = 1
         else:
             if not self._set_vverts_warned:
                 gs.logger.warning(
@@ -1045,7 +1069,9 @@ class KinematicSolver(Solver):
                     "a full memcpy through a Quadrants kernel. Expected on older Apple Metal builds (pre-2.9.1)."
                 )
                 self._set_vverts_warned = True
-            kernel_set_vverts(vverts, vvert_start, envs_idx, self.vverts_state, self._static_rigid_sim_config)
+            kernel_set_vverts(
+                vverts, vvert_start, envs_idx, self.vverts_info, self.vverts_state, self._static_rigid_sim_config
+            )
 
     def get_vverts(self, vvert_start, vvert_end, envs_idx=None):
         """Return a copy of the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``.

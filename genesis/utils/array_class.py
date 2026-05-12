@@ -1837,15 +1837,17 @@ class VVertsInfo:
     init_pos: qd.Tensor
     init_vnormal: qd.Tensor
     vgeom_idx: qd.Tensor
+    is_custom: qd.Tensor
 
 
 def get_vverts_info(solver):
-    shape = (solver.n_vverts_,)
+    shape = (solver.n_vverts_, solver._B) if solver._options.batch_vverts_info else (solver.n_vverts_,)
 
     return VVertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
         init_vnormal=V(dtype=gs.qd_vec3, shape=shape),
         vgeom_idx=V(dtype=gs.qd_int, shape=shape),
+        is_custom=V(dtype=gs.qd_int, shape=shape),
     )
 
 
@@ -2043,6 +2045,7 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     batch_links_info: bool
     batch_dofs_info: bool
     batch_joints_info: bool
+    batch_vverts_info: bool
     enable_heterogeneous: bool
     enable_mujoco_compatibility: bool
     enable_multi_contact: bool

@@ -1918,17 +1918,15 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def set_vverts(self, vverts, envs_idx=None):
-        """Override this entity's visual vertex positions for rendering and sensors.
+        """Override this entity's visual vertex positions for rendering and sensors, or clear an existing
+        override.
 
         ``vverts`` is broadcast to ``(B_target, n_vverts, 3)`` where ``B_target == len(envs_idx)`` (or the
         scene's environment count when ``envs_idx`` is None). Scalars, ``(3,)``, and ``(n_vverts, 3)`` are
-        accepted.
+        accepted. ``vverts=None`` clears the override and lets the solver's FK take back over.
 
-        Affects all consumers of ``vverts_state.pos`` (rasterizer, raycaster). The next call to
-        :meth:`~.KinematicSolver.update_vgeoms` will overwrite these values via FK; call ``set_vverts`` after
-        every solver step to keep an override in effect.
-
-        Not supported for ``gs.morphs.Plane`` entities.
+        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Not supported for
+        ``gs.morphs.Plane`` entities.
         """
         self._set_vverts_range(self.vvert_start, self.vvert_start + self.n_vverts, vverts, envs_idx)
 

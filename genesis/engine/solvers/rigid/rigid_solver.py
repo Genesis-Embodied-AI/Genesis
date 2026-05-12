@@ -408,6 +408,7 @@ class RigidSolver(KinematicSolver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=self._options.batch_dofs_info,
             batch_joints_info=self._options.batch_joints_info,
+            batch_vverts_info=self._options.batch_vverts_info,
             enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=self._enable_mujoco_compatibility,
             enable_multi_contact=self._enable_multi_contact,

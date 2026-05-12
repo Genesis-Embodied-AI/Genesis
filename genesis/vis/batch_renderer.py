@@ -67,8 +67,11 @@ class GenesisGeomRetriever:
         args = {}
         vgeoms = self.rigid_solver.vgeoms
 
-        # Retrieve geom data
+        # Retrieve geom data. When ``batch_vverts_info`` is enabled, ``init_pos`` has shape ``(n_vverts_, B, 3)``;
+        # for the batch renderer's static mesh layout we only need the canonical env-0 copy.
         mesh_vertices = self.rigid_solver.vverts_info.init_pos.to_numpy()
+        if self.rigid_solver._options.batch_vverts_info:
+            mesh_vertices = mesh_vertices[:, 0]
         mesh_faces = self.rigid_solver.vfaces_info.vverts_idx.to_numpy()
         mesh_vertex_offsets = self.rigid_solver.vgeoms_info.vvert_start.to_numpy()
         mesh_face_starts = self.rigid_solver.vgeoms_info.vface_start.to_numpy()

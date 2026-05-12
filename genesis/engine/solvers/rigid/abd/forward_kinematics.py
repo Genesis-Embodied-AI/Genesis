@@ -1207,17 +1207,19 @@ def kernel_update_all_vverts(
 ):
     """
     World-space visual vertices. Reads ``vgeoms_state`` (already populated by ``kernel_update_vgeoms``)
-    and writes ``vverts_state.pos``. Visualization-only, like ``kernel_update_vgeoms``.
+    and writes ``vverts_state.pos``. Skips entries flagged as user-driven in ``vverts_info.is_custom``.
     """
-    n_vverts = vverts_info.init_pos.shape[0]
+    n_vverts = vverts_state.pos.shape[0]
     _B = vgeoms_state.pos.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_v, i_b in qd.ndrange(n_vverts, _B):
-        i_vg = vverts_info.vgeom_idx[i_v]
-        vverts_state.pos[i_v, i_b] = gu.qd_transform_by_trans_quat(
-            vverts_info.init_pos[i_v], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
-        )
+        I_v = [i_v, i_b] if qd.static(static_rigid_sim_config.batch_vverts_info) else i_v
+        if vverts_info.is_custom[I_v] == 0:
+            i_vg = vverts_info.vgeom_idx[I_v]
+            vverts_state.pos[i_v, i_b] = gu.qd_transform_by_trans_quat(
+                vverts_info.init_pos[I_v], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
+            )
 
 
 @qd.kernel(fastcache=True)
@@ -1225,6 +1227,7 @@ def kernel_set_vverts(
     vverts: qd.types.ndarray(),
     vvert_start: qd.i32,
     envs_idx: qd.types.ndarray(),
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -1233,8 +1236,29 @@ def kernel_set_vverts(
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
     for i_b_, i_v_ in qd.ndrange(n_envs_in, n_vverts_in):
+        i_b = envs_idx[i_b_]
+        i_v = vvert_start + i_v_
         for j in qd.static(range(3)):
-            vverts_state.pos[vvert_start + i_v_, envs_idx[i_b_]][j] = vverts[i_b_, i_v_, j]
+            vverts_state.pos[i_v, i_b][j] = vverts[i_b_, i_v_, j]
+        I_v = [i_v, i_b] if qd.static(static_rigid_sim_config.batch_vverts_info) else i_v
+        vverts_info.is_custom[I_v] = 1
+
+
+@qd.kernel(fastcache=True)
+def kernel_clear_vverts(
+    vvert_start: qd.i32,
+    vvert_end: qd.i32,
+    envs_idx: qd.types.ndarray(),
+    vverts_info: array_class.VVertsInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    n_envs_in = envs_idx.shape[0]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_b_, i_v in qd.ndrange(n_envs_in, vvert_end - vvert_start):
+        i_b = envs_idx[i_b_]
+        I_v = [vvert_start + i_v, i_b] if qd.static(static_rigid_sim_config.batch_vverts_info) else vvert_start + i_v
+        vverts_info.is_custom[I_v] = 0
 
 
 @qd.func
