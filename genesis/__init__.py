@@ -261,9 +261,9 @@ def init(
         mps_queue = qd.interop.get_mps_command_queue()
         if not mps_queue:
             raise_exception(
-                "Failed to extract PyTorch MPS's Metal command queue. "
-                "This is required on Apple Metal for correct GPU synchronisation between Genesis and PyTorch. "
-                "Please ensure you are using a supported PyTorch version (>= 2.0)."
+                "Failed to extract PyTorch MPS's Metal command queue. This is required on Apple Metal for correct "
+                "GPU synchronisation between Genesis and PyTorch. Please ensure you are using a supported PyTorch "
+                "version (>= 2.0)."
             )
         qd_init_kwargs.update(
             external_metal_command_queue=mps_queue,
