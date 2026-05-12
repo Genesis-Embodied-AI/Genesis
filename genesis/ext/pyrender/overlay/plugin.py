@@ -267,6 +267,12 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             self._impl._window = self.viewer
             self._io = imgui.get_io()
             self._io.set_ini_filename("")  # Don't persist window positions
+            # Render the first frame as if the window is unfocused so ImGui's keyboard nav does not auto-pick
+            # the first focusable widget and draw a nav highlight on top of it. Pyglet's Win32 backend reports
+            # the window as focused at startup, which would otherwise leave the first entity header with a
+            # visible highlight until the user interacts. Subsequent focus events from pyglet (mouse click,
+            # key press, etc.) restore normal focus behavior on demand.
+            self._io.add_focus_event(False)
             # Set up clipboard (pyglet backend doesn't do this by default)
             # Pyglet caches _clipboard_str and only clears it on SelectionClear
             # events, which may not be dispatched in time. Invalidate the cache
