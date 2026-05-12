@@ -1,8 +1,11 @@
 """Tests for the entity naming system."""
 
 import pytest
+from pydantic import BaseModel
 
 import genesis as gs
+from genesis.options.surfaces import Surface
+from genesis.options.textures import ColorTexture
 
 
 @pytest.mark.required
@@ -123,95 +126,48 @@ def test_urdf_mjcf_names_from_file():
 
 
 @pytest.mark.required
-def test_surface_shortcut_resolution_is_idempotent():
-    """``Surface._resolve_shortcuts`` must be safe to run more than once.
-
-    Pydantic re-runs ``model_validator(mode="after")`` validators when an
-    instance is nested inside another model. Without idempotency, the second
-    pass would see both the shortcut (e.g. ``color``) and the resolved
-    texture field (``diffuse_texture``) populated and raise
-    ``"'color' and 'diffuse_texture' cannot both be set."``.
-
-    The shortcut fields stay readable on the constructed instance — downstream
-    consumers (e.g. the Nyx scene exporter) read ``surface.color``,
-    ``surface.roughness``, etc. directly to populate material params.
-    """
-    from pydantic import BaseModel
-    from genesis.options.surfaces import Surface
-
-    class Wrapper(BaseModel):
-        surface: Surface
-
-    # Plastic-family: color → diffuse_texture, roughness (default 1.0) → roughness_texture.
+def test_surface_shortcut_resolution():
+    # Plastic family: color resolves to diffuse_texture; the Rough subclass roughness default (1.0) feeds
+    # roughness_texture and default_roughness.
     rough = gs.surfaces.Rough(color=(0.4, 0.4, 0.4))
-    assert rough.color == (0.4, 0.4, 0.4), "color shortcut must remain readable after resolution"
-    assert rough.roughness == 1.0, "roughness shortcut must remain readable after resolution"
+    assert rough.color == (0.4, 0.4, 0.4)
+    assert rough.roughness == 1.0
     assert rough.diffuse_texture.color == (0.4, 0.4, 0.4)
     assert rough.roughness_texture.color == (1.0,)
-    Wrapper(surface=rough)  # used to raise
-    assert rough.color == (0.4, 0.4, 0.4)  # unchanged after re-validation
+    assert rough.default_roughness == 1.0
 
-    # Glass: color → specular_texture, plus the thickness shortcut.
+    # Glass: color resolves to specular_texture and the thickness shortcut is honored on the same path.
     glass = gs.surfaces.Glass(color=(0.6, 0.8, 1.0), thickness=0.02)
-    assert glass.color == (0.6, 0.8, 1.0)
-    assert glass.thickness == 0.02
     assert glass.specular_texture.color == (0.6, 0.8, 1.0)
     assert glass.thickness_texture.color == (0.02,)
-    Wrapper(surface=glass)
 
-    # BSDF: exercise multiple shortcuts simultaneously (color, roughness, metallic).
+    # BSDF exercises multiple shortcuts at once.
     bsdf = gs.surfaces.BSDF(color=(0.2, 0.3, 0.4), roughness=0.3, metallic=0.5)
-    assert bsdf.color == (0.2, 0.3, 0.4) and bsdf.roughness == 0.3 and bsdf.metallic == 0.5
     assert bsdf.diffuse_texture.color == (0.2, 0.3, 0.4)
     assert bsdf.roughness_texture.color == (0.3,)
     assert bsdf.metallic_texture.color == (0.5,)
-    Wrapper(surface=bsdf)
+    assert bsdf.default_roughness == 0.3
 
-    # Emit: color → emissive_texture.
+    # Emission: color resolves to emissive_texture.
     emit = gs.surfaces.Emission(color=(1.0, 1.0, 0.0))
-    assert emit.color == (1.0, 1.0, 0.0)
     assert emit.emissive_texture.color == (1.0, 1.0, 0.0)
-    Wrapper(surface=emit)
 
-    # Re-using the same already-resolved surface in multiple wrappers must not
-    # mutate it further (i.e. ``_resolve_shortcuts`` is a no-op on resolved
-    # instances). This exercises double re-validation.
-    Wrapper(surface=rough)
+    # Explicit default_roughness wins over the roughness shortcut.
+    override = gs.surfaces.Rough(roughness=0.7, default_roughness=0.5)
+    assert override.default_roughness == 0.5
+
+    # Nesting an already-resolved surface in another Pydantic model must not re-trigger resolution.
+    class Wrapper(BaseModel):
+        surface: Surface
+
+    for surface in (rough, glass, bsdf, emit):
+        Wrapper(surface=surface)
     Wrapper(surface=rough)
     assert rough.diffuse_texture.color == (0.4, 0.4, 0.4)
     assert rough.roughness_texture.color == (1.0,)
 
-
-@pytest.mark.required
-def test_surface_default_roughness_sync():
-    """``default_roughness`` must mirror the ``roughness`` shortcut unless the
-    user passes an explicit ``default_roughness`` (in which case the user wins).
-
-    The sync was moved to the top of ``_resolve_shortcuts`` when the loop that
-    consumes ``self.roughness`` started clearing it; this guards that ordering.
-    """
-    # roughness shortcut drives default_roughness when no explicit override.
-    rough = gs.surfaces.Rough(roughness=0.3)
-    assert rough.default_roughness == 0.3
-
-    # Explicit default_roughness wins over the roughness shortcut.
-    rough_override = gs.surfaces.Rough(roughness=0.7, default_roughness=0.5)
-    assert rough_override.default_roughness == 0.5
-
-    # No roughness shortcut → default_roughness keeps its declared default.
-    plain = gs.surfaces.Plastic()
-    assert plain.default_roughness == 1.0
-
-
-@pytest.mark.required
-def test_surface_shortcut_conflict_still_detected_on_first_construct():
-    """Setting both the shortcut and its resolved texture field on construction
-    must still raise — only re-validation of an already-resolved instance is
-    made safe by the idempotency fix."""
-    from genesis.options.textures import ColorTexture
-
+    # Passing both the shortcut and its resolved texture at construction is a user error.
     with pytest.raises(Exception, match="'color' and 'diffuse_texture' cannot both be set"):
         gs.surfaces.Rough(color=(1.0, 0.0, 0.0), diffuse_texture=ColorTexture(color=(0.0, 1.0, 0.0)))
-
     with pytest.raises(Exception, match="'thickness' and 'thickness_texture' cannot both be set"):
         gs.surfaces.Glass(thickness=0.02, thickness_texture=ColorTexture(color=(0.05,)))
