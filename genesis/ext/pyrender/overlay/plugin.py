@@ -34,6 +34,20 @@ def button_size_with_min(imgui, label: str, min_width: float) -> tuple[float, fl
     return max(min_width, text_width + 2.0 * imgui.get_style().frame_padding.x), 0.0
 
 
+def draw_separator(imgui, thickness: int = 2) -> None:
+    """Draw a ``thickness`` px-tall horizontal separator at integer-pixel coordinates. ImGui's built-in
+    ``Separator()`` draws a 1 px line centered on a half-pixel boundary, which different OpenGL drivers rasterize
+    onto different rows; this helper uses a filled rectangle aligned to integer rows so the line is byte-identical
+    on every renderer."""
+    draw_list = imgui.get_window_draw_list()
+    x0, y = imgui.get_cursor_screen_pos()
+    x0_i, y_i = int(x0), int(y)
+    x1_i = x0_i + int(imgui.get_content_region_avail().x)
+    color = imgui.get_color_u32(imgui.Col_.separator.value)
+    draw_list.add_rect_filled((x0_i, y_i), (x1_i, y_i + thickness), color)
+    imgui.dummy((0.0, float(thickness)))
+
+
 class ImGuiOverlayPlugin(ViewerPlugin):
     """
     ViewerPlugin that adds an ImGui control panel for simulation and joint control.
@@ -548,7 +562,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 f"Note: Controlling env {self._controlled_env_idx} of {self.scene.n_envs}",
             )
 
-        imgui.separator()
+        draw_separator(imgui)
 
     def _render_visualization(self):
         """Render visualization toggle controls."""
@@ -596,7 +610,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if changed:
             render_flags["vertex_normals"] = new_val
 
-        imgui.separator()
+        draw_separator(imgui)
 
         # Orthographic Camera
         is_ortho = not self.viewer.viewer_flags["use_perspective_cam"]
@@ -764,7 +778,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                     self._file_browser_selected = -1
             imgui.same_line()
             imgui.text(self._file_browser_dir)
-            imgui.separator()
+            draw_separator(imgui)
 
             # List directory contents
             valid_exts = self._FILE_EXTENSIONS.get(morph_type, set())
@@ -843,7 +857,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             if imgui.button(f"X##remove_{name}"):
                 to_remove = name
 
-            imgui.separator()
+            draw_separator(imgui)
 
         if to_remove is not None:
             del self._pending_entities_kwargs[to_remove]

@@ -49,6 +49,10 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
         style.anti_aliased_lines = False
         style.anti_aliased_fill = False
         style.anti_aliased_lines_use_tex = False
+        # Pyglet's backend sets ``display_framebuffer_scale`` from the window's pixel ratio (2.0 on Retina macOS,
+        # 1.0 on most Linux runners); ImGui scales vertex positions by that factor, so the same layout produces
+        # different pixel grids across platforms. Pin to 1.0 so vertex positions are byte-identical everywhere.
+        self._io.display_framebuffer_scale = (1.0, 1.0)
         self._io.fonts.flags |= self._imgui.ImFontAtlasFlags_.no_baked_lines.value
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
