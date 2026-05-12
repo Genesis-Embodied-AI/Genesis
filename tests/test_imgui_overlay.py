@@ -67,8 +67,8 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
             # Keep ``res`` small enough to fit the virtual display area of GitHub-hosted Apple M1 macos-15 runners:
             # the on-screen capture below reads from the window framebuffer, whose size the OS clamps to the display.
             res=(640, 480),
-            camera_pos=(2.0, 2.0, 1.5),
-            camera_lookat=(0.0, 0.0, 0.5),
+            camera_pos=(4.5, -1.2, 2.5),
+            camera_lookat=(0.0, -1.2, 0.5),
             # The capture path at the end of this test calls ``pyrender_viewer.on_draw`` and reads the window
             # framebuffer directly. That can only run on the thread that owns the GL context, so run the viewer
             # in the test thread instead of its own background thread.
@@ -86,12 +86,14 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
         ),
         show_viewer=True,
     )
-    # A flat fixed box stands in for the ground plane: ``gs.morphs.Plane``'s reflection / shading is not byte-
-    # identical between Apple Software Renderer and Mesa llvmpipe, while a thin box renders the same on both.
+    # The ground plane is a thin fixed box rather than ``gs.morphs.Plane`` because the latter's reflection /
+    # shading is not byte-identical between Apple Software Renderer and Mesa llvmpipe. Apple Software Renderer
+    # also misrasterizes the plane when any of its vertices fall outside the camera frustum, so the camera is
+    # pulled back below to keep all four corners visible.
     scene.add_entity(
         morph=gs.morphs.Box(
-            pos=(0.0, 0.9, -0.01),
             size=(2.0, 2.0, 0.02),
+            pos=(0.0, 0.0, -0.01),
             fixed=True,
         ),
         surface=gs.surfaces.Default(
@@ -101,8 +103,8 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     )
     scene.add_entity(
         morph=gs.morphs.Box(
-            pos=(0.0, 1.3, 0.075),
             size=(0.15, 0.15, 0.15),
+            pos=(0.0, 0.4, 0.075),
         ),
         surface=gs.surfaces.Default(
             color=(0.85, 0.45, 0.20, 1.0),
@@ -113,7 +115,7 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     scene.add_entity(
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
-            pos=(0.0, 0.9, 0.0),
+            pos=(0.0, 0.0, 0.0),
         ),
         name="panda",
     )
