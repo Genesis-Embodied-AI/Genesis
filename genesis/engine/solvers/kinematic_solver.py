@@ -33,6 +33,7 @@ from .rigid.abd.forward_kinematics import (
     kernel_forward_velocity,
     kernel_masked_forward_kinematics,
     kernel_masked_forward_velocity,
+    kernel_update_all_vverts,
     kernel_update_vgeoms,
 )
 from .rigid.abd.accessor import (
@@ -372,6 +373,7 @@ class KinematicSolver(Solver):
 
     def _init_vvert_fields(self):
         self.vverts_info = self.data_manager.vverts_info
+        self.vverts_state = self.data_manager.vverts_state
         self.vfaces_info = self.data_manager.vfaces_info
         if self.n_vverts > 0:
             vgeoms = self.vgeoms
@@ -1014,6 +1016,10 @@ class KinematicSolver(Solver):
 
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
+        if self.n_vverts > 0:
+            kernel_update_all_vverts(
+                self.vverts_info, self.vverts_state, self.vgeoms_state, self._static_rigid_sim_config
+            )
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

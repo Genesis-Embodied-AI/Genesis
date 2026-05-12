@@ -1849,6 +1849,20 @@ def get_vverts_info(solver):
     )
 
 
+# =========================================== VVertsState ===========================================
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class VVertsState:
+    pos: qd.Tensor
+
+
+def get_vverts_state(solver):
+    return VVertsState(
+        pos=V(dtype=gs.qd_vec3, shape=(solver.n_vverts_, solver._B)),
+    )
+
+
 # =========================================== VfacesInfo ===========================================
 
 
@@ -2076,6 +2090,7 @@ class DataManager:
         self.entities_state = get_entities_state(solver)
 
         self.vverts_info = get_vverts_info(solver)
+        self.vverts_state = get_vverts_state(solver)
         self.vfaces_info = get_vfaces_info(solver)
 
         self.vgeoms_info = get_vgeoms_info(solver)

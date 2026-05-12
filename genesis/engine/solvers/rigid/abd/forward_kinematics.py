@@ -1198,6 +1198,28 @@ def kernel_update_vgeoms(
         )
 
 
+@qd.kernel(fastcache=True)
+def kernel_update_all_vverts(
+    vverts_info: array_class.VVertsInfo,
+    vverts_state: array_class.VVertsState,
+    vgeoms_state: array_class.VGeomsState,
+    static_rigid_sim_config: qd.template(),
+):
+    """
+    World-space visual vertices. Reads ``vgeoms_state`` (already populated by ``kernel_update_vgeoms``)
+    and writes ``vverts_state.pos``. Visualization-only, like ``kernel_update_vgeoms``.
+    """
+    n_vverts = vverts_info.init_pos.shape[0]
+    _B = vgeoms_state.pos.shape[1]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_v, i_b in qd.ndrange(n_vverts, _B):
+        i_vg = vverts_info.vgeom_idx[i_v]
+        vverts_state.pos[i_v, i_b] = gu.qd_transform_by_trans_quat(
+            vverts_info.init_pos[i_v], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
+        )
+
+
 @qd.func
 def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
