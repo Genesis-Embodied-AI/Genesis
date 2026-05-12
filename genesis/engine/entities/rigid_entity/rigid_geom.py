@@ -902,6 +902,18 @@ class RigidVisGeom(RBC):
         vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
+    @gs.assert_built
+    def set_vverts(self, vverts, envs_idx=None):
+        """Override this vgeom's visual vertex positions for rendering and sensors. See
+        :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
+        """
+        self._entity._set_vverts_range(self.vvert_start, self.vvert_end, vverts, envs_idx)
+
+    @gs.assert_built
+    def get_vverts(self, envs_idx=None):
+        """Return a copy of this vgeom's visual vertex positions from ``vverts_state.pos``."""
+        return self._entity._get_vverts_range(self.vvert_start, self.vvert_end, envs_idx)
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------

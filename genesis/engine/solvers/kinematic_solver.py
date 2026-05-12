@@ -33,6 +33,7 @@ from .rigid.abd.forward_kinematics import (
     kernel_forward_velocity,
     kernel_masked_forward_kinematics,
     kernel_masked_forward_velocity,
+    kernel_set_vverts,
     kernel_update_all_vverts,
     kernel_update_vgeoms,
 )
@@ -91,6 +92,7 @@ class KinematicSolver(Solver):
         self._enable_mujoco_compatibility = False
         self._requires_grad = False
         self._enable_heterogeneous = False  # Set to True when any entity has heterogeneous morphs
+        self._set_vverts_warned = False
 
         self.collider = None
         self.constraint_solver = None
@@ -1020,6 +1022,39 @@ class KinematicSolver(Solver):
             kernel_update_all_vverts(
                 self.vverts_info, self.vverts_state, self.vgeoms_state, self._static_rigid_sim_config
             )
+
+    def set_vverts(self, vvert_start, vvert_end, vverts, envs_idx=None):
+        """Write the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``.
+
+        ``vverts`` is broadcast to ``(len(envs_idx), vvert_end - vvert_start, 3)`` via :func:`broadcast_tensor`,
+        so scalar / ``(3,)`` / ``(n_v, 3)`` / ``(B, n_v, 3)`` inputs are all accepted. ``envs_idx=None`` writes
+        every environment.
+
+        On backends without zero-copy, falls back to a Quadrants kernel and warns once per build.
+        """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
+        vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz"))
+        if gs.use_zerocopy:
+            data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
+            data[envs_idx, vvert_start:vvert_end, :] = vverts
+        else:
+            if not self._set_vverts_warned:
+                gs.logger.warning(
+                    "'set_vverts' is being called on a backend without zero-copy support. Every call performs "
+                    "a full memcpy through a Quadrants kernel. Expected on older Apple Metal builds (pre-2.9.1)."
+                )
+                self._set_vverts_warned = True
+            kernel_set_vverts(vverts, vvert_start, envs_idx, self.vverts_state, self._static_rigid_sim_config)
+
+    def get_vverts(self, vvert_start, vvert_end, envs_idx=None):
+        """Return a copy of the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``.
+
+        Shape: ``(len(envs_idx), vvert_end - vvert_start, 3)``. ``envs_idx=None`` returns every environment.
+        """
+        envs_idx = self._scene._sanitize_envs_idx(envs_idx)
+        data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=True)
+        return data[envs_idx, vvert_start:vvert_end, :]
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

@@ -1220,6 +1220,23 @@ def kernel_update_all_vverts(
         )
 
 
+@qd.kernel(fastcache=True)
+def kernel_set_vverts(
+    vverts: qd.types.ndarray(),
+    vvert_start: qd.i32,
+    envs_idx: qd.types.ndarray(),
+    vverts_state: array_class.VVertsState,
+    static_rigid_sim_config: qd.template(),
+):
+    n_envs_in = envs_idx.shape[0]
+    n_vverts_in = vverts.shape[1]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_b_, i_v_ in qd.ndrange(n_envs_in, n_vverts_in):
+        for j in qd.static(range(3)):
+            vverts_state.pos[vvert_start + i_v_, envs_idx[i_b_]][j] = vverts[i_b_, i_v_, j]
+
+
 @qd.func
 def func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
     dofs_state: array_class.DofsState,
