@@ -16,6 +16,44 @@ except ImportError:
     _IMGUI_BUNDLE_AVAILABLE = False
 
 
+def _apply_deterministic_imgui_overrides(monkeypatch):
+    """Make ImGui rendering and timing pixel-identical across renderers for snapshot tests."""
+    from imgui_bundle import imgui
+
+    # Pin ``on_draw`` so it resets ``_last_time`` after every call, forcing the FPS history to use the
+    # deterministic 1/60 fallback instead of the wall clock.
+    original_on_draw = ImGuiOverlayPlugin.on_draw
+
+    def _on_draw_deterministic(self):
+        original_on_draw(self)
+        self._last_time = None
+
+    monkeypatch.setattr(ImGuiOverlayPlugin, "on_draw", _on_draw_deterministic)
+
+    # Discard the plugin's 18 px ``ImFontConfig`` so ProggyClean loads at its native 13 px. ProggyClean is a bitmap
+    # font, so glyph rasterization is a memcpy on every renderer (stb_truetype is not byte-identical across software
+    # vs hardware OpenGL). The patch must run before the plugin's lazy ``_init_imgui`` so the renderer uploads the
+    # font texture at the correct size from the start.
+    original_add_font_default = imgui.ImFontAtlas.add_font_default
+    monkeypatch.setattr(imgui.ImFontAtlas, "add_font_default", lambda atlas, _=None: original_add_font_default(atlas))
+
+    # Disable shape anti-aliasing (lines, fills, textured-line shortcut) and baked thick-line atlas entries so window
+    # borders and button rounding do not drift between renderers either.
+    original_init_imgui = ImGuiOverlayPlugin._init_imgui
+
+    def _init_imgui_deterministic(self):
+        original_init_imgui(self)
+        if not self._available:
+            return
+        style = self._imgui.get_style()
+        style.anti_aliased_lines = False
+        style.anti_aliased_fill = False
+        style.anti_aliased_lines_use_tex = False
+        self._io.fonts.flags |= self._imgui.ImFontAtlasFlags_.no_baked_lines.value
+
+    monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
+
+
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason="Interactive viewer not supported on this platform.")
 @pytest.mark.skipif(not _IMGUI_BUNDLE_AVAILABLE, reason="imgui-bundle not installed (no Python 3.10 wheels).")
@@ -31,6 +69,10 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
             # framebuffer directly. That can only run on the thread that owns the GL context, so run the viewer
             # in the test thread instead of its own background thread.
             run_in_thread=False,
+            # ``_render_help_text`` rasterizes "[i]: show keyboard instructions" via Genesis's own font path,
+            # which is not byte-identical across software / hardware renderers; disable it so the captured
+            # frame contains only the deterministic ImGui overlay.
+            enable_help_text=False,
         ),
         vis_options=gs.options.VisOptions(
             shadow=False,
@@ -40,10 +82,8 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
         ),
         show_viewer=True,
     )
-    scene.add_entity(
-        morph=gs.morphs.Plane(),
-        name="plane",
-    )
+    # The ground plane's reflection / shading differs significantly between Apple Software Renderer and Mesa
+    # llvmpipe; skipping it keeps the captured scene byte-identical across CI runners.
     scene.add_entity(
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
@@ -51,16 +91,7 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
         name="panda",
     )
 
-    # Wrap ``on_draw`` at the class level (before instantiation) so the pyglet event registration in ``add_plugin``
-    # picks up the wrapper. Reset ``_last_time`` after each call so the next frame's delta_time falls back to the
-    # deterministic 1/60 default instead of the wall clock.
-    original_on_draw = ImGuiOverlayPlugin.on_draw
-
-    def _on_draw_pinned_fps(self):
-        original_on_draw(self)
-        self._last_time = None
-
-    monkeypatch.setattr(ImGuiOverlayPlugin, "on_draw", _on_draw_pinned_fps)
+    _apply_deterministic_imgui_overrides(monkeypatch)
 
     # Pin the panel to a fixed width so changes in entity names / labels do not shift the layout.
     imgui_plugin = ImGuiOverlayPlugin(panel_width=420)

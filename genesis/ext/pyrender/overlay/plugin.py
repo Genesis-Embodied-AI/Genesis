@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation as R
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.ext.pyrender.overlay.style import apply_dark_theme
-from genesis.ext.pyrender.overlay.types import _build_entity_joint_data, _EntityCacheEntry, _EntityJointData
+from genesis.ext.pyrender.overlay.types import build_entity_joint_data, EntityCacheEntry, EntityJointData
 from genesis.utils.misc import tensor_to_array
 from genesis.vis.viewer_plugins import EVENT_HANDLE_STATE, EVENT_HANDLED, ViewerPlugin
 
@@ -25,6 +25,13 @@ if TYPE_CHECKING:
 
 _FPS_HISTORY_SIZE = 30
 _MORPH_TYPES = ["URDF", "MJCF", "Mesh", "Box", "Sphere", "Cylinder", "Plane"]
+
+
+def button_size_with_min(imgui, label: str, min_width: float) -> tuple[float, float]:
+    """Return a ``(width, height)`` size tuple for ``imgui.button(label, size=...)`` that auto-fits the label but
+    never drops below ``min_width``. Height stays 0 so ImGui picks its default."""
+    text_width = imgui.calc_text_size(label).x
+    return max(min_width, text_width + 2.0 * imgui.get_style().frame_padding.x), 0.0
 
 
 class ImGuiOverlayPlugin(ViewerPlugin):
@@ -304,10 +311,10 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         for entity in self.scene.rigid_solver.entities:
             if entity.n_dofs == 0:
                 # Still include for vis_mode toggle, but no joint data
-                self._entity_cache[entity.idx] = _EntityCacheEntry(
+                self._entity_cache[entity.idx] = EntityCacheEntry(
                     entity=entity,
                     name=entity.name,
-                    joint_data=_EntityJointData(
+                    joint_data=EntityJointData(
                         q_names=[],
                         q_limits=([], []),
                         q_is_quaternion=[],
@@ -320,9 +327,9 @@ class ImGuiOverlayPlugin(ViewerPlugin):
                 )
                 continue
 
-            jdata = _build_entity_joint_data(entity, self._free_joint_pos_limit)
+            jdata = build_entity_joint_data(entity, self._free_joint_pos_limit)
             if jdata.q_names:
-                self._entity_cache[entity.idx] = _EntityCacheEntry(
+                self._entity_cache[entity.idx] = EntityCacheEntry(
                     entity=entity,
                     name=entity.name,
                     joint_data=jdata,
@@ -509,15 +516,17 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         else:
             imgui.text_colored((0.4, 0.9, 0.4, 1.0), "Running")
 
-        # Play/Pause and Reset (always visible), Step (only when paused)
-        if imgui.button("Pause" if not self.paused else "Play", size=(60, 0)):
+        # Play/Pause and Reset (always visible), Step (only when paused). Auto-fit the label but with a 60-px
+        # floor so single-word verbs share a consistent baseline width and never get truncated.
+        play_pause = "Pause" if not self.paused else "Play"
+        if imgui.button(play_pause, size=button_size_with_min(imgui, play_pause, 60.0)):
             self.paused = not self.paused
         if self.paused:
             imgui.same_line()
-            if imgui.button("Step", size=(50, 0)):
+            if imgui.button("Step", size=button_size_with_min(imgui, "Step", 60.0)):
                 self._steps_remaining = self._step_count
         imgui.same_line()
-        if imgui.button("Reset", size=(50, 0)):
+        if imgui.button("Reset", size=button_size_with_min(imgui, "Reset", 60.0)):
             with self.viewer.render_lock:
                 self.scene.reset()
                 self.viewer.context.clear_dynamic_nodes(only_outdated=False)

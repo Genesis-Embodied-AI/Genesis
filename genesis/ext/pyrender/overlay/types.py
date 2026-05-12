@@ -10,10 +10,10 @@ if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidEntity
 
 
-_QUATERNION_COMPONENT_LIMIT = 1.0
+QUATERNION_COMPONENT_LIMIT = 1.0
 
 
-class _EntityJointData(NamedTuple):
+class EntityJointData(NamedTuple):
     """Joint metadata for an entity. ``q_limits`` is ``(lower, upper)``; ``quat_groups`` lists
     ``(start, end)`` index ranges of quaternion components for normalization."""
 
@@ -25,15 +25,15 @@ class _EntityJointData(NamedTuple):
     free_joint_q_start: int
 
 
-class _EntityCacheEntry(NamedTuple):
+class EntityCacheEntry(NamedTuple):
     entity: "RigidEntity"
     name: str
-    joint_data: _EntityJointData
+    joint_data: EntityJointData
     n_qs: int
     n_dofs: int
 
 
-def _build_entity_joint_data(entity: "RigidEntity", free_joint_pos_limit: float) -> _EntityJointData:
+def build_entity_joint_data(entity: "RigidEntity", free_joint_pos_limit: float) -> EntityJointData:
     """Build joint metadata for ``entity``. Handles free, spherical, and standard joints correctly."""
     q_names: list[str] = []
     q_limits_lower: list[float] = []
@@ -61,15 +61,15 @@ def _build_entity_joint_data(entity: "RigidEntity", free_joint_pos_limit: float)
                     f"{joint.name}_qz",
                 ]
             )
-            q_limits_lower.extend([-free_joint_pos_limit] * 3 + [-_QUATERNION_COMPONENT_LIMIT] * 4)
-            q_limits_upper.extend([free_joint_pos_limit] * 3 + [_QUATERNION_COMPONENT_LIMIT] * 4)
+            q_limits_lower.extend([-free_joint_pos_limit] * 3 + [-QUATERNION_COMPONENT_LIMIT] * 4)
+            q_limits_upper.extend([free_joint_pos_limit] * 3 + [QUATERNION_COMPONENT_LIMIT] * 4)
             q_is_quaternion.extend([False, False, False, True, True, True, True])
             quat_groups.append((len(q_names) - 4, len(q_names)))
         elif joint.type == gs.JOINT_TYPE.SPHERICAL:
             quat_start = len(q_names)
             q_names.extend([f"{joint.name}_qw", f"{joint.name}_qx", f"{joint.name}_qy", f"{joint.name}_qz"])
-            q_limits_lower.extend([-_QUATERNION_COMPONENT_LIMIT] * 4)
-            q_limits_upper.extend([_QUATERNION_COMPONENT_LIMIT] * 4)
+            q_limits_lower.extend([-QUATERNION_COMPONENT_LIMIT] * 4)
+            q_limits_upper.extend([QUATERNION_COMPONENT_LIMIT] * 4)
             q_is_quaternion.extend([True, True, True, True])
             quat_groups.append((quat_start, quat_start + 4))
         else:
@@ -86,7 +86,7 @@ def _build_entity_joint_data(entity: "RigidEntity", free_joint_pos_limit: float)
                 q_limits_upper.append(hi)
                 q_is_quaternion.append(False)
 
-    return _EntityJointData(
+    return EntityJointData(
         q_names=q_names,
         q_limits=(q_limits_lower, q_limits_upper),
         q_is_quaternion=q_is_quaternion,
