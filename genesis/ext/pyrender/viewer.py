@@ -1108,6 +1108,7 @@ class Viewer(pyglet.window.Window):
 
     def start(self, auto_refresh=True):
         import pyglet  # For some reason, this is necessary if 'pyglet.window.xlib' fails to import...
+        import pyglet.app
 
         try:
             import pyglet.display.xlib
@@ -1116,6 +1117,12 @@ class Viewer(pyglet.window.Window):
             xlib_exceptions = (pyglet.window.xlib.XlibException, pyglet.display.xlib.NoSuchDisplayException)
         except ImportError:
             xlib_exceptions = ()
+
+        # Pyglet's Win32EventLoop captures the thread that first instantiates it and refuses ``dispatch_events``
+        # from any other thread. Mixing ``run_in_thread=True`` and ``run_in_thread=False`` viewers in the same
+        # Python process (typical in unit tests) leaves a stale thread id behind. Recreate the platform event
+        # loop here so its constructor rebinds the dispatch thread to whoever is about to call us.
+        pyglet.app.platform_event_loop = pyglet.app.PlatformEventLoop()
 
         # Try multiple configs starting with target OpenGL version and multisampling enabled, then removing these
         # options if not supported.
