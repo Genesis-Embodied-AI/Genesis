@@ -40,6 +40,9 @@ class CoacdOptions(Options):
     mcts_nodes: PositiveInt = 20
     mcts_iterations: PositiveInt = 100
     mcts_max_depth: PositiveInt = 3
+    # pca=True is rejected because it triggers an upstream CoACD bug where the PCA transform applied to the input
+    # mesh is not undone on the decomposed convex hulls (https://github.com/SarahWeiii/CoACD/issues/100).
+    # FIXME: re-allow once CoACD 1.0.12 lands with the fix.
     pca: StrictBool = False
     merge: StrictBool = True
     decimate: StrictBool = False
@@ -50,15 +53,7 @@ class CoacdOptions(Options):
     seed: NonNegativeInt = 0
 
     @model_validator(mode="after")
-    def _warn_pca_misalignment(self) -> Self:
-        # Upstream CoACD applies a PCA transformation to the input mesh but does not transform the
-        # decomposed convex hulls back, so the resulting collision body is misaligned with the
-        # original mesh. See https://github.com/SarahWeiii/CoACD/issues/100.
+    def _reject_pca(self) -> Self:
         if self.pca:
-            gs.logger.warning(
-                "'CoacdOptions.pca=True' produces collision bodies that are misaligned with the "
-                "original mesh due to an upstream CoACD bug "
-                "(https://github.com/SarahWeiii/CoACD/issues/100). Set 'pca=False' until the "
-                "upstream fix lands to avoid unstable physics."
-            )
+            gs.raise_exception("'CoacdOptions.pca=True' is not supported due to an upstream bug in CoACD.")
         return self
