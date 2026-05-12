@@ -293,16 +293,6 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             apply_dark_theme(imgui)
             self._available = True
 
-            # FIXME: ImGui's tab bar and auto-resize windows size themselves using the previous frame's measurements,
-            # so the very first frame snaps to default geometry and the second frame jumps to its steady-state size.
-            # Run one hidden UI pass here (no GL commit) so the first user-visible frame already has the settled
-            # layout. The root cause inside imgui-bundle should be investigated to remove this workaround.
-            io = imgui.get_io()
-            io.display_size = (float(self.viewer.width), float(self.viewer.height))
-            io.delta_time = 1.0 / 60.0
-            imgui.new_frame()
-            self._render_control_panel()
-            imgui.end_frame()
             # Try to load ImGuizmo for 3D gizmos
             try:
                 from imgui_bundle import imguizmo

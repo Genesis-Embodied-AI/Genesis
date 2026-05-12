@@ -86,11 +86,34 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
         ),
         show_viewer=True,
     )
-    # The ground plane's reflection / shading differs significantly between Apple Software Renderer and Mesa
-    # llvmpipe; skipping it keeps the captured scene byte-identical across CI runners.
+    # A flat fixed box stands in for the ground plane: ``gs.morphs.Plane``'s reflection / shading is not byte-
+    # identical between Apple Software Renderer and Mesa llvmpipe, while a thin box renders the same on both.
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 0.9, -0.01),
+            size=(2.0, 2.0, 0.02),
+            fixed=True,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.60, 0.85, 0.55, 1.0),
+        ),
+        name="ground",
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            pos=(0.0, 1.3, 0.075),
+            size=(0.15, 0.15, 0.15),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.85, 0.45, 0.20, 1.0),
+        ),
+        name="cube",
+    )
+    # Shift the robot in the camera's right direction so the ImGui panel on the left hides less of it.
     scene.add_entity(
         morph=gs.morphs.MJCF(
             file="xml/franka_emika_panda/panda.xml",
+            pos=(0.0, 0.9, 0.0),
         ),
         name="panda",
     )
@@ -102,17 +125,13 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     scene.viewer.add_plugin(imgui_plugin)
 
     scene.build()
-    scene.step()
 
-    try:
-        # ``render_offscreen`` only renders the 3D scene (it is the path also used for in-scene camera captures while
-        # the interactive viewer is alive), so it deliberately skips the viewer's plugin loop and the ImGui overlay
-        # never appears in its output. Drive ``Viewer.on_draw`` synchronously from the test thread instead, which is
-        # only legal because ``run_in_thread=False`` keeps the viewer (and the GL context it owns) on this thread.
-        pyrender_viewer = scene.viewer._pyrender_viewer
-        pyrender_viewer.switch_to()
-        pyrender_viewer.on_draw()
-        rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
-        assert rgb_array_to_png_bytes(rgb) == png_snapshot
-    finally:
-        scene.viewer.stop()
+    # ``render_offscreen`` only renders the 3D scene (it is the path also used for in-scene camera captures while the
+    # interactive viewer is alive), so it deliberately skips the viewer's plugin loop and the ImGui overlay never
+    # appears in its output. Drive ``Viewer.on_draw`` synchronously from the test thread instead, which is only legal
+    # because ``run_in_thread=False`` keeps the viewer (and the GL context it owns) on this thread.
+    pyrender_viewer = scene.viewer._pyrender_viewer
+    pyrender_viewer.switch_to()
+    pyrender_viewer.on_draw()
+    rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
+    assert rgb_array_to_png_bytes(rgb) == png_snapshot
