@@ -564,8 +564,14 @@ def qd_to_torch(
                 tensor = value._T_tc if transpose else value._tc
                 is_copy = False
 
-    if copy and not is_copy:
-        tensor = tensor.clone()
+    if not is_copy:
+        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
+        if gs.backend == gs.metal:
+            qd.sync()
+        if copy:
+            tensor = tensor.clone()
+            if gs.backend == gs.metal:
+                torch.mps.synchronize()
 
     return _apply_masks(tensor, value, row_mask, col_mask, keepdim, copy, to_torch=True)
 
