@@ -277,9 +277,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     def _update_visual_bvh_for_solver(cls, solver, aabb, bvh):
         """Update a visual-mesh BVH for a single solver.
 
-        Reads ``vverts_state.pos`` as the single source of truth. FK-driven entries are populated
-        by ``solver.update_vgeoms()``; user-driven entries (those flagged in
-        ``vverts_info.is_custom`` via ``set_vverts``) survive across calls.
+        Reads vverts_state.pos as the source of vvert positions. The buffer is seeded by FK at scene.build() and
+        refreshed for each user-driven entity via set_vverts; entries set via set_vverts survive across calls until
+        set_vverts(None) re-runs FK over the entity's vgeoms.
         """
         if not solver._is_forward_pos_updated:
             kernel_forward_kinematics(
@@ -330,11 +330,10 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     def build(self):
         super().build()
 
-        # Static sensor (entity_idx<0): the base RigidSensorMixin.build only sets
-        # self._link=None and returns, so the per-sensor solver/index lists and the
-        # offsets arrays still need entries here for the raycaster's cross-solver
-        # gather and the [..., -1, :] read below to stay aligned. links_idx is left
-        # alone - it is consumed only by non-raycaster sensors.
+        # Static sensor (entity_idx<0): the base RigidSensorMixin.build only sets self._link=None and returns, so the
+        # per-sensor solver/index lists and the offsets arrays still need entries here for the raycaster's cross-solver
+        # gather and the [..., -1, :] read below to stay aligned. links_idx is left alone - it is consumed only by
+        # non-raycaster sensors.
         if self._options.entity_idx is None or self._options.entity_idx < 0:
             sim = self._manager._sim
             batch_size = sim._B
@@ -365,8 +364,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
             solver = self._shared_metadata.solver
             n_envs = solver._B
 
-            # Primary solver: RigidSolver always uses its collision BVH; KinematicSolver has no
-            # collision geometry so it falls back to the visual BVH built from ``vverts_state``.
+            # Primary solver: RigidSolver always uses its collision BVH; KinematicSolver has no collision geometry so
+            # it falls back to the visual BVH built from vverts_state.
             use_visual = not isinstance(solver, RigidSolver)
             self._shared_metadata.use_visual_bvh = use_visual
 
@@ -438,10 +437,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         no_hit_value = self._options.no_hit_value if self._options.no_hit_value is not None else self._options.max_range
         self._shared_metadata.no_hit_values = concat_with_tensor(self._shared_metadata.no_hit_values, no_hit_value)
 
-        # When multi-solver merge is active, the merge kernel uses distance comparison to
-        # pick the closer hit.  This only works if no_hit_value >= max_range; otherwise a
-        # "no hit" from one BVH could shadow a real hit from the other. The negated form
-        # also rejects NaN (every IEEE 754 comparison with NaN is False).
+        # When multi-solver merge is active, the merge kernel uses distance comparison to pick the closer hit. This
+        # only works if no_hit_value >= max_range; otherwise a "no hit" from one BVH could shadow a real hit from the
+        # other. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
         if self._shared_metadata.extra_visual_bvhs and not (no_hit_value >= self._options.max_range):
             gs.raise_exception(
                 f"no_hit_value ({no_hit_value}) must be >= max_range ({self._options.max_range}) "
@@ -490,9 +488,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     ):
         cls._update_bvh(shared_metadata)
 
-        # Gather per-sensor link poses. Sensors can live on different solvers (e.g. a depth camera
-        # mounted on a rigid robot pointing at a kinematic mesh), so each sensor column is fetched
-        # from its own solver via bulk lookups; static sensors (solver=None) keep identity transforms.
+        # Gather per-sensor link poses. Sensors can live on different solvers (e.g. a depth camera mounted on a rigid
+        # robot pointing at a kinematic mesh), so each sensor column is fetched from its own solver via bulk lookups;
+        # static sensors (solver=None) keep identity transforms.
         solvers_list = shared_metadata._sensor_link_solvers
         indices_list = shared_metadata._sensor_link_indices
         n_sensors = len(solvers_list)

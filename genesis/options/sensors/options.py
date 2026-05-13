@@ -119,7 +119,7 @@ class RigidSensorOptionsMixin(SensorOptions[SensorT]):
             if not isinstance(entity, RigidEntity):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
             if self.link_idx_local >= entity.n_links:
-                gs.raise_exception(f"Invalid link index {self.link_idx_local} for entity {self.entity_idx}.")
+                gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
 class ImperfectSensorOptionsMixin(SensorOptions[SensorT]):

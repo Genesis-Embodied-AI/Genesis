@@ -432,12 +432,11 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
             else:
                 self._shared_metadata.solver = sim.rigid_solver
 
-        # If entity_idx is < 0, this is a static sensor (not attached to any link).
-        # Only raycaster sensors formally support this; other rigid sensors (IMU, Contact,
-        # ContactForce, TemperatureGrid, Proximity) read poses/kinematics by bulk-indexing
-        # ``shared_metadata.links_idx`` and would silently track solver link 0 if we appended
-        # a placeholder here. Raycaster overrides ``build()`` to populate its own per-sensor
-        # metadata (offsets + ``_sensor_link_solvers`` / ``_sensor_link_indices``).
+        # If entity_idx is < 0, this is a static sensor (not attached to any link). Only raycaster sensors formally
+        # support this; other rigid sensors (IMU, Contact, ContactForce, TemperatureGrid, Proximity) read poses /
+        # kinematics by bulk-indexing shared_metadata.links_idx and would silently track solver link 0 if we appended
+        # a placeholder here. Raycaster overrides build() to populate its own per-sensor metadata (offsets +
+        # _sensor_link_solvers / _sensor_link_indices).
         if self._options.entity_idx is None or self._options.entity_idx < 0:
             self._link = None
             return

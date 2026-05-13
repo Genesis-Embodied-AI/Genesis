@@ -827,9 +827,8 @@ def test_raycaster_hits(show_viewer, n_envs):
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
-    # KinematicEntity participates in raycasting automatically. set_vverts overrides survive
-    # step() so a depth camera reads the user-driven positions, and set_vverts(None) hands
-    # control back to FK without dropping any rays.
+    # KinematicEntity participates in raycasting automatically. set_vverts overrides survive step() so a depth camera
+    # reads the user-driven positions, and set_vverts(None) hands control back to FK without dropping any rays.
     scene = gs.Scene(
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -871,10 +870,10 @@ def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
     img_fk = cam.read_image()
     assert_allclose(img_fk[..., 15, 20], 0.8, tol=1e-2)
 
-    # Scale the sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4,
-    # so the closest point is at x=-0.4 and the depth at the center pixel becomes 0.6. A uniform
-    # translation would mask index-aliasing bugs in the raycaster's vvert lookup; scaling perturbs
-    # each vvert by a different amount, so only the correct vvert-to-state mapping yields 0.6.
+    # Scale the sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the closest point
+    # is at x=-0.4 and the depth at the center pixel becomes 0.6. A uniform translation would mask index-aliasing bugs
+    # in the raycaster's vvert lookup; scaling perturbs each vvert by a different amount, so only the correct
+    # vvert-to-state mapping yields 0.6.
     fk_vverts = tensor_to_array(kin_sphere.get_vverts())
     center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
