@@ -2,6 +2,7 @@ import quadrants as qd
 
 import genesis as gs
 import genesis.utils.array_class as array_class
+import genesis.utils.geom as gu
 from genesis.engine.bvh import STACK_SIZE
 from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
 
@@ -268,11 +269,40 @@ def kernel_update_verts_and_aabbs(
 
 
 @qd.func
+def get_visual_vvert_pos(
+    i_vv: int,
+    i_b: int,
+    vverts_info: array_class.VVertsInfo,
+    vverts_state: array_class.VVertsState,
+    vgeoms_state: array_class.VGeomsState,
+):
+    """
+    Return the world-space position of a visual vertex, branching between the custom buffer and FK on the fly.
+
+    Opt-in entities (morph.enable_custom_vverts=True) own a slot in vverts_state.pos (referenced via
+    vverts_state_idx). Non-opt-in entities have no slot; their world-space position is recomputed by transforming the
+    rest-pose init_pos with the owning vgeom's current pose.
+    """
+    pos = qd.math.vec3(0.0, 0.0, 0.0)
+    i_state = vverts_info.vverts_state_idx[i_vv]
+    if i_state >= 0:
+        pos = vverts_state.pos[i_state, i_b]
+    else:
+        i_vg = vverts_info.vgeom_idx[i_vv]
+        pos = gu.qd_transform_by_trans_quat(
+            vverts_info.init_pos[i_vv], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
+        )
+    return pos
+
+
+@qd.func
 def get_visual_triangle_vertices(
     i_f: int,
     i_b: int,
-    vfaces_info: array_class.VFacesInfo,
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
+    vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
 ):
     """
     Get the three vertices of a visual-mesh triangle in world space.
@@ -281,7 +311,7 @@ def get_visual_triangle_vertices(
     tri_vertices = qd.Matrix.zero(gs.qd_float, 3, 3)
     for i in qd.static(range(3)):
         i_vv = vfaces_info.vverts_idx[i_f][i]
-        tri_vertices[:, i] = vverts_state.pos[i_vv, i_b]
+        tri_vertices[:, i] = get_visual_vvert_pos(i_vv, i_b, vverts_info, vverts_state, vgeoms_state)
     return tri_vertices
 
 
@@ -293,8 +323,10 @@ def bvh_ray_cast_visual(
     i_b,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
-    vfaces_info: array_class.VFacesInfo,
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
+    vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
     eps,
 ):
     """
@@ -323,7 +355,9 @@ def bvh_ray_cast_visual(
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
                 i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
 
-                tri_vertices = get_visual_triangle_vertices(i_f, i_b, vfaces_info, vverts_state)
+                tri_vertices = get_visual_triangle_vertices(
+                    i_f, i_b, vverts_info, vverts_state, vfaces_info, vgeoms_state
+                )
                 v0, v1, v2 = tri_vertices[:, 0], tri_vertices[:, 1], tri_vertices[:, 2]
 
                 hit_result = ray_triangle_intersection(ray_start, ray_dir, v0, v1, v2, eps)
@@ -345,30 +379,39 @@ def bvh_ray_cast_visual(
 
 @qd.func
 def update_visual_aabbs(
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
+    raycast_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    _B = vverts_state.pos.shape[1]
+    _B = vgeoms_state.pos.shape[1]
     n_vfaces = vfaces_info.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
+        # Initialize as an inverted (unhittable) AABB; vfaces whose owning vgeom has raycasting disabled are left in
+        # this state so the BVH naturally skips them.
         aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
 
-        for i in qd.static(range(3)):
-            i_vv = vfaces_info.vverts_idx[i_f][i]
-            pos_v = vverts_state.pos[i_vv, i_b]
-            aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
-            aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
+        if raycast_mask[i_f] != 0:
+            for i in qd.static(range(3)):
+                i_vv = vfaces_info.vverts_idx[i_f][i]
+                pos_v = get_visual_vvert_pos(i_vv, i_b, vverts_info, vverts_state, vgeoms_state)
+                aabb_state.aabbs[i_b, i_f].min = qd.min(aabb_state.aabbs[i_b, i_f].min, pos_v)
+                aabb_state.aabbs[i_b, i_f].max = qd.max(aabb_state.aabbs[i_b, i_f].max, pos_v)
 
 
 @qd.kernel
 def kernel_update_visual_aabbs(
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
+    raycast_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    update_visual_aabbs(vverts_state, vfaces_info, aabb_state)
+    update_visual_aabbs(vverts_info, vverts_state, vfaces_info, vgeoms_state, raycast_mask, aabb_state)
 
 
 @qd.kernel

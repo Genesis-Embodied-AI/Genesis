@@ -826,9 +826,37 @@ def test_raycaster_hits(show_viewer, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
-    # KinematicEntity participates in raycasting automatically. set_vverts overrides survive step() so a depth camera
-    # reads the user-driven positions, and set_vverts(None) hands control back to FK without dropping any rays.
+def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
+    # Two depth cameras, one per opt-in entity:
+    #   - cam_kin -> KinematicEntity sphere (use_visual_raycasting=True by default). set_vverts overrides survive
+    #     step() so the depth camera reads the user-driven positions, and set_vverts(None) hands control back to FK.
+    #   - cam_rigid -> RigidEntity whose visual mesh (sphere radius 0.2) is intentionally different from its collision
+    #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere; if the
+    #     raycaster fell back to the collision BVH the depth would be ~0.95 instead of ~0.8.
+    urdf_path = tmp_path / "vis_diff.urdf"
+    urdf_path.write_text(
+        textwrap.dedent(
+            """
+            <robot name="vis_diff">
+                <link name="root">
+                    <visual>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <sphere radius="0.2"/>
+                        </geometry>
+                    </visual>
+                    <collision>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule radius="0.05" length="0.05"/>
+                        </geometry>
+                    </collision>
+                </link>
+            </robot>
+            """
+        )
+    )
+
     scene = gs.Scene(
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -846,7 +874,15 @@ def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
         ),
         material=gs.materials.Kinematic(),
     )
-    cam = scene.add_sensor(
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=str(urdf_path),
+            pos=(0.0, 0.0, 1.5),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(use_visual_raycasting=True),
+    )
+    cam_kin = scene.add_sensor(
         gs.sensors.DepthCamera(
             pattern=gs.sensors.DepthCameraPattern(
                 res=(40, 30),
@@ -860,38 +896,55 @@ def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
             return_world_frame=True,
         ),
     )
+    cam_rigid = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 1.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
     if n_envs > 0:
         scene.build(n_envs=n_envs)
     else:
         scene.build()
     scene.step()
 
-    # Camera at x=-1 looking along +x. Sphere center at (0, 0, 0.5), radius 0.2 -> distance 0.8.
-    img_fk = cam.read_image()
-    assert_allclose(img_fk[..., 15, 20], 0.8, tol=1e-2)
+    # Each camera at x=-1 along its own z-row looks along +x. The center pixel hits the closest point of its target
+    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this must come from the *visual* BVH; the collision capsule would
+    # yield ~0.95.
+    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.8, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
-    # Scale the sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the closest point
-    # is at x=-0.4 and the depth at the center pixel becomes 0.6. A uniform translation would mask index-aliasing bugs
-    # in the raycaster's vvert lookup; scaling perturbs each vvert by a different amount, so only the correct
-    # vvert-to-state mapping yields 0.6.
+    # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
+    # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. A uniform translation would mask
+    # index-aliasing bugs in the raycaster's vvert lookup; scaling perturbs each vvert by a different amount, so only
+    # the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
     fk_vverts = tensor_to_array(kin_sphere.get_vverts())
     center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
     scene.step()
-    img_scaled = cam.read_image()
-    assert_allclose(img_scaled[..., 15, 20], 0.6, tol=1e-2)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.6, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
-    # Push the sphere far away. The depth camera should report no_hit_value at the center pixel.
+    # Push the kinematic sphere far away. cam_kin should report no_hit_value at the center pixel; cam_rigid still sees
+    # the rigid visual sphere.
     kin_sphere.set_vverts((100.0, 100.0, 100.0))
     scene.step()
-    img_off = cam.read_image()
-    assert_allclose(img_off[..., 15, 20], 5.0, tol=gs.EPS)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], 5.0, tol=gs.EPS)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
-    # Restoring FK control returns the original hit distance.
+    # Restoring FK control returns the original hit distance on cam_kin; cam_rigid stays put.
     kin_sphere.set_vverts(None)
     scene.step()
-    img_restored = cam.read_image()
-    assert_allclose(img_restored[..., 15, 20], 0.8, tol=1e-2)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.8, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
 
 @pytest.mark.required

@@ -24,7 +24,7 @@ from genesis.utils.geom import (
     transform_by_quat,
     transform_by_trans_quat,
 )
-from genesis.utils.misc import concat_with_tensor, make_tensor_field
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy
 from genesis.utils.raycast_qd import (
     bvh_ray_cast,
     bvh_ray_cast_visual,
@@ -148,8 +148,10 @@ def kernel_cast_rays(
 
 @qd.kernel
 def kernel_cast_rays_visual(
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     links_pos: qd.types.ndarray(ndim=3),
@@ -190,8 +192,10 @@ def kernel_cast_rays_visual(
             i_b=i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
-            vfaces_info=vfaces_info,
+            vverts_info=vverts_info,
             vverts_state=vverts_state,
+            vfaces_info=vfaces_info,
+            vgeoms_state=vgeoms_state,
             eps=eps,
         )
 
@@ -230,6 +234,7 @@ class _SolverBVH:
     solver: object  # KinematicSolver or RigidSolver
     bvh: LBVH
     aabb: AABB
+    raycast_mask: np.ndarray  # (n_vfaces,) int8; 1 for vfaces opted into visual raycasting, 0 otherwise
 
 
 @dataclass
@@ -237,6 +242,7 @@ class RaycasterSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
     bvh: LBVH | None = None
     aabb: AABB | None = None
     use_visual_bvh: bool = False
+    visual_raycast_mask: np.ndarray | None = None  # per-vface int8 mask for the primary visual BVH
 
     # Additional solvers whose visual geometry is also cast against (multi-solver support)
     extra_visual_bvhs: list[_SolverBVH] = field(default_factory=list)
@@ -273,13 +279,34 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         self.debug_objects: list["Mesh"] = []
         self.ray_starts: torch.Tensor = torch.empty((0, 3), device=gs.device, dtype=gs.tc_float)
 
+    @staticmethod
+    def _compute_visual_raycast_mask(solver):
+        """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
+
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has
+        use_visual_raycasting=True. Kinematic materials enforce True by default; Rigid materials default to False
+        and let the user opt their visual mesh into the raycast BVH explicitly.
+        """
+        n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
+        if n_vfaces == 0:
+            return np.zeros(0, dtype=np.int8)
+        vgeom_enabled = np.zeros(solver.n_vgeoms_, dtype=np.bool_)
+        for entity in solver.entities:
+            if not entity.material.use_visual_raycasting:
+                continue
+            for vgeom in entity.vgeoms:
+                vgeom_enabled[vgeom.idx] = True
+        vface_vgeom_idx = qd_to_numpy(solver.vfaces_info.vgeom_idx)
+        return vgeom_enabled[vface_vgeom_idx].astype(np.int8)
+
     @classmethod
-    def _update_visual_bvh_for_solver(cls, solver, aabb, bvh):
+    def _update_visual_bvh_for_solver(cls, solver, aabb, bvh, raycast_mask):
         """Update a visual-mesh BVH for a single solver.
 
         Reads vverts_state.pos as the source of vvert positions. The buffer is seeded by FK at scene.build() and
         refreshed for each user-driven entity via set_vverts; entries set via set_vverts survive across calls until
-        set_vverts(None) re-runs FK over the entity's vgeoms.
+        set_vverts(None) re-runs FK over the entity's vgeoms. raycast_mask gates which vfaces contribute to the BVH;
+        masked-out vfaces keep an inverted AABB and are skipped by ray queries.
         """
         if not solver._is_forward_pos_updated:
             kernel_forward_kinematics(
@@ -297,8 +324,11 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
             solver._is_forward_pos_updated = True
         solver.update_vgeoms()
         kernel_update_visual_aabbs(
+            vverts_info=solver.vverts_info,
             vverts_state=solver.vverts_state,
             vfaces_info=solver.vfaces_info,
+            vgeoms_state=solver.vgeoms_state,
+            raycast_mask=raycast_mask,
             aabb_state=aabb,
         )
         bvh.build()
@@ -309,7 +339,9 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         solver = shared_metadata.solver
 
         if shared_metadata.use_visual_bvh:
-            cls._update_visual_bvh_for_solver(solver, shared_metadata.aabb, shared_metadata.bvh)
+            cls._update_visual_bvh_for_solver(
+                solver, shared_metadata.aabb, shared_metadata.bvh, shared_metadata.visual_raycast_mask
+            )
         else:
             kernel_update_verts_and_aabbs(
                 geoms_info=solver.geoms_info,
@@ -325,7 +357,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
 
         # Update extra solver BVHs
         for entry in shared_metadata.extra_visual_bvhs:
-            cls._update_visual_bvh_for_solver(entry.solver, entry.aabb, entry.bvh)
+            cls._update_visual_bvh_for_solver(entry.solver, entry.aabb, entry.bvh, entry.raycast_mask)
 
     def build(self):
         super().build()
@@ -371,6 +403,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
 
             if use_visual:
                 n_faces = solver.vfaces_info.vgeom_idx.shape[0]
+                self._shared_metadata.visual_raycast_mask = self._compute_visual_raycast_mask(solver)
             else:
                 n_faces = solver.faces_info.geom_idx.shape[0]
             self._shared_metadata.aabb = AABB(n_batches=n_envs, n_aabbs=n_faces)
@@ -378,23 +411,31 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
                 self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
             )
 
-            # Add a secondary visual BVH for every other active KinematicSolver that has any vverts.
-            # The merge kernel keeps the closer hit, so collision and visual meshes coexist transparently.
+            # Add a secondary visual BVH for every other active solver that has at least one entity opted into visual
+            # raycasting. The merge kernel keeps the closer hit, so collision and visual meshes coexist transparently;
+            # this is how a Rigid entity with use_visual_raycasting=True gets its visual mesh raycast alongside the
+            # default collision BVH.
             for other_solver in [sim.rigid_solver, sim.kinematic_solver]:
                 if not other_solver.is_active:
                     continue
                 if other_solver is solver and use_visual:
                     # Already covered by the primary visual BVH.
                     continue
-                if isinstance(other_solver, RigidSolver):
-                    continue
                 if other_solver.vfaces_info.vgeom_idx.shape[0] == 0:
+                    continue
+                extra_mask = self._compute_visual_raycast_mask(other_solver)
+                if not extra_mask.any():
                     continue
                 extra_n_faces = other_solver.vfaces_info.vgeom_idx.shape[0]
                 extra_aabb = AABB(n_batches=n_envs, n_aabbs=extra_n_faces)
                 extra_bvh = LBVH(extra_aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64)
                 self._shared_metadata.extra_visual_bvhs.append(
-                    _SolverBVH(solver=other_solver, bvh=extra_bvh, aabb=extra_aabb)
+                    _SolverBVH(
+                        solver=other_solver,
+                        bvh=extra_bvh,
+                        aabb=extra_aabb,
+                        raycast_mask=extra_mask,
+                    )
                 )
 
             self._update_bvh(self._shared_metadata)
@@ -463,8 +504,10 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     def _cast_visual_rays(cls, solver, bvh, shared_metadata, links_pos, links_quat, output_cache):
         """Cast rays against a single solver's visual BVH."""
         kernel_cast_rays_visual(
+            solver.vverts_info,
             solver.vverts_state,
             solver.vfaces_info,
+            solver.vgeoms_state,
             bvh.nodes,
             bvh.morton_codes,
             links_pos,
