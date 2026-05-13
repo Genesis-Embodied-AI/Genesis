@@ -1932,6 +1932,8 @@ class KinematicEntity(Entity):
         Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Requires the entity's
         morph to have been created with ``enable_custom_vverts=True``.
         """
+        if self._enable_heterogeneous:
+            gs.raise_exception("This method is not supported by heterogeneous entities.")
         if not self._morph.enable_custom_vverts:
             gs.raise_exception(
                 "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
@@ -1940,12 +1942,28 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def get_vverts(self, envs_idx=None):
-        """Return a copy of this entity's visual vertex positions from ``vverts_state.pos``."""
-        if not self._morph.enable_custom_vverts:
-            gs.raise_exception(
-                "'get_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
-            )
-        return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
+        """Return a copy of this entity's visual vertex positions in world space.
+
+        For entities created with ``morph.enable_custom_vverts=True``, the positions are read directly from the
+        engine-owned ``vverts_state.pos`` buffer. For other entities the positions are computed on the fly from each
+        vgeom's current world pose applied to its rest-pose ``init_vverts``.
+        """
+        if self._enable_heterogeneous:
+            gs.raise_exception("This method is not supported by heterogeneous entities.")
+        self._solver.update_vgeoms()
+        if self._morph.enable_custom_vverts:
+            return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
+
+        vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
+        vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
+        parts = []
+        for vgeom in self.vgeoms:
+            init = torch.as_tensor(vgeom.init_vverts, dtype=gs.tc_float, device=gs.device)
+            pos = vgeoms_pos[..., vgeom.idx, :].unsqueeze(-2)
+            quat = vgeoms_quat[..., vgeom.idx, :].unsqueeze(-2)
+            parts.append(gu.transform_by_trans_quat(init, pos, quat))
+        tensor = torch.cat(parts, dim=-2)
+        return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @property
     def links(self) -> list[RigidLink]:

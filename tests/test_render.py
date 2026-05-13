@@ -8,6 +8,7 @@ import time
 import numpy as np
 import pytest
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -2112,3 +2113,123 @@ def test_set_vverts(batched, renderer, show_viewer):
     # set_vverts requires the entity's morph to be created with ``enable_custom_vverts=True``.
     with pytest.raises(gs.GenesisException, match="enable_custom_vverts=True"):
         plane.set_vverts(0.0)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_set_vverts_sphere_to_box(renderer, show_viewer):
+    # Build a grid-subdivided cube (10 segments per edge -> 602 vertices) so the topology has vertices at every cube
+    # corner and edge. ``spherify`` maps the cube grid onto the sphere surface with the same triangulation. The
+    # deformable is loaded with the spherified mesh and ``set_vverts`` later swaps the verts back to the cube
+    # positions. The reference sphere and box are the standard ``gs.morphs.Sphere`` / ``gs.morphs.Box`` primitives;
+    # the cube grid already has vertices at every cube corner, so the post-morph silhouette is byte-equal to the
+    # primitive box, while the spherified mesh differs from the primitive sphere by a handful of boundary pixels
+    # (different tessellations of the same circle outline).
+    n_seg = 10
+    coords = np.linspace(-1.0, 1.0, n_seg + 1)
+    cube_verts_list: list[np.ndarray] = []
+    vert_index: dict[tuple, int] = {}
+    faces: list[list[int]] = []
+    for axis in range(3):
+        for sign in (-1.0, 1.0):
+            i, j = (axis + 1) % 3, (axis + 2) % 3
+            grid = np.empty((n_seg + 1, n_seg + 1), dtype=int)
+            for a in range(n_seg + 1):
+                for b in range(n_seg + 1):
+                    p = np.zeros(3)
+                    p[axis] = sign
+                    p[i] = coords[a]
+                    p[j] = coords[b]
+                    key = tuple(np.round(p, 8))
+                    idx = vert_index.get(key)
+                    if idx is None:
+                        idx = len(cube_verts_list)
+                        vert_index[key] = idx
+                        cube_verts_list.append(p)
+                    grid[a, b] = idx
+            for a in range(n_seg):
+                for b in range(n_seg):
+                    v00, v10 = int(grid[a, b]), int(grid[a + 1, b])
+                    v01, v11 = int(grid[a, b + 1]), int(grid[a + 1, b + 1])
+                    if sign > 0:
+                        faces.append([v00, v10, v11])
+                        faces.append([v00, v11, v01])
+                    else:
+                        faces.append([v00, v11, v10])
+                        faces.append([v00, v01, v11])
+
+    radius = 0.2
+    cube_verts = np.asarray(cube_verts_list, dtype=gs.np_float) * radius
+    faces_arr = np.asarray(faces, dtype=gs.np_int)
+    x, y, z = cube_verts[:, 0] / radius, cube_verts[:, 1] / radius, cube_verts[:, 2] / radius
+    sphere_verts = radius * np.column_stack(
+        [
+            x * np.sqrt(np.maximum(0.0, 1 - y * y / 2 - z * z / 2 + y * y * z * z / 3)),
+            y * np.sqrt(np.maximum(0.0, 1 - z * z / 2 - x * x / 2 + z * z * x * x / 3)),
+            z * np.sqrt(np.maximum(0.0, 1 - x * x / 2 - y * y / 2 + x * x * y * y / 3)),
+        ]
+    )
+    sphere_tri = trimesh.Trimesh(vertices=sphere_verts, faces=faces_arr, process=False)
+
+    pos_sphere = (0.0, 0.0, 1.0)
+    pos_box = (5.0, 0.0, 1.0)
+    pos_deformable = (10.0, 0.0, 1.0)
+    cam_dz = 1.0
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=radius,
+            pos=pos_sphere,
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0 * radius, 2.0 * radius, 2.0 * radius),
+            pos=pos_box,
+            fixed=True,
+        ),
+    )
+    deformable = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            files=(sphere_tri,),
+            pos=pos_deformable,
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+    )
+    cam = scene.add_camera(
+        res=(256, 256),
+        pos=(pos_sphere[0], pos_sphere[1], pos_sphere[2] + cam_dz),
+        lookat=pos_sphere,
+        up=(0.0, 1.0, 0.0),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    cam.set_pose(pos=(pos_sphere[0], pos_sphere[1], pos_sphere[2] + cam_dz), lookat=pos_sphere)
+    mask_sphere = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+
+    cam.set_pose(pos=(pos_box[0], pos_box[1], pos_box[2] + cam_dz), lookat=pos_box)
+    mask_box = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+
+    # The reference primitive sphere uses a different tessellation than the spherified cube grid, so the two circle
+    # silhouettes differ by a handful of boundary pixels - bound the symmetric difference at 0.5% of the area.
+    sphere_tolerance = max(int(0.005 * mask_sphere.sum()), 1)
+
+    cam.set_pose(pos=(pos_deformable[0], pos_deformable[1], pos_deformable[2] + cam_dz), lookat=pos_deformable)
+    mask_deformable_sphere = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert int((mask_deformable_sphere ^ mask_sphere).sum()) < sphere_tolerance
+
+    deformable.set_vverts(cube_verts + np.array(pos_deformable, dtype=gs.np_float))
+    mask_deformable_box = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert_equal(mask_deformable_box, mask_box)
+
+    deformable.set_vverts(None)
+    mask_deformable_restored = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert int((mask_deformable_restored ^ mask_sphere).sum()) < sphere_tolerance

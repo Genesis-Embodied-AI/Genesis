@@ -3304,9 +3304,15 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
                             <capsule length="0.1" radius="0.02"/>
                         </geometry>
                     </collision>
+                    <visual>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule length="0.06" radius="0.03"/>
+                        </geometry>
+                    </visual>
                 </link>
             </robot>
-            """
+"""
         )
 
     scene = gs.Scene(show_viewer=show_viewer)
@@ -3329,6 +3335,13 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     geom_verts = tensor_to_array(geom.get_verts())
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.0), axis=-1, ord=np.inf).min() < 1e-3
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
+
+    (vgeom,) = robot.vgeoms
+    vgeom_verts = tensor_to_array(vgeom.get_vverts())
+    # Visual is a capsule (length=0.06, radius=0.03, total height 0.12) centered on the link, so after
+    # the collision capsule settles against the plane (link at z=0.07), the visual spans z in [0.01, 0.13].
+    assert np.linalg.norm(vgeom_verts - (0.0, 0.0, 0.01), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(vgeom_verts - (0.0, 0.0, 0.13), axis=-1, ord=np.inf).min() < 1e-3
 
 
 @pytest.mark.required
