@@ -67,18 +67,16 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
     original_on_draw = ImGuiOverlayPlugin.on_draw
 
     # ImGui's modern input pipeline rebuilds ``io.mouse_pos`` from the queued event stream on every
-    # ``new_frame``, so a one-shot direct write at init does not stick (pyglet posts a real cursor-position
-    # event between successive frames and the next ``new_frame`` overwrites our value). Park the cursor by
-    # appending the canonical ``IsMousePosValid`` sentinel as the LAST event in the queue at the start of
-    # every frame. Pre-call ``_init_imgui`` here so ``self._io`` is available; the real ``on_draw`` will
-    # short-circuit its own init via the ``_init_attempted`` guard.
-    FLT_MAX = 3.4028234663852886e38
-
+    # ``new_frame``, so a one-shot direct write at init does not stick (pyglet posts a cursor-position
+    # event whenever it processes Win32 messages, and the next ``new_frame`` overwrites our value). Park
+    # the cursor off-panel by appending an event with negative coordinates as the LAST event in the queue
+    # at the start of every frame. Pre-call ``_init_imgui`` here so ``self._io`` is available; the real
+    # ``on_draw`` will short-circuit its own init via the ``_init_attempted`` guard.
     def _on_draw_deterministic(self):
         if not self._init_attempted:
             self._init_imgui()
         if self._available:
-            self._io.add_mouse_pos_event(-FLT_MAX, -FLT_MAX)
+            self._io.add_mouse_pos_event(-1.0, -1.0)
         # DEBUG (DO NOT MERGE): instrument input state at each phase of the frame.
         _dump_imgui_state("before-on_draw", self)
         original_on_draw(self)
