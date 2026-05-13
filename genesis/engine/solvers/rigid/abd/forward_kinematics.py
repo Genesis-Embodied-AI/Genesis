@@ -1198,28 +1198,34 @@ def kernel_update_vgeoms(
         )
 
 
-@qd.kernel(fastcache=gs.use_fastcache)
-def kernel_update_all_vverts(
-    vverts_info: array_class.VVertsInfo,
+@qd.kernel(fastcache=True)
+def kernel_update_vverts_for_vgeoms(
+    vgeoms_idx: qd.types.ndarray(),
     vgeoms_info: array_class.VGeomsInfo,
     vgeoms_state: array_class.VGeomsState,
+    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     static_rigid_sim_config: qd.template(),
 ):
     """
-    Transform visual vertices from local vgeom space to world space.
+    Refresh vverts_state.pos for the requested vgeom range from FK output. Only iterates vverts that have a slot in
+    the custom buffer (vverts_state_idx != -1); other vverts are computed on the fly by their consumers, so they have
+    no persistent storage here.
     """
-    n_vverts = vverts_info.init_pos.shape[0]
+    n_vgeoms_in = vgeoms_idx.shape[0]
     _B = vgeoms_state.pos.shape[1]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for i_vv, i_b in qd.ndrange(n_vverts, _B):
-        i_vg = vverts_info.vgeom_idx[i_vv]
-        vverts_state.pos[i_vv, i_b] = gu.qd_transform_by_trans_quat(
-            vverts_info.init_pos[i_vv],
-            vgeoms_state.pos[i_vg, i_b],
-            vgeoms_state.quat[i_vg, i_b],
-        )
+    for i_vg_, i_b in qd.ndrange(n_vgeoms_in, _B):
+        i_vg = vgeoms_idx[i_vg_]
+        v_start = vgeoms_info.vvert_start[i_vg]
+        v_end = vgeoms_info.vvert_end[i_vg]
+        for i_vv in range(v_start, v_end):
+            i_state = vverts_info.vverts_state_idx[i_vv]
+            if i_state >= 0:
+                vverts_state.pos[i_state, i_b] = gu.qd_transform_by_trans_quat(
+                    vverts_info.init_pos[i_vv], vgeoms_state.pos[i_vg, i_b], vgeoms_state.quat[i_vg, i_b]
+                )
 
 
 @qd.func

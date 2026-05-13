@@ -5,22 +5,23 @@ Depth Camera with Deforming Kinematic Entity + Articulated Rigid Robot
 End-to-end demonstration of multi-solver raycasting and per-sensor link
 resolution.  The scene contains:
 
-- **Rigid entities** (RigidSolver): ground plane + Go2 quadruped robot
-- **Kinematic entities** (KinematicSolver): a deforming sphere (opted-in
-  via ``use_visual_raycasting``) and a static box (NOT opted-in, invisible
-  to raycasters — verifies phase-3 per-entity filtering).
+- **Rigid entities** (RigidSolver): ground plane + Go2 quadruped robot.
+- **Kinematic entities** (KinematicSolver): a deforming sphere and a static box.
 
 Two depth cameras are attached to *different solvers*:
 
-1. A camera on the Go2's ``base`` link (rigid) — looks forward.
-2. A camera on the plane (rigid, world-fixed) — third-person overhead view.
+1. A camera on the Go2's ``base`` link (rigid) - looks forward.
+2. A camera on the plane (rigid, world-fixed) - third-person overhead view.
 
-Both cameras see the rigid robot AND the opted-in kinematic sphere, while
-the non-opted-in kinematic box is invisible to rays (phase-3 filtering).
+Both cameras see every entity in the scene, rigid and kinematic alike: the rigid
+collision BVH and the kinematic visual BVH are merged at ray-cast time so each
+ray returns the closer hit. The sphere's vertices are pushed every frame via
+``set_vverts`` and survive ``step()`` because the FK kernel skips
+``vverts_info.is_custom`` entries.
 
 Depth frames are saved to ``/tmp/depth_out/`` as grayscale PNGs:
-- ``cam_robot_XXXX.png`` — Go2-mounted camera
-- ``cam_world_XXXX.png`` — world-fixed camera
+- ``cam_robot_XXXX.png`` - Go2-mounted camera
+- ``cam_world_XXXX.png`` - world-fixed camera
 
 Usage
 -----
@@ -39,6 +40,7 @@ import torch
 import trimesh
 
 import genesis as gs
+from genesis.utils.misc import tensor_to_array
 
 
 # ----------------------------- helpers ---------------------------------
@@ -57,7 +59,7 @@ def wave_deform(verts, t, amplitude=0.08, freq=4.0):
 
 
 def save_depth_png(depth_img, out_path, max_range):
-    depth_np = depth_img.detach().cpu().numpy()
+    depth_np = tensor_to_array(depth_img)
     valid = np.isfinite(depth_np) & (depth_np < max_range)
     normalized = np.where(valid, 1.0 - depth_np / max_range, 0.0)
     gray = (normalized * 255).astype(np.uint8)
@@ -76,6 +78,7 @@ def save_depth_png(depth_img, out_path, max_range):
 def main():
     parser = argparse.ArgumentParser(description="Multi-solver depth camera demo")
     parser.add_argument("-v", "--vis", action="store_true", help="Open Genesis 3D viewer")
+    parser.add_argument("-c", "--cpu", action="store_true", help="Force CPU backend")
     parser.add_argument("-B", "--num_envs", type=int, default=0, help="Number of parallel envs (0 = unbatched)")
     parser.add_argument("--steps", type=int, default=300, help="Number of simulation steps")
     parser.add_argument("--save-every", type=int, default=10, help="Save depth PNG every N steps")
@@ -87,7 +90,7 @@ def main():
     for old in out_dir.glob("cam_*.png"):
         old.unlink()
 
-    gs.init(backend=gs.gpu)
+    gs.init(backend=gs.cpu if args.cpu else gs.gpu)
 
     scene = gs.Scene(
         viewer_options=gs.options.ViewerOptions(
@@ -116,8 +119,7 @@ def main():
     # Kinematic entities (KinematicSolver)
     # =====================================================================
 
-    # 1) Deforming sphere — opted-IN via use_visual_raycasting.
-    #    Visible to both depth cameras.
+    # 1) Deforming sphere - vertices are pushed every frame via set_vverts.
     sphere_verts, sphere_faces = create_sphere_mesh(radius=0.25, subdivisions=3)
     sphere_verts[:, 2] += 0.5
     sphere_verts[:, 0] += 1.0  # place to the right of the robot
@@ -127,14 +129,17 @@ def main():
     mesh_sphere.export(tmp_sphere.name)
 
     kin_sphere = scene.add_entity(
-        morph=gs.morphs.Mesh(file=tmp_sphere.name, pos=(0, 0, 0), fixed=True),
-        material=gs.materials.Kinematic(use_visual_raycasting=True),
+        morph=gs.morphs.Mesh(
+            file=tmp_sphere.name,
+            pos=(0, 0, 0),
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Default(color=(0.2, 0.8, 0.4)),
     )
 
-    # 2) Static box — NOT opted-in (use_visual_raycasting=False, default).
-    #    Visible in the 3D viewer but INVISIBLE to both depth cameras.
-    #    This verifies phase-3 per-entity filtering.
+    # 2) Static box - FK-driven, visible to both depth cameras like the sphere.
     box_tri = trimesh.creation.box(extents=(0.3, 0.3, 0.3))
     box_verts = box_tri.vertices.astype(np.float32)
     box_verts[:, 2] += 0.15
@@ -145,14 +150,14 @@ def main():
     tmp_box = tempfile.NamedTemporaryFile(suffix=".obj", delete=False)
     mesh_box.export(tmp_box.name)
 
-    kin_box_no_raycast = scene.add_entity(
+    kin_box = scene.add_entity(
         morph=gs.morphs.Mesh(file=tmp_box.name, pos=(0, 0, 0), fixed=True),
-        material=gs.materials.Kinematic(),  # use_visual_raycasting=False (default)
+        material=gs.materials.Kinematic(),
         surface=gs.surfaces.Default(color=(1.0, 0.3, 0.3)),
     )
 
     # =====================================================================
-    # Depth camera sensors — on different solvers
+    # Depth camera sensors - on different solvers
     # =====================================================================
     max_range = 5.0
     cam_res = (96, 72)
@@ -218,8 +223,8 @@ def main():
     print("Scene entities:")
     print(f"  [RIGID]      plane       idx={plane.idx}")
     print(f"  [RIGID]      go2         idx={go2.idx}  (articulated, {go2.n_links} links)")
-    print(f"  [KINEMATIC]  kin_sphere   idx={kin_sphere.idx}  use_visual_raycasting=True")
-    print(f"  [KINEMATIC]  kin_box      idx={kin_box_no_raycast.idx}  use_visual_raycasting=False")
+    print(f"  [KINEMATIC]  kin_sphere   idx={kin_sphere.idx}  (deforms each step)")
+    print(f"  [KINEMATIC]  kin_box      idx={kin_box.idx}")
     print()
     print("Depth cameras:")
     print(f"  cam_robot : on go2 base link (entity_idx={go2.idx})")

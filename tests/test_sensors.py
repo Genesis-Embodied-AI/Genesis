@@ -10,6 +10,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, assert_equal
 
@@ -821,6 +822,77 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_raycaster_against_kinematic_entity(show_viewer, n_envs):
+    # KinematicEntity participates in raycasting automatically. set_vverts overrides survive
+    # step() so a depth camera reads the user-driven positions, and set_vverts(None) hands
+    # control back to FK without dropping any rays.
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    kin_sphere = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.2,
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+        material=gs.materials.Kinematic(),
+    )
+    cam = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 0.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
+    if n_envs > 0:
+        scene.build(n_envs=n_envs)
+    else:
+        scene.build()
+    scene.step()
+
+    # Camera at x=-1 looking along +x. Sphere center at (0, 0, 0.5), radius 0.2 -> distance 0.8.
+    img_fk = cam.read_image()
+    assert_allclose(img_fk[..., 15, 20], 0.8, tol=1e-2)
+
+    # Scale the sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4,
+    # so the closest point is at x=-0.4 and the depth at the center pixel becomes 0.6. A uniform
+    # translation would mask index-aliasing bugs in the raycaster's vvert lookup; scaling perturbs
+    # each vvert by a different amount, so only the correct vvert-to-state mapping yields 0.6.
+    fk_vverts = tensor_to_array(kin_sphere.get_vverts())
+    center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
+    kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
+    scene.step()
+    img_scaled = cam.read_image()
+    assert_allclose(img_scaled[..., 15, 20], 0.6, tol=1e-2)
+
+    # Push the sphere far away. The depth camera should report no_hit_value at the center pixel.
+    kin_sphere.set_vverts((100.0, 100.0, 100.0))
+    scene.step()
+    img_off = cam.read_image()
+    assert_allclose(img_off[..., 15, 20], 5.0, tol=gs.EPS)
+
+    # Restoring FK control returns the original hit distance.
+    kin_sphere.set_vverts(None)
+    scene.step()
+    img_restored = cam.read_image()
+    assert_allclose(img_restored[..., 15, 20], 0.8, tol=1e-2)
 
 
 @pytest.mark.required

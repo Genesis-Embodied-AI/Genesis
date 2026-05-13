@@ -1870,20 +1870,6 @@ def get_vverts_state(solver):
     )
 
 
-# =========================================== VvertsState ===========================================
-
-
-@DATA_ORIENTED
-class StructVvertsState(metaclass=BASE_METACLASS):
-    pos: V_ANNOTATION
-
-
-def get_vverts_state(solver):
-    return StructVvertsState(
-        pos=V(dtype=gs.qd_vec3, shape=(solver.n_vverts_, solver._B)),
-    )
-
-
 # =========================================== VfacesInfo ===========================================
 
 
@@ -2161,38 +2147,4 @@ def get_raycast_result(n_envs: int):
     )
 
 
-DofsState = StructDofsState if gs.use_ndarray else qd.template()
-DofsInfo = StructDofsInfo if gs.use_ndarray else qd.template()
-GeomsState = StructGeomsState if gs.use_ndarray else qd.template()
-GeomsInfo = StructGeomsInfo if gs.use_ndarray else qd.template()
-GeomsInitAABB = V_ANNOTATION
-LinksState = StructLinksState if gs.use_ndarray else qd.template()
-LinksInfo = StructLinksInfo if gs.use_ndarray else qd.template()
-JointsInfo = StructJointsInfo if gs.use_ndarray else qd.template()
-JointsState = StructJointsState if gs.use_ndarray else qd.template()
-VertsState = StructVertsState if gs.use_ndarray else qd.template()
-VertsInfo = StructVertsInfo if gs.use_ndarray else qd.template()
-EdgesInfo = StructEdgesInfo if gs.use_ndarray else qd.template()
-FacesInfo = StructFacesInfo if gs.use_ndarray else qd.template()
-VVertsInfo = StructVvertsInfo if gs.use_ndarray else qd.template()
-VVertsState = StructVvertsState if gs.use_ndarray else qd.template()
-VFacesInfo = StructVfacesInfo if gs.use_ndarray else qd.template()
-VGeomsInfo = StructVgeomsInfo if gs.use_ndarray else qd.template()
-VGeomsState = StructVgeomsState if gs.use_ndarray else qd.template()
-EntitiesState = StructEntitiesState if gs.use_ndarray else qd.template()
-EntitiesInfo = StructEntitiesInfo if gs.use_ndarray else qd.template()
-EqualitiesInfo = StructEqualitiesInfo if gs.use_ndarray else qd.template()
-RigidGlobalInfo = StructRigidGlobalInfo if gs.use_ndarray else qd.template()
-ColliderState = StructColliderState if gs.use_ndarray else qd.template()
-ColliderInfo = StructColliderInfo if gs.use_ndarray else qd.template()
-MPRState = StructMPRState if gs.use_ndarray else qd.template()
-MPRInfo = StructMPRInfo if gs.use_ndarray else qd.template()
-SupportFieldInfo = StructSupportFieldInfo if gs.use_ndarray else qd.template()
-ConstraintState = StructConstraintState if gs.use_ndarray else qd.template()
-GJKState = StructGJKState if gs.use_ndarray else qd.template()
-GJKInfo = StructGJKInfo if gs.use_ndarray else qd.template()
-SDFInfo = StructSDFInfo if gs.use_ndarray else qd.template()
-ContactIslandState = StructContactIslandState if gs.use_ndarray else qd.template()
-DiffContactInput = StructDiffContactInput if gs.use_ndarray else qd.template()
-RigidAdjointCache = StructRigidAdjointCache if gs.use_ndarray else qd.template()
-RaycastResult = StructViewerRaycastResult if gs.use_ndarray else qd.template()
+GeomsInitAABB = qd.Tensor

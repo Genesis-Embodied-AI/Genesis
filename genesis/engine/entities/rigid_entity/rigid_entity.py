@@ -106,11 +106,6 @@ class KinematicEntity(Entity):
         self._is_attached: bool = False
         self._variant_init_qpos: list[np.ndarray] | None = None
 
-        # Custom visual vertex state (set via set_vverts)
-        self._custom_vverts: np.ndarray | None = None  # (B, n_vverts, 3)
-        self._custom_vverts_dirty: bool = False
-        self._use_visual_raycasting: bool = material.use_visual_raycasting
-
         self._load_model()
 
         # Initialize target variables and checkpoint
@@ -1925,35 +1920,6 @@ class KinematicEntity(Entity):
             return self._vgeoms
         return gs.List(vgeom for link in self._links for vgeom in link.vgeoms)
 
-    # ------------------------------------------------------------------------------------
-    # ----------------------------- custom visual vertex API ----------------------------
-    # ------------------------------------------------------------------------------------
-
-    @property
-    def has_custom_vverts(self) -> bool:
-        """Whether this entity has custom per-frame visual vertex positions set via :meth:`set_vverts`."""
-        return self._custom_vverts is not None
-
-    @property
-    def use_visual_raycasting(self) -> bool:
-        """Whether raycasting (depth camera, lidar) uses visual mesh instead of collision mesh.
-
-        Must be set **before** ``scene.build()``, because the raycaster BVH is sized at
-        build time based on this flag.
-        """
-        return self._use_visual_raycasting
-
-    @use_visual_raycasting.setter
-    def use_visual_raycasting(self, value: bool):
-        if self._is_built:
-            gs.raise_exception(
-                "use_visual_raycasting cannot be changed after scene.build(). "
-                "The raycaster BVH has already been sized. "
-                "Set this flag before calling scene.build(), or use "
-                "gs.materials.Kinematic(use_visual_raycasting=True)."
-            )
-        self._use_visual_raycasting = value
-
     @gs.assert_built
     def set_vverts(self, vverts, envs_idx=None):
         """Override this entity's visual vertex positions for rendering and sensors.
@@ -1980,53 +1946,25 @@ class KinematicEntity(Entity):
     def get_vverts(self, envs_idx=None):
         """Return a copy of this entity's visual vertex positions in world space.
 
-        This only affects rendering (and raycasting when ``use_visual_raycasting`` is enabled)
-        and does not change physics simulation.
-
-        Parameters
-        ----------
-        vverts : np.ndarray | torch.Tensor
-            Vertex positions in world space.
-            Shape ``(n_vverts, 3)`` for unbatched scenes or single-env update, or
-            ``(B, n_vverts, 3)`` for batched scenes where ``B = len(envs_idx)``
-            (or ``n_envs`` if ``envs_idx`` is None).
-        envs_idx : None | int | list | np.ndarray, optional
-            Environment indices to update. If None, all environments are updated.
-            When a single int is given, ``vverts`` may be ``(n_vverts, 3)``.
+        For entities created with enable_custom_vverts=True the positions are read from the engine custom buffer; for
+        other entities they are computed on the fly from each vgeom's current pose applied to its rest-pose init_vverts.
         """
         if self._enable_heterogeneous:
             gs.raise_exception("This method is not supported by heterogeneous entities.")
         if self._morph.enable_custom_vverts:
             return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
 
-        if self._custom_vverts is None:
-            # Initialize with the raycast-invalidation sentinel so envs that have not yet been
-            # populated by a partial set_vverts(envs_idx=...) call are pushed outside any sensible
-            # ray range and rendered off-screen, instead of collapsing to the world origin.
-            from genesis.utils.raycast_qd import _VVERT_INVALIDATION_POS
-
-            self._custom_vverts = np.full((B, self.n_vverts, 3), _VVERT_INVALIDATION_POS, dtype=gs.np_float)
-
-        if self._solver.n_envs == 0:
-            if vverts.shape != (self.n_vverts, 3):
-                gs.raise_exception(f"Expected vverts shape ({self.n_vverts}, 3), got {vverts.shape}")
-            self._custom_vverts[0] = vverts
-        else:
-            if envs_idx is not None:
-                envs_idx = np.atleast_1d(np.asarray(envs_idx, dtype=int))
-            else:
-                envs_idx = np.arange(B)
-            # Allow (n_vverts, 3) as shorthand when updating a single environment
-            if len(envs_idx) == 1 and vverts.ndim == 2 and vverts.shape == (self.n_vverts, 3):
-                vverts = vverts[np.newaxis]  # -> (1, n_vverts, 3)
-            if vverts.shape != (len(envs_idx), self.n_vverts, 3):
-                gs.raise_exception(f"Expected vverts shape ({len(envs_idx)}, {self.n_vverts}, 3), got {vverts.shape}")
-            self._custom_vverts[envs_idx] = vverts
-        self._custom_vverts_dirty = True
-
-    # ------------------------------------------------------------------------------------
-    # ------------------------------------ link / joint ----------------------------------
-    # ------------------------------------------------------------------------------------
+        self._solver.update_vgeoms()
+        vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
+        vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
+        parts = []
+        for vgeom in self.vgeoms:
+            init = torch.as_tensor(vgeom.init_vverts, dtype=gs.tc_float, device=gs.device)
+            pos = vgeoms_pos[..., vgeom.idx, :].unsqueeze(-2)
+            quat = vgeoms_quat[..., vgeom.idx, :].unsqueeze(-2)
+            parts.append(gu.transform_by_trans_quat(init, pos, quat))
+        tensor = torch.cat(parts, dim=-2)
+        return tensor[0] if self._solver.n_envs == 0 else tensor
 
     @property
     def links(self) -> list[RigidLink]:

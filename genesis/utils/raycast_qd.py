@@ -4,15 +4,6 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 from genesis.engine.bvh import STACK_SIZE
 from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
-from genesis.utils.misc import qd_to_numpy
-from genesis.utils.raycast import RayHit
-
-# Position used to push non-participating visual vertices outside any
-# reasonable ray max_range so the BVH naturally skips them.
-_VVERT_INVALIDATION_POS = 1e10
-
-if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
 
 
 @qd.func
@@ -378,38 +369,6 @@ def kernel_update_visual_aabbs(
     aabb_state: qd.template(),
 ):
     update_visual_aabbs(vverts_state, vfaces_info, aabb_state)
-
-
-@qd.kernel
-def kernel_copy_custom_vverts(
-    custom_vverts: qd.types.ndarray(ndim=3),  # (B, n_vverts_entity, 3)
-    vverts_state: array_class.VVertsState,
-    vvert_start: int,
-):
-    """Copy per-batch custom vertex positions into the solver's vverts_state."""
-    _B = custom_vverts.shape[0]
-    n_vv = custom_vverts.shape[1]
-    for i_b, i_vv in qd.ndrange(_B, n_vv):
-        vverts_state.pos[vvert_start + i_vv, i_b] = qd.math.vec3(
-            custom_vverts[i_b, i_vv, 0],
-            custom_vverts[i_b, i_vv, 1],
-            custom_vverts[i_b, i_vv, 2],
-        )
-
-
-@qd.kernel
-def kernel_invalidate_vverts_range(
-    vverts_state: array_class.VVertsState,
-    vvert_start: int,
-    n_vverts: int,
-):
-    """Set a range of visual vertices to a far-away position so they produce
-    degenerate AABBs that no ray will ever intersect."""
-    _B = vverts_state.pos.shape[1]
-    for i_vv, i_b in qd.ndrange(n_vverts, _B):
-        vverts_state.pos[vvert_start + i_vv, i_b] = qd.math.vec3(
-            _VVERT_INVALIDATION_POS, _VVERT_INVALIDATION_POS, _VVERT_INVALIDATION_POS
-        )
 
 
 @qd.kernel

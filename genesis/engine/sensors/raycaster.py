@@ -28,13 +28,11 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field
 from genesis.utils.raycast_qd import (
     bvh_ray_cast,
     bvh_ray_cast_visual,
-    kernel_copy_custom_vverts,
-    kernel_invalidate_vverts_range,
     kernel_merge_ray_hits,
     kernel_update_visual_aabbs,
     kernel_update_verts_and_aabbs,
 )
-from genesis.engine.solvers.rigid.abd.forward_kinematics import kernel_forward_kinematics, kernel_update_all_vverts
+from genesis.engine.solvers.rigid.abd.forward_kinematics import kernel_forward_kinematics
 from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
@@ -277,50 +275,27 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
 
     @classmethod
     def _update_visual_bvh_for_solver(cls, solver, aabb, bvh):
-        """Update a visual-mesh BVH for a single solver."""
-        # Check whether any opted-in entity relies on FK-derived vertex positions
-        # (i.e. it participates in visual raycasting but has no custom vverts).
-        # If every opted-in entity supplies custom vverts, the expensive
-        # FK → vgeom → vvert transform pipeline can be skipped entirely.
-        needs_fk = any(e.use_visual_raycasting and not e.has_custom_vverts for e in solver.entities)
+        """Update a visual-mesh BVH for a single solver.
 
-        if needs_fk:
-            if not solver._is_forward_pos_updated:
-                kernel_forward_kinematics(
-                    solver.scene._envs_idx,
-                    links_state=solver.links_state,
-                    links_info=solver.links_info,
-                    joints_state=solver.joints_state,
-                    joints_info=solver.joints_info,
-                    dofs_state=solver.dofs_state,
-                    dofs_info=solver.dofs_info,
-                    entities_info=solver.entities_info,
-                    rigid_global_info=solver._rigid_global_info,
-                    static_rigid_sim_config=solver._static_rigid_sim_config,
-                )
-                solver._is_forward_pos_updated = True
-            solver.update_vgeoms()
-            kernel_update_all_vverts(
-                vverts_info=solver.vverts_info,
-                vgeoms_info=solver.vgeoms_info,
-                vgeoms_state=solver.vgeoms_state,
-                vverts_state=solver.vverts_state,
+        Reads ``vverts_state.pos`` as the single source of truth. FK-driven entries are populated
+        by ``solver.update_vgeoms()``; user-driven entries (those flagged in
+        ``vverts_info.is_custom`` via ``set_vverts``) survive across calls.
+        """
+        if not solver._is_forward_pos_updated:
+            kernel_forward_kinematics(
+                solver.scene._envs_idx,
+                links_state=solver.links_state,
+                links_info=solver.links_info,
+                joints_state=solver.joints_state,
+                joints_info=solver.joints_info,
+                dofs_state=solver.dofs_state,
+                dofs_info=solver.dofs_info,
+                entities_info=solver.entities_info,
+                rigid_global_info=solver._rigid_global_info,
                 static_rigid_sim_config=solver._static_rigid_sim_config,
             )
-
-        for entity in solver.entities:
-            if entity.use_visual_raycasting and entity.has_custom_vverts:
-                kernel_copy_custom_vverts(
-                    np.ascontiguousarray(entity._custom_vverts, dtype=gs.np_float),
-                    solver.vverts_state,
-                    entity.vvert_start,
-                )
-            elif not entity.use_visual_raycasting:
-                # Push vverts to 1e10 so the BVH skips them.  Only needed the
-                # first time, or after FK ran (which overwrites all positions).
-                if needs_fk or not getattr(entity, "_raycast_vverts_invalidated", False):
-                    kernel_invalidate_vverts_range(solver.vverts_state, entity.vvert_start, entity.n_vverts)
-                    entity._raycast_vverts_invalidated = True
+            solver._is_forward_pos_updated = True
+        solver.update_vgeoms()
         kernel_update_visual_aabbs(
             vverts_state=solver.vverts_state,
             vfaces_info=solver.vfaces_info,
@@ -359,7 +334,7 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         # self._link=None and returns, so the per-sensor solver/index lists and the
         # offsets arrays still need entries here for the raycaster's cross-solver
         # gather and the [..., -1, :] read below to stay aligned. links_idx is left
-        # alone — it is consumed only by non-raycaster sensors.
+        # alone - it is consumed only by non-raycaster sensors.
         if self._options.entity_idx is None or self._options.entity_idx < 0:
             sim = self._manager._sim
             batch_size = sim._B
@@ -390,13 +365,8 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
             solver = self._shared_metadata.solver
             n_envs = solver._B
 
-            # Determine whether primary solver uses visual mesh for raycasting.
-            # KinematicSolver has no collision geometry — always use visual BVH.
-            # The rigid solver always stays on its collision BVH so that rigid bodies
-            # without ``use_visual_raycasting`` set keep their pre-existing raycast
-            # behaviour. If any rigid entity opts in, the rigid solver is added below
-            # as an *additional* visual BVH alongside its collision BVH; the merge
-            # kernel picks the closer hit.
+            # Primary solver: RigidSolver always uses its collision BVH; KinematicSolver has no
+            # collision geometry so it falls back to the visual BVH built from ``vverts_state``.
             use_visual = not isinstance(solver, RigidSolver)
             self._shared_metadata.use_visual_bvh = use_visual
 
@@ -409,17 +379,17 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
                 self._shared_metadata.aabb, max_n_query_result_per_aabb=0, n_radix_sort_groups=64
             )
 
-            # Build extra visual BVHs for any active solver that has opted-in entities.
-            # When the primary solver is the rigid solver and a rigid entity opted in,
-            # we add a *second* BVH for the same solver: the primary stays on collision,
-            # and this extra one covers visual meshes for the opted-in entities.
+            # Add a secondary visual BVH for every other active KinematicSolver that has any vverts.
+            # The merge kernel keeps the closer hit, so collision and visual meshes coexist transparently.
             for other_solver in [sim.rigid_solver, sim.kinematic_solver]:
                 if not other_solver.is_active:
                     continue
                 if other_solver is solver and use_visual:
                     # Already covered by the primary visual BVH.
                     continue
-                if not any(e.use_visual_raycasting for e in other_solver.entities):
+                if isinstance(other_solver, RigidSolver):
+                    continue
+                if other_solver.vfaces_info.vgeom_idx.shape[0] == 0:
                     continue
                 extra_n_faces = other_solver.vfaces_info.vgeom_idx.shape[0]
                 extra_aabb = AABB(n_batches=n_envs, n_aabbs=extra_n_faces)
@@ -492,46 +462,6 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
         return gs.tc_float
 
     @classmethod
-    def _gather_sensor_link_poses(cls, shared_metadata):
-        """Gather per-sensor link positions/quaternions from potentially different solvers.
-
-        Returns (links_pos, links_quat) with shape (B, n_sensors, 3) and (B, n_sensors, 4),
-        where each sensor column is fetched from its own solver.  Static sensors (no entity)
-        get identity transforms.
-        """
-        solvers_list = shared_metadata._sensor_link_solvers
-        indices_list = shared_metadata._sensor_link_indices
-        n_sensors = len(solvers_list)
-        B = shared_metadata.solver._B
-
-        links_pos = torch.zeros(B, n_sensors, 3, device=gs.device, dtype=gs.tc_float)
-        links_quat = torch.zeros(B, n_sensors, 4, device=gs.device, dtype=gs.tc_float)
-        links_quat[:, :, 0] = 1.0  # identity quaternion for static sensors
-
-        # Group sensors by solver for efficient bulk lookups
-        groups = defaultdict(list)  # id(solver) -> [(out_col, link_idx)]
-        solver_by_id = {}
-        for i, (solver, link_idx) in enumerate(zip(solvers_list, indices_list)):
-            if solver is not None:
-                sid = id(solver)
-                groups[sid].append((i, link_idx))
-                solver_by_id[sid] = solver
-
-        for sid, members in groups.items():
-            solver = solver_by_id[sid]
-            link_indices = torch.tensor([m[1] for m in members], device=gs.device, dtype=gs.tc_int)
-            pos = solver.get_links_pos(links_idx=link_indices)
-            quat = solver.get_links_quat(links_idx=link_indices)
-            if solver.n_envs == 0:
-                pos = pos[None]
-                quat = quat[None]
-            for j, (sensor_col, _) in enumerate(members):
-                links_pos[:, sensor_col, :] = pos[:, j, :]
-                links_quat[:, sensor_col, :] = quat[:, j, :]
-
-        return links_pos, links_quat
-
-    @classmethod
     def _cast_visual_rays(cls, solver, bvh, shared_metadata, links_pos, links_quat, output_cache):
         """Cast rays against a single solver's visual BVH."""
         kernel_cast_rays_visual(
@@ -560,8 +490,33 @@ class RaycasterSensor(RigidSensorMixin, Sensor[RaycasterOptions, RaycasterShared
     ):
         cls._update_bvh(shared_metadata)
 
-        # Gather link poses once (supports sensors on different solvers)
-        links_pos, links_quat = cls._gather_sensor_link_poses(shared_metadata)
+        # Gather per-sensor link poses. Sensors can live on different solvers (e.g. a depth camera
+        # mounted on a rigid robot pointing at a kinematic mesh), so each sensor column is fetched
+        # from its own solver via bulk lookups; static sensors (solver=None) keep identity transforms.
+        solvers_list = shared_metadata._sensor_link_solvers
+        indices_list = shared_metadata._sensor_link_indices
+        n_sensors = len(solvers_list)
+        B = shared_metadata.solver._B
+        links_pos = torch.zeros(B, n_sensors, 3, device=gs.device, dtype=gs.tc_float)
+        links_quat = torch.zeros(B, n_sensors, 4, device=gs.device, dtype=gs.tc_float)
+        links_quat[:, :, 0] = 1.0
+        groups: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        solver_by_id: dict[int, object] = {}
+        for i, (solver, link_idx) in enumerate(zip(solvers_list, indices_list)):
+            if solver is not None:
+                solver_by_id[id(solver)] = solver
+                groups[id(solver)].append((i, link_idx))
+        for sid, members in groups.items():
+            solver = solver_by_id[sid]
+            link_indices = torch.tensor([m[1] for m in members], device=gs.device, dtype=gs.tc_int)
+            pos = solver.get_links_pos(links_idx=link_indices)
+            quat = solver.get_links_quat(links_idx=link_indices)
+            if solver.n_envs == 0:
+                pos = pos[None]
+                quat = quat[None]
+            for j, (sensor_col, _) in enumerate(members):
+                links_pos[:, sensor_col, :] = pos[:, j, :]
+                links_quat[:, sensor_col, :] = quat[:, j, :]
 
         # Cast against primary BVH
         if shared_metadata.use_visual_bvh:
