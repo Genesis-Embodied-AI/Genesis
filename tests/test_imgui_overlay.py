@@ -66,7 +66,19 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
     # deterministic 1/60 fallback instead of the wall clock.
     original_on_draw = ImGuiOverlayPlugin.on_draw
 
+    # ImGui's modern input pipeline rebuilds ``io.mouse_pos`` from the queued event stream on every
+    # ``new_frame``, so a one-shot direct write at init does not stick (pyglet posts a real cursor-position
+    # event between successive frames and the next ``new_frame`` overwrites our value). Park the cursor by
+    # appending the canonical ``IsMousePosValid`` sentinel as the LAST event in the queue at the start of
+    # every frame. Pre-call ``_init_imgui`` here so ``self._io`` is available; the real ``on_draw`` will
+    # short-circuit its own init via the ``_init_attempted`` guard.
+    FLT_MAX = 3.4028234663852886e38
+
     def _on_draw_deterministic(self):
+        if not self._init_attempted:
+            self._init_imgui()
+        if self._available:
+            self._io.add_mouse_pos_event(-FLT_MAX, -FLT_MAX)
         # DEBUG (DO NOT MERGE): instrument input state at each phase of the frame.
         _dump_imgui_state("before-on_draw", self)
         original_on_draw(self)
@@ -110,10 +122,8 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
         # different pixel grids across platforms. Pin to 1.0 so vertex positions are byte-identical everywhere.
         self._io.display_framebuffer_scale = (1.0, 1.0)
         self._io.fonts.flags |= self._imgui.ImFontAtlasFlags_.no_baked_lines.value
-        # Park the ImGui mouse cursor outside the panel so no widget can enter its hovered state in the captured
-        # frame. On Windows, pyglet seeds ``io.mouse_pos`` from the OS cursor at startup, which would otherwise
-        # leak the runner's cursor location into hover-sensitive pixels.
-        self._io.mouse_pos = (-1.0, -1.0)
+        # Mouse-cursor parking is handled per-frame in ``_on_draw_deterministic`` via the event API; a direct
+        # write here would be wiped by the next ``new_frame`` (see comment there).
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
 
