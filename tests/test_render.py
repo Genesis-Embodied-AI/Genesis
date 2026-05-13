@@ -163,13 +163,18 @@ def test_render_api(show_viewer, renderer_type, renderer):
 def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
+    CAM_POS_LOCAL = (0.0, 0.0, 2.0)
+    CAM_LOOKAT_LOCAL = (0.0, 0.0, 0.0)
+
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
             env_separate_rigid=False,
+            # When env are not separated, their world pos is different, which affects lighting
+            shadow=False,
         ),
         renderer=renderer,
-        show_viewer=show_viewer,
+        show_viewer=False,
         show_FPS=False,
     )
     if IS_BATCHRENDER:
@@ -190,7 +195,9 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             intensity=0.5,
         )
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            plane_size=(1.5, 1.5),
+        ),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
         ),
@@ -299,14 +306,21 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
     cam = scene.add_camera(
-        pos=(0.9, 0.0, 0.4),
-        lookat=(0.0, 0.0, 0.4),
+        pos=CAM_POS_LOCAL,
+        lookat=CAM_LOOKAT_LOCAL,
         res=(500, 500),
         fov=60,
         spp=512,
-        GUI=False,
+        GUI=show_viewer,
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
+
+    # Apple Software Renderer is fully deterministic: successive captures do not match exactly
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        tol_env = tol_step = 1.0
+    else:
+        tol_env = 0.002
+        tol_step = gs.EPS
 
     cam.start_recording()
     for _ in range(7):
@@ -318,21 +332,32 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         steps_rgb_arrays = []
         for _ in range(2):
             scene.step()
-
-            robots_rgb_arrays = []
             robot.set_qpos(qpos)
-            if show_viewer:
-                scene.visualizer.update()
-            for i in range(3):
-                pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
-                lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
-                cam.set_pose(pos=pos_i, lookat=lookat_i)
-                rgb_array, *_ = cam.render(
+
+            if IS_BATCHRENDER:
+                rgb_array_all, *_ = cam.render(
                     rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
                 )
-                rgb_std = tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max()
+
+            env_rgb_array = None
+            for i_b in range(scene.n_envs):
+                if IS_BATCHRENDER:
+                    rgb_array = rgb_array_all[i_b]
+                else:
+                    # When env are not separated, scene cameras observe ALL batched environments. Moreover, scene
+                    # cameras are operating in local frame of the env they bind to rather than world-frame, for
+                    # consistency with camera sensors. As a result, the pos offset to apply for looking at each parallel
+                    # env depends on the env the camera is bound to.
+                    env_offset = scene.envs_offset[i_b] - scene.envs_offset[cam.env_idx]
+                    cam.set_pose(pos=CAM_POS_LOCAL + env_offset, lookat=CAM_LOOKAT_LOCAL + env_offset)
+                    rgb_array, *_ = cam.render(
+                        rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
+                    )
+                rgb_array = tensor_to_array(rgb_array).astype(np.float32)
+
+                rgb_std = rgb_array.reshape((-1, 3)).std(axis=0).max()
                 try:
-                    assert rgb_std > 10.0
+                    assert rgb_std > 20.0
                 except AssertionError:
                     if rgb_std < gs.EPS:
                         if sys.platform == "darwin" and scene.visualizer.is_software:
@@ -340,16 +365,17 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                                 "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
                             )
                     raise
-                robots_rgb_arrays.append(rgb_array)
-            steps_rgb_arrays.append(robots_rgb_arrays)
+                if env_rgb_array is None:
+                    env_rgb_array = rgb_array
+                else:
+                    rgb_env_diff = np.abs(env_rgb_array - rgb_array)
+                    assert rgb_env_diff.mean() < tol_env, "Per-env renders do not match"
 
-        try:
-            for i in range(3):
-                assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
-        except AssertionError:
-            if sys.platform == "darwin" and scene.visualizer.is_software:
-                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures do not match.")
-            raise
+            steps_rgb_arrays.append(env_rgb_array)
+
+        rgb_step_diff = np.abs(np.diff(steps_rgb_arrays, axis=0))
+        assert rgb_step_diff.mean() < tol_step, "Per-step renders do not match"
+
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
@@ -377,6 +403,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             enable_collision=False,
         ),
         vis_options=gs.options.VisOptions(
+            env_separate_rigid=False,
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),

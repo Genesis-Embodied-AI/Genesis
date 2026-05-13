@@ -340,7 +340,7 @@ def test_mouse_interaction_plugin(n_envs, env_spacing, n_envs_per_row, target_en
     # Ensure event is processed
     wait_for_viewer_events(pyrender_viewer, check_event_count())
 
-    # Confirm the raycaster picked the expected env (requires envs_offset alignment in kernel_cast_ray).
+    # Confirm the raycaster picked the expected env
     if target_env_idx is not None:
         plugin = next(
             p for p in scene.viewer._viewer_plugins if isinstance(p, gs.vis.viewer_plugins.MouseInteractionPlugin)

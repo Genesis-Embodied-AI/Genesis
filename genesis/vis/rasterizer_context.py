@@ -436,11 +436,17 @@ class RasterizerContext:
                         mesh = geom.get_trimesh()
                     geom_T = geoms_T[geom.idx][geom_envs_idx]
 
-                    # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting
+                    # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting,
+                    # unless they do not overlap.
                     env_shared = not self.env_separate_rigid
                     if not env_shared and isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal = entity.morph.normal
-                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                        if (
+                            abs(plane_normal[0]) < gs.EPS
+                            and abs(plane_normal[1]) < gs.EPS
+                            and self.scene.env_spacing[0] < plane_size[0]
+                            and self.scene.env_spacing[1] < plane_size[1]
+                        ):
                             geom_T = geom_T[:1]
                             env_shared = True
 
@@ -485,8 +491,13 @@ class RasterizerContext:
 
                     # Keep single-instance for z-axis normal planes (see on_rigid)
                     if isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal = entity.morph.normal
-                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                        if (
+                            abs(plane_normal[0]) < gs.EPS
+                            and abs(plane_normal[1]) < gs.EPS
+                            and self.scene.env_spacing[0] < plane_size[0]
+                            and self.scene.env_spacing[1] < plane_size[1]
+                        ):
                             geom_T = geom_T[:1]
 
                     node = self.rigid_nodes[geom.uid]

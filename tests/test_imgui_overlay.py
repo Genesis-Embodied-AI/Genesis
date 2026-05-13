@@ -54,6 +54,10 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
         # different pixel grids across platforms. Pin to 1.0 so vertex positions are byte-identical everywhere.
         self._io.display_framebuffer_scale = (1.0, 1.0)
         self._io.fonts.flags |= self._imgui.ImFontAtlasFlags_.no_baked_lines.value
+        # Park the ImGui mouse cursor outside the panel so no widget can enter its hovered state in the captured
+        # frame. On Windows, pyglet seeds ``io.mouse_pos`` from the OS cursor at startup, which would otherwise
+        # leak the runner's cursor location into hover-sensitive pixels.
+        self._io.mouse_pos = (-1.0, -1.0)
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
 
