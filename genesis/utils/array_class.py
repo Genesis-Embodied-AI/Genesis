@@ -2105,7 +2105,7 @@ class DataManager:
         self.errno = V(dtype=gs.qd_int, shape=(solver._B,))
 
 
-# =========================================== ViewerRaycastResult ===========================================
+# =========================================== RaycastResult ===========================================
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2114,16 +2114,14 @@ class RaycastResult:
     geom_idx: qd.Tensor
     hit_point: qd.Tensor
     normal: qd.Tensor
-    env_idx: qd.Tensor
 
 
-def get_viewer_raycast_result():
+def get_raycast_result(n_envs: int):
     return RaycastResult(
-        distance=V(dtype=gs.qd_float, shape=()),
-        geom_idx=V(dtype=gs.qd_int, shape=()),
-        hit_point=V_VEC(3, dtype=gs.qd_float, shape=()),
-        normal=V_VEC(3, dtype=gs.qd_float, shape=()),
-        env_idx=V(dtype=gs.qd_int, shape=()),
+        distance=V(dtype=gs.qd_float, shape=(n_envs,)),
+        geom_idx=V(dtype=gs.qd_int, shape=(n_envs,)),
+        hit_point=V_VEC(3, dtype=gs.qd_float, shape=(n_envs,)),
+        normal=V_VEC(3, dtype=gs.qd_float, shape=(n_envs,)),
     )
 
 

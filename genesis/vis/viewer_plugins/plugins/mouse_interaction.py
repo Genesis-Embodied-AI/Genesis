@@ -1,5 +1,5 @@
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Type
+from typing import TYPE_CHECKING
 
 import numpy as np
 from typing_extensions import override
@@ -7,11 +7,12 @@ from typing_extensions import override
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.utils.mesh import create_cylinder, create_plane
-from genesis.utils.misc import qd_to_numpy, tensor_to_array, with_lock
+from genesis.utils.misc import tensor_to_array, with_lock
 from genesis.utils.raycast import Ray, RayHit, plane_raycast
 from genesis.vis.keybindings import MouseButton
 
-from ..viewer_plugin import EVENT_HANDLE_STATE, EVENT_HANDLED, RaycasterViewerPlugin
+from ..base import EVENT_HANDLE_STATE, EVENT_HANDLED
+from ..raycast import RaycasterViewerPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity import RigidLink
@@ -276,10 +277,7 @@ class MouseInteractionPlugin(RaycasterViewerPlugin):
         self._mouse_drag_plane = (plane_normal, -np.dot(plane_normal, self._prev_mouse_scene_pos))
 
     def _get_last_raycast_env_idx(self) -> int | None:
-        if self.scene.n_envs == 0:
-            return None
-        env_idx = int(qd_to_numpy(self._raycaster.result.env_idx))
-        return env_idx if env_idx >= 0 else None
+        return self._raycaster.last_hit_env_idx
 
     def _apply_spring_force(self, control_point: np.ndarray, dt: float) -> None:
         if not self._held_link:

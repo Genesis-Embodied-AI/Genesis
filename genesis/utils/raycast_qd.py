@@ -1,18 +1,9 @@
-import math
-from typing import TYPE_CHECKING
-
 import quadrants as qd
-import numpy as np
 
 import genesis as gs
 import genesis.utils.array_class as array_class
-from genesis.engine.bvh import AABB, LBVH, STACK_SIZE
+from genesis.engine.bvh import STACK_SIZE
 from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
-from genesis.utils.misc import qd_to_numpy
-from genesis.utils.raycast import RayHit
-
-if TYPE_CHECKING:
-    from genesis.engine.scene import Scene
 
 
 @qd.func
@@ -291,27 +282,20 @@ def kernel_cast_ray(
     eps: float,
 ):
     """
-    Quadrants kernel for casting a single ray.
+    Cast a single ray against each env's BVH in parallel.
 
-    This loops over all environments in envs_idx and stores the closest hit in result. Each environment's BVH is built
-    in env-local coordinates, so the ray is shifted by -envs_offset[i_b] before the cast; the distance is invariant
-    under translation and the world hit point can be recovered from the original world ray.
+    Per-env: the ray is shifted by -envs_offset[i_b] (each BVH is in env-local coordinates) and the closest hit on
+    that env is written to result[i_b]; envs not in envs_idx are left as no-hit (geom_idx == -1, distance == +inf).
+    Aggregation across envs is intentionally out of scope, because cross-env reduction has no use beyond the viewer.
     """
-    # Setup ray
     ray_start_world = qd.math.vec3(ray_start[0], ray_start[1], ray_start[2])
     ray_direction_world = qd.math.vec3(ray_direction[0], ray_direction[1], ray_direction[2])
 
-    # Initialize result with no hit
-    result.distance[None] = qd.math.nan
-    result.geom_idx[None] = -1
-    result.hit_point[None] = qd.math.vec3(0.0, 0.0, 0.0)
-    result.normal[None] = qd.math.vec3(0.0, 0.0, 0.0)
-    result.env_idx[None] = -1
-
-    closest_distance = max_range
-    hit_face = -1
-    hit_env_idx = -1
-    hit_normal = qd.math.vec3(0.0, 0.0, 0.0)
+    for i_b in range(result.geom_idx.shape[0]):
+        result.distance[i_b] = qd.math.inf
+        result.geom_idx[i_b] = -1
+        result.hit_point[i_b] = qd.math.vec3(0.0, 0.0, 0.0)
+        result.normal[i_b] = qd.math.vec3(0.0, 0.0, 0.0)
 
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
@@ -319,7 +303,7 @@ def kernel_cast_ray(
         cur_hit_face, cur_distance, cur_hit_normal = bvh_ray_cast(
             ray_start=ray_start_world - env_offset,
             ray_dir=ray_direction_world,
-            max_range=closest_distance,
+            max_range=max_range,
             i_b=i_b,
             bvh_nodes=bvh_nodes,
             bvh_morton_codes=bvh_morton_codes,
@@ -329,133 +313,8 @@ def kernel_cast_ray(
             free_verts_state=free_verts_state,
             eps=eps,
         )
-
-        # Update global closest if this environment had a closer hit
-        if cur_hit_face >= 0 and cur_distance < closest_distance:
-            closest_distance = cur_distance
-            hit_face = cur_hit_face
-            hit_env_idx = i_b
-            hit_normal = cur_hit_normal
-
-    # Store result
-    if hit_face >= 0:
-        result.distance[None] = closest_distance
-        # Find which geom this face belongs to
-        i_g = faces_info.geom_idx[hit_face]
-        result.geom_idx[None] = i_g
-        # Compute hit point in world coordinates (translation cancels out via ray_start_world)
-        hit_point = ray_start_world + closest_distance * ray_direction_world
-        result.hit_point[None] = hit_point
-        # Store normal
-        result.normal[None] = hit_normal
-        result.env_idx[None] = hit_env_idx
-
-
-class Raycaster:
-    """
-    BVH-accelerated raycaster. Currently only supports single-ray casting.
-    """
-
-    def __init__(self, scene: "Scene"):
-        self.result = array_class.get_viewer_raycast_result()
-
-        self.scene = scene
-        self.solver = scene.sim.rigid_solver
-
-        self.envs_idx = scene._envs_idx
-
-        # Build the BVH structure for rendered environments.
-        n_faces = self.solver.faces_info.geom_idx.shape[0]
-
-        if n_faces == 0:
-            gs.logger.warning("No faces found in scene, viewer raycasting will not work.")
-            self.aabb = None
-            self.bvh = None
-            return
-
-        self.aabb = AABB(n_batches=len(self.envs_idx), n_aabbs=n_faces)
-        self.bvh = LBVH(
-            self.aabb,
-            max_n_query_result_per_aabb=0,  # Not used for ray queries
-            n_radix_sort_groups=min(64, n_faces),
-        )
-
-        self.update()
-
-        # Make sure raycasting is pre-compiled to avoid race condition with Quadrants.
-        self.cast(ray_origin=np.zeros(3, dtype=gs.np_float), ray_direction=np.zeros(3, dtype=gs.np_float))
-
-    def _raycast_from_result(self, result: array_class.RaycastResult) -> "RayHit | None":
-        distance = float(qd_to_numpy(result.distance))
-        if math.isnan(distance):
-            return None
-
-        geom_idx = int(qd_to_numpy(result.geom_idx))
-        position = qd_to_numpy(result.hit_point)
-        normal = qd_to_numpy(result.normal)
-
-        # Get the geom object from the solver
-        geom = None
-        if self.solver is not None and 0 <= geom_idx < len(self.solver.geoms):
-            geom = self.solver.geoms[geom_idx]
-
-        return RayHit(distance, position, normal, geom)
-
-    def update(self):
-        """Update the BVH structure with current geometry state."""
-        if self.bvh is None:
-            return
-
-        # Update vertex positions and AABBs
-        kernel_update_verts_and_aabbs(
-            geoms_info=self.solver.geoms_info,
-            geoms_state=self.solver.geoms_state,
-            verts_info=self.solver.verts_info,
-            faces_info=self.solver.faces_info,
-            free_verts_state=self.solver.free_verts_state,
-            fixed_verts_state=self.solver.fixed_verts_state,
-            static_rigid_sim_config=self.solver._static_rigid_sim_config,
-            aabb_state=self.aabb,
-        )
-
-        # Rebuild BVH
-        self.bvh.build()
-
-    def cast(
-        self, ray_origin: np.ndarray, ray_direction: np.ndarray, max_range: float = 1000.0, envs_idx=None
-    ) -> RayHit | None:
-        """
-        Cast a single ray against all rendered environments and return the closest hit.
-
-        Parameters
-        ----------
-        ray_origin : np.ndarray, shape (3,)
-            The origin point of the ray in world coordinates.
-        ray_direction : np.ndarray, shape (3,)
-            The normalized direction vector of the ray.
-        max_range : float, optional
-            Maximum distance to check for intersections. Default is 1000.0.
-        envs_idx : np.ndarray, shape (n_envs,), optional
-            Indices of environments to consider for raycasting. If None, use all environments.
-
-        Returns
-        -------
-        RayHit | None
-            A tuple containing distance, position, normal, and geom.
-        """
-        kernel_cast_ray(
-            self.solver.fixed_verts_state,
-            self.solver.free_verts_state,
-            self.solver.verts_info,
-            self.solver.faces_info,
-            self.bvh.nodes,
-            self.bvh.morton_codes,
-            np.ascontiguousarray(ray_origin, dtype=gs.np_float),
-            np.ascontiguousarray(ray_direction, dtype=gs.np_float),
-            max_range,
-            envs_idx if envs_idx is not None else self.envs_idx,
-            self.solver._rigid_global_info,
-            self.result,
-            gs.EPS,
-        )
-        return self._raycast_from_result(self.result)
+        if cur_hit_face >= 0:
+            result.distance[i_b] = cur_distance
+            result.geom_idx[i_b] = faces_info.geom_idx[cur_hit_face]
+            result.normal[i_b] = cur_hit_normal
+            result.hit_point[i_b] = ray_start_world + cur_distance * ray_direction_world

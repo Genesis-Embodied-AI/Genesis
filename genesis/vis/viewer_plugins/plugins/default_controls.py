@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import genesis as gs
 from genesis.vis.keybindings import Key, Keybind
 
-from ..viewer_plugin import ViewerPlugin
+from ..base import ViewerPlugin
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
