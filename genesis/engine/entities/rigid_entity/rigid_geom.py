@@ -906,15 +906,29 @@ class RigidVisGeom(RBC):
     def set_vverts(self, vverts, envs_idx=None):
         """Override this vgeom's visual vertex positions for rendering and sensors. See
         :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
+
+        Requires the owning entity's morph to be created with ``enable_custom_vverts=True``.
         """
-        if isinstance(self._entity._morph, gs.morphs.Plane):
-            gs.raise_exception("'set_vverts' is not supported for 'gs.morphs.Plane' entities.")
-        self._entity._solver.set_vverts(self.vvert_start, self.vvert_end, vverts, envs_idx)
+        if not self._entity._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+        self._entity._solver.set_vverts(
+            self.vvert_start + custom_offset, self.vvert_end + custom_offset, vverts, envs_idx
+        )
 
     @gs.assert_built
     def get_vverts(self, envs_idx=None):
         """Return a copy of this vgeom's visual vertex positions from ``vverts_state.pos``."""
-        return self._entity._solver.get_vverts(self.vvert_start, self.vvert_end, envs_idx)
+        if not self._entity._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'get_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+        return self._entity._solver.get_vverts(
+            self.vvert_start + custom_offset, self.vvert_end + custom_offset, envs_idx
+        )
 
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------

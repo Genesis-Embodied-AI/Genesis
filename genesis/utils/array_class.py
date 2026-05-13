@@ -1841,7 +1841,7 @@ class VVertsInfo:
 
 
 def get_vverts_info(solver):
-    shape = (solver.n_vverts_, solver._B) if solver._options.batch_vverts_info else (solver.n_vverts_,)
+    shape = (solver.n_custom_vverts_, solver._B) if solver._options.batch_vverts_info else (solver.n_custom_vverts_,)
 
     return VVertsInfo(
         init_pos=V(dtype=gs.qd_vec3, shape=shape),
@@ -1860,8 +1860,13 @@ class VVertsState:
 
 
 def get_vverts_state(solver):
+    if math.prod((solver.n_custom_vverts_, solver._B, 3)) > np.iinfo(np.int32).max:
+        gs.raise_exception(
+            f"Custom-vverts state shape (n_custom_vverts={solver.n_custom_vverts_}, B={solver._B}, 3) is too large. "
+            "Consider opting fewer kinematic entities into 'enable_custom_vverts=True', or reducing 'n_envs'."
+        )
     return VVertsState(
-        pos=V(dtype=gs.qd_vec3, shape=(solver.n_vverts_, solver._B)),
+        pos=V(dtype=gs.qd_vec3, shape=(solver.n_custom_vverts_, solver._B)),
     )
 
 
@@ -1875,7 +1880,7 @@ class VFacesInfo:
 
 
 def get_vfaces_info(solver):
-    shape = (solver.n_vfaces_,)
+    shape = (solver.n_custom_vfaces_,)
 
     return VFacesInfo(
         vverts_idx=V(dtype=gs.qd_ivec3, shape=shape),

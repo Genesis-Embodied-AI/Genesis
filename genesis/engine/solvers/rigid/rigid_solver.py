@@ -307,6 +307,8 @@ class RigidSolver(KinematicSolver):
             vgeom_start=self.n_vgeoms,
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
+            custom_vvert_start=self.n_custom_vverts,
+            custom_vface_start=self.n_custom_vfaces,
             visualize_contact=visualize_contact,
             morph_heterogeneous=morph_heterogeneous,
             name=name,

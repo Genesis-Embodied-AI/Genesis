@@ -102,6 +102,7 @@ class Morph(Options):
     visualization: StrictBool = True
     collision: StrictBool = True
     requires_jac_and_IK: StrictBool = False
+    enable_custom_vverts: StrictBool = False
 
     @model_validator(mode="before")
     @classmethod

@@ -128,6 +128,8 @@ class KinematicSolver(Solver):
             vgeom_start=self.n_vgeoms,
             vvert_start=self.n_vverts,
             vface_start=self.n_vfaces,
+            custom_vvert_start=self.n_custom_vverts,
+            custom_vface_start=self.n_custom_vfaces,
             morph_heterogeneous=morph_heterogeneous,
             name=name,
         )
@@ -155,6 +157,8 @@ class KinematicSolver(Solver):
         self._n_vgeoms = self.n_vgeoms
         self._n_vfaces = self.n_vfaces
         self._n_vverts = self.n_vverts
+        self._n_custom_vverts = self.n_custom_vverts
+        self._n_custom_vfaces = self.n_custom_vfaces
         self._n_entities = self.n_entities
 
         self._vgeoms = self.vgeoms
@@ -177,6 +181,8 @@ class KinematicSolver(Solver):
         self.n_vgeoms_ = max(1, self.n_vgeoms)
         self.n_vfaces_ = max(1, self.n_vfaces)
         self.n_vverts_ = max(1, self.n_vverts)
+        self.n_custom_vverts_ = max(1, self.n_custom_vverts)
+        self.n_custom_vfaces_ = max(1, self.n_custom_vfaces)
         self.n_entities_ = max(1, self.n_entities)
 
         # batch_links_info is required when heterogeneous simulation is used.
@@ -377,19 +383,29 @@ class KinematicSolver(Solver):
         self.vverts_info = self.data_manager.vverts_info
         self.vverts_state = self.data_manager.vverts_state
         self.vfaces_info = self.data_manager.vfaces_info
-        if self.n_vverts > 0:
-            vgeoms = self.vgeoms
-            kernel_init_vvert_fields(
-                vverts=np.concatenate([vgeom.init_vverts for vgeom in vgeoms], dtype=gs.np_float),
-                vfaces=np.concatenate([vgeom.init_vfaces + vgeom.vvert_start for vgeom in vgeoms], dtype=gs.np_int),
-                vnormals=np.concatenate([vgeom.init_vnormals for vgeom in vgeoms], dtype=gs.np_float),
-                vverts_vgeom_idx=np.concatenate(
-                    [np.full(vgeom.n_vverts, vgeom.idx) for vgeom in vgeoms], dtype=gs.np_int
-                ),
-                vverts_info=self.vverts_info,
-                vfaces_info=self.vfaces_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-            )
+        if self.n_custom_vverts == 0:
+            return
+
+        # Only entities that opted in via ``morph.enable_custom_vverts=True`` get an entry in vverts_info /
+        # vverts_state. Each opted entity owns a contiguous slice of the custom-vvert buffer starting
+        # at ``entity._custom_vvert_start``; the vfaces' vert indices are remapped from the global
+        # vvert numbering into that custom-buffer index space.
+        vgeom_payload = []
+        for entity in self._entities:
+            if not entity._morph.enable_custom_vverts:
+                continue
+            entity_custom_offset = entity._custom_vvert_start - entity._vvert_start
+            for vgeom in entity.vgeoms:
+                vgeom_payload.append((vgeom, vgeom._vvert_start + entity_custom_offset))
+        kernel_init_vvert_fields(
+            vverts=np.concatenate([vg.init_vverts for vg, _ in vgeom_payload], dtype=gs.np_float),
+            vfaces=np.concatenate([vg.init_vfaces + custom_off for vg, custom_off in vgeom_payload], dtype=gs.np_int),
+            vnormals=np.concatenate([vg.init_vnormals for vg, _ in vgeom_payload], dtype=gs.np_float),
+            vverts_vgeom_idx=np.concatenate([np.full(vg.n_vverts, vg.idx) for vg, _ in vgeom_payload], dtype=gs.np_int),
+            vverts_info=self.vverts_info,
+            vfaces_info=self.vfaces_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
 
     def _init_vgeom_fields(self):
         self.vgeoms_info = self.data_manager.vgeoms_info
@@ -1073,7 +1089,8 @@ class KinematicSolver(Solver):
             kernel_clear_vverts(vvert_start, vvert_end, envs_idx, self.vverts_info, self._static_rigid_sim_config)
         else:
             target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
-            vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz"))
+            # ``broadcast_tensor`` may return a non-contiguous expanded view; kernel ndarray args must be contiguous.
+            vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
             kernel_set_vverts(
                 vverts, vvert_start, envs_idx, self.vverts_info, self.vverts_state, self._static_rigid_sim_config
             )
@@ -1143,6 +1160,18 @@ class KinematicSolver(Solver):
         if self.is_built:
             return self._n_vfaces
         return sum(entity.n_vfaces for entity in self._entities)
+
+    @property
+    def n_custom_vverts(self):
+        if self.is_built:
+            return self._n_custom_vverts
+        return sum(entity.n_vverts for entity in self._entities if entity._morph.enable_custom_vverts)
+
+    @property
+    def n_custom_vfaces(self):
+        if self.is_built:
+            return self._n_custom_vfaces
+        return sum(entity.n_vfaces for entity in self._entities if entity._morph.enable_custom_vverts)
 
     @property
     def n_qs(self):

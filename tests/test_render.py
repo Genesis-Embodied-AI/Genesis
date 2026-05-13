@@ -2036,6 +2036,7 @@ def test_set_vverts(batched, renderer, show_viewer):
             scale=0.2,
             pos=(0.0, 0.0, 0.5),
             fixed=True,
+            enable_custom_vverts=True,
         ),
     )
     cam = scene.add_camera(
@@ -2108,6 +2109,6 @@ def test_set_vverts(batched, renderer, show_viewer):
         with pytest.raises(gs.GenesisException):
             entity.set_vverts(0.0, envs_idx=0)
 
-    # set_vverts on a Plane entity is unsupported regardless of batching.
-    with pytest.raises(gs.GenesisException, match="gs.morphs.Plane"):
+    # set_vverts requires the entity's morph to be created with ``enable_custom_vverts=True``.
+    with pytest.raises(gs.GenesisException, match="enable_custom_vverts=True"):
         plane.set_vverts(0.0)

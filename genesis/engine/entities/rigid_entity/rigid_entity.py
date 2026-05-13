@@ -80,6 +80,8 @@ class KinematicEntity(Entity):
         vgeom_start: int,
         vvert_start: int,
         vface_start: int,
+        custom_vvert_start: int,
+        custom_vface_start: int,
         morph_heterogeneous: list[Morph] | None = None,
         name: str | None = None,
     ):
@@ -97,6 +99,8 @@ class KinematicEntity(Entity):
         self._vgeom_start = vgeom_start
         self._vvert_start = vvert_start
         self._vface_start = vface_start
+        self._custom_vvert_start = custom_vvert_start
+        self._custom_vface_start = custom_vface_start
 
         self._is_built: bool = False
         self._is_attached: bool = False
@@ -1925,17 +1929,23 @@ class KinematicEntity(Entity):
         scene's environment count when ``envs_idx`` is None). Scalars, ``(3,)``, and ``(n_vverts, 3)`` are
         accepted. ``vverts=None`` clears the override and lets the solver's FK take back over.
 
-        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Not supported for
-        ``gs.morphs.Plane`` entities.
+        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Requires the entity's
+        morph to have been created with ``enable_custom_vverts=True``.
         """
-        if isinstance(self._morph, gs.morphs.Plane):
-            gs.raise_exception("'set_vverts' is not supported for 'gs.morphs.Plane' entities.")
-        self._solver.set_vverts(self.vvert_start, self.vvert_start + self.n_vverts, vverts, envs_idx)
+        if not self._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        self._solver.set_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, vverts, envs_idx)
 
     @gs.assert_built
     def get_vverts(self, envs_idx=None):
         """Return a copy of this entity's visual vertex positions from ``vverts_state.pos``."""
-        return self._solver.get_vverts(self.vvert_start, self.vvert_start + self.n_vverts, envs_idx)
+        if not self._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'get_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
 
     @property
     def links(self) -> list[RigidLink]:
@@ -1998,6 +2008,8 @@ class RigidEntity(KinematicEntity):
         vgeom_start=0,
         vvert_start=0,
         vface_start=0,
+        custom_vvert_start=0,
+        custom_vface_start=0,
         equality_start=0,
         visualize_contact: bool = False,
         morph_heterogeneous: list[Morph] | None = None,
@@ -2032,6 +2044,8 @@ class RigidEntity(KinematicEntity):
             vgeom_start,
             vvert_start,
             vface_start,
+            custom_vvert_start,
+            custom_vface_start,
             morph_heterogeneous,
             name,
         )
