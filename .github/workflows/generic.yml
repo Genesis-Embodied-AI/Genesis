@@ -1,91 +1,43 @@
 name: Generic
 
+# DEBUG BRANCH (DO NOT MERGE): trimmed to a single Windows job that runs the flaky imgui overlay
+# screenshot test 50 times in a row via pytest-repeat with -x to abort on first failure. Restore the
+# original matrix before merging.
+
 on:
   pull_request:
     branches:
       - main
-  release:
-    branches:
-      - main
-    types: [published]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  generic-cpu:
-    name: ${{ matrix.OS }}-${{ matrix.PYTHON_VERSION }}-${{ matrix.GS_BACKEND }}-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        # See official Github documentation for details: https://shorturl.at/NJgsj
-        OS: ["ubuntu-24.04", "macos-15"]
-        PYTHON_VERSION: ["3.10", "3.11", "3.12", "3.13"]
-        GS_BACKEND: ["cpu"]
-        GS_ENABLE_NDARRAY: ["1"]
-        include:
-          # CPU backend - dynamic array (other OSes)
-          - OS: "ubuntu-22.04"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "1"
-          - OS: "ubuntu-24.04-arm"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "1"
-          - OS: "windows-2025"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "1"
-          # CPU backend - field array
-          - OS: "ubuntu-24.04"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "0"
-          - OS: "ubuntu-24.04-arm"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "0"
-          # FIXME: Quadrants compilation is taking so slow on Windows that running the unit tests
-          # for static arrays takes about 400min, which is not acceptable. Disabling for now.
-          # - OS: "windows-2025"
-          #   PYTHON_VERSION: "3.12"
-          #   GS_BACKEND: "cpu"
-          #   GS_ENABLE_NDARRAY: "0"
-          - OS: "macos-15"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "cpu"
-            GS_ENABLE_NDARRAY: "0"
-          # GPU backend - field array
-          - OS: "macos-15"
-            PYTHON_VERSION: "3.12"
-            GS_BACKEND: "gpu"
-            GS_ENABLE_NDARRAY: "1"
+  debug-imgui-windows:
+    name: debug-imgui-windows-2025
 
     env:
       HF_HUB_DOWNLOAD_TIMEOUT: "60"
       FORCE_COLOR: "1"
       PY_COLORS: "1"
       GS_CACHE_FILE_PATH: ".cache/genesis"
-      GS_ENABLE_NDARRAY: ${{ matrix.GS_ENABLE_NDARRAY }}
-      GS_TORCH_FORCE_CPU_DEVICE: ${{ startsWith(matrix.OS, 'macos-') && '1' || '0' }}
+      GS_ENABLE_NDARRAY: "1"
+      GS_TORCH_FORCE_CPU_DEVICE: "0"
       QD_OFFLINE_CACHE: "1"
       QD_OFFLINE_CACHE_CLEANING_POLICY: "never"
       QD_OFFLINE_CACHE_FILE_PATH: ".cache/quadrants"
-      QD_ENABLE_CUDA: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
-      QD_ENABLE_AMDGPU: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
-      QD_ENABLE_METAL: ${{ matrix.GS_BACKEND == 'gpu' && '1' || '0' }}
+      QD_ENABLE_CUDA: "0"
+      QD_ENABLE_AMDGPU: "0"
+      QD_ENABLE_METAL: "0"
       QD_DEBUG: "0"
       OMNI_KIT_ACCEPT_EULA: "yes"
 
-    runs-on: ${{ matrix.OS }}
+    runs-on: windows-2025
     if: github.event_name != 'release'
 
     steps:
       - name: Print system information (Windows)
-        if: startsWith(matrix.OS, 'windows-')
         shell: pwsh
         run: |
           $cpu = Get-CimInstance -ClassName Win32_Processor
@@ -105,43 +57,28 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.PYTHON_VERSION }}
+          python-version: "3.12"
 
       - name: Install system dependencies (Windows)
-        if: startsWith(matrix.OS, 'windows-')
         shell: bash
         run: |
           curl -L -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/25.1.5/mesa3d-25.1.5-release-msvc.7z
           7z x mesa.7z -omesa
           mv -v mesa/x64/* /C/Windows/System32/
 
-      - name: Install Mesa OpenGL driver (Linux)
-        if: startsWith(matrix.OS, 'ubuntu-')
-        run: |
-          for retry in {1..10}; do
-            sudo add-apt-repository -y ppa:kisak/kisak-mesa && break || sleep 5;
-          done
-          sudo apt install -y \
-              libglu1-mesa \
-              libegl-mesa0 \
-              libgl1-mesa-dev
       - name: Install python dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip setuptools pkg-info wheel
-
           # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
           pip3 install torch --upgrade --index-url https://download.pytorch.org/whl/cpu
+          # DEBUG (DO NOT MERGE): pytest-repeat enables the --count flag below.
+          pip install pytest-repeat
+
       - name: Install Genesis
         shell: bash
         run: |
-          PYTHON_DEPS="dev,render"
-          # Install USD for all platforms except ARM (usd-core doesn't support ARM)
-          # This is required for test_mesh.py which tests USD parsing functionality
-          if [[ "${{ matrix.OS }}" != 'ubuntu-24.04-arm' ]] ; then
-            PYTHON_DEPS="${PYTHON_DEPS},usd"
-          fi
-          pip install ".[${PYTHON_DEPS}]"
+          pip install ".[dev,render,usd]"
 
       - name: Get artifact prefix name
         id: artifact_prefix
@@ -161,50 +98,11 @@ jobs:
           restore-keys: |
             ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-
 
-      - name: Run unit tests
+      - name: Run flaky imgui overlay test 50x
+        shell: bash
+        # -n 0 -> disable xdist (run in-process); -x -> stop at first failure; --count=50 -> pytest-repeat;
+        # -s -> do not capture stderr so the [IMGUI_DEBUG] dumps land in the job log next to the snapshot diff.
         run: |
-          pytest -v -ra --logical --dev --backend ${{ matrix.GS_BACKEND }} -m 'required and not slow' --forked ./tests
-
-      - name: Save Updated Quadrants Kernel Cache
-        if: >-
-          ${{ always() &&
-              (matrix.OS == 'ubuntu-24.04' || matrix.OS == 'ubuntu-24.04-arm' || matrix.OS == 'macos-15' || matrix.OS == 'windows-2025') &&
-              matrix.PYTHON_VERSION == '3.12' &&
-              matrix.GS_BACKEND == 'cpu' &&
-              matrix.GS_ENABLE_NDARRAY == '1' &&
-              steps.artifact_prefix.outputs.ARTIFACT_PREFIX != '' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .cache
-          # Note that it is necessary to create a new archive systematically for now:
-          # See: https://github.com/actions/cache/issues/1594
-          key: ${{ steps.artifact_prefix.outputs.ARTIFACT_PREFIX }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-  publish-pypi:
-    name: Publish on PyPI
-    runs-on: ubuntu-24.04
-    permissions:
-      id-token: write
-    environment:
-      name: advance
-
-    if: github.event_name == 'release'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Build wheels
-        run: |
-          pip wheel --no-deps . -w wheelhouse
-
-      - name: Publish the wheels on PyPI
-        uses: pypa/gh-action-pypi-publish@v1.12.4
-        with:
-          packages-dir: wheelhouse
-          verify-metadata: true
-          attestations: true
-          print-hash: true
-          skip-existing: true
+          pytest -v -ra -s --logical --dev --backend cpu --forked \
+              -n 0 -x --count=50 \
+              tests/test_imgui_overlay.py::test_imgui_overlay_screenshot

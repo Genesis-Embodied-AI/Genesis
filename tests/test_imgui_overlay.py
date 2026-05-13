@@ -1,5 +1,8 @@
 """Screenshot integration test for ImGuiOverlayPlugin."""
 
+import os
+import sys
+
 import pytest
 
 import genesis as gs
@@ -7,6 +10,45 @@ from genesis.ext.pyrender.overlay import ImGuiOverlayPlugin
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE
 from .utils import rgb_array_to_png_bytes
+
+
+# DEBUG INSTRUMENTATION (DO NOT MERGE). Print ImGui input/focus/hover state around new_frame and around
+# the panel's widget submission so a failing CI run shows which input field is non-deterministic.
+_DEBUG_TAG = os.environ.get("IMGUI_DEBUG_TAG", "")
+
+
+def _dump_imgui_state(label, plugin):
+    imgui = plugin._imgui
+    io = plugin._io
+    if io is None:
+        sys.stderr.write(f"[IMGUI_DEBUG]{_DEBUG_TAG} {label}: io is None\n")
+        sys.stderr.flush()
+        return
+    fields = {
+        "mouse_pos": tuple(io.mouse_pos),
+        "mouse_pos_prev": tuple(io.mouse_pos_prev),
+        "mouse_delta": tuple(io.mouse_delta),
+        "mouse_down": [bool(io.mouse_down[i]) for i in range(5)],
+        "mouse_clicked": [bool(io.mouse_clicked[i]) for i in range(5)],
+        "want_capture_mouse": bool(io.want_capture_mouse),
+        "want_capture_keyboard": bool(io.want_capture_keyboard),
+        "want_set_mouse_pos": bool(io.want_set_mouse_pos),
+        "app_focus_lost": bool(io.app_focus_lost),
+        "nav_active": bool(io.nav_active),
+        "nav_visible": bool(io.nav_visible),
+        "config_flags": int(io.config_flags),
+        "backend_flags": int(io.backend_flags),
+        "display_size": tuple(io.display_size),
+        "display_framebuffer_scale": tuple(io.display_framebuffer_scale),
+    }
+    try:
+        fields["active_id"] = int(imgui.internal.get_active_id())
+        fields["hovered_id"] = int(imgui.internal.get_hovered_id())
+    except Exception as e:
+        fields["internal_id_lookup_error"] = repr(e)
+    sys.stderr.write(f"[IMGUI_DEBUG]{_DEBUG_TAG} {label}: {fields}\n")
+    sys.stderr.flush()
+
 
 try:
     import imgui_bundle  # noqa: F401
@@ -25,10 +67,24 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
     original_on_draw = ImGuiOverlayPlugin.on_draw
 
     def _on_draw_deterministic(self):
+        # DEBUG (DO NOT MERGE): instrument input state at each phase of the frame.
+        _dump_imgui_state("before-on_draw", self)
         original_on_draw(self)
+        _dump_imgui_state("after-on_draw", self)
         self._last_time = None
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "on_draw", _on_draw_deterministic)
+
+    # DEBUG (DO NOT MERGE): wrap the panel render path so we can read ImGui's hover/active id state at the
+    # point widgets have been submitted but before the draw lists are committed.
+    original_render_panel = ImGuiOverlayPlugin._render_control_panel
+
+    def _render_control_panel_debug(self):
+        _dump_imgui_state("before-render_control_panel", self)
+        original_render_panel(self)
+        _dump_imgui_state("after-render_control_panel", self)
+
+    monkeypatch.setattr(ImGuiOverlayPlugin, "_render_control_panel", _render_control_panel_debug)
 
     # Discard the plugin's 18 px ``ImFontConfig`` so ProggyClean loads at its native 13 px. ProggyClean is a bitmap
     # font, so glyph rasterization is a memcpy on every renderer (stb_truetype is not byte-identical across software
@@ -138,6 +194,8 @@ def test_imgui_overlay_screenshot(png_snapshot, monkeypatch):
     # because ``run_in_thread=False`` keeps the viewer (and the GL context it owns) on this thread.
     pyrender_viewer = scene.viewer._pyrender_viewer
     pyrender_viewer.switch_to()
+    sys.stderr.write(f"[IMGUI_DEBUG]{_DEBUG_TAG} ---- iteration start ----\n")
     pyrender_viewer.on_draw()
+    _dump_imgui_state("post-draw-final", imgui_plugin)
     rgb = pyrender_viewer._renderer.jit.read_color_buf(*pyrender_viewer._viewport_size, rgba=False)
     assert rgb_array_to_png_bytes(rgb) == png_snapshot
