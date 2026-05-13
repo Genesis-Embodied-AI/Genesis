@@ -3312,7 +3312,7 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
                     </visual>
                 </link>
             </robot>
-"""
+            """
         )
 
     scene = gs.Scene(show_viewer=show_viewer)

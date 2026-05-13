@@ -67,25 +67,17 @@ class GenesisGeomRetriever:
         args = {}
         vgeoms = self.rigid_solver.vgeoms
 
-        # The engine-side ``vverts_info`` / ``vfaces_info`` only allocate entries for entities opted into
-        # ``morph.enable_custom_vverts=True``; non-opted entities have no slot. Rebuild the per-vgeom static mesh layout
-        # from each vgeom's local ``init_vverts`` / ``init_vfaces`` so every vgeom is represented in the batch renderer.
-        mesh_vertices = (
-            np.concatenate([vgeom.init_vverts for vgeom in vgeoms], dtype=np.float32)
-            if vgeoms
-            else np.empty((0, 3), dtype=np.float32)
-        )
-        mesh_faces = (
-            np.concatenate([vgeom.init_vfaces for vgeom in vgeoms], dtype=np.int32)
-            if vgeoms
-            else np.empty((0, 3), dtype=np.int32)
-        )
+        # Retrieve geom data
+        mesh_vertices = self.rigid_solver.vverts_info.init_pos.to_numpy()
+        mesh_faces = self.rigid_solver.vfaces_info.vverts_idx.to_numpy()
         mesh_vertex_offsets = self.rigid_solver.vgeoms_info.vvert_start.to_numpy()
         mesh_face_starts = self.rigid_solver.vgeoms_info.vface_start.to_numpy()
         mesh_face_ends = self.rigid_solver.vgeoms_info.vface_end.to_numpy()
         total_uv_size = 0
         mesh_uvs = []
         mesh_uv_offsets = []
+        for i in range(self.n_vgeoms):
+            mesh_faces[mesh_face_starts[i] : mesh_face_ends[i]] -= mesh_vertex_offsets[i]
 
         geom_data_ids = []
         for vgeom in vgeoms:

@@ -1922,15 +1922,11 @@ class KinematicEntity(Entity):
 
     @gs.assert_built
     def set_vverts(self, vverts, envs_idx=None):
-        """Override this entity's visual vertex positions for rendering and sensors, or clear an existing
-        override.
+        """Override this entity's visual vertex positions for rendering and sensors.
 
-        ``vverts`` is broadcast to ``(B_target, n_vverts, 3)`` where ``B_target == len(envs_idx)`` (or the
-        scene's environment count when ``envs_idx`` is None). Scalars, ``(3,)``, and ``(n_vverts, 3)`` are
-        accepted. ``vverts=None`` clears the override and lets the solver's FK take back over.
-
-        Partial ``envs_idx`` requires ``KinematicOptions.batch_vverts_info=True``. Requires the entity's
-        morph to have been created with ``enable_custom_vverts=True``.
+        vverts is broadcast to (len(envs_idx), n_vverts, 3); scalars, (3,) and (n_vverts, 3) are accepted. vverts=None
+        re-runs FK over the entity's vgeoms and writes the result back into the custom buffer. Requires the entity's
+        morph to be created with enable_custom_vverts=True.
         """
         if self._enable_heterogeneous:
             gs.raise_exception("This method is not supported by heterogeneous entities.")
@@ -1938,22 +1934,27 @@ class KinematicEntity(Entity):
             gs.raise_exception(
                 "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
             )
-        self._solver.set_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, vverts, envs_idx)
+        self._solver.set_vverts(
+            self._custom_vvert_start,
+            self._custom_vvert_start + self.n_vverts,
+            np.array([vg.idx for vg in self.vgeoms], dtype=gs.np_int),
+            vverts,
+            envs_idx,
+        )
 
     @gs.assert_built
     def get_vverts(self, envs_idx=None):
         """Return a copy of this entity's visual vertex positions in world space.
 
-        For entities created with ``morph.enable_custom_vverts=True``, the positions are read directly from the
-        engine-owned ``vverts_state.pos`` buffer. For other entities the positions are computed on the fly from each
-        vgeom's current world pose applied to its rest-pose ``init_vverts``.
+        For entities created with enable_custom_vverts=True the positions are read from the engine custom buffer; for
+        other entities they are computed on the fly from each vgeom's current pose applied to its rest-pose init_vverts.
         """
         if self._enable_heterogeneous:
             gs.raise_exception("This method is not supported by heterogeneous entities.")
-        self._solver.update_vgeoms()
         if self._morph.enable_custom_vverts:
             return self._solver.get_vverts(self._custom_vvert_start, self._custom_vvert_start + self.n_vverts, envs_idx)
 
+        self._solver.update_vgeoms()
         vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
         vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
         parts = []

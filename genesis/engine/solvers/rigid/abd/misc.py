@@ -407,6 +407,7 @@ def kernel_init_vvert_fields(
     vfaces: qd.types.ndarray(),
     vnormals: qd.types.ndarray(),
     vverts_vgeom_idx: qd.types.ndarray(),
+    vverts_state_idx: qd.types.ndarray(),
     # Quadrants variables
     vverts_info: array_class.VVertsInfo,
     vfaces_info: array_class.VFacesInfo,
@@ -416,13 +417,13 @@ def kernel_init_vvert_fields(
     n_vfaces = vfaces.shape[0]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
-    for I_vv in qd.grouped(vverts_info.vgeom_idx):
-        i_vv = I_vv[0]
+    for i_vv in range(n_vverts):
         for j in qd.static(range(3)):
-            vverts_info.init_pos[I_vv][j] = vverts[i_vv, j]
-            vverts_info.init_vnormal[I_vv][j] = vnormals[i_vv, j]
+            vverts_info.init_pos[i_vv][j] = vverts[i_vv, j]
+            vverts_info.init_vnormal[i_vv][j] = vnormals[i_vv, j]
 
-        vverts_info.vgeom_idx[I_vv] = vverts_vgeom_idx[i_vv]
+        vverts_info.vgeom_idx[i_vv] = vverts_vgeom_idx[i_vv]
+        vverts_info.vverts_state_idx[i_vv] = vverts_state_idx[i_vv]
 
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_vf in range(n_vfaces):

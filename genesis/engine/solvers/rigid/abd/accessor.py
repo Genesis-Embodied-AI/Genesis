@@ -1102,7 +1102,6 @@ def kernel_set_vverts(
     vverts: qd.types.ndarray(),
     vvert_start: qd.i32,
     envs_idx: qd.types.ndarray(),
-    vverts_info: array_class.VVertsInfo,
     vverts_state: array_class.VVertsState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -1115,23 +1114,3 @@ def kernel_set_vverts(
         i_vv = vvert_start + i_vv_
         for j in qd.static(range(3)):
             vverts_state.pos[i_vv, i_b][j] = vverts[i_b_, i_vv_, j]
-        I_vv = [i_vv, i_b] if qd.static(static_rigid_sim_config.batch_vverts_info) else i_vv
-        vverts_info.is_custom[I_vv] = 1
-
-
-@qd.kernel(fastcache=True)
-def kernel_clear_vverts(
-    vvert_start: qd.i32,
-    vvert_end: qd.i32,
-    envs_idx: qd.types.ndarray(),
-    vverts_info: array_class.VVertsInfo,
-    static_rigid_sim_config: qd.template(),
-):
-    n_envs_in = envs_idx.shape[0]
-
-    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_b_, i_vv_ in qd.ndrange(n_envs_in, vvert_end - vvert_start):
-        i_b = envs_idx[i_b_]
-        i_vv = vvert_start + i_vv_
-        I_vv = [i_vv, i_b] if qd.static(static_rigid_sim_config.batch_vverts_info) else i_vv
-        vverts_info.is_custom[I_vv] = 0

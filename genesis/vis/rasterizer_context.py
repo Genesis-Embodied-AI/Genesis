@@ -473,101 +473,57 @@ class RasterizerContext:
 
     def update_rigid(self):
         for solver in self._rigid_solvers():
-            # Hoist the is_custom view once per solver: only opted-in entities (``morph.enable_custom_vverts=True``) have
-            # entries in ``vverts_info`` / ``vverts_state``, so the per-env path probes the flag at the entity's
-            # custom-vvert offset to decide between the instancing fast path and the per-env vverts-buffer path.
-            if solver.n_custom_vverts > 0:
-                is_custom = qd_to_numpy(solver.vverts_info.is_custom)
-                if solver._options.batch_vverts_info:
-                    is_custom_per_entity = is_custom[:, self.rendered_envs_idx].any(axis=1)
-                else:
-                    is_custom_per_entity = is_custom
-            else:
-                is_custom_per_entity = None
             for entity in solver.entities:
                 if entity.surface.vis_mode == "visual":
                     geoms = entity.vgeoms
                     geoms_T = solver._vgeoms_render_T
-                    needs_per_env = (
-                        entity._morph.enable_custom_vverts
-                        and is_custom_per_entity is not None
-                        and bool(is_custom_per_entity[entity._custom_vvert_start])
-                    )
-                    is_in_per_env = entity.uid in self._per_env_vverts_entity_uids
-                    if needs_per_env and not is_in_per_env:
-                        # Migrate forward: tear down the instanced rigid_node for each of the entity's vgeoms and build
-                        # one per-env pyrender node per (env, vgeom). The per-env node's GL buffers are only allocated
-                        # during the upcoming render pass, so any queued ``update_buffer`` call resolving its id right
-                        # now would hit -1 and be silently dropped. Seed ``primitive.positions`` with the current
-                        # world-space vverts before the GL upload so the first frame after migration is already
-                        # correct; the regular ``update_buffer`` path below keeps subsequent frames in sync.
-                        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
-                        envs_offset = self.scene.envs_offset
-                        custom_offset = entity._custom_vvert_start - entity._vvert_start
-                        for geom in entity.vgeoms:
-                            old_node = self.rigid_nodes.pop(geom.uid, None)
-                            if old_node is not None:
-                                self.remove_node_seg(old_node)
-                                self.remove_node(old_node)
+                    if entity._morph.enable_custom_vverts:
+                        if entity.uid not in self._per_env_vverts_entity_uids:
+                            # The per-env node's GL buffers are only allocated during the upcoming render pass, so any
+                            # queued update_buffer call resolving its id right now would hit -1 and be silently
+                            # dropped. Seed primitive.positions with the current world-space vverts directly so the
+                            # first frame is already correct.
+                            vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                            envs_offset = self.scene.envs_offset
+                            custom_offset = entity._custom_vvert_start - entity._vvert_start
+                            for geom in entity.vgeoms:
+                                old_node = self.rigid_nodes.pop(geom.uid, None)
+                                if old_node is not None:
+                                    self.remove_node_seg(old_node)
+                                    self.remove_node(old_node)
 
-                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                            if len(geom_envs_idx) == 0:
-                                continue
+                                geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                                if len(geom_envs_idx) == 0:
+                                    continue
 
-                            mesh = geom.get_trimesh()
-                            v_start = geom.vvert_start + custom_offset
-                            v_end = geom.vvert_end + custom_offset
-                            for i_b in geom_envs_idx:
-                                node = self.add_node(
-                                    pyrender.Mesh.from_trimesh(
-                                        mesh=mesh,
-                                        smooth=geom.surface.smooth,
-                                        double_sided=geom.surface.double_sided,
-                                    ),
-                                )
-                                env_i = self.rendered_envs_idx.index(i_b)
-                                geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
-                                node.mesh.primitives[0].positions = self._scene.reorder_vertices(
-                                    node, geom_vverts.astype(np.float32)
-                                )
-                                self.vverts_nodes[(i_b, geom.uid)] = node
-                                if self.segmentation_level == "geom":
-                                    seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
-                                elif self.segmentation_level == "link":
-                                    seg_key = (geom.entity.idx, geom.link.idx)
-                                elif self.segmentation_level == "entity":
-                                    seg_key = geom.entity.idx
-                                else:
-                                    gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
-                                self.create_node_seg(seg_key, node)
-                        self._per_env_vverts_entity_uids.add(entity.uid)
-                    elif not needs_per_env and is_in_per_env:
-                        # Migrate back: drop the per-env nodes and reinstate the instanced rigid_node so the standard
-                        # transform-only update path below takes over again.
-                        for geom in entity.vgeoms:
-                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
-                            for i_b in geom_envs_idx:
-                                node = self.vverts_nodes.pop((i_b, geom.uid), None)
-                                if node is not None:
-                                    self.remove_node_seg(node)
-                                    self.remove_node(node)
-                            if len(geom_envs_idx) == 0:
-                                continue
-                            self.add_rigid_node(
-                                geom,
-                                pyrender.Mesh.from_trimesh(
-                                    mesh=geom.get_trimesh(),
-                                    poses=geoms_T[geom.idx][geom_envs_idx],
-                                    smooth=geom.surface.smooth,
-                                    double_sided=geom.surface.double_sided,
-                                ),
-                            )
-                        self._per_env_vverts_entity_uids.discard(entity.uid)
+                                mesh = geom.get_trimesh()
+                                v_start = geom.vvert_start + custom_offset
+                                v_end = geom.vvert_end + custom_offset
+                                for i_b in geom_envs_idx:
+                                    node = self.add_node(
+                                        pyrender.Mesh.from_trimesh(
+                                            mesh=mesh,
+                                            smooth=geom.surface.smooth,
+                                            double_sided=geom.surface.double_sided,
+                                        ),
+                                    )
+                                    env_i = self.rendered_envs_idx.index(i_b)
+                                    geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
+                                    node.mesh.primitives[0].positions = self._scene.reorder_vertices(
+                                        node, geom_vverts.astype(np.float32)
+                                    )
+                                    self.vverts_nodes[(i_b, geom.uid)] = node
+                                    if self.segmentation_level == "geom":
+                                        seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
+                                    elif self.segmentation_level == "link":
+                                        seg_key = (geom.entity.idx, geom.link.idx)
+                                    elif self.segmentation_level == "entity":
+                                        seg_key = geom.entity.idx
+                                    else:
+                                        gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+                                    self.create_node_seg(seg_key, node)
+                            self._per_env_vverts_entity_uids.add(entity.uid)
 
-                    if needs_per_env:
-                        # Push the entity's current vverts_state.pos slice to each per-env pyrender node. vverts_state
-                        # is indexed in the custom-vvert space, so remap each vgeom's global vvert range via the
-                        # entity's custom-vvert offset.
                         vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
                         envs_offset = self.scene.envs_offset
                         custom_offset = entity._custom_vvert_start - entity._vvert_start

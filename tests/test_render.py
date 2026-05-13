@@ -15,7 +15,7 @@ import genesis.utils.geom as gu
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 from genesis.vis.keybindings import Key
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
@@ -2019,13 +2019,8 @@ def test_render_offscreen_oversized_resolution(renderer):
 
 @pytest.mark.required
 @pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
-@pytest.mark.parametrize("batched", [False, True])
-def test_set_vverts(batched, renderer, show_viewer):
-    n_envs = 3 if batched else 0
+def test_set_vverts(renderer, show_viewer):
     scene = gs.Scene(
-        rigid_options=gs.options.RigidOptions(
-            batch_vverts_info=batched,
-        ),
         renderer=renderer,
         show_viewer=False,
         show_FPS=False,
@@ -2045,7 +2040,15 @@ def test_set_vverts(batched, renderer, show_viewer):
         pos=(0.0, -1.5, 0.5),
         lookat=(0.0, 0.0, 0.5),
     )
-    scene.build(n_envs=n_envs)
+    scene.build(n_envs=3)
+
+    # vfaces_info covers all vgeoms in global vvert space, not just opt-in entities.
+    solver = scene.sim.rigid_solver
+    vfaces_idx = qd_to_numpy(solver.vfaces_info.vverts_idx)
+    assert vfaces_idx.shape[0] == solver.n_vfaces
+    for vg in solver.vgeoms:
+        assert_equal(vfaces_idx[vg.vface_start : vg.vface_end], vg.init_vfaces + vg._vvert_start)
+
     scene.step()
     scene.visualizer.update_visual_states()
     fk_vverts = tensor_to_array(entity.get_vverts())
@@ -2053,7 +2056,7 @@ def test_set_vverts(batched, renderer, show_viewer):
     # Render baseline through FK path before any set_vverts, to compare deformed vs FK pixels.
     rgb_baseline = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
 
-    # set_vverts data must survive step() because FK skips is_custom entries.
+    # User-driven vverts survive step() because FK does not overwrite the custom buffer.
     entity.set_vverts(7.0)
     scene.step()
     scene.visualizer.update_visual_states()
@@ -2064,7 +2067,7 @@ def test_set_vverts(batched, renderer, show_viewer):
     rgb_deformed = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
     assert np.abs(rgb_deformed - rgb_baseline).mean() > 5.0
 
-    # set_vverts(None) returns the entity to FK and migrates the renderer back to the instancing path.
+    # set_vverts(None) re-runs FK over the entity's vgeoms and writes the result back.
     entity.set_vverts(None)
     scene.step()
     scene.visualizer.update_visual_states()
@@ -2086,29 +2089,15 @@ def test_set_vverts(batched, renderer, show_viewer):
     copy[:] = 99.0
     assert (tensor_to_array(entity.get_vverts()) != 99.0).any()
 
-    if batched:
-        # Mix user-driven and FK-driven envs in the same entity.
-        entity.set_vverts(7.0, envs_idx=0)
-        entity.set_vverts(9.0, envs_idx=[2])
-        scene.step()
-        scene.visualizer.update_visual_states()
-        v = tensor_to_array(entity.get_vverts())
-        assert_equal(v[0], 7.0)
-        assert_allclose(v[1], fk_vverts[1], tol=gs.EPS)
-        assert_equal(v[2], 9.0)
-
-        # Clear env 0 only; env 2 stays overridden.
-        entity.set_vverts(None, envs_idx=0)
-        scene.step()
-        scene.visualizer.update_visual_states()
-        v = tensor_to_array(entity.get_vverts())
-        assert_allclose(v[0], fk_vverts[0], tol=gs.EPS)
-        assert_equal(v[2], 9.0)
-    else:
-        # Partial envs_idx requires batch_vverts_info=True; without it the API raises.
-        # n_envs == 0 means the scene rejects envs_idx at all, which is a stricter form of the same rule.
-        with pytest.raises(gs.GenesisException):
-            entity.set_vverts(0.0, envs_idx=0)
+    # Mix user-driven and FK-driven envs in the same entity.
+    entity.set_vverts(7.0, envs_idx=0)
+    entity.set_vverts(9.0, envs_idx=[2])
+    scene.step()
+    scene.visualizer.update_visual_states()
+    v = tensor_to_array(entity.get_vverts())
+    assert_equal(v[0], 7.0)
+    assert_allclose(v[1], fk_vverts[1], tol=gs.EPS)
+    assert_equal(v[2], 9.0)
 
     # set_vverts requires the entity's morph to be created with ``enable_custom_vverts=True``.
     with pytest.raises(gs.GenesisException, match="enable_custom_vverts=True"):

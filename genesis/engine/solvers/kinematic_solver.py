@@ -34,9 +34,9 @@ from .rigid.abd.forward_kinematics import (
     kernel_masked_forward_kinematics,
     kernel_masked_forward_velocity,
     kernel_update_vgeoms,
+    kernel_update_vverts_for_vgeoms,
 )
 from .rigid.abd.accessor import (
-    kernel_clear_vverts,
     kernel_get_kinematic_state,
     kernel_get_state_grad,
     kernel_set_kinematic_state,
@@ -200,6 +200,21 @@ class KinematicSolver(Solver):
         self._init_entity_fields()
 
         self._init_envs_offset()
+        self._init_vverts_state()
+
+    def _init_vverts_state(self):
+        # Seed vverts_state.pos with one FK pass so opt-in entities show their initial pose from frame 0 even before
+        # the user touches the buffer with set_vverts.
+        if self.n_custom_vverts == 0:
+            return
+        opt_in_vgeoms_idx = np.array(
+            [vgeom.idx for entity in self._entities if entity._morph.enable_custom_vverts for vgeom in entity.vgeoms],
+            dtype=gs.np_int,
+        )
+        if opt_in_vgeoms_idx.size == 0:
+            return
+        self.update_vgeoms()
+        self.update_vverts_for_vgeoms(opt_in_vgeoms_idx)
 
     def _build_static_config(self):
         # Static config with all physics disabled
@@ -211,7 +226,6 @@ class KinematicSolver(Solver):
             batch_links_info=self._options.batch_links_info,
             batch_dofs_info=False,
             batch_joints_info=False,
-            batch_vverts_info=self._options.batch_vverts_info,
             enable_heterogeneous=self._enable_heterogeneous,
             enable_mujoco_compatibility=False,
             enable_multi_contact=False,
@@ -383,25 +397,28 @@ class KinematicSolver(Solver):
         self.vverts_info = self.data_manager.vverts_info
         self.vverts_state = self.data_manager.vverts_state
         self.vfaces_info = self.data_manager.vfaces_info
-        if self.n_custom_vverts == 0:
+        if self.n_vverts == 0:
             return
 
-        # Only entities that opted in via ``morph.enable_custom_vverts=True`` get an entry in vverts_info /
-        # vverts_state. Each opted entity owns a contiguous slice of the custom-vvert buffer starting
-        # at ``entity._custom_vvert_start``; the vfaces' vert indices are remapped from the global
-        # vvert numbering into that custom-buffer index space.
-        vgeom_payload = []
+        vgeoms = self.vgeoms
+        vverts = np.concatenate([vg.init_vverts for vg in vgeoms], dtype=gs.np_float)
+        vnormals = np.concatenate([vg.init_vnormals for vg in vgeoms], dtype=gs.np_float)
+        vfaces = np.concatenate([vg.init_vfaces + vg._vvert_start for vg in vgeoms], dtype=gs.np_int)
+        vverts_vgeom_idx = np.concatenate([np.full(vg.n_vverts, vg.idx) for vg in vgeoms], dtype=gs.np_int)
+        vverts_state_idx = np.full(self.n_vverts, -1, dtype=gs.np_int)
         for entity in self._entities:
             if not entity._morph.enable_custom_vverts:
                 continue
             entity_custom_offset = entity._custom_vvert_start - entity._vvert_start
             for vgeom in entity.vgeoms:
-                vgeom_payload.append((vgeom, vgeom._vvert_start + entity_custom_offset))
+                local = np.arange(vgeom.n_vverts, dtype=gs.np_int)
+                vverts_state_idx[vgeom._vvert_start + local] = vgeom._vvert_start + entity_custom_offset + local
         kernel_init_vvert_fields(
-            vverts=np.concatenate([vg.init_vverts for vg, _ in vgeom_payload], dtype=gs.np_float),
-            vfaces=np.concatenate([vg.init_vfaces + custom_off for vg, custom_off in vgeom_payload], dtype=gs.np_int),
-            vnormals=np.concatenate([vg.init_vnormals for vg, _ in vgeom_payload], dtype=gs.np_float),
-            vverts_vgeom_idx=np.concatenate([np.full(vg.n_vverts, vg.idx) for vg, _ in vgeom_payload], dtype=gs.np_int),
+            vverts=vverts,
+            vfaces=vfaces,
+            vnormals=vnormals,
+            vverts_vgeom_idx=vverts_vgeom_idx,
+            vverts_state_idx=vverts_state_idx,
             vverts_info=self.vverts_info,
             vfaces_info=self.vfaces_info,
             static_rigid_sim_config=self._static_rigid_sim_config,
@@ -1033,74 +1050,64 @@ class KinematicSolver(Solver):
         return tensor[..., 0], tensor[..., 1]
 
     def update_vgeoms(self):
-        kernel_update_vgeoms(
+        kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
+
+    def update_vverts_for_vgeoms(self, vgeoms_idx):
+        """Refresh the vverts_state.pos slice for the requested vgeoms by re-running FK.
+
+        Used by set_vverts(None, ...) and at scene-build time to initialize the custom buffer with a meaningful pose.
+        The kernel is a no-op for vgeoms whose vverts have no state slot.
+        """
+        if self.n_custom_vverts == 0:
+            return
+        kernel_update_vverts_for_vgeoms(
+            vgeoms_idx,
             self.vgeoms_info,
             self.vgeoms_state,
             self.vverts_info,
             self.vverts_state,
-            self.links_state,
             self._static_rigid_sim_config,
         )
 
-    def set_vverts(self, vvert_start, vvert_end, vverts, envs_idx=None):
-        """Write the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``, or clear it.
+    def set_vverts(self, custom_vvert_start, custom_vvert_end, vgeoms_idx, vverts, envs_idx=None):
+        """Write the slice [custom_vvert_start:custom_vvert_end] of vverts_state.pos.
 
-        Accepted ``vverts`` shapes: scalar / ``(3,)`` / ``(n_v, 3)`` / ``(B, n_v, 3)``. ``vverts=None``
-        clears the override and lets FK take back over.
-
-        Any explicit ``envs_idx`` (even one that lists every env) is treated as partial and requires
-        ``KinematicOptions.batch_vverts_info=True``. Pass ``envs_idx=None`` to address all envs in the
-        non-batched mode.
+        vverts=None re-populates the slice from FK by running update_vverts_for_vgeoms over the vgeoms owning the slice.
+        Otherwise vverts is broadcast to the slice shape and written directly. vverts_state.pos is always batched;
+        envs_idx selects which envs to write to.
         """
-        if envs_idx is not None and not self._options.batch_vverts_info:
-            gs.raise_exception("'envs_idx' for 'set_vverts' requires 'KinematicOptions.batch_vverts_info=True'.")
+        if vverts is None:
+            self.update_vverts_for_vgeoms(vgeoms_idx)
+            return
 
         if gs.use_zerocopy:
-            is_custom_value = int(vverts is not None)
-            is_custom = qd_to_torch(self.vverts_info.is_custom, transpose=True, copy=False)
-            if self._options.batch_vverts_info:
-                is_custom_slice = is_custom[:, vvert_start:vvert_end]
-                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
-                    is_custom_slice.masked_fill_(envs_idx[:, None], is_custom_value)
-                elif envs_idx is None:
-                    is_custom_slice.fill_(is_custom_value)
+            data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
+            if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
+                pos_slice = data[:, custom_vvert_start:custom_vvert_end]
+                if vverts.ndim == 3 and len(vverts) != len(pos_slice):
+                    pos_slice.masked_scatter_(envs_idx[:, None, None], vverts.view_as(vverts))
                 else:
-                    is_custom_slice[indices_to_mask(envs_idx)] = is_custom_value
+                    vverts_b = broadcast_tensor(vverts, gs.tc_float, pos_slice.shape)
+                    torch.where(envs_idx[:, None, None], vverts_b, pos_slice, out=pos_slice)
             else:
-                is_custom[vvert_start:vvert_end] = is_custom_value
-
-            if vverts is not None:
-                data = qd_to_torch(self.vverts_state.pos, transpose=True, copy=False)
-                if isinstance(envs_idx, torch.Tensor) and envs_idx.dtype == torch.bool:
-                    pos_slice = data[:, vvert_start:vvert_end]
-                    if vverts.ndim == 3 and len(vverts) != len(pos_slice):
-                        pos_slice.masked_scatter_(envs_idx[:, None, None], vverts.view_as(vverts))
-                    else:
-                        vverts_b = broadcast_tensor(vverts, gs.tc_float, pos_slice.shape)
-                        torch.where(envs_idx[:, None, None], vverts_b, pos_slice, out=pos_slice)
-                else:
-                    vverts_mask = indices_to_mask(slice(vvert_start, vvert_end))
-                    pos_mask = (0, *vverts_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *vverts_mask)
-                    assign_indexed_tensor(data, pos_mask, vverts)
+                vverts_mask = indices_to_mask(slice(custom_vvert_start, custom_vvert_end))
+                pos_mask = (0, *vverts_mask) if self.n_envs == 0 else indices_to_mask(envs_idx, *vverts_mask)
+                assign_indexed_tensor(data, pos_mask, vverts)
             return
 
         envs_idx = self._scene._sanitize_envs_idx(envs_idx)
-        if vverts is None:
-            kernel_clear_vverts(vvert_start, vvert_end, envs_idx, self.vverts_info, self._static_rigid_sim_config)
-        else:
-            target_shape = (envs_idx.shape[0], vvert_end - vvert_start, 3)
-            # ``broadcast_tensor`` may return a non-contiguous expanded view; kernel ndarray args must be contiguous.
-            vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
-            kernel_set_vverts(
-                vverts, vvert_start, envs_idx, self.vverts_info, self.vverts_state, self._static_rigid_sim_config
-            )
+        target_shape = (envs_idx.shape[0], custom_vvert_end - custom_vvert_start, 3)
+        vverts = broadcast_tensor(vverts, gs.tc_float, target_shape, ("envs", "vverts", "xyz")).contiguous()
+        kernel_set_vverts(vverts, custom_vvert_start, envs_idx, self.vverts_state, self._static_rigid_sim_config)
 
-    def get_vverts(self, vvert_start, vvert_end, envs_idx=None):
-        """Return a copy of the visual vertex slice ``[vvert_start:vvert_end]`` of ``vverts_state.pos``.
+    def get_vverts(self, custom_vvert_start, custom_vvert_end, envs_idx=None):
+        """Return a copy of the vverts_state.pos slice for the given custom-vvert range.
 
-        Shape: ``(len(envs_idx), vvert_end - vvert_start, 3)``. ``envs_idx=None`` returns every environment.
+        Shape: (len(envs_idx), custom_vvert_end - custom_vvert_start, 3). envs_idx=None returns every env.
         """
-        tensor = qd_to_torch(self.vverts_state.pos, envs_idx, slice(vvert_start, vvert_end), transpose=True, copy=True)
+        tensor = qd_to_torch(
+            self.vverts_state.pos, envs_idx, slice(custom_vvert_start, custom_vvert_end), transpose=True, copy=True
+        )
         return tensor[0] if self.n_envs == 0 else tensor
 
     # ------------------------------------------------------------------------------------
