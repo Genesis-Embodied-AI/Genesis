@@ -72,8 +72,6 @@ jobs:
           python -m pip install --upgrade pip setuptools pkg-info wheel
           # FIXME: Must install torch>2.9.1 to support zerocopy on Apple Metal
           pip3 install torch --upgrade --index-url https://download.pytorch.org/whl/cpu
-          # DEBUG (DO NOT MERGE): pytest-repeat enables the --count flag below.
-          pip install pytest-repeat
 
       - name: Install Genesis
         shell: bash
@@ -100,11 +98,21 @@ jobs:
 
       - name: Run flaky imgui overlay test 50x
         shell: bash
-        # -n 0 -> disable xdist (run in-process); -x -> stop at first failure; --count=50 -> pytest-repeat;
-        # -s -> do not capture stderr so the [IMGUI_DEBUG] dumps land in the job log next to the snapshot diff.
-        # Deliberately NO --forked so all 50 iterations run in the same Python process; cross-iteration state
-        # leakage is exactly what we want to surface here.
+        # Shell for-loop rather than pytest-repeat's --count: --count reuses the same Python process,
+        # which interferes with the HuggingFace asset download path used by the snapshot fixture. Each
+        # iteration is its own pytest invocation (fresh process, fresh window) and the loop exits early
+        # on first failure. IMGUI_DEBUG_TAG threads the iteration index through the test's stderr dumps
+        # so a failing iteration is easy to locate in the job log.
         run: |
-          pytest -v -ra -s --logical --dev --backend cpu \
-              -n 0 -x --count=50 \
-              tests/test_imgui_overlay.py::test_imgui_overlay_screenshot
+          for i in $(seq -f '%02g' 1 50); do
+              echo "::group::iteration $i/50"
+              IMGUI_DEBUG_TAG="[iter=$i]" pytest -v -ra -s --logical --dev --backend cpu \
+                  -n 0 \
+                  tests/test_imgui_overlay.py::test_imgui_overlay_screenshot
+              status=$?
+              echo "::endgroup::"
+              if [ "$status" -ne 0 ]; then
+                  echo "FAILED at iteration $i/50 (exit=$status)"
+                  exit "$status"
+              fi
+          done
