@@ -1,13 +1,8 @@
 name: Production
 
 on:
-  # Trigger the workflow on push on the master branch, or for any pull request
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  # DEBUG BRANCH (DO NOT MERGE): disabled. Restore the push/pull_request triggers before merging.
+  workflow_dispatch:
 
 concurrency:
   # Cancel all workflows that are still running if any when updating branches associated with PRs,

@@ -102,7 +102,9 @@ jobs:
         shell: bash
         # -n 0 -> disable xdist (run in-process); -x -> stop at first failure; --count=50 -> pytest-repeat;
         # -s -> do not capture stderr so the [IMGUI_DEBUG] dumps land in the job log next to the snapshot diff.
+        # Deliberately NO --forked so all 50 iterations run in the same Python process; cross-iteration state
+        # leakage is exactly what we want to surface here.
         run: |
-          pytest -v -ra -s --logical --dev --backend cpu --forked \
+          pytest -v -ra -s --logical --dev --backend cpu \
               -n 0 -x --count=50 \
               tests/test_imgui_overlay.py::test_imgui_overlay_screenshot

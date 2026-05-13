@@ -1,9 +1,8 @@
 name: Examples (CPU)
 
 on:
-  pull_request:
-    branches:
-      - main
+  # DEBUG BRANCH (DO NOT MERGE): disabled. Restore the pull_request trigger before merging.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
