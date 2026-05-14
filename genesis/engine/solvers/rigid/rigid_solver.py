@@ -405,18 +405,17 @@ class RigidSolver(KinematicSolver):
     def _should_transpose_constraint_layout(self) -> bool:
         """Decide whether to allocate Tier-1 constraint state with layout=(1, 0).
 
-        The transposed layout (plus its companion cooperative kernels) wins on workloads with
-        enough per-env compute density to amortize the warp-per-env overhead, and loses when
-        envs are sparse and many: in those cases the legacy 1-thread-per-env path is already
-        coalesced under (len_constraints_, _B) and the warp scheduling cost dominates.
+        The transposed layout (plus its companion cooperative kernels) wins on workloads with enough per-env compute
+        density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
+        legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
 
         Empirical pattern from `perso_hugh/doc/linesearch_shuffle.md` (Exp 5):
           - Wins (>+3%): dex_hand, g1_fall, box_pyramid_3..6 — all 4096 envs, n_dofs >= ~18.
           - Wash / regression: anymal/franka families — 30000 envs, n_dofs <= ~12.
 
-        Heuristic: enable transpose when both (a) n_envs is small enough that env-parallelism
-        does not already saturate the GPU, and (b) per-env DoF count is large enough to keep
-        a 32-lane warp busy on the cooperative reductions.
+        Heuristic: enable transpose when both (a) n_envs is small enough that env-parallelism does not already
+        saturate the GPU, and (b) per-env DoF count is large enough to keep a 32-lane warp busy on the cooperative
+        reductions.
 
         Override:
           GS_CONSTRAINT_LAYOUT_TRANSPOSED=0  -> force off (default-safe, bit-identical baseline)

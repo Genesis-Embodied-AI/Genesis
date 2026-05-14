@@ -316,9 +316,8 @@ def _func_parallel_linesearch_refine(
 ):
     """Linesearch refinement body, called per-env from ``_func_parallel_linesearch_eval``.
 
-    Dispatches to serial (tid==0 only) or cooperative (all 32 lanes) based on
-    ``constraint_layout_transposed``. Extracted so the ``qd.static`` branching
-    on the entry condition doesn't require variable assignment across branches.
+    Dispatches to serial (tid==0 only) or cooperative (all 32 lanes) based on ``constraint_layout_transposed``.
+    Extracted so the ``qd.static`` branching on the entry condition doesn't require variable assignment across branches.
     """
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         if alpha_newton > 0.0:
@@ -398,15 +397,13 @@ def _func_parallel_linesearch_eval(
 ):
     """Decomposed solver eval kernel: linesearch refinement from Newton step + cooperative apply.
 
-    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via
-    ``func_linesearch_refine`` (serial, tid==0 only) or ``func_linesearch_refine_coop``
-    (cooperative across the 32-lane warp), gated on ``constraint_layout_transposed``. It then
-    cooperatively applies the chosen alpha to qacc, Ma, and Jaref.
+    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via ``func_linesearch_refine``
+    (serial, tid==0 only) or ``func_linesearch_refine_coop`` (cooperative across the 32-lane warp), gated on
+    ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to qacc, Ma, and Jaref.
 
-    The cooperative path is only safe when the Tier-1 constraint-state tensors are stored with
-    ``layout=(1, 0)`` (so per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across
-    constraints for a fixed env). The qd.Tensor layout rewrite makes the canonical indexing
-    identical in both paths; only the access pattern changes.
+    The cooperative path is only safe when the Tier-1 constraint-state tensors are stored with ``layout=(1, 0)`` (so
+    per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a fixed env). The
+    qd.Tensor layout rewrite makes the canonical indexing identical in both paths; only the access pattern changes.
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
@@ -568,9 +565,8 @@ def _func_update_constraint_cost(
     """Compute gauss and cost (reductions over dofs and constraints).
 
     Two paths picked at compile time on ``constraint_layout_transposed``:
-      - True:  warp-per-env cooperative path. 32 lanes stride through dofs and
-               constraints; final reduction via ``subgroup.reduce_all_add``.
-               Per-lane reads of Jaref/efc_D/active are coalesced under the
+      - True:  warp-per-env cooperative path. 32 lanes stride through dofs and constraints; final reduction via
+               ``subgroup.reduce_all_add``. Per-lane reads of Jaref/efc_D/active are coalesced under the
                [_B, len_constraints_] physical layout.
       - False: legacy 1-thread-per-env serial path. Bit-identical to baseline.
     """
