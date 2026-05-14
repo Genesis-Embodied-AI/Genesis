@@ -77,10 +77,6 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_current_ground_truth_data_T(cls, metadata, cache):
-                pass
-
-            @classmethod
             def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline):
                 pass
 

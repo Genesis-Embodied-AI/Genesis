@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, Sequence, TypeVar, get_args, get_origin
 
 import numpy as np
 import torch
@@ -50,8 +50,8 @@ class SharedSensorMetadata:
     history_lengths: list[int] = field(default_factory=list)
     # Per-sensor: interpolate delayed reads (aligned with cache_sizes). Appended in Sensor.build.
     interpolate: list[bool] = field(default_factory=list)
-    # True iff at least one sensor in the class has a nonzero read delay. Precomputed at build (and latched True
-    # by `set_delay`) so the per-step fast path in SensorManager._apply_delay_to_shared_cache can avoid a GPU-syncing reduction.
+    # True iff at least one sensor in the class has a nonzero read delay. Precomputed at build (and latched True by
+    # `set_delay`) so the per-step fast path in `_apply_delay_to_shared_cache` can avoid a GPU-syncing reduction.
     has_any_delay: bool = False
     # True iff at least one sensor in the class has a nonzero jitter option. Stays False for non-noisy sensor classes
     # (Contact, Raycaster) since they never sample jitter. Same precompute-and-latch contract as `has_any_delay`.
@@ -275,6 +275,73 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         return self._is_built
 
     # =============================== private shared methods ===============================
+
+    @classmethod
+    def _apply_delay_to_shared_cache(
+        cls,
+        shared_metadata: SharedSensorMetadataT,
+        shared_cache: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+        interpolate: Sequence[bool] | None = None,
+    ):
+        """
+        Applies the read delay (and jitter, if any) to the shared cache tensor by copying the buffered data at the
+        appropriate index. When the class has neither delay nor jitter, takes a fast path that writes the most
+        recent ring frame to the cache class-wide.
+
+        Parameters
+        ----------
+        shared_metadata : SharedSensorMetadata
+            The shared metadata for the sensor.
+        shared_cache : torch.Tensor
+            The shared cache tensor.
+        measured_data_timeline : TensorRingBuffer
+            Pre-delay measured timeline ring for this sensor class slice (current step already written by
+            ``_update_shared_cache``).
+        interpolate : Sequence[bool] | None
+            Whether to interpolate the sensor data for the read delay + jitter. Defaults to False.
+        """
+        # Fast path: when no sensor in the class has any delay or jitter, this is equivalent to copying the most
+        # recent ring frame to the measured cache class-wide. Avoids a Python loop over every sensor. Both flags
+        # are precomputed Python bools (no GPU sync) latched at build / by setters.
+        if not shared_metadata.has_any_delay and not shared_metadata.has_any_jitter:
+            shared_cache.copy_(measured_data_timeline.at(0))
+            return
+
+        # Sample uniform jitter in [0, jitter_ts) per env per sensor. One-sided so samples are non-negative;
+        # combined with the `jitter < dt` option constraint, the effective per-step shift is strictly bounded
+        # within [0, 1) steps and cannot wrap the ring.
+        if shared_metadata.has_any_jitter:
+            shared_metadata.cur_jitter_ts.uniform_(0.0, 1.0).mul_(shared_metadata.jitter_ts)
+            cur_jitter_ts = shared_metadata.cur_jitter_ts
+        else:
+            cur_jitter_ts = None
+
+        if interpolate is None:
+            interpolate = [False for _ in shared_metadata.cache_sizes]
+
+        tensor_start = 0
+        for sensor_idx, (tensor_size, interp) in enumerate(zip(shared_metadata.cache_sizes, interpolate)):
+            # Compute the current delay of the sensor, taking into account jitter if any
+            cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
+            if cur_jitter_ts is not None:
+                cur_delay_ts = cur_delay_ts + cur_jitter_ts[:, sensor_idx]
+
+            # Get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
+            cur_delay_ts_int = cur_delay_ts.to(dtype=torch.int64)
+
+            # Update shared cached with left data (Zero Order Hold) or linearly interpolated data (First Order)
+            tensor_slice = slice(tensor_start, tensor_start + tensor_size)
+            sensor_cache = shared_cache[:, tensor_slice]
+            data_left = measured_data_timeline.at(cur_delay_ts_int, tensor_slice, per_row=True)
+            if interp:
+                ratio = torch.frac(cur_delay_ts)
+                data_right = measured_data_timeline.at(cur_delay_ts_int + 1, tensor_slice, per_row=True)
+                torch.lerp(data_left, data_right, ratio[:, None], out=sensor_cache)
+            else:
+                sensor_cache.copy_(data_left)
+
+            tensor_start += tensor_size
 
     def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
         """

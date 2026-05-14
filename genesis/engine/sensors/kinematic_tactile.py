@@ -1128,7 +1128,6 @@ class ElastomerDisplacementSensor(
             gs.EPS,
             current_ground_truth_data_T,
         )
-        # use torch for fft
         _elastomer_displacement_grid_fft_dilate(
             shared_metadata.is_grid,
             shared_metadata.contact_buf,

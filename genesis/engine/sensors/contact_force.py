@@ -151,6 +151,8 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
         is_contact_a = link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]
         is_contact_b = link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]
         result = (is_contact_a | is_contact_b).any(dim=-1)
+        # Apply the (more expensive) filter-aware update only on sensors that declared a filter; other sensors
+        # keep the cheap any() result above.
         if shared_metadata.filtered_sensor_idx.numel() > 0:
             filt = shared_metadata.filtered_sensor_idx
             sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
@@ -239,11 +241,13 @@ class ContactForceSensor(
     ):
         assert shared_metadata.solver is not None
 
+        # Note that forcing GPU sync to operate on `slice(0, max(n_contacts))` is usually faster overall.
         all_contacts = shared_metadata.solver.collider.get_contacts(as_tensor=True, to_torch=True)
         force, link_a, link_b = all_contacts["force"], all_contacts["link_a"], all_contacts["link_b"]
         if shared_metadata.solver.n_envs == 0:
             force, link_a, link_b = force[None], link_a[None], link_b[None]
 
+        # Short-circuit if no contacts
         if link_a.shape[-1] == 0:
             current_ground_truth_data_T.zero_()
             measured_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
@@ -253,6 +257,7 @@ class ContactForceSensor(
                 links_quat = links_quat[None]
 
             if gs.use_zerocopy:
+                # Forces are aggregated BEFORE moving them in local frame for efficiency
                 force_mask_a = link_a[:, None] == shared_metadata.links_idx[None, :, None]
                 force_mask_b = link_b[:, None] == shared_metadata.links_idx[None, :, None]
                 force_mask = force_mask_b.to(dtype=gs.tc_float) - force_mask_a.to(dtype=gs.tc_float)
@@ -275,6 +280,9 @@ class ContactForceSensor(
         measured = measured_data_timeline.at(0, copy=False)
         measured.copy_(current_ground_truth_data_T.T)
         cls._apply_imperfections(shared_metadata, measured)
+        # Saturate at max_force and zero out values below the min_force dead band. Applied after quantization; for
+        # max_force values that are not multiples of resolution this produces a non-quantized saturation value,
+        # accepted as minor drift in that edge case.
         measured_per_sensor_view = measured.reshape((measured.shape[0], -1, 3))
         measured_per_sensor_view.clamp_(min=-shared_metadata.max_force, max=shared_metadata.max_force)
         measured_per_sensor_view.masked_fill_(torch.abs(measured_per_sensor_view) < shared_metadata.min_force, 0.0)
