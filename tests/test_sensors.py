@@ -826,10 +826,12 @@ def test_raycaster_hits(show_viewer, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
-    # Two depth cameras, one per opt-in entity:
-    #   - cam_kin -> KinematicEntity sphere (use_visual_raycasting=True by default). set_vverts overrides survive
-    #     step() so the depth camera reads the user-driven positions, and set_vverts(None) hands control back to FK.
+@pytest.mark.parametrize("kin_raycastable", [True, False])
+def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
+    # Two depth cameras, one per entity:
+    #   - cam_kin -> KinematicEntity sphere. When use_visual_raycasting=True the depth camera reads the entity's
+    #     visual mesh (including set_vverts overrides, which survive step() until set_vverts(None) hands control
+    #     back to FK). When False the kinematic entity is completely ignored by the raycaster.
     #   - cam_rigid -> RigidEntity whose visual mesh (sphere radius 0.2) is intentionally different from its collision
     #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere.
     urdf_path = tmp_path / "vis_diff.urdf"
@@ -871,7 +873,7 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
             fixed=True,
             enable_custom_vverts=True,
         ),
-        material=gs.materials.Kinematic(),
+        material=gs.materials.Kinematic(use_visual_raycasting=kin_raycastable),
     )
     scene.add_entity(
         morph=gs.morphs.URDF(
@@ -916,8 +918,12 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
     scene.step()
 
     # Each camera at x=-1 along its own z-row looks along +x. The center pixel hits the closest point of its target
-    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this comes from the visual BVH (not the collision capsule).
-    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.8, tol=1e-2)
+    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this comes from the visual BVH (not the collision capsule). When
+    # the kinematic entity opts out of raycasting, cam_kin sees nothing and returns the no_hit_value (max_range=5.0).
+    NO_HIT = 5.0  # max_range
+    kin_at_origin = 0.8 if kin_raycastable else NO_HIT
+    kin_scaled = 0.6 if kin_raycastable else NO_HIT
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
     # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
@@ -927,20 +933,20 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
     center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
     scene.step()
-    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.6, tol=1e-2)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_scaled, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
     # Push the kinematic sphere far away. cam_kin should report no_hit_value at the center pixel; cam_rigid still sees
     # the rigid visual sphere.
     kin_sphere.set_vverts((100.0, 100.0, 100.0))
     scene.step()
-    assert_allclose(cam_kin.read_image()[..., 15, 20], 5.0, tol=gs.EPS)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], NO_HIT, tol=gs.EPS)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
     # Restoring FK control returns the original hit distance on cam_kin; cam_rigid stays put.
     kin_sphere.set_vverts(None)
     scene.step()
-    assert_allclose(cam_kin.read_image()[..., 15, 20], 0.8, tol=1e-2)
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
 
