@@ -135,6 +135,7 @@ def kernel_rigid_entity_inverse_kinematics(
                         rot_mask=rot_mask,
                         dofs_info=dofs_info,
                         joints_info=joints_info,
+                        joints_state=joints_state,
                         links_info=links_info,
                         links_state=links_state,
                     )  # NOTE: we still compute jacobian for all dofs as we haven't found a clean way to implement this

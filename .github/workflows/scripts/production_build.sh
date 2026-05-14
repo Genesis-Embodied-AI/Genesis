@@ -14,3 +14,7 @@ uv pip install torch --index-url https://download.pytorch.org/whl/cu129
 uv pip install --upgrade pip setuptools wheel
 uv pip install omniverse-kit --index-url https://pypi.nvidia.com/
 uv pip install ".[dev,render,usd]" "pyuipc==0.0.7"
+# imgui-bundle has no pre-built wheel for Python 3.10 (which this runner uses) so it is excluded from the
+# ``[render]`` extras marker. Install it manually. Disable MicroTeX since we don't use it and its submodule
+# is missing from the 1.92.x source distribution.
+SKBUILD_CMAKE_DEFINE="IMGUI_BUNDLE_WITH_MICROTEX=OFF" uv pip install imgui-bundle

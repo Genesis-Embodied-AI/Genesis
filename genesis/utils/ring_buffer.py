@@ -44,7 +44,11 @@ class TensorRingBuffer:
             assert self._idx is idx
 
     def at(
-        self, idx: int | torch.Tensor, *others_idx: int | slice | torch.Tensor, copy: bool | None = None
+        self,
+        idx: int | torch.Tensor,
+        *others_idx: int | slice | torch.Tensor,
+        copy: bool | None = None,
+        per_row: bool = False,
     ) -> torch.Tensor:
         """
         Get the value of the tensor at the given index.
@@ -62,8 +66,17 @@ class TensorRingBuffer:
             If `None`, then memory will be allocated only if necessary. If `True`, then memory will be allocated
             systematically instead of returning a view. If `False`, then allocating memory is forbidden and will raise
             an exception if returning a view is impossible.
+        per_row : bool, optional
+            If True, `idx` must be a 1D tensor of length self.buffer.shape[1] selecting one ring slot per row of
+            the second buffer dimension. `others_idx` applies to the remaining dimensions. Result shape:
+            (self.buffer.shape[1], *trailing_slice_shape). Always allocates memory.
         """
         rel_idx = (self._idx - idx) % self.N
+        if per_row:
+            sub = self.buffer[(slice(None), slice(None), *others_idx)] if others_idx else self.buffer
+            idx_expanded = rel_idx.view(1, -1, *([1] * (sub.ndim - 2))).expand(1, *sub.shape[1:])
+            return sub.gather(0, idx_expanded).squeeze(0)
+
         assert len(others_idx) < self.buffer.ndim
         tensor = self.buffer[(rel_idx, *others_idx)]
         if tensor.untyped_storage().data_ptr() == self.buffer.untyped_storage().data_ptr():

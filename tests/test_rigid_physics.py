@@ -405,6 +405,22 @@ def general_actuator():
     return mjcf
 
 
+@pytest.fixture(scope="session")
+def compound_joint():
+    mjcf = ET.Element("mujoco", model="compound_joint")
+    ET.SubElement(mjcf, "compiler", angle="radian")
+    ET.SubElement(mjcf, "option", gravity="0 0 0")
+    worldbody = ET.SubElement(mjcf, "worldbody")
+    seg1 = ET.SubElement(worldbody, "body", name="seg1", pos="0 0 0")
+    ET.SubElement(seg1, "joint", name="j_x", type="hinge", axis="1 0 0")
+    ET.SubElement(seg1, "joint", name="j_y", type="hinge", axis="0 1 0")
+    ET.SubElement(seg1, "geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.4")
+    seg2 = ET.SubElement(seg1, "body", name="seg2", pos="0 0 0.4")
+    ET.SubElement(seg2, "joint", name="j_z", type="hinge", axis="0 0 1")
+    ET.SubElement(seg2, "geom", type="capsule", size="0.02", fromto="0 0 0 0 0 0.4")
+    return mjcf
+
+
 @pytest.mark.required
 @pytest.mark.parametrize("model_name", ["box_plan"])
 @pytest.mark.parametrize("gs_solver", [gs.constraint_solver.CG, gs.constraint_solver.Newton])
@@ -2982,6 +2998,34 @@ def test_jacobian(gs_sim, tol):
 
 
 @pytest.mark.required
+@pytest.mark.parametrize("model_name", ["compound_joint"])
+def test_jacobian_compound_joints(xml_path, tol):
+    scene = gs.Scene(show_viewer=False)
+    robot = scene.add_entity(
+        gs.morphs.MJCF(
+            file=xml_path,
+            requires_jac_and_IK=True,
+        ),
+    )
+    scene.build()
+    end_link = robot.get_link("seg2")
+
+    mj_model = mujoco.MjModel.from_xml_path(xml_path)
+    mj_data = mujoco.MjData(mj_model)
+    end_body_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "seg2")
+    jacp = np.empty((3, mj_model.nv), dtype=np.float64)
+    jacr = np.empty((3, mj_model.nv), dtype=np.float64)
+
+    for qpos in (np.zeros(3), np.array([0.3, -0.5, 0.7])):
+        robot.set_qpos(qpos.astype(gs.np_float))
+        mj_data.qpos[:] = qpos
+        mujoco.mj_forward(mj_model, mj_data)
+        mujoco.mj_jacBody(mj_model, mj_data, jacp, jacr, end_body_id)
+
+        assert_allclose(robot.get_jacobian(end_link), np.concatenate([jacp, jacr]), tol=tol)
+
+
+@pytest.mark.required
 def test_mjcf_parsing_with_include():
     scene = gs.Scene()
     robot1 = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/scene.xml"))
@@ -3260,6 +3304,12 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
                             <capsule length="0.1" radius="0.02"/>
                         </geometry>
                     </collision>
+                    <visual>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule length="0.06" radius="0.03"/>
+                        </geometry>
+                    </visual>
                 </link>
             </robot>
             """
@@ -3285,6 +3335,13 @@ def test_urdf_capsule(tmp_path, show_viewer, tol):
     geom_verts = tensor_to_array(geom.get_verts())
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.0), axis=-1, ord=np.inf).min() < 1e-3
     assert np.linalg.norm(geom_verts - (0.0, 0.0, 0.14), axis=-1, ord=np.inf).min() < 1e-3
+
+    (vgeom,) = robot.vgeoms
+    vgeom_verts = tensor_to_array(vgeom.get_vverts())
+    # Visual is a capsule (length=0.06, radius=0.03, total height 0.12) centered on the link, so after
+    # the collision capsule settles against the plane (link at z=0.07), the visual spans z in [0.01, 0.13].
+    assert np.linalg.norm(vgeom_verts - (0.0, 0.0, 0.01), axis=-1, ord=np.inf).min() < 1e-3
+    assert np.linalg.norm(vgeom_verts - (0.0, 0.0, 0.13), axis=-1, ord=np.inf).min() < 1e-3
 
 
 @pytest.mark.required

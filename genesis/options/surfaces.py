@@ -1,5 +1,5 @@
 import math
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from typing_extensions import Self
 
 import numpy as np
@@ -95,37 +95,37 @@ class Surface(Options):
     generate_foam: StrictBool = False
     foam_options: FoamOptions = Field(default_factory=FoamOptions)
 
-    @model_validator(mode="after")
-    def _resolve_shortcuts(self) -> Self:
-        color_target = type(self)._color_target
-        if self.color is not None:
-            if getattr(self, color_target) is not None:
-                gs.raise_exception(f"'color' and '{color_target}' cannot both be set.")
-            setattr(self, color_target, ColorTexture(color=tuple(self.color)))
-
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_shortcuts(cls, data: Any) -> Any:
+        # Route each shortcut into its texture counterpart. Subclasses that don't expose a given texture (e.g. Glass has
+        # no opacity_texture) are skipped via the model_fields guard, and class defaults like `Rough.roughness = 1.0`
+        # are honored.
         for shortcut, texture_field in (
+            ("color", cls._color_target),
             ("opacity", "opacity_texture"),
             ("roughness", "roughness_texture"),
             ("metallic", "metallic_texture"),
+            ("thickness", "thickness_texture"),
+            ("emissive", "emissive_texture"),
         ):
-            value = getattr(self, shortcut, None)
-            if value is not None:
-                if texture_field in self.model_fields:
-                    if getattr(self, texture_field) is not None:
-                        gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
-                    setattr(self, texture_field, ColorTexture(color=(float(value),)))
+            if texture_field not in cls.model_fields:
+                continue
+            field = cls.model_fields.get(shortcut)
+            value = data.get(shortcut, field.default if field is not None else None)
+            if value is None:
+                continue
+            if data.get(texture_field) is not None:
+                gs.raise_exception(f"'{shortcut}' and '{texture_field}' cannot both be set.")
+            data[texture_field] = ColorTexture(color=value)
 
-        if self.emissive is not None:
-            if "emissive_texture" in self.model_fields:
-                if self.emissive_texture is not None:
-                    gs.raise_exception("'emissive' and 'emissive_texture' cannot both be set.")
-                self.emissive_texture = ColorTexture(color=tuple(self.emissive))
+        # Mirror the roughness shortcut into default_roughness unless the user passed an explicit value.
+        if "default_roughness" not in data and "roughness" in cls.model_fields:
+            roughness = data.get("roughness", cls.model_fields["roughness"].default)
+            if roughness is not None:
+                data["default_roughness"] = float(roughness)
 
-        # Sync default_roughness with roughness shortcut unless explicitly set
-        if self.roughness is not None and "default_roughness" not in self.model_fields_set:
-            self.default_roughness = float(self.roughness)
-
-        return self
+        return data
 
     @property
     def texture(self) -> Texture | None:
@@ -317,12 +317,6 @@ class Glass(Surface):
 
     @model_validator(mode="after")
     def _post_init(self) -> Self:
-        # Handle thickness shortcut
-        if self.thickness is not None:
-            if self.thickness_texture is not None:
-                gs.raise_exception("'thickness' and 'thickness_texture' cannot both be set.")
-            self.thickness_texture = ColorTexture(color=(float(self.thickness),))
-
         # Truncate specular/emissive textures to 3 channels (discard alpha for Glass which has no opacity_texture)
         if self.specular_texture is not None:
             self.specular_texture.check_dim(3)

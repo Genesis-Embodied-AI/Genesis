@@ -1,21 +1,23 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Type
 
-import quadrants as qd
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
 from genesis.options.sensors import (
     Contact as ContactSensorOptions,
+)
+from genesis.options.sensors import (
     ContactForce as ContactForceSensorOptions,
 )
 from genesis.utils.geom import inv_transform_by_quat, qd_inv_transform_by_quat, transform_by_quat
-from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array, qd_to_torch
+from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_torch, tensor_to_array
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    ImperfectSensorMetadataMixin,
+    ImperfectSensorMixin,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
@@ -23,8 +25,8 @@ from .base_sensor import (
 )
 
 if TYPE_CHECKING:
-    from genesis.engine.solvers import RigidSolver
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
+    from genesis.engine.solvers import RigidSolver
     from genesis.ext.pyrender.mesh import Mesh
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -76,6 +78,11 @@ class ContactSensorMetadata(SharedSensorMetadata):
 
     solver: "RigidSolver | None" = None
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    # (num_contact_sensors, max_num_filter_links); unused slots are -1.
+    filter_links_idx: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
+    # Indices into expanded_links_idx of sensors that have at least one filter link. Lets the GT update skip the
+    # 4D contact-vs-filter comparison for the (typically larger) subset of sensors with no filter.
+    filtered_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
 
 class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
@@ -103,6 +110,20 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
             self._shared_metadata.expanded_links_idx, link_idx, expand=(1,), dim=0
         )
 
+        num_sensors, cur_num_filter_links = self._shared_metadata.filter_links_idx.shape
+        max_num_filter_links = max(cur_num_filter_links, len(self._options.filter_link_idx))
+        filter_links_idx = torch.full((num_sensors + 1, max_num_filter_links), -1, dtype=gs.tc_int, device=gs.device)
+        filter_links_idx[:num_sensors, :cur_num_filter_links] = self._shared_metadata.filter_links_idx
+        filter_links_idx[num_sensors, : len(self._options.filter_link_idx)] = torch.tensor(
+            self._options.filter_link_idx, dtype=gs.tc_int, device=gs.device
+        )
+        self._shared_metadata.filter_links_idx = filter_links_idx
+
+        if len(self._options.filter_link_idx) > 0:
+            self._shared_metadata.filtered_sensor_idx = concat_with_tensor(
+                self._shared_metadata.filtered_sensor_idx, num_sensors, expand=(1,), dim=0
+            )
+
     def _get_return_format(self) -> tuple[int, ...]:
         return (1,)
 
@@ -122,9 +143,21 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
             return
         if shared_metadata.solver.n_envs == 0:
             link_a, link_b = link_a[None], link_b[None]
-        is_contact_a = (link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        is_contact_b = (link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]).any(dim=-1)
-        shared_ground_truth_cache[:] = (is_contact_a | is_contact_b).T
+
+        is_contact_a = link_a[..., None, :] == shared_metadata.expanded_links_idx[..., None]
+        is_contact_b = link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]
+        result = (is_contact_a | is_contact_b).any(dim=-1)
+        # Apply the (more expensive) filter-aware update only on sensors that declared a filter; other sensors
+        # keep the cheap result computed above.
+        if shared_metadata.filtered_sensor_idx.numel() > 0:
+            filt = shared_metadata.filtered_sensor_idx
+            sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
+            filtered_a = (link_b[:, None, :, None] == sub_filter).any(dim=-1)
+            filtered_b = (link_a[:, None, :, None] == sub_filter).any(dim=-1)
+            sub_is_a = is_contact_a[:, filt, :]
+            sub_is_b = is_contact_b[:, filt, :]
+            result[:, filt] = ((sub_is_a & ~filtered_a) | (sub_is_b & ~filtered_b)).any(dim=-1)
+        shared_ground_truth_cache[:] = result.T
 
     @classmethod
     def _update_shared_cache(
@@ -134,7 +167,6 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        buffered_data.set(shared_ground_truth_cache)
         cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
     def _draw_debug(self, context: "RasterizerContext"):
@@ -162,7 +194,7 @@ class ContactSensor(Sensor[ContactSensorOptions, ContactSensorMetadata]):
 
 
 @dataclass
-class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+class ContactForceSensorMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
     """
     Shared metadata for all contact force sensors.
     """
@@ -173,7 +205,7 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMi
 
 class ContactForceSensor(
     RigidSensorMixin[ContactForceSensorMetadata],
-    NoisySensorMixin[ContactForceSensorMetadata],
+    ImperfectSensorMixin[ContactForceSensorMetadata],
     Sensor[ContactForceSensorOptions, ContactForceSensorMetadata],
 ):
     """
@@ -256,22 +288,19 @@ class ContactForceSensor(
         shared_cache: torch.Tensor,
         buffered_data: "TensorRingBuffer",
     ):
-        buffered_data.set(shared_ground_truth_cache)
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
         cls._apply_delay_to_shared_cache(
             shared_metadata,
             shared_cache,
             buffered_data,
-            shared_metadata.cur_jitter_ts,
             shared_metadata.interpolate,
         )
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
+        cls._apply_imperfections(shared_metadata, shared_cache)
         shared_cache_per_sensor = shared_cache.reshape((shared_cache.shape[0], -1, 3))  # B, n_sensors * 3
-        # clip for max force
+        # Saturate at max_force and zero out values below the min_force dead band. Applied after quantization;
+        # for max_force values that are not multiples of resolution this produces a non-quantized saturation
+        # value, accepted as minor drift in that edge case.
         shared_cache_per_sensor.clamp_(min=-shared_metadata.max_force, max=shared_metadata.max_force)
-        # set to 0 for undetectable force
         shared_cache_per_sensor.masked_fill_(torch.abs(shared_cache_per_sensor) < shared_metadata.min_force, 0.0)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

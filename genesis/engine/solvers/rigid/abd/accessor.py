@@ -1095,3 +1095,22 @@ def kernel_set_geoms_friction(
     qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL))
     for i_g_ in range(geoms_idx.shape[0]):
         geoms_info.friction[geoms_idx[i_g_]] = friction[i_g_]
+
+
+@qd.kernel(fastcache=True)
+def kernel_set_vverts(
+    vverts: qd.types.ndarray(),
+    vvert_start: qd.i32,
+    envs_idx: qd.types.ndarray(),
+    vverts_state: array_class.VVertsState,
+    static_rigid_sim_config: qd.template(),
+):
+    n_envs_in = envs_idx.shape[0]
+    n_vverts_in = vverts.shape[1]
+
+    qd.loop_config(serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+    for i_b_, i_vv_ in qd.ndrange(n_envs_in, n_vverts_in):
+        i_b = envs_idx[i_b_]
+        i_vv = vvert_start + i_vv_
+        for j in qd.static(range(3)):
+            vverts_state.pos[i_vv, i_b][j] = vverts[i_b_, i_vv_, j]

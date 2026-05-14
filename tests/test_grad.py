@@ -1,5 +1,3 @@
-import sys
-
 import numpy as np
 import pytest
 import torch
@@ -10,12 +8,6 @@ from genesis.utils.misc import qd_to_torch, qd_to_numpy, tensor_to_array
 from genesis.utils import set_random_seed
 
 from .utils import assert_allclose
-
-
-# Disable debug mode globally for performance concerns
-pytestmark = [
-    pytest.mark.debug(False),
-]
 
 
 @pytest.mark.required
@@ -413,9 +405,6 @@ def test_diff_solver(monkeypatch):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_differentiable_rigid(show_viewer):
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.xfail("This test fails on Apple M1 runners be because shader compilation exceeds 100Mb threshold.")
-
     dt = 1e-2
     horizon = 100
     substeps = 1
@@ -509,9 +498,6 @@ def test_differentiable_rigid(show_viewer):
 @pytest.mark.required
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_sim_vs_solver_state_grad_parity(show_viewer):
-    if sys.platform == "darwin" and gs.backend != gs.cpu:
-        pytest.xfail("This test fails on Apple M1 runners be because shader compilation exceeds 100Mb threshold.")
-
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             dt=0.01,

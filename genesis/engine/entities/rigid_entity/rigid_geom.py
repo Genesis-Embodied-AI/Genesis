@@ -902,6 +902,48 @@ class RigidVisGeom(RBC):
         vverts_pos = pos[..., None, :] + gu.transform_by_quat(self._aabb_verts, quat[..., None, :])
         return torch.stack((vverts_pos.min(dim=-2).values, vverts_pos.max(dim=-2).values), dim=-2)
 
+    @gs.assert_built
+    def set_vverts(self, vverts, envs_idx=None):
+        """Override this vgeom's visual vertex positions for rendering and sensors. See
+        :meth:`KinematicEntity.set_vverts` for the full behavior; this method writes only this vgeom's slice.
+
+        Requires the owning entity's morph to be created with 'enable_custom_vverts=True'.
+        """
+        if not self._entity._morph.enable_custom_vverts:
+            gs.raise_exception(
+                "'set_vverts' requires the entity's morph to be created with 'enable_custom_vverts=True'."
+            )
+        custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+        self._entity._solver.set_vverts(
+            self.vvert_start + custom_offset,
+            self.vvert_end + custom_offset,
+            np.array([self.idx], dtype=gs.np_int),
+            vverts,
+            envs_idx,
+        )
+
+    @gs.assert_built
+    def get_vverts(self, envs_idx=None):
+        """Return a copy of this vgeom's visual vertex positions in world space.
+
+        Entities created with 'morph.enable_custom_vverts=True' read from the engine-owned 'vverts_state.pos' buffer.
+        Other entities compute the positions on the fly from the vgeom's current world pose applied to 'init_vverts'.
+        """
+        if self._entity._morph.enable_custom_vverts:
+            custom_offset = self._entity._custom_vvert_start - self._entity._vvert_start
+            return self._entity._solver.get_vverts(
+                self.vvert_start + custom_offset, self.vvert_end + custom_offset, envs_idx
+            )
+
+        self._solver.update_vgeoms()
+        vgeoms_pos = qd_to_torch(self._solver.vgeoms_state.pos, envs_idx, transpose=True, copy=None)
+        vgeoms_quat = qd_to_torch(self._solver.vgeoms_state.quat, envs_idx, transpose=True, copy=None)
+        init = torch.as_tensor(self.init_vverts, dtype=gs.tc_float, device=gs.device)
+        pos = vgeoms_pos[..., self.idx, :].unsqueeze(-2)
+        quat = vgeoms_quat[..., self.idx, :].unsqueeze(-2)
+        tensor = gu.transform_by_trans_quat(init, pos, quat)
+        return tensor[0] if self._solver.n_envs == 0 else tensor
+
     # ------------------------------------------------------------------------------------
     # ----------------------------------- properties -------------------------------------
     # ------------------------------------------------------------------------------------
