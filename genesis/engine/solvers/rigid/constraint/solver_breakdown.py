@@ -316,24 +316,23 @@ def _func_parallel_linesearch_refine(
 ):
     """Linesearch refinement body, called per-env from ``_func_parallel_linesearch_eval``.
 
-    The body runs on all 32 lanes when ``constraint_layout_transposed`` is True (cooperative path), and only on
-    ``tid == 0`` otherwise (serial path) — this is enforced by the ``qd.static(coop) or tid == 0`` outer guard, which
-    DCEs to ``True`` in coop mode and to ``tid == 0`` in serial mode (same idiom as ``_func_ls_point_fn_opt_post``
-    in solver.py). The unified evaluator (`func_ls_point_fn_opt`) and refine (`func_linesearch_refine`) dispatch on
-    the same ``coop`` flag, which is forwarded as a template arg. Writes to ``ls_alpha`` are always tid==0-guarded so
-    only one lane writes per env in the cooperative case (the guards are redundant but harmless when serial).
+    Dispatches on ``constraint_layout_transposed`` via the outer ``qd.static`` branch so the unselected path is DCE'd.
+    Both branches call the same unified ``func_ls_point_fn_opt`` and ``func_linesearch_refine``, passing the literal
+    ``True`` (cooperative, all 32 lanes) or ``False`` (serial, ``tid == 0`` only) for the ``coop`` template arg —
+    Python literals are required here because Quadrants' ``qd.template()`` machinery does not auto-promote a struct
+    member access to a compile-time value at the call site (passing it via a local variable yields a quadrants
+    ``Expr``, not a Python bool). Writes to ``ls_alpha`` are tid==0-guarded in the cooperative branch.
     """
-    coop = static_rigid_sim_config.constraint_layout_transposed
-    if qd.static(coop) or tid == 0:
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         if alpha_newton > 0.0:
             if tid == 0:
                 constraint_state.ls_alpha[i_b] = 0.0
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop
+                i_b, tid, alpha_newton, constraint_state, rigid_global_info, True
             )
             if p0_cost < p1_cost:
                 p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop
+                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, True
                 )
             if p1_cost < p0_cost and tid == 0:
                 constraint_state.ls_alpha[i_b] = p1_alpha
@@ -349,9 +348,37 @@ def _func_parallel_linesearch_refine(
                     gtol,
                     constraint_state,
                     rigid_global_info,
-                    coop,
+                    True,
                 )
                 if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
+                    constraint_state.ls_alpha[i_b] = res_alpha
+    else:
+        if alpha_newton > 0.0 and tid == 0:
+            constraint_state.ls_alpha[i_b] = 0.0
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                i_b, tid, alpha_newton, constraint_state, rigid_global_info, False
+            )
+            if p0_cost < p1_cost:
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, False
+                )
+            if p1_cost < p0_cost:
+                constraint_state.ls_alpha[i_b] = p1_alpha
+            if qd.abs(p1_deriv_0) > gtol:
+                res_alpha, ls_result = solver.func_linesearch_refine(
+                    i_b,
+                    tid,
+                    p1_alpha,
+                    p1_cost,
+                    p1_deriv_0,
+                    p1_deriv_1,
+                    p0_cost,
+                    gtol,
+                    constraint_state,
+                    rigid_global_info,
+                    False,
+                )
+                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
                     constraint_state.ls_alpha[i_b] = res_alpha
 
 
