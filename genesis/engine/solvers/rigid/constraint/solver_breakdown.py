@@ -304,6 +304,92 @@ def _func_decomp_linesearch_p0(
 
 
 @qd.func
+def _func_decomp_linesearch_refine_coop(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
+    ``func_ls_point_fn_opt`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
+    template arg). Writes to ``ls_alpha`` are tid==0-guarded since the result is per-env, not per-lane."""
+    if alpha_newton > 0.0:
+        if tid == 0:
+            constraint_state.ls_alpha[i_b] = 0.0
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, True
+        )
+        if p0_cost < p1_cost:
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, True
+            )
+        if p1_cost < p0_cost and tid == 0:
+            constraint_state.ls_alpha[i_b] = p1_alpha
+        if qd.abs(p1_deriv_0) > gtol:
+            res_alpha, ls_result = solver.func_linesearch_refine(
+                i_b,
+                tid,
+                p1_alpha,
+                p1_cost,
+                p1_deriv_0,
+                p1_deriv_1,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_global_info,
+                True,
+            )
+            if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
+                constraint_state.ls_alpha[i_b] = res_alpha
+
+
+@qd.func
+def _func_decomp_linesearch_refine_serial(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: bit-identical to the pre-coop baseline.
+    Only ``tid == 0`` runs the work; the unified helpers are called with the Python literal ``False`` for ``coop``."""
+    if alpha_newton > 0.0 and tid == 0:
+        constraint_state.ls_alpha[i_b] = 0.0
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, False
+        )
+        if p0_cost < p1_cost:
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, False
+            )
+        if p1_cost < p0_cost:
+            constraint_state.ls_alpha[i_b] = p1_alpha
+        if qd.abs(p1_deriv_0) > gtol:
+            res_alpha, ls_result = solver.func_linesearch_refine(
+                i_b,
+                tid,
+                p1_alpha,
+                p1_cost,
+                p1_deriv_0,
+                p1_deriv_1,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_global_info,
+                False,
+            )
+            if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
+                constraint_state.ls_alpha[i_b] = res_alpha
+
+
+@qd.func
 def _func_decomp_linesearch_refine(
     i_b,
     tid,
@@ -314,72 +400,21 @@ def _func_decomp_linesearch_refine(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_eval``.
+    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_eval``. Dispatches at compile time
+    on ``constraint_layout_transposed`` to ``_func_decomp_linesearch_refine_coop`` (warp-cooperative, all 32 lanes)
+    or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical baseline).
 
-    Dispatches on ``constraint_layout_transposed`` via the outer ``qd.static`` branch so the unselected path is DCE'd.
-    Both branches call the same unified ``func_ls_point_fn_opt`` and ``func_linesearch_refine``, passing the literal
-    ``True`` (cooperative, all 32 lanes) or ``False`` (serial, ``tid == 0`` only) for the ``coop`` template arg —
-    Python literals are required here because Quadrants' ``qd.template()`` machinery does not auto-promote a struct
-    member access to a compile-time value at the call site (passing it via a local variable yields a quadrants
-    ``Expr``, not a Python bool). Writes to ``ls_alpha`` are tid==0-guarded in the cooperative branch.
-    """
+    Each branch passes the literal Python ``True`` / ``False`` for the ``coop`` template arg of the unified
+    ``func_ls_point_fn_opt`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
+    auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        if alpha_newton > 0.0:
-            if tid == 0:
-                constraint_state.ls_alpha[i_b] = 0.0
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                i_b, tid, alpha_newton, constraint_state, rigid_global_info, True
-            )
-            if p0_cost < p1_cost:
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, True
-                )
-            if p1_cost < p0_cost and tid == 0:
-                constraint_state.ls_alpha[i_b] = p1_alpha
-            if qd.abs(p1_deriv_0) > gtol:
-                res_alpha, ls_result = solver.func_linesearch_refine(
-                    i_b,
-                    tid,
-                    p1_alpha,
-                    p1_cost,
-                    p1_deriv_0,
-                    p1_deriv_1,
-                    p0_cost,
-                    gtol,
-                    constraint_state,
-                    rigid_global_info,
-                    True,
-                )
-                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
-                    constraint_state.ls_alpha[i_b] = res_alpha
+        _func_decomp_linesearch_refine_coop(
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
     else:
-        if alpha_newton > 0.0 and tid == 0:
-            constraint_state.ls_alpha[i_b] = 0.0
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                i_b, tid, alpha_newton, constraint_state, rigid_global_info, False
-            )
-            if p0_cost < p1_cost:
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, False
-                )
-            if p1_cost < p0_cost:
-                constraint_state.ls_alpha[i_b] = p1_alpha
-            if qd.abs(p1_deriv_0) > gtol:
-                res_alpha, ls_result = solver.func_linesearch_refine(
-                    i_b,
-                    tid,
-                    p1_alpha,
-                    p1_cost,
-                    p1_deriv_0,
-                    p1_deriv_1,
-                    p0_cost,
-                    gtol,
-                    constraint_state,
-                    rigid_global_info,
-                    False,
-                )
-                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
-                    constraint_state.ls_alpha[i_b] = res_alpha
+        _func_decomp_linesearch_refine_serial(
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
 
 
 @qd.func
