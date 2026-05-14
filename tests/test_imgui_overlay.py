@@ -20,11 +20,25 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
     """Make ImGui rendering and timing pixel-identical across renderers for snapshot tests."""
     from imgui_bundle import imgui
 
-    # Pin ``on_draw`` so it resets ``_last_time`` after every call, forcing the FPS history to use the
-    # deterministic 1/60 fallback instead of the wall clock.
+    # Pin ``on_draw`` so it resets ``_last_time`` after every call (forcing the FPS history to use the
+    # deterministic 1/60 fallback instead of the wall clock) and parks the ImGui mouse cursor off-panel at
+    # the start of every frame. The mouse-park must go through ``add_mouse_pos_event`` rather than a direct
+    # ``io.mouse_pos`` assignment because ImGui rebuilds ``MousePos`` from the queued event stream inside
+    # ``new_frame``: pyglet posts a cursor-position event whenever it processes Win32 messages, so a direct
+    # write is overwritten before any widget reads it. The headless Windows runner still keeps a desktop
+    # cursor position internally, and the window-local coordinates pyglet derives from it shift across runs
+    # with window placement - landing on a widget on some runs and not others, which made the snapshot flaky.
+    # Appending an off-panel event as the LAST entry in the queue at the start of every frame guarantees
+    # that ``new_frame`` resolves ``MousePos`` to ``(-1, -1)`` regardless of what pyglet queued earlier.
+    # ``_init_imgui`` is pre-called so ``self._io`` is available; the real ``on_draw`` short-circuits its
+    # own init via the ``_init_attempted`` guard.
     original_on_draw = ImGuiOverlayPlugin.on_draw
 
     def _on_draw_deterministic(self):
+        if not self._init_attempted:
+            self._init_imgui()
+        if self._available:
+            self._io.add_mouse_pos_event(-1.0, -1.0)
         original_on_draw(self)
         self._last_time = None
 
@@ -54,10 +68,6 @@ def _apply_deterministic_imgui_overrides(monkeypatch):
         # different pixel grids across platforms. Pin to 1.0 so vertex positions are byte-identical everywhere.
         self._io.display_framebuffer_scale = (1.0, 1.0)
         self._io.fonts.flags |= self._imgui.ImFontAtlasFlags_.no_baked_lines.value
-        # Park the ImGui mouse cursor outside the panel so no widget can enter its hovered state in the captured
-        # frame. On Windows, pyglet seeds ``io.mouse_pos`` from the OS cursor at startup, which would otherwise
-        # leak the runner's cursor location into hover-sensitive pixels.
-        self._io.mouse_pos = (-1.0, -1.0)
 
     monkeypatch.setattr(ImGuiOverlayPlugin, "_init_imgui", _init_imgui_deterministic)
 
