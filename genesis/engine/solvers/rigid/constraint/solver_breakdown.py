@@ -316,32 +316,29 @@ def _func_parallel_linesearch_refine(
 ):
     """Linesearch refinement body, called per-env from ``_func_parallel_linesearch_eval``.
 
-    Dispatches to serial (tid==0 only) or cooperative (all 32 lanes) based on ``constraint_layout_transposed``.
-    Extracted so the ``qd.static`` branching on the entry condition doesn't require variable assignment across branches.
+    The body runs on all 32 lanes when ``constraint_layout_transposed`` is True (cooperative path), and only on
+    ``tid == 0`` otherwise (serial path) — this is enforced by the ``qd.static(coop) or tid == 0`` outer guard, which
+    DCEs to ``True`` in coop mode and to ``tid == 0`` in serial mode (same idiom as ``_func_ls_point_fn_opt_post``
+    in solver.py). The unified evaluator (`func_ls_point_fn_opt`) and refine (`func_linesearch_refine`) dispatch on
+    the same ``coop`` flag, which is forwarded as a template arg. Writes to ``ls_alpha`` are always tid==0-guarded so
+    only one lane writes per env in the cooperative case (the guards are redundant but harmless when serial).
     """
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    coop = static_rigid_sim_config.constraint_layout_transposed
+    if qd.static(coop) or tid == 0:
         if alpha_newton > 0.0:
             if tid == 0:
                 constraint_state.ls_alpha[i_b] = 0.0
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
-                i_b,
-                tid,
-                alpha_newton,
-                constraint_state,
-                rigid_global_info,
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop
             )
             if p0_cost < p1_cost:
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt_coop(
-                    i_b,
-                    tid,
-                    gs.qd_float(0.0),
-                    constraint_state,
-                    rigid_global_info,
+                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+                    i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop
                 )
             if p1_cost < p0_cost and tid == 0:
                 constraint_state.ls_alpha[i_b] = p1_alpha
             if qd.abs(p1_deriv_0) > gtol:
-                res_alpha, ls_result = solver.func_linesearch_refine_coop(
+                res_alpha, ls_result = solver.func_linesearch_refine(
                     i_b,
                     tid,
                     p1_alpha,
@@ -352,40 +349,9 @@ def _func_parallel_linesearch_refine(
                     gtol,
                     constraint_state,
                     rigid_global_info,
+                    coop,
                 )
                 if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
-                    constraint_state.ls_alpha[i_b] = res_alpha
-    else:
-        if alpha_newton > 0.0 and tid == 0:
-            constraint_state.ls_alpha[i_b] = 0.0
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                i_b,
-                alpha_newton,
-                constraint_state,
-                rigid_global_info,
-            )
-            if p0_cost < p1_cost:
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b,
-                    gs.qd_float(0.0),
-                    constraint_state,
-                    rigid_global_info,
-                )
-            if p1_cost < p0_cost:
-                constraint_state.ls_alpha[i_b] = p1_alpha
-            if qd.abs(p1_deriv_0) > gtol:
-                res_alpha, ls_result = solver.func_linesearch_refine(
-                    i_b,
-                    p1_alpha,
-                    p1_cost,
-                    p1_deriv_0,
-                    p1_deriv_1,
-                    p0_cost,
-                    gtol,
-                    constraint_state,
-                    rigid_global_info,
-                )
-                if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
                     constraint_state.ls_alpha[i_b] = res_alpha
 
 
@@ -397,9 +363,10 @@ def _func_parallel_linesearch_eval(
 ):
     """Decomposed solver eval kernel: linesearch refinement from Newton step + cooperative apply.
 
-    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via ``func_linesearch_refine``
-    (serial, tid==0 only) or ``func_linesearch_refine_coop`` (cooperative across the 32-lane warp), gated on
-    ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to qacc, Ma, and Jaref.
+    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via the unified
+    ``func_linesearch_refine`` (templated on ``coop``: serial-on-tid-0 when False, cooperative across the 32-lane
+    warp when True), gated on ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to
+    qacc, Ma, and Jaref.
 
     The cooperative path is only safe when the Tier-1 constraint-state tensors are stored with ``layout=(1, 0)`` (so
     per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a fixed env). The
