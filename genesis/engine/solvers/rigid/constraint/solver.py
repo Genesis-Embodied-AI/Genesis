@@ -2449,16 +2449,22 @@ def func_ls_point_fn_opt(
 ):
     """Single-alpha linesearch evaluator. ``coop=True`` runs cooperatively across the 32-lane warp (caller passes the
     lane id as ``tid``); ``coop=False`` runs serially and the caller is responsible for ensuring only one thread per
-    env enters this function (typically by gating on ``tid == 0`` upstream)."""
+    env enters this function (typically by gating on ``tid == 0`` upstream).
+
+    Note: the reducer call and the post-reduction call live inside the same ``qd.static(coop)`` branch and end with
+    ``return``, because Quadrants' AST transformer doesn't propagate locals across ``if qd.static`` branches — naming
+    a variable in the unified ``return`` statement raises ``Name "t0_0" is not defined`` even when one branch is
+    DCE'd. Self-contained per-branch returns sidestep this."""
     if qd.static(coop):
         t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_coop(
             i_b, tid, alpha, alpha, alpha, constraint_state, 1
         )
+        return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True)
     else:
         t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_serial(
             i_b, alpha, alpha, alpha, constraint_state, 1
         )
-    return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, coop)
+        return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
 
 
 @qd.func
@@ -2605,34 +2611,54 @@ def func_ls_point_fn_3alphas_opt(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """3-alpha linesearch evaluator. See ``func_ls_point_fn_opt`` for the serial-vs-cooperative contract."""
+    """3-alpha linesearch evaluator. See ``func_ls_point_fn_opt`` for the serial-vs-cooperative contract and the
+    rationale for the per-branch return."""
     if qd.static(coop):
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
+        )
+        return _func_ls_point_fn_3alphas_post(
+            i_b,
+            tid,
+            alpha_0,
+            alpha_1,
+            alpha_2,
+            t0_0,
+            t0_1,
+            t0_2,
+            t1_0,
+            t1_1,
+            t1_2,
+            t2_0,
+            t2_1,
+            t2_2,
+            constraint_state,
+            rigid_global_info,
+            True,
         )
     else:
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
-    return _func_ls_point_fn_3alphas_post(
-        i_b,
-        tid,
-        alpha_0,
-        alpha_1,
-        alpha_2,
-        t0_0,
-        t0_1,
-        t0_2,
-        t1_0,
-        t1_1,
-        t1_2,
-        t2_0,
-        t2_1,
-        t2_2,
-        constraint_state,
-        rigid_global_info,
-        coop,
-    )
+        return _func_ls_point_fn_3alphas_post(
+            i_b,
+            tid,
+            alpha_0,
+            alpha_1,
+            alpha_2,
+            t0_0,
+            t0_1,
+            t0_2,
+            t1_0,
+            t1_1,
+            t1_2,
+            t2_0,
+            t2_1,
+            t2_2,
+            constraint_state,
+            rigid_global_info,
+            False,
+        )
 
 
 @qd.func
