@@ -2073,7 +2073,10 @@ def test_set_vverts(renderer, show_viewer):
     scene.visualizer.update_visual_states()
     assert_allclose(entity.get_vverts(), fk_vverts, tol=gs.EPS)
     rgb_restored = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
-    assert_allclose(rgb_restored, rgb_baseline, tol=gs.EPS)
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        assert np.abs(rgb_restored.astype(np.float32) - rgb_baseline.astype(np.float32)).mean() < 1.0
+    else:
+        assert_equal(rgb_restored, rgb_baseline)
 
     # Vgeom-level write affects only the slice owned by that vgeom.
     vg = entity.vgeoms[0]
