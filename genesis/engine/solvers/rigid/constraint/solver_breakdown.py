@@ -551,116 +551,137 @@ def _func_update_constraint_qfrc(
 
 
 @qd.func
+def _func_update_constraint_cost_coop(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Warp-per-env cooperative variant of ``_func_update_constraint_cost``: 32 lanes stride through dofs and
+    constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add``. Per-lane reads of
+    Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when the
+    Tier-1 constraint-state tensors were allocated with ``layout=(1, 0)``)."""
+    _B = constraint_state.grad.shape[1]
+    _K = qd.static(32)
+
+    qd.loop_config(name="update_constraint_cost", block_dim=_K)
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            n_dofs = constraint_state.qfrc_constraint.shape[0]
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            n_con = constraint_state.n_constraints[i_b]
+
+            if tid == 0:
+                constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
+
+            cost_i = gs.qd_float(0.0)
+            gauss_i = gs.qd_float(0.0)
+
+            # Gauss cost from dofs (lane-strided)
+            i_d = tid
+            while i_d < n_dofs:
+                v = (
+                    0.5
+                    * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
+                    * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+                )
+                gauss_i += v
+                cost_i += v
+                i_d = i_d + _K
+
+            # Constraint cost: quadratic + friction linear (lane-strided over constraints)
+            i_c = tid
+            while i_c < n_con:
+                Jaref_c = constraint_state.Jaref[i_c, i_b]
+                cost_i += 0.5 * (
+                    Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+                )
+                if ne <= i_c and i_c < nef:
+                    f = constraint_state.efc_frictionloss[i_c, i_b]
+                    r = constraint_state.diag[i_c, i_b]
+                    rf = r * f
+                    linear_neg = Jaref_c <= -rf
+                    linear_pos = Jaref_c >= rf
+                    cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+                i_c = i_c + _K
+
+            cost_i = qd.simt.subgroup.reduce_all_add(cost_i, 5)
+            gauss_i = qd.simt.subgroup.reduce_all_add(gauss_i, 5)
+
+            if tid == 0:
+                constraint_state.gauss[i_b] = gauss_i
+                constraint_state.cost[i_b] = cost_i
+
+
+@qd.func
+def _func_update_constraint_cost_serial(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Legacy 1-thread-per-env variant of ``_func_update_constraint_cost``. Bit-identical to the pre-coop baseline:
+    one thread runs the full reduction over dofs + constraints in straight ``for`` loops."""
+    _B = constraint_state.grad.shape[1]
+
+    qd.loop_config(name="update_constraint_cost", block_dim=32)
+    for i_b in range(_B):
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            n_dofs = constraint_state.qfrc_constraint.shape[0]
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            n_con = constraint_state.n_constraints[i_b]
+
+            constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
+
+            cost_i = gs.qd_float(0.0)
+            gauss_i = gs.qd_float(0.0)
+
+            # Gauss cost from dofs
+            for i_d in range(n_dofs):
+                v = (
+                    0.5
+                    * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
+                    * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+                )
+                gauss_i += v
+                cost_i += v
+
+            # Constraint cost: quadratic + friction linear
+            for i_c in range(n_con):
+                cost_i += 0.5 * (
+                    constraint_state.Jaref[i_c, i_b] ** 2
+                    * constraint_state.efc_D[i_c, i_b]
+                    * constraint_state.active[i_c, i_b]
+                )
+                if ne <= i_c and i_c < nef:
+                    f = constraint_state.efc_frictionloss[i_c, i_b]
+                    r = constraint_state.diag[i_c, i_b]
+                    rf = r * f
+                    linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+                    linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+                    cost_i += linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
+                        -0.5 * rf + constraint_state.Jaref[i_c, i_b]
+                    )
+
+            constraint_state.gauss[i_b] = gauss_i
+            constraint_state.cost[i_b] = cost_i
+
+
+@qd.func
 def _func_update_constraint_cost(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute gauss and cost (reductions over dofs and constraints).
-
-    Two paths picked at compile time on ``constraint_layout_transposed``:
-      - True:  warp-per-env cooperative path. 32 lanes stride through dofs and constraints; final reduction via
-               ``subgroup.reduce_all_add``. Per-lane reads of Jaref/efc_D/active are coalesced under the
-               [_B, len_constraints_] physical layout.
-      - False: legacy 1-thread-per-env serial path. Bit-identical to baseline.
-    """
-    _B = constraint_state.grad.shape[1]
-    _K = qd.static(32)
-
+    """Compute gauss and cost (reductions over dofs and constraints). Dispatches at compile time on
+    ``constraint_layout_transposed`` to ``_func_update_constraint_cost_coop`` (warp-per-env) or
+    ``_func_update_constraint_cost_serial`` (1-thread-per-env, bit-identical baseline)."""
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        qd.loop_config(name="update_constraint_cost", block_dim=_K)
-        for i_flat in range(_B * _K):
-            tid = i_flat % _K
-            i_b = i_flat // _K
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                n_dofs = constraint_state.qfrc_constraint.shape[0]
-                ne = constraint_state.n_constraints_equality[i_b]
-                nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-                n_con = constraint_state.n_constraints[i_b]
-
-                if tid == 0:
-                    constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
-
-                cost_i = gs.qd_float(0.0)
-                gauss_i = gs.qd_float(0.0)
-
-                # Gauss cost from dofs (lane-strided)
-                i_d = tid
-                while i_d < n_dofs:
-                    v = (
-                        0.5
-                        * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
-                        * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
-                    )
-                    gauss_i += v
-                    cost_i += v
-                    i_d = i_d + _K
-
-                # Constraint cost: quadratic + friction linear (lane-strided over constraints)
-                i_c = tid
-                while i_c < n_con:
-                    Jaref_c = constraint_state.Jaref[i_c, i_b]
-                    cost_i += 0.5 * (
-                        Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-                    )
-                    if ne <= i_c and i_c < nef:
-                        f = constraint_state.efc_frictionloss[i_c, i_b]
-                        r = constraint_state.diag[i_c, i_b]
-                        rf = r * f
-                        linear_neg = Jaref_c <= -rf
-                        linear_pos = Jaref_c >= rf
-                        cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
-                    i_c = i_c + _K
-
-                cost_i = qd.simt.subgroup.reduce_all_add(cost_i, 5)
-                gauss_i = qd.simt.subgroup.reduce_all_add(gauss_i, 5)
-
-                if tid == 0:
-                    constraint_state.gauss[i_b] = gauss_i
-                    constraint_state.cost[i_b] = cost_i
+        _func_update_constraint_cost_coop(dofs_state, constraint_state, static_rigid_sim_config)
     else:
-        qd.loop_config(name="update_constraint_cost", block_dim=32)
-        for i_b in range(_B):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
-                n_dofs = constraint_state.qfrc_constraint.shape[0]
-                ne = constraint_state.n_constraints_equality[i_b]
-                nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-                n_con = constraint_state.n_constraints[i_b]
-
-                constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
-
-                cost_i = gs.qd_float(0.0)
-                gauss_i = gs.qd_float(0.0)
-
-                # Gauss cost from dofs
-                for i_d in range(n_dofs):
-                    v = (
-                        0.5
-                        * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
-                        * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
-                    )
-                    gauss_i += v
-                    cost_i += v
-
-                # Constraint cost: quadratic + friction linear
-                for i_c in range(n_con):
-                    cost_i += 0.5 * (
-                        constraint_state.Jaref[i_c, i_b] ** 2
-                        * constraint_state.efc_D[i_c, i_b]
-                        * constraint_state.active[i_c, i_b]
-                    )
-                    if ne <= i_c and i_c < nef:
-                        f = constraint_state.efc_frictionloss[i_c, i_b]
-                        r = constraint_state.diag[i_c, i_b]
-                        rf = r * f
-                        linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-                        linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-                        cost_i += linear_neg * f * (-0.5 * rf - constraint_state.Jaref[i_c, i_b]) + linear_pos * f * (
-                            -0.5 * rf + constraint_state.Jaref[i_c, i_b]
-                        )
-
-                constraint_state.gauss[i_b] = gauss_i
-                constraint_state.cost[i_b] = cost_i
+        _func_update_constraint_cost_serial(dofs_state, constraint_state, static_rigid_sim_config)
 
 
 # Number of full Hessian+Cholesky rebuilds at the start of the solver loop (after the init's iter-0 full rebuild).
