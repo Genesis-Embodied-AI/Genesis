@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Generic, Sequence, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, Sequence, TypeVar, get_args, get_origin
 
 import numpy as np
 import torch
@@ -15,6 +15,7 @@ from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
     from genesis.engine.solvers import RigidSolver
+    from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.options.sensors.options import SensorOptions
     from genesis.recorders.base_recorder import Recorder, RecorderOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -327,7 +328,6 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
             interpolate = [False for _ in shared_metadata.cache_sizes]
 
         tensor_start = 0
-        envs_idx = shared_metadata.solver.scene._envs_idx
         for sensor_idx, (tensor_size, interp) in enumerate(zip(shared_metadata.cache_sizes, interpolate)):
             # Compute the current delay of the sensor, taking into account jitter if any
             cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
@@ -340,10 +340,10 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
             # Update shared cached with left data (Zero Order Hold) or linearly interpolated data (First Order)
             tensor_slice = slice(tensor_start, tensor_start + tensor_size)
             sensor_cache = shared_cache[:, tensor_slice]
-            data_left = buffered_data.at(cur_delay_ts_int, envs_idx, tensor_slice)
+            data_left = buffered_data.at(cur_delay_ts_int, tensor_slice, per_row=True)
             if interp:
                 ratio = torch.frac(cur_delay_ts)
-                data_right = buffered_data.at(cur_delay_ts_int + 1, envs_idx, tensor_slice)
+                data_right = buffered_data.at(cur_delay_ts_int + 1, tensor_slice, per_row=True)
                 torch.lerp(data_left, data_right, ratio[:, None], out=sensor_cache)
             else:
                 sensor_cache.copy_(data_left)
@@ -388,6 +388,32 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         field[:, index_slice] = broadcast_tensor(value, field.dtype, (len(envs_idx), field_size), ("envs_idx", ""))
 
 
+class _SolverLinkGroup(NamedTuple):
+    """Per-solver bucket: (solver, in-solver link indices, sensor columns)."""
+
+    solver: "KinematicSolver"
+    links_idx: torch.Tensor  # solver-local link indices, one per sensor in this group
+    sensor_cols: torch.Tensor  # which per-class sensor column each link pose lands in
+
+
+@dataclass
+class KinematicSensorMetadataMixin:
+    """
+    Shared metadata for sensors attached to a KinematicEntity (or any subclass, including RigidEntity). Sensors are
+    bucketed at build time into per-solver _SolverLinkGroup entries so the per-step gather is one bulk read per solver.
+    Static sensors (entity_idx<0) are not bucketed and keep an identity link pose, leaving the kernel to apply
+    pos_offset / euler_offset in world frame.
+    """
+
+    offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
+    offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
+    solver_groups: list[_SolverLinkGroup] = field(default_factory=list)
+
+    @property
+    def n_sensors(self) -> int:
+        return self.offsets_pos.shape[1]
+
+
 @dataclass
 class RigidSensorMetadataMixin:
     """
@@ -399,59 +425,31 @@ class RigidSensorMetadataMixin:
     offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
     offsets_quat: torch.Tensor = make_tensor_field((0, 0, 4))
 
-    # Per-sensor link resolution: supports sensors attached to entities in different solvers.
-    # Each entry corresponds to one sensor in registration order.
-    _sensor_link_solvers: list = field(default_factory=list)  # [solver | None] per sensor
-    _sensor_link_indices: list[int] = field(default_factory=list)  # solver-relative link idx per sensor
-
 
 RigidSensorMetadataMixinT = TypeVar("RigidSensorMetadataMixinT", bound=RigidSensorMetadataMixin)
+KinematicSensorMetadataMixinT = TypeVar("KinematicSensorMetadataMixinT", bound=KinematicSensorMetadataMixin)
 
 
-class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
+class _LinkAttachedSensorMixin:
     """
-    Base sensor class for sensors that are attached to a RigidEntity.
+    Common boilerplate for sensors attached to a link: holds the python-side `_link` reference, concatenates
+    per-sensor pos/euler offsets into shared metadata at build time, and exposes `set_{pos,quat}_offset`. Subclasses
+    implement `_register_link` to record the link mapping in solver-specific shared-metadata shape (single tensor
+    for RigidSensorMixin, per-solver buckets for KinematicSensorMixin).
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._link: "RigidLink" | None = None
+    _link: "RigidLink | None" = None
 
     def build(self):
         super().build()
 
-        sim = self._manager._sim
+        batch_size = self._manager._sim._B
+        if self._options.entity_idx >= 0:
+            entity = self._manager._sim.entities[self._options.entity_idx]
+            self._link = entity.links[self._options.link_idx_local]
+            link_idx = self._options.link_idx_local + entity.link_start
+            self._register_link(entity, link_idx)
 
-        if self._shared_metadata.solver is None:
-            # Primary solver determines BVH geometry (collision or visual).
-            # Prefer rigid_solver (has collision geometry); fall back to kinematic.
-            if sim.rigid_solver.is_active:
-                self._shared_metadata.solver = sim.rigid_solver
-            elif sim.kinematic_solver.is_active:
-                self._shared_metadata.solver = sim.kinematic_solver
-            else:
-                self._shared_metadata.solver = sim.rigid_solver
-
-        # If entity_idx is < 0, this is a static sensor (not attached to any link). Only raycaster sensors formally
-        # support this; other rigid sensors (IMU, Contact, ContactForce, TemperatureGrid, Proximity) read poses /
-        # kinematics by bulk-indexing shared_metadata.links_idx and would silently track solver link 0 if we appended
-        # a placeholder here. Raycaster overrides build() to populate its own per-sensor metadata (offsets +
-        # _sensor_link_solvers / _sensor_link_indices).
-        if self._options.entity_idx is None or self._options.entity_idx < 0:
-            self._link = None
-            return
-
-        entity = sim.entities[self._options.entity_idx]
-        self._link = entity.links[self._options.link_idx_local]
-        link_idx = self._options.link_idx_local + entity.link_start
-
-        # Record per-sensor solver + link for cross-solver link resolution.
-        self._shared_metadata._sensor_link_solvers.append(entity.solver)
-        self._shared_metadata._sensor_link_indices.append(link_idx)
-
-        batch_size = sim._B
-        # Keep links_idx for backward compatibility with non-raycaster sensors.
-        self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, link_idx)
         self._shared_metadata.offsets_pos = concat_with_tensor(
             self._shared_metadata.offsets_pos,
             self._options.pos_offset,
@@ -465,6 +463,9 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
             dim=1,
         )
 
+    def _register_link(self, entity, link_idx: int):
+        raise NotImplementedError
+
     @gs.assert_built
     def set_pos_offset(self, pos_offset, envs_idx=None):
         self._set_metadata_field(pos_offset, self._shared_metadata.offsets_pos, 3, envs_idx)
@@ -472,6 +473,45 @@ class RigidSensorMixin(Generic[RigidSensorMetadataMixinT]):
     @gs.assert_built
     def set_quat_offset(self, quat_offset, envs_idx=None):
         self._set_metadata_field(quat_offset, self._shared_metadata.offsets_quat, 4, envs_idx)
+
+
+class RigidSensorMixin(_LinkAttachedSensorMixin, Generic[RigidSensorMetadataMixinT]):
+    """Base sensor class for sensors that are attached to a RigidEntity."""
+
+    def build(self):
+        if self._shared_metadata.solver is None:
+            self._shared_metadata.solver = self._manager._sim.rigid_solver
+        super().build()
+
+    def _register_link(self, entity, link_idx: int):
+        self._shared_metadata.links_idx = concat_with_tensor(self._shared_metadata.links_idx, link_idx)
+
+
+class KinematicSensorMixin(_LinkAttachedSensorMixin, Generic[KinematicSensorMetadataMixinT]):
+    """
+    Base sensor class for sensors that may attach to entities across solvers (rigid or kinematic). Bucketing into
+    shared_metadata.solver_groups happens at build time so the per-step gather is one bulk read per solver.
+    """
+
+    def _register_link(self, entity, link_idx: int):
+        sensor_col = self._shared_metadata.n_sensors
+        groups = self._shared_metadata.solver_groups
+        existing = next((i for i, g in enumerate(groups) if g.solver is entity.solver), None)
+        if existing is None:
+            groups.append(
+                _SolverLinkGroup(
+                    solver=entity.solver,
+                    links_idx=concat_with_tensor(torch.empty(0, device=gs.device, dtype=gs.tc_int), link_idx),
+                    sensor_cols=concat_with_tensor(torch.empty(0, device=gs.device, dtype=gs.tc_int), sensor_col),
+                )
+            )
+        else:
+            group = groups[existing]
+            groups[existing] = _SolverLinkGroup(
+                solver=group.solver,
+                links_idx=concat_with_tensor(group.links_idx, link_idx),
+                sensor_cols=concat_with_tensor(group.sensor_cols, sensor_col),
+            )
 
 
 @dataclass

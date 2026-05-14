@@ -7,7 +7,7 @@ import torch
 
 import genesis as gs
 from genesis.options.sensors import types as _sensor_types_namespace
-from genesis.options.sensors.options import RigidSensorOptionsMixin, SensorOptions
+from genesis.options.sensors.options import SensorOptions
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 if TYPE_CHECKING:
@@ -104,18 +104,11 @@ class SensorManager:
         )
 
     def build(self):
-        # Precompute a normalized entity index on every sensor: -1 for static sensors (options not carrying an
-        # entity_idx field, or entity_idx unset/negative), otherwise the entity index as-is. Then sort each class
-        # by it so sensors attached to the same entity occupy a contiguous slice of the class cache. Python's sort
-        # is stable, so registration order is preserved within each entity bucket.
+        # Sort each class by entity_idx so sensors attached to the same entity occupy a contiguous slice of the
+        # class cache. Static sensors have entity_idx=-1 and group together. Python's sort is stable, so
+        # registration order is preserved within each entity bucket.
         for sensors in self._sensors_by_type.values():
-            for sensor in sensors:
-                opts = sensor._options
-                if isinstance(opts, RigidSensorOptionsMixin) and opts.entity_idx is not None and opts.entity_idx >= 0:
-                    sensor._entity_idx = opts.entity_idx
-                else:
-                    sensor._entity_idx = -1
-            sensors.sort(key=lambda s: s._entity_idx)
+            sensors.sort(key=lambda s: s._options.entity_idx)
             for new_idx, sensor in enumerate(sensors):
                 sensor._idx = new_idx
 
@@ -142,7 +135,7 @@ class SensorManager:
                 if hist > 0:
                     max_history_per_dtype[dtype] = max(max_history_per_dtype.get(dtype, 0), hist)
                     cls_max_history = max(cls_max_history, hist)
-                eid = sensor._entity_idx
+                eid = sensor._options.entity_idx
                 if eid in entity_offsets:
                     entity_offsets[eid][1] = cls_offset + sensor._cache_size
                 else:
@@ -386,7 +379,7 @@ class SensorManager:
             sensor
             for sensor_list in self._sensors_by_type.values()
             for sensor in sensor_list
-            if sensor._entity_idx == target_eid
+            if sensor._options.entity_idx == target_eid
         )
 
     @property

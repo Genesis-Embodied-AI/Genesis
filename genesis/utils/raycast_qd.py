@@ -7,6 +7,15 @@ from genesis.engine.bvh import STACK_SIZE
 from genesis.engine.solvers.rigid.rigid_solver import func_update_all_verts
 
 
+# FIXME: get_triangle_vertices/bvh_ray_cast/update_aabbs duplicate their visual counterparts below. The two paths
+# differ only in the leaf-data fetch (fixed/free verts split vs vverts_state_idx + FK fallback) and in the dataclass
+# shapes of geoms_state vs vgeoms_state. Quadrants does not currently support a qd.func arg that accepts either of
+# two dataclasses with different field sets, so we cannot factor the BVH traversal into a single shared kernel; the
+# kernel-call argument-fusion step strictly matches the annotated dataclass shape and rejects either union typing or
+# qd.template() for dataclass-typed args. Until Quadrants gains generic-dataclass dispatch, the visual variants below
+# stay as parallel copies.
+
+
 @qd.func
 def get_triangle_vertices(
     i_f: int,
@@ -256,13 +265,7 @@ def kernel_update_verts_and_aabbs(
     func_update_all_verts(
         geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
     )
-    update_aabbs(
-        free_verts_state,
-        fixed_verts_state,
-        verts_info,
-        faces_info,
-        aabb_state,
-    )
+    update_aabbs(free_verts_state, fixed_verts_state, verts_info, faces_info, aabb_state)
 
 
 # =========================================== Visual Mesh Raycasting ===========================================
@@ -279,9 +282,9 @@ def get_visual_vvert_pos(
     """
     Return the world-space position of a visual vertex, branching between the custom buffer and FK on the fly.
 
-    Opt-in entities (morph.enable_custom_vverts=True) own a slot in vverts_state.pos (referenced via
-    vverts_state_idx). Non-opt-in entities have no slot; their world-space position is recomputed by transforming the
-    rest-pose init_pos with the owning vgeom's current pose.
+    Opt-in entities (morph.enable_custom_vverts=True) own a slot in vverts_state.pos referenced by vverts_state_idx.
+    Non-opt-in entities (vverts_state_idx<0) have no slot; their position is recomputed by transforming the rest-pose
+    init_pos with the owning vgeom's current pose.
     """
     pos = qd.math.vec3(0.0, 0.0, 0.0)
     i_state = vverts_info.vverts_state_idx[i_vv]
@@ -304,10 +307,7 @@ def get_visual_triangle_vertices(
     vfaces_info: array_class.VFacesInfo,
     vgeoms_state: array_class.VGeomsState,
 ):
-    """
-    Get the three vertices of a visual-mesh triangle in world space.
-    Simpler than collision variant: no fixed/free split, just batched positions.
-    """
+    """Get the three vertices of a triangle from the visual mesh in world space."""
     tri_vertices = qd.Matrix.zero(gs.qd_float, 3, 3)
     for i in qd.static(range(3)):
         i_vv = vfaces_info.vverts_idx[i_f][i]
@@ -329,10 +329,7 @@ def bvh_ray_cast_visual(
     vgeoms_state: array_class.VGeomsState,
     eps,
 ):
-    """
-    Cast a ray through a BVH built from visual-mesh faces.
-    Same traversal as bvh_ray_cast but uses visual vertex data.
-    """
+    """Cast a single ray against the visual-mesh BVH; returns (hit_face, distance, normal)."""
     n_triangles = vfaces_info.vverts_idx.shape[0]
 
     hit_face = -1
@@ -351,7 +348,7 @@ def bvh_ray_cast_visual(
         aabb_t = ray_aabb_intersection(ray_start, ray_dir, node.bound.min, node.bound.max, eps)
 
         if aabb_t >= 0.0 and aabb_t < closest_distance:
-            if node.left == -1:  # Leaf node
+            if node.left == -1:
                 sorted_leaf_idx = node_idx - (n_triangles - 1)
                 i_f = qd.cast(bvh_morton_codes[i_b, sorted_leaf_idx][1], gs.qd_int)
 
@@ -368,7 +365,7 @@ def bvh_ray_cast_visual(
                     edge1 = v1 - v0
                     edge2 = v2 - v0
                     hit_normal = edge1.cross(edge2).normalized()
-            else:  # Internal node
+            else:
                 if stack_idx < qd.static(STACK_SIZE - 2):
                     node_stack[stack_idx] = node.left
                     node_stack[stack_idx + 1] = node.right
@@ -383,18 +380,17 @@ def update_visual_aabbs(
     vverts_state: array_class.VVertsState,
     vfaces_info: array_class.VFacesInfo,
     vgeoms_state: array_class.VGeomsState,
-    raycast_mask: qd.types.ndarray(),
+    face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
+    """Update per-vface AABBs from the visual mesh. face_mask gates inclusion: 0 keeps the AABB inverted
+    (unhittable) so vfaces from entities not opted into raycasting are skipped by ray queries."""
     _B = vgeoms_state.pos.shape[1]
     n_vfaces = vfaces_info.vverts_idx.shape[0]
     for i_b, i_f in qd.ndrange(_B, n_vfaces):
-        # Initialize as an inverted (unhittable) AABB; vfaces whose owning vgeom has raycasting disabled are left in
-        # this state so the BVH naturally skips them.
         aabb_state.aabbs[i_b, i_f].min.fill(qd.math.inf)
         aabb_state.aabbs[i_b, i_f].max.fill(-qd.math.inf)
-
-        if raycast_mask[i_f] != 0:
+        if face_mask[i_f] != 0:
             for i in qd.static(range(3)):
                 i_vv = vfaces_info.vverts_idx[i_f][i]
                 pos_v = get_visual_vvert_pos(i_vv, i_b, vverts_info, vverts_state, vgeoms_state)
@@ -408,36 +404,10 @@ def kernel_update_visual_aabbs(
     vverts_state: array_class.VVertsState,
     vfaces_info: array_class.VFacesInfo,
     vgeoms_state: array_class.VGeomsState,
-    raycast_mask: qd.types.ndarray(),
+    face_mask: qd.types.ndarray(),
     aabb_state: qd.template(),
 ):
-    update_visual_aabbs(vverts_info, vverts_state, vfaces_info, vgeoms_state, raycast_mask, aabb_state)
-
-
-@qd.kernel
-def kernel_merge_ray_hits(
-    primary: qd.types.ndarray(ndim=2),
-    secondary: qd.types.ndarray(ndim=2),
-    points_to_sensor_idx: qd.types.ndarray(ndim=1),
-    sensor_cache_offsets: qd.types.ndarray(ndim=1),
-    sensor_point_offsets: qd.types.ndarray(ndim=1),
-    sensor_point_counts: qd.types.ndarray(ndim=1),
-):
-    """Merge secondary ray cast results into primary, keeping closer hits per ray."""
-    n_points = points_to_sensor_idx.shape[0]
-    _B = primary.shape[1]
-    for i_p, i_b in qd.ndrange(n_points, _B):
-        i_s = points_to_sensor_idx[i_p]
-        i_p_sensor = i_p - sensor_point_offsets[i_s]
-        offset = sensor_cache_offsets[i_s]
-        n_pts = sensor_point_counts[i_s]
-
-        dist_idx = offset + n_pts * 3 + i_p_sensor
-        if secondary[dist_idx, i_b] < primary[dist_idx, i_b]:
-            primary[offset + i_p_sensor * 3 + 0, i_b] = secondary[offset + i_p_sensor * 3 + 0, i_b]
-            primary[offset + i_p_sensor * 3 + 1, i_b] = secondary[offset + i_p_sensor * 3 + 1, i_b]
-            primary[offset + i_p_sensor * 3 + 2, i_b] = secondary[offset + i_p_sensor * 3 + 2, i_b]
-            primary[dist_idx, i_b] = secondary[dist_idx, i_b]
+    update_visual_aabbs(vverts_info, vverts_state, vfaces_info, vgeoms_state, face_mask, aabb_state)
 
 
 # FIXME: Fastcache is not supported because of 'bvh_nodes', 'bvh_morton_codes'.
@@ -494,3 +464,204 @@ def kernel_cast_ray(
             result.geom_idx[i_b] = faces_info.geom_idx[cur_hit_face]
             result.normal[i_b] = cur_hit_normal
             result.hit_point[i_b] = ray_start_world + cur_distance * ray_direction_world
+
+
+@qd.func
+def write_ray_hit(
+    hit_face: int,
+    hit_distance: float,
+    ray_start_world,
+    ray_direction_world,
+    ray_dir_local,
+    i_b: int,
+    i_s: int,
+    i_p_sensor: int,
+    i_p_offset: int,
+    i_p_dist: int,
+    is_world_frame: qd.types.ndarray(ndim=1),
+    no_hit_values: qd.types.ndarray(ndim=1),
+    output_hits: qd.types.ndarray(ndim=2),
+    eps: float,
+    is_merge: qd.template(),
+):
+    """Common post-BVH write block for both collision and visual cast kernels.
+
+    `is_merge` is a compile-time flag. When False the function writes a value into every output slot (hit or
+    no_hit_value), initializing the cache. When True the function only writes when it found a closer hit than what
+    is already in the cache, so multiple BVH casts can be composed by chaining calls (first with is_merge=False,
+    subsequent with is_merge=True) into the same output buffer with no scratch storage.
+    """
+    if hit_face >= 0 and (not is_merge or hit_distance < output_hits[i_p_dist, i_b]):
+        # Store distance at: cache_offset + (num_points_in_sensor * 3) + point_idx_in_sensor
+        output_hits[i_p_dist, i_b] = hit_distance
+
+        hit_point = qd.math.vec3(0.0, 0.0, 0.0)
+        if is_world_frame[i_s]:
+            hit_point = ray_start_world + hit_distance * ray_direction_world
+        else:
+            # Local frame output along provided local ray direction
+            hit_point = hit_distance * gu.qd_normalize(ray_dir_local, eps)
+        # Store points at: cache_offset + point_idx_in_sensor * 3
+        output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = hit_point.x
+        output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = hit_point.y
+        output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = hit_point.z
+    elif not is_merge:
+        # No hit
+        output_hits[i_p_offset + i_p_sensor * 3 + 0, i_b] = 0.0
+        output_hits[i_p_offset + i_p_sensor * 3 + 1, i_b] = 0.0
+        output_hits[i_p_offset + i_p_sensor * 3 + 2, i_b] = 0.0
+        output_hits[i_p_dist, i_b] = no_hit_values[i_s]
+
+
+@qd.kernel
+def kernel_cast_rays(
+    fixed_verts_state: array_class.VertsState,
+    free_verts_state: array_class.VertsState,
+    verts_info: array_class.VertsInfo,
+    faces_info: array_class.FacesInfo,
+    bvh_nodes: qd.template(),
+    bvh_morton_codes: qd.template(),  # maps sorted leaves to original triangle indices
+    links_pos: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 3]
+    links_quat: qd.types.ndarray(ndim=3),  # [n_env, n_sensors, 4]
+    ray_starts: qd.types.ndarray(ndim=2),  # [n_points, 3]
+    ray_directions: qd.types.ndarray(ndim=2),  # [n_points, 3]
+    max_ranges: qd.types.ndarray(ndim=1),  # [n_sensors]
+    no_hit_values: qd.types.ndarray(ndim=1),  # [n_sensors]
+    is_world_frame: qd.types.ndarray(ndim=1),  # [n_sensors]
+    points_to_sensor_idx: qd.types.ndarray(ndim=1),  # [n_points]
+    sensor_cache_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - cache start index for each sensor
+    sensor_point_offsets: qd.types.ndarray(ndim=1),  # [n_sensors] - point start index for each sensor
+    sensor_point_counts: qd.types.ndarray(ndim=1),  # [n_sensors] - number of points for each sensor
+    output_hits: qd.types.ndarray(ndim=2),  # [total_cache_size, n_env]
+    eps: float,
+    is_merge: qd.template(),
+):
+    """Cast rays against a collision-mesh BVH, accelerated by a BVH. See write_ray_hit for `is_merge` semantics.
+
+    The result `output_hits` is a 2D array of shape (total_cache_size, n_env) where in the first dimension each
+    sensor's data is stored as [sensor_points (n_points * 3), sensor_ranges (n_points)].
+    """
+    n_points = ray_starts.shape[0]
+    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+        i_s = points_to_sensor_idx[i_p]
+
+        link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
+        link_quat = qd.math.vec4(
+            links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]
+        )
+
+        ray_start_local = qd.math.vec3(ray_starts[i_p, 0], ray_starts[i_p, 1], ray_starts[i_p, 2])
+        ray_start_world = gu.qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
+
+        ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
+        ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
+
+        hit_face, hit_distance, _hit_normal = bvh_ray_cast(
+            ray_start=ray_start_world,
+            ray_dir=ray_direction_world,
+            max_range=max_ranges[i_s],
+            i_b=i_b,
+            bvh_nodes=bvh_nodes,
+            bvh_morton_codes=bvh_morton_codes,
+            faces_info=faces_info,
+            verts_info=verts_info,
+            fixed_verts_state=fixed_verts_state,
+            free_verts_state=free_verts_state,
+            eps=eps,
+        )
+
+        i_p_sensor = i_p - sensor_point_offsets[i_s]
+        i_p_offset = sensor_cache_offsets[i_s]
+        i_p_dist = i_p_offset + sensor_point_counts[i_s] * 3 + i_p_sensor
+        write_ray_hit(
+            hit_face,
+            hit_distance,
+            ray_start_world,
+            ray_direction_world,
+            ray_dir_local,
+            i_b,
+            i_s,
+            i_p_sensor,
+            i_p_offset,
+            i_p_dist,
+            is_world_frame,
+            no_hit_values,
+            output_hits,
+            eps,
+            is_merge,
+        )
+
+
+@qd.kernel
+def kernel_cast_rays_visual(
+    vverts_info: array_class.VVertsInfo,
+    vverts_state: array_class.VVertsState,
+    vfaces_info: array_class.VFacesInfo,
+    vgeoms_state: array_class.VGeomsState,
+    bvh_nodes: qd.template(),
+    bvh_morton_codes: qd.template(),
+    links_pos: qd.types.ndarray(ndim=3),
+    links_quat: qd.types.ndarray(ndim=3),
+    ray_starts: qd.types.ndarray(ndim=2),
+    ray_directions: qd.types.ndarray(ndim=2),
+    max_ranges: qd.types.ndarray(ndim=1),
+    no_hit_values: qd.types.ndarray(ndim=1),
+    is_world_frame: qd.types.ndarray(ndim=1),
+    points_to_sensor_idx: qd.types.ndarray(ndim=1),
+    sensor_cache_offsets: qd.types.ndarray(ndim=1),
+    sensor_point_offsets: qd.types.ndarray(ndim=1),
+    sensor_point_counts: qd.types.ndarray(ndim=1),
+    output_hits: qd.types.ndarray(ndim=2),
+    eps: float,
+    is_merge: qd.template(),
+):
+    """Visual-mesh variant of kernel_cast_rays."""
+    n_points = ray_starts.shape[0]
+    for i_p, i_b in qd.ndrange(n_points, output_hits.shape[-1]):
+        i_s = points_to_sensor_idx[i_p]
+
+        link_pos = qd.math.vec3(links_pos[i_b, i_s, 0], links_pos[i_b, i_s, 1], links_pos[i_b, i_s, 2])
+        link_quat = qd.math.vec4(
+            links_quat[i_b, i_s, 0], links_quat[i_b, i_s, 1], links_quat[i_b, i_s, 2], links_quat[i_b, i_s, 3]
+        )
+
+        ray_start_local = qd.math.vec3(ray_starts[i_p, 0], ray_starts[i_p, 1], ray_starts[i_p, 2])
+        ray_start_world = gu.qd_transform_by_trans_quat(ray_start_local, link_pos, link_quat)
+
+        ray_dir_local = qd.math.vec3(ray_directions[i_p, 0], ray_directions[i_p, 1], ray_directions[i_p, 2])
+        ray_direction_world = gu.qd_normalize(gu.qd_transform_by_quat(ray_dir_local, link_quat), eps)
+
+        hit_face, hit_distance, _hit_normal = bvh_ray_cast_visual(
+            ray_start=ray_start_world,
+            ray_dir=ray_direction_world,
+            max_range=max_ranges[i_s],
+            i_b=i_b,
+            bvh_nodes=bvh_nodes,
+            bvh_morton_codes=bvh_morton_codes,
+            vverts_info=vverts_info,
+            vverts_state=vverts_state,
+            vfaces_info=vfaces_info,
+            vgeoms_state=vgeoms_state,
+            eps=eps,
+        )
+
+        i_p_sensor = i_p - sensor_point_offsets[i_s]
+        i_p_offset = sensor_cache_offsets[i_s]
+        i_p_dist = i_p_offset + sensor_point_counts[i_s] * 3 + i_p_sensor
+        write_ray_hit(
+            hit_face,
+            hit_distance,
+            ray_start_world,
+            ray_direction_world,
+            ray_dir_local,
+            i_b,
+            i_s,
+            i_p_sensor,
+            i_p_offset,
+            i_p_dist,
+            is_world_frame,
+            no_hit_values,
+            output_hits,
+            eps,
+            is_merge,
+        )

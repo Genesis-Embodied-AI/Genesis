@@ -831,8 +831,7 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
     #   - cam_kin -> KinematicEntity sphere (use_visual_raycasting=True by default). set_vverts overrides survive
     #     step() so the depth camera reads the user-driven positions, and set_vverts(None) hands control back to FK.
     #   - cam_rigid -> RigidEntity whose visual mesh (sphere radius 0.2) is intentionally different from its collision
-    #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere; if the
-    #     raycaster fell back to the collision BVH the depth would be ~0.95 instead of ~0.8.
+    #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere.
     urdf_path = tmp_path / "vis_diff.urdf"
     urdf_path.write_text(
         textwrap.dedent(
@@ -917,15 +916,13 @@ def test_raycaster_against_visual(tmp_path, show_viewer, n_envs):
     scene.step()
 
     # Each camera at x=-1 along its own z-row looks along +x. The center pixel hits the closest point of its target
-    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this must come from the *visual* BVH; the collision capsule would
-    # yield ~0.95.
+    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this comes from the visual BVH (not the collision capsule).
     assert_allclose(cam_kin.read_image()[..., 15, 20], 0.8, tol=1e-2)
     assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
     # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
-    # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. A uniform translation would mask
-    # index-aliasing bugs in the raycaster's vvert lookup; scaling perturbs each vvert by a different amount, so only
-    # the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
+    # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. Scaling perturbs each vvert by a
+    # different amount, so only the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
     fk_vverts = tensor_to_array(kin_sphere.get_vverts())
     center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
     kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)

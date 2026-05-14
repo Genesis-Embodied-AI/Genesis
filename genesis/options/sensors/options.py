@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Annotated, Any, Generic, NamedTuple, TypeVar
 
 import numpy as np
-from pydantic import BeforeValidator, Field, StrictBool, StrictInt, model_validator
+from pydantic import BeforeValidator, Field, StrictBool, StrictInt, field_validator
 
 import genesis as gs
 from genesis.typing import (
@@ -71,6 +71,13 @@ class SensorOptions(Options, Generic[SensorT]):
     history_length: NonNegativeInt = 0
     delay: NonNegativeFloat = 0.0
     draw_debug: StrictBool = False
+    # -1 means not link-attached. None is accepted from users and normalized to -1 so SensorManager can sort uniformly.
+    entity_idx: StrictInt = Field(default=-1, ge=-1)
+
+    @field_validator("entity_idx", mode="before")
+    @classmethod
+    def _normalize_entity_idx(cls, value):
+        return -1 if value is None else value
 
     def validate_scene(self, scene: "Scene"):
         """
@@ -87,39 +94,56 @@ class SensorOptions(Options, Generic[SensorT]):
             )
 
 
-class RigidSensorOptionsMixin(SensorOptions[SensorT]):
+class KinematicSensorOptionsMixin(SensorOptions[SensorT]):
     """
-    Base options class for sensors that are attached to a RigidEntity.
+    Base options class for sensors attached to a KinematicEntity (or any subclass, including RigidEntity). Use this
+    base for sensors whose output is purely kinematic and does not depend on physics-derived quantities like contact
+    forces or inertial dynamics.
 
     Parameters
     ----------
     entity_idx : int
-        The global entity index of the RigidEntity to which this sensor is attached. -1 or None for static sensors.
+        The global entity index of the entity to which this sensor is attached. -1 or None for static sensors.
     link_idx_local : int, optional
-        The local index of the RigidLink of the RigidEntity to which this sensor is attached.
+        The local index of the link of the entity to which this sensor is attached.
     pos_offset : array-like[float, float, float], optional
-        The positional offset of the sensor from the RigidLink.
+        The positional offset of the sensor from the link.
     euler_offset : array-like[float, float, float], optional
-        The rotational offset of the sensor from the RigidLink in degrees.
+        The rotational offset of the sensor from the link in degrees.
     """
 
-    entity_idx: StrictInt | None = Field(default=-1, ge=-1)
     link_idx_local: NonNegativeInt = 0
     pos_offset: Vec3FType = (0.0, 0.0, 0.0)
     euler_offset: Vec3FType = (0.0, 0.0, 0.0)
 
     def validate_scene(self, scene: "Scene"):
+        from genesis.engine.entities import KinematicEntity
+
+        super().validate_scene(scene)
+        if self.entity_idx >= 0:
+            if self.entity_idx >= len(scene.entities):
+                gs.raise_exception(f"Invalid entity index {self.entity_idx}.")
+            entity = scene.entities[self.entity_idx]
+            if not isinstance(entity, KinematicEntity):
+                gs.raise_exception(f"Entity at index {self.entity_idx} is not a KinematicEntity.")
+            if self.link_idx_local >= entity.n_links:
+                gs.raise_exception(f"Invalid link index {self.link_idx_local} for entity {self.entity_idx}.")
+
+
+class RigidSensorOptionsMixin(KinematicSensorOptionsMixin[SensorT]):
+    """
+    Options for sensors that require a RigidEntity specifically (e.g. contact, contact force, IMU, tactile). Any
+    sensor whose output depends on physics quantities (contact pairs, friction, inertial dynamics) belongs here.
+    """
+
+    def validate_scene(self, scene: "Scene"):
         from genesis.engine.entities import RigidEntity
 
         super().validate_scene(scene)
-        if self.entity_idx is not None and self.entity_idx >= 0:
-            if self.entity_idx >= len(scene.entities):
-                gs.raise_exception(f"Invalid RigidEntity index {self.entity_idx}.")
+        if self.entity_idx >= 0:
             entity = scene.entities[self.entity_idx]
             if not isinstance(entity, RigidEntity):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
-            if self.link_idx_local >= entity.n_links:
-                gs.raise_exception(f"Invalid RigidLink index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
 class ImperfectSensorOptionsMixin(SensorOptions[SensorT]):
@@ -428,7 +452,7 @@ class Proximity(RigidSensorOptionsMixin["ProximitySensor"], ImperfectSensorOptio
                 gs.raise_exception(f"Proximity sensor track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")
 
 
-class Raycaster(RigidSensorOptionsMixin["RaycasterSensor"]):
+class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"]):
     """
     Raycaster sensor that performs ray casting to get distance measurements and point clouds.
 
@@ -455,38 +479,20 @@ class Raycaster(RigidSensorOptionsMixin["RaycasterSensor"]):
     pattern: RaycastPattern
     min_range: NonNegativeFloat = 0.0
     max_range: PositiveFloat = 20.0
-    no_hit_value: float = float("nan")
+    no_hit_value: float | None = None
     return_world_frame: StrictBool = False
 
     debug_sphere_radius: PositiveFloat = 0.02
     debug_ray_start_color: Vec4FType = (0.5, 0.5, 1.0, 1.0)
     debug_ray_hit_color: Vec4FType = (1.0, 0.5, 0.5, 1.0)
 
-    @model_validator(mode="before")
-    @classmethod
-    def default_no_hit_value(cls, data: dict) -> dict:
-        if "no_hit_value" not in data:
-            data["no_hit_value"] = data.get("max_range", cls.model_fields["max_range"].default)
-        return data
-
     def model_post_init(self, context: Any) -> None:
+        if self.no_hit_value is None:
+            self.no_hit_value = self.max_range
         if self.max_range <= self.min_range:
             gs.raise_exception(
                 f"[{type(self).__name__}] max_range {self.max_range} should be greater than min_range {self.min_range}."
             )
-
-    def validate_scene(self, scene: "Scene"):
-        from genesis.engine.entities.rigid_entity.rigid_entity import KinematicEntity
-
-        SensorOptions.validate_scene(self, scene)
-        if self.entity_idx is not None and self.entity_idx >= 0:
-            if self.entity_idx >= len(scene.entities):
-                gs.raise_exception(f"Invalid entity index {self.entity_idx}.")
-            entity = scene.entities[self.entity_idx]
-            if not isinstance(entity, KinematicEntity):
-                gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity or KinematicEntity.")
-            if self.link_idx_local >= entity.n_links:
-                gs.raise_exception(f"Invalid link index {self.link_idx_local} for entity {self.entity_idx}.")
 
 
 class DepthCamera(Raycaster):

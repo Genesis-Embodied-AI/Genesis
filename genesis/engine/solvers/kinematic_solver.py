@@ -1052,6 +1052,24 @@ class KinematicSolver(Solver):
     def update_vgeoms(self):
         kernel_update_vgeoms(self.vgeoms_info, self.vgeoms_state, self.links_state, self._static_rigid_sim_config)
 
+    def update_forward_pos(self):
+        """Run forward kinematics if links_state is not already up to date for the current pose."""
+        if self._is_forward_pos_updated:
+            return
+        kernel_forward_kinematics(
+            self.scene._envs_idx,
+            links_state=self.links_state,
+            links_info=self.links_info,
+            joints_state=self.joints_state,
+            joints_info=self.joints_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+        )
+        self._is_forward_pos_updated = True
+
     def update_vverts_for_vgeoms(self, vgeoms_idx):
         """Refresh the vverts_state.pos slice for the requested vgeoms by re-running FK.
 
