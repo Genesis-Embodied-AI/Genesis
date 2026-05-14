@@ -33,8 +33,8 @@ from genesis.vis.rasterizer_context import RasterizerContext
 
 from .base_sensor import (
     OptionsT,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
+    KinematicSensorMetadataMixin,
+    KinematicSensorMixin,
     Sensor,
     SharedSensorMetadata,
 )
@@ -139,7 +139,7 @@ class BatchRendererCameraWrapper(BaseCameraWrapper):
 
 
 @dataclass
-class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class RasterizerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Rasterizer cameras."""
 
     # Rasterizer instance
@@ -170,7 +170,7 @@ class RasterizerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetad
 
 
 @dataclass
-class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class RaytracerCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Raytracer cameras."""
 
     # Raytracer instance
@@ -193,7 +193,7 @@ class RaytracerCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetada
 
 
 @dataclass
-class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMetadata):
+class BatchRendererCameraSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
     """Shared metadata for all Batch Renderer cameras."""
 
     # BatchRenderer instance
@@ -221,12 +221,12 @@ class BatchRendererCameraSharedMetadata(RigidSensorMetadataMixin, SharedSensorMe
 # ========================== Base Camera Sensor ==========================
 
 
-class BaseCameraSensor(RigidSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
+class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetadata, CameraData]):
     """
     Base class for camera sensors that render RGB images into an internal image_cache.
 
     This class centralizes:
-    - Attachment handling via RigidSensorMixin
+    - Attachment handling via KinematicSensorMixin
     - The _stale flag used for auto-render-on-read
     - Common Sensor cache integration (shape/dtype)
     - Shared read() method returning torch tensors

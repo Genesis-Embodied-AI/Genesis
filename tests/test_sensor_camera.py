@@ -65,6 +65,19 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
         ),
     )
 
+    # Kinematic mesh in addition to the rigid entities above, so the camera-mount path is exercised against both
+    # entity kinds via raster_cam_attached_kin below.
+    kin_box = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.3,
+            pos=(-1.0, 1.0, 1.0),
+            fixed=True,
+        ),
+        material=gs.materials.Kinematic(),
+        surface=gs.surfaces.Rough(color=(0.5, 0.5, 1.0)),
+    )
+
     raster_cam0 = scene.add_sensor(
         gs.sensors.RasterizerCameraOptions(
             res=(512, 512),
@@ -117,6 +130,17 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
             offset_T=offset_T,
         )
     )
+    raster_cam_attached_kin = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(320, 240),
+            pos=(0.0, 0.0, 1.0),
+            lookat=(0.0, 0.0, 0.0),
+            up=(0.0, 0.0, 1.0),
+            fov=70.0,
+            entity_idx=kin_box.idx,  # Mount on a kinematic entity to exercise the cross-solver attach path.
+            link_idx_local=0,
+        )
+    )
 
     scene.build(n_envs=n_envs)
     for _ in range(10):
@@ -125,12 +149,14 @@ def test_rasterizer_non_batched(n_envs, show_viewer):
     data_cam1 = raster_cam1.read()
     data_attached = raster_cam_attached.read()
     data_offset_T = raster_cam_offset_T.read()
+    data_attached_kin = raster_cam_attached_kin.read()
 
     for _cam_name, data in [
         ("cam0", data_cam0),
         ("cam1", data_cam1),
         ("attached", data_attached),
         ("offset_T", data_offset_T),
+        ("attached_kin", data_attached_kin),
     ]:
         rgb_np = tensor_to_array(data.rgb)
         mean = np.mean(rgb_np)

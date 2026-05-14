@@ -17,7 +17,7 @@ from genesis.typing import (
     Vec3FType,
 )
 
-from .options import RigidSensorOptionsMixin, SensorT
+from .options import KinematicSensorOptionsMixin, SensorT
 
 if TYPE_CHECKING:
     from genesis.engine.sensors.camera import (
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     )
 
 
-class BaseCameraOptions(RigidSensorOptionsMixin[SensorT]):
+class BaseCameraOptions(KinematicSensorOptionsMixin[SensorT]):
     """
     Base class for camera sensor options containing common properties.
 
