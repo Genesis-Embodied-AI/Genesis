@@ -84,7 +84,7 @@ def _ls_eval_cost_grad(
 
 
 @qd.func
-def _func_parallel_linesearch_p0(
+def _func_decomp_linesearch_p0(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -304,7 +304,7 @@ def _func_parallel_linesearch_p0(
 
 
 @qd.func
-def _func_parallel_linesearch_refine(
+def _func_decomp_linesearch_refine(
     i_b,
     tid,
     alpha_newton,
@@ -314,7 +314,7 @@ def _func_parallel_linesearch_refine(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Linesearch refinement body, called per-env from ``_func_parallel_linesearch_eval``.
+    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_eval``.
 
     Dispatches on ``constraint_layout_transposed`` via the outer ``qd.static`` branch so the unselected path is DCE'd.
     Both branches call the same unified ``func_ls_point_fn_opt`` and ``func_linesearch_refine``, passing the literal
@@ -383,7 +383,7 @@ def _func_parallel_linesearch_refine(
 
 
 @qd.func
-def _func_parallel_linesearch_eval(
+def _func_decomp_linesearch_eval(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -414,7 +414,7 @@ def _func_parallel_linesearch_eval(
             gtol = constraint_state.ls_gtol[i_b]
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
-            _func_parallel_linesearch_refine(
+            _func_decomp_linesearch_refine(
                 i_b,
                 tid,
                 alpha_newton,
@@ -932,11 +932,11 @@ def _kernel_solve_graph(
 ):
     while qd.graph_do_while(graph_counter):
         # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
-        _func_parallel_linesearch_p0(
+        _func_decomp_linesearch_p0(
             dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
         )
         # Fused: refinement + apply alpha
-        _func_parallel_linesearch_eval(constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_decomp_linesearch_eval(constraint_state, rigid_global_info, static_rigid_sim_config)
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
