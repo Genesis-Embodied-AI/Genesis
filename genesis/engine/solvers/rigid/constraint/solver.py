@@ -2575,41 +2575,36 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
     alpha_0,
     alpha_1,
     alpha_2,
-    t0_0,
-    t0_1,
-    t0_2,
-    t1_0,
-    t1_1,
-    t1_2,
-    t2_0,
-    t2_1,
-    t2_2,
+    t0,
+    t1,
+    t2,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Given three reduced quadratic-coefficient triples (one per candidate alpha), plug each alpha into
-    ``cost(alpha) = t0 + t1*alpha + t2*alpha**2`` and its first/second derivatives, and return three
-    ``(cost, grad, hess)`` triples (packed as three ``qd.Vector``s of length 3). The hessian is floored at ``EPS`` so
-    downstream Newton steps stay finite. Increments ``ls_it`` by 3 (one per evaluated alpha); the increment is gated to
-    a single thread under ``coop=True`` since lanes share the same per-env counter."""
+    """Given three reduced quadratic-coefficient triples (one per candidate alpha; ``t0``, ``t1``, ``t2`` are each a
+    ``qd.Vector(3)`` packed as ``[const, linear, quad]``), plug each alpha into
+    ``cost(alpha) = c + l*alpha + q*alpha**2`` and its first/second derivatives. Returns three ``qd.Vector(3)``s
+    ``(costs, grads, hess)`` indexed by alpha slot. The hessian is floored at ``EPS`` so downstream Newton steps stay
+    finite. Increments ``ls_it`` by 3 (one per evaluated alpha); the increment is gated to a single thread under
+    ``coop=True`` since lanes share the same per-env counter."""
     EPS = rigid_global_info.EPS[None]
 
-    cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
-    grad_0 = 2 * alpha_0 * t0_2 + t0_1
-    hess_0 = 2 * t0_2
+    cost_0 = alpha_0 * alpha_0 * t0[2] + alpha_0 * t0[1] + t0[0]
+    grad_0 = 2 * alpha_0 * t0[2] + t0[1]
+    hess_0 = 2 * t0[2]
     if hess_0 <= 0.0:
         hess_0 = EPS
 
-    cost_1 = alpha_1 * alpha_1 * t1_2 + alpha_1 * t1_1 + t1_0
-    grad_1 = 2 * alpha_1 * t1_2 + t1_1
-    hess_1 = 2 * t1_2
+    cost_1 = alpha_1 * alpha_1 * t1[2] + alpha_1 * t1[1] + t1[0]
+    grad_1 = 2 * alpha_1 * t1[2] + t1[1]
+    hess_1 = 2 * t1[2]
     if hess_1 <= 0.0:
         hess_1 = EPS
 
-    cost_2 = alpha_2 * alpha_2 * t2_2 + alpha_2 * t2_1 + t2_0
-    grad_2 = 2 * alpha_2 * t2_2 + t2_1
-    hess_2 = 2 * t2_2
+    cost_2 = alpha_2 * alpha_2 * t2[2] + alpha_2 * t2[1] + t2[0]
+    grad_2 = 2 * alpha_2 * t2[2] + t2[1]
+    hess_2 = 2 * t2[2]
     if hess_2 <= 0.0:
         hess_2 = EPS
 
@@ -2646,47 +2641,21 @@ def _func_linesearch_eval_at_3_alphas(
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, n_alphas=3
         )
+        t0 = qd.Vector([t0_0, t0_1, t0_2])
+        t1 = qd.Vector([t1_0, t1_1, t1_2])
+        t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b,
-            tid,
-            alpha_0,
-            alpha_1,
-            alpha_2,
-            t0_0,
-            t0_1,
-            t0_2,
-            t1_0,
-            t1_1,
-            t1_2,
-            t2_0,
-            t2_1,
-            t2_2,
-            constraint_state,
-            rigid_global_info,
-            coop=True,
+            i_b, tid, alpha_0, alpha_1, alpha_2, t0, t1, t2, constraint_state, rigid_global_info, coop=True
         )
     else:
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, n_alphas=3
         )
+        t0 = qd.Vector([t0_0, t0_1, t0_2])
+        t1 = qd.Vector([t1_0, t1_1, t1_2])
+        t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b,
-            tid,
-            alpha_0,
-            alpha_1,
-            alpha_2,
-            t0_0,
-            t0_1,
-            t0_2,
-            t1_0,
-            t1_1,
-            t1_2,
-            t2_0,
-            t2_1,
-            t2_2,
-            constraint_state,
-            rigid_global_info,
-            coop=False,
+            i_b, tid, alpha_0, alpha_1, alpha_2, t0, t1, t2, constraint_state, rigid_global_info, coop=False
         )
 
 
