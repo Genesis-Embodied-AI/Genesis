@@ -2340,7 +2340,7 @@ def func_ls_init_and_eval_p0(
 
 
 @qd.func
-def _func_linesearch_reduce_quadratic_coeff_serial(
+def _func_linesearch_eval_constraints_at_n_alphas_serial(
     i_b,
     alpha_0,
     alpha_1,
@@ -2456,14 +2456,14 @@ def _func_linesearch_eval_at_alpha(
     a variable in the unified ``return`` statement raises ``Name "t0_0" is not defined`` even when one branch is
     DCE'd. Self-contained per-branch returns sidestep this."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_reduce_quadratic_coeff_coop(
+        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alpha, alpha, alpha, constraint_state, 1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
             i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True
         )
     else:
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_reduce_quadratic_coeff_serial(
+        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alpha, alpha, alpha, constraint_state, 1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
@@ -2472,7 +2472,7 @@ def _func_linesearch_eval_at_alpha(
 
 
 @qd.func
-def _func_linesearch_reduce_quadratic_coeff_coop(
+def _func_linesearch_eval_constraints_at_n_alphas_coop(
     i_b,
     tid,
     alpha_0,
@@ -2481,7 +2481,7 @@ def _func_linesearch_reduce_quadratic_coeff_coop(
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
-    """Cooperative (32-lane subgroup) variant of ``_func_linesearch_reduce_quadratic_coeff_serial``.
+    """Cooperative (32-lane subgroup) variant of ``_func_linesearch_eval_constraints_at_n_alphas_serial``.
 
     All 32 lanes call this with their own ``tid``; the constraint loop is strided by 32, then each
     accumulator is reduced across the warp via ``subgroup.reduce_all_add(_, 5)`` so every lane ends
@@ -2618,7 +2618,7 @@ def _func_linesearch_eval_at_alpha_hi_mid_lo(
     """3-alpha linesearch evaluator. See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract and the
     rationale for the per-branch return."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_reduce_quadratic_coeff_coop(
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
         return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
@@ -2641,7 +2641,7 @@ def _func_linesearch_eval_at_alpha_hi_mid_lo(
             True,
         )
     else:
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_reduce_quadratic_coeff_serial(
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
         return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
