@@ -2574,7 +2574,7 @@ def _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Shared post-reduction logic for ``_func_linesearch_eval_at_alpha_hi_mid_lo``."""
+    """Shared post-reduction logic for ``_func_linesearch_eval_at_3_alphas``."""
     EPS = rigid_global_info.EPS[None]
 
     cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
@@ -2605,7 +2605,7 @@ def _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
 
 
 @qd.func
-def _func_linesearch_eval_at_alpha_hi_mid_lo(
+def _func_linesearch_eval_at_3_alphas(
     i_b,
     tid,
     alpha_0,
@@ -2787,7 +2787,7 @@ def func_linesearch_refine(
             alpha_1 = p1_alpha
             alpha_2 = (p1_alpha + p2_alpha) * 0.5
             while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                costs, grads, hess = _func_linesearch_eval_at_alpha_hi_mid_lo(
+                costs, grads, hess = _func_linesearch_eval_at_3_alphas(
                     i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info, coop
                 )
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
