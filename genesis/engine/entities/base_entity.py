@@ -111,17 +111,17 @@ class Entity(RBC):
         return self._sim._sensor_manager.get_sensors_by_entity(self._idx)
 
     @gs.assert_built
-    def read_sensors(self, envs_idx=None, copy: bool = False) -> "dict[type[Sensor], torch.Tensor]":
+    def read_sensors(self, envs_idx=None) -> "dict[type[Sensor], torch.Tensor]":
         """
         Read every sensor attached to this entity as a tensor per sensor class.
+
+        Always returns a fresh tensor independent of the internal sensor storage; the caller is free to mutate the
+        result.
 
         Parameters
         ----------
         envs_idx : array-like | int | slice | None
-            Environment selection. Integer/slice indexing returns a view along the batch axis; list/tensor
-            (fancy) indexing returns a copy.
-        copy : bool
-            When True, returned tensors are cloned. When False (default), they are views into the shared cache.
+            Environment selection. Defaults to all environments.
 
         Returns
         -------
@@ -129,7 +129,7 @@ class Entity(RBC):
             For each sensor class with at least one sensor on this entity, a tensor of shape
             (B, [history,] entity_cache_size_for_class).
         """
-        return self._sim._sensor_manager.read_sensors(entity_idx=self._idx, envs_idx=envs_idx, copy=copy)
+        return self._sim._sensor_manager.read_sensors(entity_idx=self._idx, envs_idx=envs_idx)
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- naming methods -----------------------------------

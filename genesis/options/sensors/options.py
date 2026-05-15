@@ -60,16 +60,24 @@ class SensorOptions(Options, Generic[SensorT]):
 
     Parameters
     ----------
-    history_length: NonNegativeInt
+    history_length : NonNegativeInt
         The length of the history to store. Defaults to 0 (no history).
-    delay : float
+    delay : float, optional
         The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
+    jitter : float, optional
+        The jitter in seconds modeled as a random additive delay sampled from a normal distribution.
+        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
+    interpolate : bool, optional
+        If True, the sensor data is interpolated between data points for delay + jitter.
+        Otherwise, the sensor data at the closest time step will be used. Default is False.
     draw_debug : bool
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
 
     history_length: NonNegativeInt = 0
     delay: NonNegativeFloat = 0.0
+    jitter: NonNegativeFloat = 0.0
+    interpolate: StrictBool = False
     draw_debug: StrictBool = False
     # -1 means not link-attached. None is accepted from users and normalized to -1 so SensorManager can sort uniformly.
     entity_idx: StrictInt = Field(default=-1, ge=-1)
@@ -79,6 +87,12 @@ class SensorOptions(Options, Generic[SensorT]):
     def _normalize_entity_idx(cls, value):
         return -1 if value is None else value
 
+    def model_post_init(self, context: Any) -> None:
+        if self.jitter > 0 and not self.interpolate:
+            gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
+        if self.jitter > self.delay:
+            gs.raise_exception(f"{type(self).__name__}: Jitter must be less than or equal to read delay.")
+
     def validate_scene(self, scene: "Scene"):
         """
         Validate the sensor options values before the sensor is added to the scene.
@@ -86,12 +100,13 @@ class SensorOptions(Options, Generic[SensorT]):
         Use pydantic's model_post_init() for validation that does not require scene context.
         """
         assert scene.sim is not None
-        delay_hz = self.delay / scene.sim.dt
-        if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
-            gs.logger.warning(
-                f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got {self.delay}"
-                f" and {scene.sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
-            )
+        if self.delay > 0:
+            delay_hz = self.delay / scene.sim.dt
+            if not np.isclose(delay_hz, round(delay_hz), atol=gs.EPS):
+                gs.logger.warning(
+                    f"{type(self).__name__}: Read delay should be a multiple of the simulation time step. Got "
+                    f"{self.delay} and {scene.sim.dt}. Actual read delay will be {1 / round(delay_hz)}."
+                )
 
 
 class KinematicSensorOptionsMixin(SensorOptions[SensorT]):
@@ -132,8 +147,10 @@ class KinematicSensorOptionsMixin(SensorOptions[SensorT]):
 
 class RigidSensorOptionsMixin(KinematicSensorOptionsMixin[SensorT]):
     """
-    Options for sensors that require a RigidEntity specifically (e.g. contact, contact force, IMU, tactile). Any
-    sensor whose output depends on physics quantities (contact pairs, friction, inertial dynamics) belongs here.
+    Options for sensors that require a RigidEntity specifically (e.g. contact, contact force, IMU, tactile).
+
+    Any sensor whose output depends on physics quantities (contact pairs, friction, inertial dynamics) belongs
+    here.
     """
 
     def validate_scene(self, scene: "Scene"):
@@ -146,9 +163,13 @@ class RigidSensorOptionsMixin(KinematicSensorOptionsMixin[SensorT]):
                 gs.raise_exception(f"Entity at index {self.entity_idx} is not a RigidEntity.")
 
 
-class ImperfectSensorOptionsMixin(SensorOptions[SensorT]):
+class SimpleSensorOptions(SensorOptions[SensorT]):
     """
-    Base options class for analog sensors that are attached to a RigidEntity.
+    Options carrying SimpleSensor's imperfection parameters.
+
+    Interpreted by ``_apply_hardware_imperfections`` as perturbations introduced by the embedded sampler when it
+    snapshots the sensor into shared memory. Inherited by every ``SimpleSensor``-derived options class; Camera
+    (deriving from ``Sensor`` directly) stays on plain ``SensorOptions``.
 
     Parameters
     ----------
@@ -161,29 +182,15 @@ class ImperfectSensorOptionsMixin(SensorOptions[SensorT]):
         The standard deviation of the additive white noise.
     random_walk : float | array-like[float, ...], optional
         The standard deviation of the random walk, which acts as accumulated bias drift.
-    jitter : float, optional
-        The jitter in seconds modeled as a a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
     """
 
     resolution: FArrayType | float = 0.0
     bias: FArrayType | float = 0.0
     noise: FArrayType | float = 0.0
     random_walk: FArrayType | float = 0.0
-    jitter: NonNegativeFloat = 0.0
-    interpolate: StrictBool = False
-
-    def model_post_init(self, context: Any) -> None:
-        if self.jitter > 0 and not self.interpolate:
-            gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
-        if self.jitter > self.delay:
-            gs.raise_exception(f"{type(self).__name__}: Jitter must be less than or equal to read delay.")
 
 
-class Contact(RigidSensorOptionsMixin["ContactSensor"]):
+class Contact(RigidSensorOptionsMixin["ContactSensor"], SimpleSensorOptions["ContactSensor"]):
     """
     Sensor that returns bool based on whether associated RigidLink is in contact.
 
@@ -192,6 +199,10 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
     filter_link_idx : array-like[int], optional
         Global rigid link indices (solver link space). Contacts with the sensor link where the other
         participant is one of these links are ignored. Default is empty (no filtering).
+    threshold : float, optional
+        The bool-conversion threshold applied at read time to the underlying float contact magnitude
+        (kernel produces float). A bin reads ``True`` iff its magnitude exceeds this value. Default
+        ``0.0`` so any positive magnitude registers as contact.
     debug_sphere_radius : float, optional
         The radius of the debug sphere. Defaults to 0.05.
     debug_color : array-like[float, float, float, float], optional
@@ -199,6 +210,7 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
     """
 
     filter_link_idx: OptionalIArrayType = Field(default_factory=tuple)
+    threshold: NonNegativeFloat = 0.0
     debug_sphere_radius: PositiveFloat = 0.05
     debug_color: UnitIntervalVec4Type = (1.0, 0.0, 1.0, 0.5)
 
@@ -212,7 +224,7 @@ class Contact(RigidSensorOptionsMixin["ContactSensor"]):
                 )
 
 
-class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], ImperfectSensorOptionsMixin["ContactForceSensor"]):
+class ContactForce(RigidSensorOptionsMixin["ContactForceSensor"], SimpleSensorOptions["ContactForceSensor"]):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
 
@@ -267,9 +279,7 @@ class TemperatureProperties(NamedTuple):
     emissivity: float = 0.9
 
 
-class TemperatureGrid(
-    RigidSensorOptionsMixin["TemperatureGridSensor"], ImperfectSensorOptionsMixin["TemperatureGridSensor"]
-):
+class TemperatureGrid(RigidSensorOptionsMixin["TemperatureGridSensor"], SimpleSensorOptions["TemperatureGridSensor"]):
     """
     Sensor that returns the temperature in Celsius of the associated RigidLink in its local frame.
     Temperature is computed based on object contacts and their material properties provided to these options.
@@ -315,7 +325,7 @@ class TemperatureGrid(
     debug_temperature_range: Vec2FType = (0.0, 100.0)
 
 
-class IMU(RigidSensorOptionsMixin["IMUSensor"], ImperfectSensorOptionsMixin["IMUSensor"]):
+class IMU(RigidSensorOptionsMixin["IMUSensor"], SimpleSensorOptions["IMUSensor"]):
     """
     IMU sensor returns the linear acceleration (accelerometer) and angular velocity (gyroscope)
     of the associated entity link.
@@ -412,7 +422,7 @@ class IMU(RigidSensorOptionsMixin["IMUSensor"], ImperfectSensorOptionsMixin["IMU
         self.noise = self.acc_noise + self.gyro_noise + self.mag_noise
 
 
-class Proximity(RigidSensorOptionsMixin["ProximitySensor"], ImperfectSensorOptionsMixin["ProximitySensor"]):
+class Proximity(RigidSensorOptionsMixin["ProximitySensor"], SimpleSensorOptions["ProximitySensor"]):
     """
     Proximity sensor that reports the nearest distances from probe positions to tracked mesh surfaces.
     The read() output will provide the distances, and the nearest points can be accessed with `sensor.nearest_points`.
@@ -452,7 +462,7 @@ class Proximity(RigidSensorOptionsMixin["ProximitySensor"], ImperfectSensorOptio
                 gs.raise_exception(f"Proximity sensor track_link_idx[{i}]={link_idx} is out of range [0, {n_links}).")
 
 
-class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"]):
+class Raycaster(KinematicSensorOptionsMixin["RaycasterSensor"], SimpleSensorOptions["RaycasterSensor"]):
     """
     Raycaster sensor that performs ray casting to get distance measurements and point clouds.
 

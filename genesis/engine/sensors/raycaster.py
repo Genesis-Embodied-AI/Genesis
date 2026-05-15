@@ -28,7 +28,8 @@ from .base_sensor import (
     KinematicSensorMetadataMixin,
     KinematicSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
+    SimpleSensor,
 )
 
 if TYPE_CHECKING:
@@ -40,8 +41,12 @@ if TYPE_CHECKING:
 
 
 class _SolverBVH(NamedTuple):
-    """One BVH built against a solver's mesh. raycast_mask is None for a collision BVH (faces_info / verts_info,
-    no per-face mask), otherwise an int8 array of shape (n_vfaces,) selecting which visual faces contribute."""
+    """
+    One BVH built against a solver's mesh.
+
+    ``raycast_mask`` is ``None`` for a collision BVH (``faces_info`` / ``verts_info``, no per-face mask),
+    otherwise an int8 array of shape ``(n_vfaces,)`` selecting which visual faces contribute.
+    """
 
     solver: "KinematicSolver"
     bvh: LBVH
@@ -50,7 +55,7 @@ class _SolverBVH(NamedTuple):
 
 
 @dataclass
-class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
+class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata):
     # All BVHs (one per active solver per mesh type) cast against each frame. The first is written into the output
     # cache with is_merge=False (initializes hits or no_hit_value), the rest merge in closer hits. Per-sensor link
     # poses are gathered via KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
@@ -85,7 +90,7 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
     def __init__(self, options: RaycasterOptions, sensor_idx: int, manager: "SensorManager"):
         super().__init__(options, sensor_idx, manager)
         self.debug_objects: list["Mesh"] = []
@@ -230,22 +235,20 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
             )
 
     @classmethod
-    def reset(cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: RaycasterSharedMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         cls._update_bvh(shared_metadata)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         shape = self._options.pattern.return_shape
-        return (*shape, 3), shape
+        return ((*shape, 3), shape)
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: RaycasterSharedMetadata, shared_ground_truth_cache: torch.Tensor
-    ):
+    def _update_raw_data(cls, shared_metadata: RaycasterSharedMetadata, raw_data_T: torch.Tensor):
         cls._update_bvh(shared_metadata)
 
         # Allocate the link-pose scratch buffers on first cast (B and n_sensors are known here). Identity quat is
@@ -292,7 +295,7 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,
-                shared_ground_truth_cache,
+                raw_data_T,
                 gs.EPS,
                 i > 0,
             )
@@ -312,16 +315,6 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                     solver.vgeoms_state,
                     *args_common,
                 )
-
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: RaycasterSharedMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

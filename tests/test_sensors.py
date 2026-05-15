@@ -58,6 +58,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         from dataclasses import dataclass
 
         import genesis as gs
+        import torch
         from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
 
         from .options import FakeSensorOptions
@@ -77,11 +78,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_shared_ground_truth_cache(cls, metadata, cache):
-                pass
-
-            @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline, intermediate_cache, return_cache):
                 pass
 
             @classmethod
@@ -124,6 +121,32 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
             if mod_name.startswith("fake_sensor_plugin"):
                 del sys.modules[mod_name]
         SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+
+
+@pytest.mark.required
+def test_post_process_requires_intermediate_override():
+    # Strict-override rule: a subclass overriding `_post_process` without also overriding `_get_intermediate_format`
+    # or `_get_intermediate_dtype` must raise TypeError at class-definition time. The intermediate buffer is
+    # structurally distinct from the return buffer (timeline ring is in intermediate space); the explicit override
+    # forces the author to declare it - even a no-op override is acceptable when shape/dtype coincide with return.
+    # Local import: importing `genesis.engine.sensors.base_sensor` at module top triggers the sensors package
+    # `__init__.py`, which transitively loads `genesis.utils.sdf` and dereferences `gs.qd_float`. That attribute is
+    # only set by `gs.init(...)`, which runs in the autouse conftest fixture after pytest collection. Defer here.
+    from genesis.engine.sensors.base_sensor import Sensor
+
+    with pytest.raises(TypeError, match="_get_intermediate"):
+
+        class BadSensor(Sensor):
+            def _get_return_format(self):
+                return (1,)
+
+            @classmethod
+            def _get_cache_dtype(cls):
+                return gs.tc_float
+
+            @classmethod
+            def _post_process(cls, shared_metadata, tensor):
+                return tensor * 2
 
 
 @pytest.mark.required
@@ -442,10 +465,13 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
+    DT = 1e-2
+    DELAY_STEPS = 2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
+            dt=DT,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -468,7 +494,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(1.0, 1.0, 1.0),  # volume = 1 m^3
-            pos=(0.0, 0.0, 0.51),
+            pos=(0.0, 0.0, 0.55),
         ),
         material=gs.materials.Rigid(
             rho=1.0,  # mass = 1.0 kg
@@ -530,7 +556,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
             noise=NOISE,
             bias=BIAS,
             random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
-            delay=0.05,
+            delay=DT * DELAY_STEPS,
             jitter=0.01,
             interpolate=True,
         )
@@ -555,7 +581,8 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box_3.set_dofs_position((-np.pi / 2, -np.pi / 4, -np.pi / 2), dofs_idx_local=slice(3, None))
 
     # Note that it is necessary to do a first step, because the initial state right after reset is not valid
-    scene.step()
+    for _ in range(DELAY_STEPS + 1):
+        scene.step()
 
     # Make sure that box CoM is valid
     assert_allclose(box.get_links_pos(ref="root_com")[..., :2], box_com_offset[:2], tol=tol)
@@ -566,14 +593,14 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor.read(), force_sensor_noisy.read_ground_truth(), tol=gs.EPS)
     assert_allclose(force_sensor_noisy.read(), BIAS, tol=NOISE * 3)
 
-    for _ in range(10):
+    for _ in range(20):
         scene.step()
 
     assert bool_sensor_floor.read().all(), "ContactSensor for floor should detect contact with the ground"
     assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
     assert_allclose(force_sensor_noisy.read(), force_sensor_noisy.read(), tol=gs.EPS)
 
-    for _ in range(90):
+    for _ in range(80):
         scene.step()
 
     assert bool_sensor_box_2.read().all(), "ContactSensor for box_2 should detect contact with the ground"
@@ -581,8 +608,10 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     # Moving force back in world frame because box is not perfectly flat on the ground due to CoM offset
     with np.testing.assert_raises(AssertionError):
         assert_allclose(box.get_quat(), 0.0, atol=tol)
+    # Unsaturated GT physics check uses force_sensor (no max_force). force_sensor_noisy clamps in _post_process,
+    # which applies uniformly to read() and read_ground_truth().
     assert_allclose(
-        gu.transform_by_quat(force_sensor_noisy.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
+        gu.transform_by_quat(force_sensor.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
     )
 
     # FIXME: Adding CoM offset on box is disturbing contact force computations on box_2 for some reason...
@@ -1869,7 +1898,7 @@ def test_read_sensors_bulk_api(show_viewer, n_envs):
         scene.step()
 
     # Scene-wide read returns every sensor class. Per-entity reads restrict to classes present on that entity, so the
-    # static camera class is excluded from both box_a and box_b reads.
+    # static camera class is excluded from both box_a and box_b reads. Each call allocates a fresh tensor per class.
     scene_data = scene.read_sensors()
     a_data = box_a.read_sensors()
     b_data = box_b.read_sensors()
@@ -1918,18 +1947,16 @@ def test_read_sensors_bulk_api(show_viewer, n_envs):
     assert_equal(a_data[gs.sensors.types.Contact], contact_a.read())
     assert_equal(b_data[gs.sensors.types.Contact], contact_b.read())
 
-    # View vs copy: storage data_ptr is the discriminating metadata. Two copy=False reads must share storage (both
-    # views into the same backing cache), and the scene-level and entity-level views must share storage too. copy=True
-    # must always allocate fresh storage. Verified for both the float (IMU) and bool (Contact) dtypes.
+    # `read_sensors` always returns a fresh tensor independent of internal sensor storage. Two successive calls (at
+    # the scene level or the entity level) must back onto distinct storage. Verified on both IMU (identity
+    # `_post_process`, intermediate-space ring) and Contact (overridden `_post_process`, per-class return-space ring).
     for type_tag in (gs.sensors.types.IMU, gs.sensors.types.Contact):
-        scene_view = scene.read_sensors(copy=False)[type_tag]
-        entity_view = box_a.read_sensors(copy=False)[type_tag]
-        clone_a = scene.read_sensors(copy=True)[type_tag]
-        clone_b = scene.read_sensors(copy=True)[type_tag]
-        assert scene_view.untyped_storage().data_ptr() == entity_view.untyped_storage().data_ptr()
-        assert clone_a.untyped_storage().data_ptr() != scene_view.untyped_storage().data_ptr()
-        assert clone_b.untyped_storage().data_ptr() != scene_view.untyped_storage().data_ptr()
-        assert clone_a.untyped_storage().data_ptr() != clone_b.untyped_storage().data_ptr()
+        scene_a = scene.read_sensors()[type_tag]
+        scene_b = scene.read_sensors()[type_tag]
+        entity_a = box_a.read_sensors()[type_tag]
+        assert scene_a.untyped_storage().data_ptr() != scene_b.untyped_storage().data_ptr()
+        assert scene_a.untyped_storage().data_ptr() != entity_a.untyped_storage().data_ptr()
+        assert_equal(scene_a, scene_b)
 
     # Batching must be exercised end-to-end. For n_envs > 0, every per-env row of the bulk view must equal that env's
     # individual sensor read.
