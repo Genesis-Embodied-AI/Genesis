@@ -2413,7 +2413,7 @@ def _func_linesearch_reduce_quadratic_coeff_serial(
 
 
 @qd.func
-def _func_ls_point_fn_post(
+def _func_linesearch_eval_quadratic_at_alpha(
     i_b,
     tid,
     alpha,
@@ -2459,12 +2459,16 @@ def _func_linesearch_eval_at_alpha(
         t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_reduce_quadratic_coeff_coop(
             i_b, tid, alpha, alpha, alpha, constraint_state, 1
         )
-        return _func_ls_point_fn_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True)
+        return _func_linesearch_eval_quadratic_at_alpha(
+            i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True
+        )
     else:
         t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_reduce_quadratic_coeff_serial(
             i_b, alpha, alpha, alpha, constraint_state, 1
         )
-        return _func_ls_point_fn_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
+        return _func_linesearch_eval_quadratic_at_alpha(
+            i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False
+        )
 
 
 @qd.func
@@ -2551,7 +2555,7 @@ def _func_linesearch_reduce_quadratic_coeff_coop(
 
 
 @qd.func
-def _func_ls_point_fn_3alphas_post(
+def _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
     i_b,
     tid,
     alpha_0,
@@ -2617,7 +2621,7 @@ def _func_linesearch_eval_at_alpha_hi_mid_lo(
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_reduce_quadratic_coeff_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
-        return _func_ls_point_fn_3alphas_post(
+        return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
             i_b,
             tid,
             alpha_0,
@@ -2640,7 +2644,7 @@ def _func_linesearch_eval_at_alpha_hi_mid_lo(
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_reduce_quadratic_coeff_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
-        return _func_ls_point_fn_3alphas_post(
+        return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
             i_b,
             tid,
             alpha_0,
