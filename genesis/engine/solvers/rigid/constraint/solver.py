@@ -2354,9 +2354,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     equality-only seed and should be ignored by the caller.
 
     Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad coefficients are
-    recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array -- 3 loads per contact
-    (vs 5) and 5 per friction (vs 7), a 40%/29% bandwidth reduction. The ~8 FLOPs of recomputation per constraint are
-    almost free. With ``n_alphas == 3``, each constraint's loaded data is reused for all 3 alpha evaluations.
+    recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array, costing 3 loads per
+    contact (vs 5) and 5 per friction (vs 7), a 40%/29% bandwidth reduction. The ~8 FLOPs of recomputation per
+    constraint are almost free. With ``n_alphas == 3``, each constraint's loaded data is reused for all 3 alpha
+    evaluations.
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -2629,9 +2630,9 @@ def _func_linesearch_eval_at_3_alphas(
     """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint-loop pass.
     Batches the three step sizes into one loop over constraints so each constraint's heavy work (load Jaref/jv/efc_D
     plus, for friction, efc_frictionloss/diag; recompute the per-constraint quad coefficients) is paid once and reused
-    for all three alpha evaluations. Combined with the on-the-fly quad recompute (3 loads/contact, 5 loads/friction --
-    same bandwidth optimisation as the 1-alpha evaluator) this means each constraint's data is loaded once from global memory
-    and feeds three (cost, grad, hess) results. ``alphas`` is a ``qd.Vector(3)`` of candidate step sizes.
+    for all three alpha evaluations. Combined with the on-the-fly quad recompute (3 loads/contact, 5 loads/friction;
+    same bandwidth optimisation as the 1-alpha evaluator) this means each constraint's data is loaded once from global
+    memory and feeds three (cost, grad, hess) results. ``alphas`` is a ``qd.Vector(3)`` of candidate step sizes.
 
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the
     rationale for the per-branch return."""

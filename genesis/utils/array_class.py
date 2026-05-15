@@ -2071,8 +2071,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``
-    # -- i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
+    # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``,
+    # i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
     # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
