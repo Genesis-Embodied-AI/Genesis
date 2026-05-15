@@ -2354,7 +2354,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     equality-only seed and should be ignored by the caller.
 
     Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad coefficients are
-    recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array — 3 loads per contact
+    recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array -- 3 loads per contact
     (vs 5) and 5 per friction (vs 7), a 40%/29% bandwidth reduction. The ~8 FLOPs of recomputation per constraint are
     almost free. With ``n_alphas == 3``, each constraint's loaded data is reused for all 3 alpha evaluations.
     """
@@ -2427,10 +2427,11 @@ def _func_linesearch_eval_quadratic_at_alpha(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Given the reduced quadratic-coefficient triple (t₀, t₁, t₂), plug ``alpha`` into ``cost(α) = t₀ + t₁·α + t₂·α²``
-    and its first/second derivatives, and return ``(alpha, cost, grad, hess)``. The hessian is floored at ``EPS`` so
-    downstream Newton steps stay finite. Increments ``ls_it`` by 1; under ``coop=True`` the increment is gated to a
-    single thread because lanes share the same per-env counter."""
+    """Given the reduced quadratic-coefficient triple (t0, t1, t2), plug ``alpha`` into
+    ``cost(alpha) = t0 + t1*alpha + t2*alpha**2`` and its first/second derivatives, and return
+    ``(alpha, cost, grad, hess)``. The hessian is floored at ``EPS`` so downstream Newton steps stay finite. Increments
+    ``ls_it`` by 1; under ``coop=True`` the increment is gated to a single thread because lanes share the same per-env
+    counter."""
     cost = alpha * alpha * t0_2 + alpha * t0_1 + t0_0
     grad = 2 * alpha * t0_2 + t0_1
     hess = 2 * t0_2
@@ -2588,9 +2589,9 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
     coop: qd.template(),
 ):
     """Given three reduced quadratic-coefficient triples (one per candidate alpha), plug each alpha into
-    ``cost(α) = t₀ + t₁·α + t₂·α²`` and its first/second derivatives, and return three ``(cost, grad, hess)``
-    triples (packed as three ``qd.Vector``s of length 3). The hessian is floored at ``EPS`` so downstream
-    Newton steps stay finite. Increments ``ls_it`` by 3 (one per evaluated alpha); the increment is gated to
+    ``cost(alpha) = t0 + t1*alpha + t2*alpha**2`` and its first/second derivatives, and return three
+    ``(cost, grad, hess)`` triples (packed as three ``qd.Vector``s of length 3). The hessian is floored at ``EPS`` so
+    downstream Newton steps stay finite. Increments ``ls_it`` by 3 (one per evaluated alpha); the increment is gated to
     a single thread under ``coop=True`` since lanes share the same per-env counter."""
     EPS = rigid_global_info.EPS[None]
 
@@ -2635,8 +2636,8 @@ def _func_linesearch_eval_at_3_alphas(
     """Evaluate linesearch cost, gradient, and curvature at three candidate alphas in a single constraint-loop pass.
     Batches the three step sizes into one loop over constraints so each constraint's heavy work (load Jaref/jv/efc_D
     plus, for friction, efc_frictionloss/diag; recompute the per-constraint quad coefficients) is paid once and reused
-    for all three α evaluations. Combined with the on-the-fly quad recompute (3 loads/contact, 5 loads/friction — same
-    bandwidth optimisation as the 1-α evaluator) this means each constraint's data is loaded once from global memory
+    for all three alpha evaluations. Combined with the on-the-fly quad recompute (3 loads/contact, 5 loads/friction --
+    same bandwidth optimisation as the 1-alpha evaluator) this means each constraint's data is loaded once from global memory
     and feeds three (cost, grad, hess) results.
 
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the

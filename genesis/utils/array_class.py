@@ -2071,18 +2071,9 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    # When True, the layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active)
-    # are allocated with ``layout=(1, 0)`` — i.e. (_B, len_constraints_) physical storage under canonical (len_constraints_, _B)
-    # shape. This unlocks coalesced cross-lane reads for the subgroup-cooperative refinement in the linesearch and
-    # contiguous per-thread access in restructured constraint kernels. Because the layout change is implemented via
-    # ``qd.tensor(..., layout=)``, canonical ``Jaref[i_c, i_b]`` indexing in kernel bodies remains correct in both
-    # modes — the AST-level rewrite handles the permutation. Cooperative kernels switch on this flag via
-    # ``qd.static(...)`` so the dead branch is DCE'd at compile time. The flag is fastcache-safe because
-    # ``RigidSimStaticConfig`` is ``@qd.data_oriented`` (see the decorator above): primitive member values of
-    # ``@qd.data_oriented`` parameters are automatically included in the kernel's fastcache key, so flipping this
-    # bool produces a different key and a separately-cached compiled artifact. ``qd.static(...)`` itself does **not**
-    # affect cache keys — it is purely a compile-time-evaluation marker. See perso_hugh/doc/linesearch_shuffle.md
-    # and quadrants/docs/source/user_guide/fastcache.md ("Supported parameter types" table).
+    # When True, some constraint-state tensors (eg Jaref, efc_D, ...) are allocated with ``layout=(1, 0)``
+    # -- i.e. (_B, len_constraints_) physical storage. This unlocks coalesced cross-lane reads for the
+    # subgroup-cooperative refinement in the linesearch and contiguous per-thread access.
     constraint_layout_transposed: bool = False
     tiled_n_dofs_per_entity: int = -1
     tiled_n_dofs: int = -1
