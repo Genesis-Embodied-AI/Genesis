@@ -2356,12 +2356,14 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad
     coefficients are recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed
     quad array — 3 loads per contact (vs 5) and 5 per friction (vs 7), a 40%/29% bandwidth reduction.
-    With ``n_alphas == 3``, each constraint's loaded data is reused for all 3 alpha evaluations.
+    The ~8 FLOPs of recomputation per constraint are almost free. With ``n_alphas == 3``, each
+    constraint's loaded data is reused for all 3 alpha evaluations.
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
+    # Start from quad_gauss + eq_sum (skips ne equality constraints)
     base_0 = constraint_state.quad_gauss[0, i_b] + constraint_state.eq_sum[0, i_b]
     base_1 = constraint_state.quad_gauss[1, i_b] + constraint_state.eq_sum[1, i_b]
     base_2 = constraint_state.quad_gauss[2, i_b] + constraint_state.eq_sum[2, i_b]
@@ -2370,6 +2372,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     t_1 = [base_1, base_1, base_1]
     t_2 = [base_2, base_2, base_2]
 
+    # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad, eval n_alphas
     for i_c in range(ne, nef):
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
@@ -2394,6 +2397,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
             t_1[k] = t_1[k] + ak_qf_1
             t_2[k] = t_2[k] + ak_qf_2
 
+    # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas
     for i_c in range(nef, n_con):
         Jaref_c = constraint_state.Jaref[i_c, i_b]
         jv_c = constraint_state.jv[i_c, i_b]
@@ -2491,6 +2495,8 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
     n_con = constraint_state.n_constraints[i_b]
 
+    # Start from quad_gauss + eq_sum (skips ne equality constraints); only lane 0 holds the seed,
+    # the warp-tree reduction at the end implicitly broadcasts it back to all lanes.
     base_0 = gs.qd_float(0.0)
     base_1 = gs.qd_float(0.0)
     base_2 = gs.qd_float(0.0)
@@ -2503,6 +2509,8 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     t_1 = [base_1, base_1, base_1]
     t_2 = [base_2, base_2, base_2]
 
+    # Friction constraints [ne, nef): 5 loads (Jaref, jv, D, f, diag) + recompute quad, eval n_alphas;
+    # constraint loop strided by 32 across the warp.
     i_c = ne + tid
     while i_c < nef:
         Jaref_c = constraint_state.Jaref[i_c, i_b]
@@ -2529,6 +2537,8 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
             t_2[k] = t_2[k] + ak_qf_2
         i_c = i_c + 32
 
+    # Contact constraints [nef, n_con): 3 loads (Jaref, jv, D) + recompute quad, eval n_alphas;
+    # constraint loop strided by 32 across the warp.
     i_c = nef + tid
     while i_c < n_con:
         Jaref_c = constraint_state.Jaref[i_c, i_b]
@@ -2546,6 +2556,8 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
             t_2[k] = t_2[k] + qf_2 * act
         i_c = i_c + 32
 
+    # Warp-tree reduction: every lane's 9 partial sums collapse into the per-env totals; after this
+    # all 32 lanes hold identical scalars. The `5` is log2(32) tree levels.
     for k in qd.static(range(n_alphas)):
         t_0[k] = qd.simt.subgroup.reduce_all_add(t_0[k], 5)
         t_1[k] = qd.simt.subgroup.reduce_all_add(t_1[k], 5)
@@ -2577,6 +2589,7 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
     """Shared post-reduction logic for ``_func_linesearch_eval_at_3_alphas``."""
     EPS = rigid_global_info.EPS[None]
 
+    # Evaluate cost, gradient (1st derivative), and hessian (2nd derivative) for each alpha.
     cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
     grad_0 = 2 * alpha_0 * t0_2 + t0_1
     hess_0 = 2 * t0_2
@@ -2749,6 +2762,13 @@ def func_linesearch_refine(
     coop: qd.template(),
 ):
     """Bracketing walk + 3-alpha dual-bracket refinement.
+
+    Shared by the monolith linesearch (``func_linesearch_batch``) and the decomposed path's Phase 3
+    (``solver_breakdown._func_decomp_linesearch_refine``). Takes an initial point
+    (p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1) and refines it via Newton steps until the gradient sign
+    flips, then polishes with batched 3-alpha evaluation.
+
+    Returns (res_alpha, ls_result) where ls_result is a status code for diagnostics.
 
     ``coop=True`` runs cooperatively across the 32-lane warp (caller passes the lane id as ``tid``); ``coop=False``
     runs serially (1-thread-per-env, caller is responsible for ensuring only ``tid == 0`` enters this function). The

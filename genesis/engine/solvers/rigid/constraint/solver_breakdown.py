@@ -317,6 +317,7 @@ def _func_decomp_linesearch_refine_coop(
     """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
     ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
     template arg). Writes to ``ls_alpha`` are tid==0-guarded since the result is per-env, not per-lane."""
+    # Gated: skip when the Newton step is zero (degenerate hessian).
     if alpha_newton > 0.0:
         if tid == 0:
             constraint_state.ls_alpha[i_b] = 0.0
@@ -343,6 +344,8 @@ def _func_decomp_linesearch_refine_coop(
                 rigid_global_info,
                 True,
             )
+            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
+            # p1_alpha already written above.
             if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
                 constraint_state.ls_alpha[i_b] = res_alpha
 
@@ -360,6 +363,7 @@ def _func_decomp_linesearch_refine_serial(
 ):
     """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: bit-identical to the pre-coop baseline.
     Only ``tid == 0`` runs the work; the unified helpers are called with the Python literal ``False`` for ``coop``."""
+    # Gated: skip when the Newton step is zero (degenerate hessian).
     if alpha_newton > 0.0 and tid == 0:
         constraint_state.ls_alpha[i_b] = 0.0
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
@@ -385,6 +389,8 @@ def _func_decomp_linesearch_refine_serial(
                 rigid_global_info,
                 False,
             )
+            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
+            # p1_alpha already written above.
             if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
                 constraint_state.ls_alpha[i_b] = res_alpha
 
