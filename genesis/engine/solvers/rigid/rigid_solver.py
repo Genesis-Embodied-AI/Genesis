@@ -1,5 +1,4 @@
 import math
-import os
 import sys
 from typing import TYPE_CHECKING, Literal
 
@@ -416,17 +415,7 @@ class RigidSolver(KinematicSolver):
         Heuristic: enable transpose when both (a) n_envs is small enough that env-parallelism does not already
         saturate the GPU, and (b) per-env DoF count is large enough to keep a 32-lane warp busy on the cooperative
         reductions.
-
-        Override:
-          GS_CONSTRAINT_LAYOUT_TRANSPOSED=0  -> force off (default-safe, bit-identical baseline)
-          GS_CONSTRAINT_LAYOUT_TRANSPOSED=1  -> force on
-          GS_CONSTRAINT_LAYOUT_TRANSPOSED=auto (or unset) -> heuristic below
         """
-        env_val = os.environ.get("GS_CONSTRAINT_LAYOUT_TRANSPOSED", "auto").lower()
-        if env_val in ("0", "false", "off"):
-            return False
-        if env_val in ("1", "true", "on"):
-            return True
         if gs.backend == gs.cpu or self.sim.options.requires_grad:
             return False
         n_envs = self._sim._B
