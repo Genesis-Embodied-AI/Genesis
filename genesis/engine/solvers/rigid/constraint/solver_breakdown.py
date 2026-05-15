@@ -29,9 +29,8 @@ def _ls_eval_cost_grad(
 ):
     """Compute cost and analytical gradient at alpha (thread-0 only).
 
-    Follows the same quadratic-coefficient approach as _func_linesearch_eval_at_alpha in solver.py.
-    Reuses quad_gauss and eq_sum precomputed by the p0 kernel.
-    Returns (cost, grad).
+    Follows the same quadratic-coefficient approach as _func_linesearch_eval_at_alpha in solver.py. Reuses quad_gauss
+    and eq_sum precomputed by the p0 kernel. Returns (cost, grad).
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -322,11 +321,11 @@ def _func_decomp_linesearch_refine_coop(
         if tid == 0:
             constraint_state.ls_alpha[i_b] = 0.0
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-            i_b, tid, alpha_newton, constraint_state, rigid_global_info, True
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop=True
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, True
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop=True
             )
         if p1_cost < p0_cost and tid == 0:
             constraint_state.ls_alpha[i_b] = p1_alpha
@@ -342,7 +341,7 @@ def _func_decomp_linesearch_refine_coop(
                 gtol,
                 constraint_state,
                 rigid_global_info,
-                True,
+                coop=True,
             )
             # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
             # p1_alpha already written above.
@@ -367,11 +366,11 @@ def _func_decomp_linesearch_refine_serial(
     if alpha_newton > 0.0 and tid == 0:
         constraint_state.ls_alpha[i_b] = 0.0
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-            i_b, tid, alpha_newton, constraint_state, rigid_global_info, False
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop=False
         )
         if p0_cost < p1_cost:
             p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
-                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, False
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop=False
             )
         if p1_cost < p0_cost:
             constraint_state.ls_alpha[i_b] = p1_alpha
@@ -387,7 +386,7 @@ def _func_decomp_linesearch_refine_serial(
                 gtol,
                 constraint_state,
                 rigid_global_info,
-                False,
+                coop=False,
             )
             # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
             # p1_alpha already written above.
@@ -436,9 +435,10 @@ def _func_decomp_linesearch_refine_and_apply(
     warp when True), gated on ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to
     qacc, Ma, and Jaref.
 
-    The cooperative path is only safe when the Tier-1 constraint-state tensors are stored with ``layout=(1, 0)`` (so
-    per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a fixed env). The
-    qd.Tensor layout rewrite makes the canonical indexing identical in both paths; only the access pattern changes.
+    The cooperative path is only safe when the layout-flippable constraint-state tensors are stored with
+    ``layout=(1, 0)`` (so per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a
+    fixed env). The qd.Tensor layout rewrite makes the canonical indexing identical in both paths; only the access
+    pattern changes.
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
@@ -553,8 +553,8 @@ def _func_update_constraint_forces(
 ):
     """Compute active flags and efc_force, parallelized over (constraint, env).
 
-    Iteration order is picked at compile time so adjacent lanes always cover the
-    *physical* contiguous dimension of the Tier-1 tensors:
+    Iteration order is picked at compile time so adjacent lanes always cover the *physical* contiguous dimension of the
+    layout-flippable constraint-state tensors:
       - layout False (canonical [i_c, i_b], physical [i_c, i_b]):  ndrange(len_constraints, _B)
       - layout True  (canonical [i_c, i_b], physical [i_b, i_c]):  ndrange(_B, len_constraints)
     """
@@ -599,8 +599,8 @@ def _func_update_constraint_cost_coop(
 ):
     """Warp-per-env cooperative variant of ``_func_update_constraint_cost``: 32 lanes stride through dofs and
     constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add``. Per-lane reads of
-    Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when the
-    Tier-1 constraint-state tensors were allocated with ``layout=(1, 0)``)."""
+    Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when those
+    layout-flippable constraint-state tensors were allocated with ``layout=(1, 0)``)."""
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
 
@@ -662,8 +662,8 @@ def _func_update_constraint_cost_serial(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Legacy 1-thread-per-env variant of ``_func_update_constraint_cost``. Bit-identical to the pre-coop baseline:
-    one thread runs the full reduction over dofs + constraints in straight ``for`` loops."""
+    """1-thread-per-env variant of ``_func_update_constraint_cost``. Bit-identical to the pre-coop baseline: one thread
+    runs the full reduction over dofs + constraints in straight ``for`` loops."""
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_cost", block_dim=32)

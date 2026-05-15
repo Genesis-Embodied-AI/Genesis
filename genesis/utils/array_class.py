@@ -313,9 +313,10 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
-    # Tier-1 constraint-state tensors: shape stays canonical (len_constraints_, _B); the static config flag chooses
-    # physical layout via ``layout=(1, 0)``. Cooperative kernels read the same flag at compile time to switch between
-    # serial and warp-cooperative reductions. See perso_hugh/doc/linesearch_shuffle.md.
+    # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
+    # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
+    # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
+    # See perso_hugh/doc/linesearch_shuffle.md.
     con_layout = (1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
@@ -377,9 +378,9 @@ def get_constraint_state(constraint_solver, solver):
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
         efc_b=V(dtype=gs.qd_float, shape=efc_b_shape),
         efc_AR=V(dtype=gs.qd_float, shape=efc_AR_shape),
-        # Tier-1 constraint state: allocated as qd.Tensor wrappers, optionally with layout=(1, 0) to physically store
-        # as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B); kernel-body indexing
-        # ``Jaref[i_c, i_b]`` is rewritten by the AST when layout != None.
+        # Layout-flippable constraint-state tensors: allocated as qd.Tensor wrappers, optionally with
+        # ``layout=(1, 0)`` to physically store as (_B, len_constraints_). Canonical shape stays (len_constraints_, _B);
+        # kernel-body indexing ``Jaref[i_c, i_b]`` is rewritten by the AST when ``layout != None``.
         active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B), layout=con_layout),
         prev_active=V(dtype=gs.qd_bool, shape=(len_constraints_, _B)),
         diag=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
@@ -2070,8 +2071,8 @@ class RigidSimStaticConfig(metaclass=AutoInitMeta):
     broadphase_traversal: int = 0
     enable_tiled_cholesky_mass_matrix: bool = False
     enable_tiled_cholesky_hessian: bool = False
-    # When True, the Tier-1 constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) are allocated
-    # with ``layout=(1, 0)`` — i.e. (_B, len_constraints_) physical storage under canonical (len_constraints_, _B)
+    # When True, the layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active)
+    # are allocated with ``layout=(1, 0)`` — i.e. (_B, len_constraints_) physical storage under canonical (len_constraints_, _B)
     # shape. This unlocks coalesced cross-lane reads for the subgroup-cooperative refinement in the linesearch and
     # contiguous per-thread access in restructured constraint kernels. Because the layout change is implemented via
     # ``qd.tensor(..., layout=)``, canonical ``Jaref[i_c, i_b]`` indexing in kernel bodies remains correct in both

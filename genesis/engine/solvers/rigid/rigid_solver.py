@@ -403,7 +403,7 @@ class RigidSolver(KinematicSolver):
         return self.n_envs <= gpu_cores
 
     def _should_transpose_constraint_layout(self) -> bool:
-        """Decide whether to allocate Tier-1 constraint state with layout=(1, 0).
+        """Decide whether to allocate the layout-flippable constraint-state with layout=(1, 0).
 
         The transposed layout (plus its companion cooperative kernels) wins on workloads with enough per-env compute
         density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
