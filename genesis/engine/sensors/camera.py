@@ -4,7 +4,7 @@ Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, NamedTuple, Optional, Type
 
 import numpy as np
 import torch
@@ -232,7 +232,20 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
     - Shared read() method returning torch tensors
     """
 
+    uses_measured_pipeline: ClassVar[bool] = False
+
     def __init__(self, options: "SensorOptions", idx: int, manager: "SensorManager"):
+        # Camera bypasses the measured pipeline (lazy render on read); any feature relying on the timeline ring
+        # would silently no-op. Reject the inputs at construction so the user is forced to drop the option or pick a
+        # different sensor.
+        if options.delay > 0.0:
+            gs.raise_exception(f"{type(self).__name__} does not support `delay`; got delay={options.delay}.")
+        if options.jitter > 0.0:
+            gs.raise_exception(f"{type(self).__name__} does not support `jitter`; got jitter={options.jitter}.")
+        if options.history_length > 0:
+            gs.raise_exception(
+                f"{type(self).__name__} does not support `history_length`; got history_length={options.history_length}."
+            )
         super().__init__(options, idx, manager)
         self._stale: bool = True
 
@@ -251,9 +264,12 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
         cls,
         shared_metadata: SharedSensorMetadata,
         current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
+        measured_data_timeline: "TensorRingBuffer | None",
+        intermediate_cache: torch.Tensor,
+        return_cache: torch.Tensor,
     ):
-        # No per-step measured-cache update for cameras (handled lazily on read()).
+        # No per-step measured-cache update for cameras (handled lazily on read()). `BaseCameraSensor` declares
+        # `uses_measured_pipeline = False`, so the manager passes `measured_data_timeline=None` here.
         pass
 
     def _draw_debug(self, context: "RasterizerContext"):

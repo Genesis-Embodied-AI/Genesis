@@ -16,12 +16,11 @@ from genesis.utils.geom import (
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
 from .base_sensor import (
-    ImperfectSensorMetadataMixin,
-    ImperfectSensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
 )
 
 if TYPE_CHECKING:
@@ -63,7 +62,7 @@ def _get_cross_axis_coupling_to_alignment_matrix(
 
 
 @dataclass
-class IMUSharedMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
+class IMUSharedMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata):
     """
     Shared metadata between all IMU sensors.
     """
@@ -83,8 +82,7 @@ class IMUData(NamedTuple):
 
 class IMUSensor(
     RigidSensorMixin[IMUSharedMetadata],
-    ImperfectSensorMixin[IMUSharedMetadata],
-    Sensor[IMUOptions, IMUSharedMetadata, IMUData],
+    SimpleSensor[IMUOptions, IMUSharedMetadata, IMUData],
 ):
     def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
         # FIXME: Resolution should be made private in mixin, so that it cannot be set by the user directly.
@@ -155,24 +153,16 @@ class IMUSensor(
             self.pos_offset = self._shared_metadata.offsets_pos[0, self._idx]
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return (3,), (3,), (3,)
+        return ((3,), (3,), (3,))
 
     @classmethod
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
     @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: IMUSharedMetadata,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
-        """
-        Update ground truth and pre-delay measured IMU values for all sensors of this class.
-        """
-        # Extract acceleration and gravity in world frame
+    def _update_raw_data(cls, shared_metadata: IMUSharedMetadata, raw_data_T: torch.Tensor):
         assert shared_metadata.solver is not None
+        # Extract acceleration and gravity in world frame.
         gravity = shared_metadata.solver.get_gravity()
         quats = shared_metadata.solver.get_links_quat(links_idx=shared_metadata.links_idx)
         acc = shared_metadata.solver.get_links_acc(links_idx=shared_metadata.links_idx)
@@ -194,27 +184,31 @@ class IMUSensor(
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
             acc += tangential_acc + centripetal_acc
 
-        # Subtract gravity then move to local frame
-        # acc/ang shape: (B, n_imus, 3)
+        # Subtract gravity then move to local frame. acc/ang shape: (B, n_imus, 3); local_mag is already
+        # (B, n_imus, 3) after the inverse transform, no reshape needed.
         local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
-
-        # is now already (n_envs, n_imus, 3), no need for a reshape
         local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
 
-        # cache layout: (n_imus * 9, B)
+        # Raw-data buffer layout: (n_imus * 9, B). View into (n_imus, 3, 3, *batch_size) for the per-channel writes.
         *batch_size, n_imus, _ = local_acc.shape
-        strided_ground_truth_cache = current_ground_truth_data_T.view(n_imus, 3, 3, *batch_size)
-        strided_ground_truth_cache[:, 0].copy_(local_acc.permute(1, 2, 0))
-        strided_ground_truth_cache[:, 1].copy_(local_ang.permute(1, 2, 0))
-        strided_ground_truth_cache[:, 2].copy_(local_mag.permute(1, 2, 0))
+        strided_raw = raw_data_T.view(n_imus, 3, 3, *batch_size)
+        strided_raw[:, 0].copy_(local_acc.permute(1, 2, 0))
+        strided_raw[:, 1].copy_(local_ang.permute(1, 2, 0))
+        strided_raw[:, 2].copy_(local_mag.permute(1, 2, 0))
 
-        # apply alignment rotation and imperfections to the measured data
-        measured = measured_data_timeline.at(0, copy=False)
-        measured.copy_(current_ground_truth_data_T.T)
-        measured_xyz = measured.view(measured.shape[0], -1, 3)
-        measured_xyz.copy_(torch.matmul(shared_metadata.alignment_rot_matrix, measured_xyz.unsqueeze(-1)).squeeze(-1))
-        cls._apply_imperfections(shared_metadata, measured)
+    @classmethod
+    def _apply_transform(
+        cls,
+        shared_metadata: IMUSharedMetadata,
+        data: torch.Tensor,
+        *,
+        timeline=None,
+    ):
+        # Apply alignment rotation to the (lin_acc, ang_vel, mag) triplet. View the flat cache as a stack of 3-vectors
+        # and rotate them in place with the per-sensor `alignment_rot_matrix`.
+        data_xyz = data.view(data.shape[0], -1, 3)
+        data_xyz.copy_(torch.matmul(shared_metadata.alignment_rot_matrix, data_xyz.unsqueeze(-1)).squeeze(-1))
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

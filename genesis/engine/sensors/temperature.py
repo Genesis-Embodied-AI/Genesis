@@ -16,12 +16,10 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .base_sensor import (
-    ImperfectSensorMetadataMixin,
-    ImperfectSensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
-    Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
 )
 
 if TYPE_CHECKING:
@@ -491,7 +489,7 @@ def _apply_T_measured_filter(
 
 
 @dataclass
-class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata):
+class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata):
     """Shared metadata for all temperature grid sensors."""
 
     ambient_temperature: float = 21.0
@@ -521,8 +519,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, ImperfectSensorMet
 
 class TemperatureGridSensor(
     RigidSensorMixin[TemperatureGridSensorMetadata],
-    ImperfectSensorMixin[TemperatureGridSensorMetadata],
-    Sensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
+    SimpleSensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
     def __init__(self, sensor_options: TemperatureGridOptions, sensor_idx: int, sensor_manager: "SensorManager"):
         super().__init__(sensor_options, sensor_idx, sensor_manager)
@@ -674,7 +671,7 @@ class TemperatureGridSensor(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+    def _get_return_format(self) -> tuple[int, ...]:
         return (self._options.grid_size,)
 
     @classmethod
@@ -703,12 +700,7 @@ class TemperatureGridSensor(
             shared_metadata.link_temps[envs_idx, :] = base_T_per_link.unsqueeze(0).expand(n_envs, -1)
 
     @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: TemperatureGridSensorMetadata,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
+    def _update_raw_data(cls, shared_metadata: TemperatureGridSensorMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
         dt = solver._sim.dt
         props = shared_metadata.link_material_properties
@@ -731,7 +723,7 @@ class TemperatureGridSensor(
             shared_metadata.K2_spectral,
             dt,
             gs.EPS,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
         # 3) Contact heat transfer
         collider_state = solver.collider._collider_state
@@ -762,9 +754,9 @@ class TemperatureGridSensor(
             shared_metadata.contact_area_buffer,
             dt,
             gs.EPS,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
-        current_ground_truth_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
+        raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection
         _apply_radiation_convection(
             shared_metadata.sensor_cache_start,
@@ -780,21 +772,32 @@ class TemperatureGridSensor(
             shared_metadata.ambient_temperature,
             shared_metadata.convection_coeff,
             dt,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
 
-        t_actual = current_ground_truth_data_T.T
-        work = measured_data_timeline.at(1).clone()
+    @classmethod
+    def _apply_transform(
+        cls,
+        shared_metadata: TemperatureGridSensorMetadata,
+        data: torch.Tensor,
+        *,
+        timeline=None,
+    ):
+        if timeline is None:
+            return
+        # First-order RC filter: data <- prev_measured + (dt/tau) * (raw - prev_measured), where data initially
+        # holds the raw seed copied by the default `_update_current_timestep_data`.
+        raw = data.clone()
+        filtered = timeline.at(1).clone()
         _apply_T_measured_filter(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_time_const,
-            dt,
-            t_actual,
-            work,
+            shared_metadata.solver._sim.dt,
+            raw,
+            filtered,
         )
-        cls._apply_imperfections(shared_metadata, work)
-        measured_data_timeline.at(0, copy=False).copy_(work)
+        data.copy_(filtered)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

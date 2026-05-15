@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, Sequence, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, TypeVar, get_args, get_origin
 
 import numpy as np
 import torch
@@ -42,7 +42,7 @@ def _to_tuple(*values: NumArrayType, length_per_value: int = 3) -> tuple[Numeric
 @dataclass
 class SharedSensorMetadata:
     """
-    Shared metadata between all sensors of the same class.
+    Shared metadata between all sensors of the same class. Time-related state only - visible to SensorManager.
     """
 
     cache_sizes: list[int] = field(default_factory=list)
@@ -50,11 +50,12 @@ class SharedSensorMetadata:
     history_lengths: list[int] = field(default_factory=list)
     # Per-sensor: interpolate delayed reads (aligned with cache_sizes). Appended in Sensor.build.
     interpolate: list[bool] = field(default_factory=list)
-    # True iff at least one sensor in the class has a nonzero read delay. Precomputed at build (and latched True by
-    # `set_delay`) so the per-step fast path in `_apply_delay_to_shared_cache` can avoid a GPU-syncing reduction.
+    jitter_ts: torch.Tensor = make_tensor_field((0, 0))
+    # True iff at least one sensor in the class has a nonzero read delay. Precomputed at build so the per-step fast
+    # path can avoid a GPU-syncing reduction.
     has_any_delay: bool = False
-    # True iff at least one sensor in the class has a nonzero jitter option. Stays False for non-noisy sensor classes
-    # (Contact, Raycaster) since they never sample jitter. Same precompute-and-latch contract as `has_any_delay`.
+    # True iff at least one sensor in the class has a nonzero jitter. Latched True by `set_jitter`; same
+    # precompute-and-latch contract as `has_any_delay`.
     has_any_jitter: bool = False
 
     def __del__(self):
@@ -70,6 +71,30 @@ class SharedSensorMetadata:
         This method is called by SensorManager when the scene is destroyed. his should remove any references to the
         sensors from the shared metadata, and clean up any resources associated with the sensors.
         """
+
+
+@dataclass
+class SimpleSensorMetadata(SharedSensorMetadata):
+    """
+    SimpleSensor's per-class state for the imperfection parameters (noise/bias/random_walk/resolution).
+
+    Opaque to SensorManager (which only uses ``SharedSensorMetadata`` fields). Per-sensor-class metadata subclasses
+    inherit this when the sensor derives from ``SimpleSensor``; sensors deriving from ``Sensor`` directly (Camera)
+    inherit ``SharedSensorMetadata`` instead.
+    """
+
+    resolution: torch.Tensor = make_tensor_field((0, 0))
+    bias: torch.Tensor = make_tensor_field((0, 0))
+    _cur_random_walk: torch.Tensor = make_tensor_field((0, 0))
+    random_walk: torch.Tensor = make_tensor_field((0, 0))
+    noise: torch.Tensor = make_tensor_field((0, 0))
+    # Precomputed Python bool flags gate the per-step noise/bias/quantize work without GPU sync. Set at build from
+    # options and refreshed by the corresponding setters. Conservatively True once any sensor has nonzero value;
+    # never flipped back to False (avoids tracking per-sensor state).
+    has_any_noise: bool = False
+    has_any_random_walk: bool = False
+    has_any_bias: bool = False
+    has_any_resolution: bool = False
 
 
 SharedSensorMetadataT = TypeVar("SharedSensorMetadataT", bound=SharedSensorMetadata)
@@ -99,6 +124,10 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     _options_cls: ClassVar[type]
     _metadata_cls: ClassVar[type]
     _return_data_class: ClassVar[type] = tuple
+    # Whether instances of this class read or write the measured-timeline ring inside `_update_shared_cache`. Drives
+    # ring allocation in `SensorManager.build`. Subclasses whose `_update_shared_cache` bypasses the ring (e.g.
+    # cameras handling rendering lazily) explicitly set this to ``False``.
+    uses_measured_pipeline: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -113,6 +142,20 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
                 if len(args) >= 3 and not isinstance(args[2], TypeVar):
                     cls._return_data_class = args[2]
                 break
+        # Strict contract: overriding `_post_process` requires overriding `_get_intermediate_format` and/or
+        # `_get_intermediate_dtype`. The intermediate buffer must be a distinct buffer regardless of whether its
+        # shape/dtype happen to coincide with the return space (the timeline ring is in intermediate space; mixing
+        # data spaces breaks `_apply_transform` filter overrides that read previous slots). When the intermediate
+        # shape and dtype both coincide with return, override one method as a no-op to make the structural
+        # distinction explicit.
+        if "_post_process" in cls.__dict__ and not (
+            "_get_intermediate_format" in cls.__dict__ or "_get_intermediate_dtype" in cls.__dict__
+        ):
+            raise TypeError(
+                f"{cls.__name__} overrides `_post_process` but neither `_get_intermediate_format` nor "
+                f"`_get_intermediate_dtype`; declare the intermediate buffer explicitly (no-op override returning "
+                f"the return-space value is acceptable when they coincide)."
+            )
         # Auto-register if this class defines its own options (not inherited).
         # Enforce that concrete sensor classes also specify the metadata type parameter.
         if "_options_cls" in cls.__dict__:
@@ -176,7 +219,7 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         )
         self._shared_metadata.cache_sizes.append(self._cache_size)
         self._shared_metadata.history_lengths.append(self._options.history_length)
-        self._shared_metadata.interpolate.append(getattr(self._options, "interpolate", False))
+        self._shared_metadata.interpolate.append(self._options.interpolate)
         if self._delay_ts > 0:
             self._shared_metadata.has_any_delay = True
 
@@ -200,38 +243,80 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
 
     def _get_return_format(self) -> tuple[int | tuple[int, ...], ...]:
         """
-        Get the data format of the read() return value.
+        Shape(s) of what ``read()`` returns; instance method because the shape may depend on options.
 
-        Returns
-        -------
-        return_format : tuple[tuple[int, ...], ...]
-            The output shape(s) of the tensor data returned by read(), e.g. (2, 3) means read() will return a single
-            tensor of shape (2, 3) and ((3,), (3,)) would return two tensors of shape (3,).
+        Sensor options are free to affect the returned shape (Raycaster's pattern, Camera's resolution, Proximity's
+        probe positions, etc.) - this is supported by design. Returns a single tuple ``(N,)`` for a single-tensor
+        return, or a tuple-of-tuples ``((3,), (3,), (3,))`` for a multi-tensor return (e.g. IMU's
+        ``NamedTuple(lin_acc, ang_vel, mag)``).
         """
-        raise NotImplementedError(f"{type(self).__name__} has not implemented `get_return_format()`.")
+        raise NotImplementedError(f"{type(self).__name__} has not implemented `_get_return_format()`.")
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        """
+        Dtype of what ``read()`` returns; classmethod because the dtype is class-uniform across all instances.
+
+        The manager allocates one per-dtype intermediate cache buffer and uses a per-class slice within it; if
+        instances of the same class returned different dtypes, the per-class slice would no longer be a single
+        contiguous range, breaking the per-class batched ``_update_shared_cache`` and ``_apply_transform`` contract.
+        Dtype is therefore class-uniform by design.
+        """
+        raise NotImplementedError(f"{cls.__name__} has not implemented `_get_cache_dtype()`.")
+
+    def _get_intermediate_format(self) -> tuple[int | tuple[int, ...], ...]:
+        """
+        Shape(s) of the pipeline-internal cache; defaults to ``_get_return_format()``.
+
+        Override together with ``_post_process`` when the projection changes shape. Same instance-method semantics
+        as ``_get_return_format``: the shape may depend on options.
+        """
+        return self._get_return_format()
+
+    @classmethod
+    def _get_intermediate_dtype(cls) -> torch.dtype:
+        """
+        Dtype of the pipeline-internal cache; defaults to ``_get_cache_dtype()``.
+
+        Override together with ``_post_process`` when the projection changes dtype (e.g. ContactSensor's float
+        intermediate vs. bool return). Same class-uniform semantics as ``_get_cache_dtype``.
+        """
+        return cls._get_cache_dtype()
 
     @classmethod
     def _update_shared_cache(
         cls,
         shared_metadata: SharedSensorMetadataT,
         current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
+        measured_data_timeline: "TensorRingBuffer | None",
+        intermediate_cache: torch.Tensor,
+        return_cache: torch.Tensor,
     ):
         """
-        Update the shared ground-truth cache slice (shape ``(cols, B)``, C-contiguous rows) and write this physics
-        step's pre-delay measured values into ``measured_data_timeline``. The current write slot is
-        ``measured_data_timeline.at(0, copy=False)`` (shape ``(B, cols)``); sensors may read older slots via
-        ``at(k, ...)`` (for example first-order filtering). SensorManager applies read delay/jitter from this timeline
-        into ``read()``.
+        Compute one step of sensor data into the shared caches.
+
+        Updates the shared ground-truth cache slice (shape ``(cols, B)``, C-contiguous rows), the pre-delay
+        measured timeline ring (``measured_data_timeline.at(0)`` is the current write slot), the per-dtype
+        ``intermediate_cache`` (shape ``(B, cols)``, post-delay sample in intermediate space), and the per-class
+        ``return_cache`` (shape ``(B, cols)``, post-``_post_process`` user-facing space). When the sensor opts
+        out of the measured pipeline (e.g. Camera), ``measured_data_timeline`` is ``None`` and the
+        implementation writes directly to ``intermediate_cache``; if ``_post_process`` is identity,
+        ``return_cache is intermediate_cache``.
         """
         raise NotImplementedError(f"{cls.__name__} has not implemented `update_shared_cache()`.")
 
     @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
+    def _post_process(cls, shared_metadata: SharedSensorMetadataT, tensor: torch.Tensor) -> torch.Tensor:
         """
-        The dtype of the cache for this sensor.
+        Write-time projection from per-class intermediate cache to per-class return cache.
+
+        Applied eagerly once per step by the orchestrator. Default: identity (intermediate IS return; no separate
+        allocation). ``tensor`` is the full per-class intermediate cache ``[B, total_cache_size]``. Per-instance reads
+        slice the return cache directly; no ``cache_slice`` keyword needed. Stateful overrides are allowed because the
+        orchestrator calls this exactly once per simulation step (a natural place for software-level signal processing
+        such as a complementary, Mahony, or Kalman filter on top of the raw measurement).
         """
-        raise NotImplementedError(f"{cls.__name__} has not implemented `get_cache_dtype()`.")
+        return tensor
 
     def _draw_debug(self, context: "RasterizerContext"):
         """
@@ -245,13 +330,16 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
     def read(self, envs_idx=None) -> DataT:
         """
         Read the sensor data (with noise applied if applicable).
+
+        Pure view into the per-class return cache (post-``_post_process``); ``_post_process`` was applied
+        eagerly once per step by the orchestrator.
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self), envs_idx)
 
     @gs.assert_built
     def read_ground_truth(self, envs_idx=None) -> DataT:
         """
-        Read the ground truth sensor data (without noise).
+        Read the ground truth sensor data (without noise). Pure view into the per-class ground-truth return cache.
         """
         return self._get_formatted_data(self._manager.get_cloned_from_cache(self, is_ground_truth=True), envs_idx)
 
@@ -275,73 +363,6 @@ class Sensor(RBC, Generic[OptionsT, SharedSensorMetadataT, DataT]):
         return self._is_built
 
     # =============================== private shared methods ===============================
-
-    @classmethod
-    def _apply_delay_to_shared_cache(
-        cls,
-        shared_metadata: SharedSensorMetadataT,
-        shared_cache: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-        interpolate: Sequence[bool] | None = None,
-    ):
-        """
-        Applies the read delay (and jitter, if any) to the shared cache tensor by copying the buffered data at the
-        appropriate index. When the class has neither delay nor jitter, takes a fast path that writes the most
-        recent ring frame to the cache class-wide.
-
-        Parameters
-        ----------
-        shared_metadata : SharedSensorMetadata
-            The shared metadata for the sensor.
-        shared_cache : torch.Tensor
-            The shared cache tensor.
-        measured_data_timeline : TensorRingBuffer
-            Pre-delay measured timeline ring for this sensor class slice (current step already written by
-            ``_update_shared_cache``).
-        interpolate : Sequence[bool] | None
-            Whether to interpolate the sensor data for the read delay + jitter. Defaults to False.
-        """
-        # Fast path: when no sensor in the class has any delay or jitter, this is equivalent to copying the most
-        # recent ring frame to the measured cache class-wide. Avoids a Python loop over every sensor. Both flags
-        # are precomputed Python bools (no GPU sync) latched at build / by setters.
-        if not shared_metadata.has_any_delay and not shared_metadata.has_any_jitter:
-            shared_cache.copy_(measured_data_timeline.at(0))
-            return
-
-        # Sample uniform jitter in [0, jitter_ts) per env per sensor. One-sided so samples are non-negative;
-        # combined with the `jitter < dt` option constraint, the effective per-step shift is strictly bounded
-        # within [0, 1) steps and cannot wrap the ring.
-        if shared_metadata.has_any_jitter:
-            shared_metadata.cur_jitter_ts.uniform_(0.0, 1.0).mul_(shared_metadata.jitter_ts)
-            cur_jitter_ts = shared_metadata.cur_jitter_ts
-        else:
-            cur_jitter_ts = None
-
-        if interpolate is None:
-            interpolate = [False for _ in shared_metadata.cache_sizes]
-
-        tensor_start = 0
-        for sensor_idx, (tensor_size, interp) in enumerate(zip(shared_metadata.cache_sizes, interpolate)):
-            # Compute the current delay of the sensor, taking into account jitter if any
-            cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
-            if cur_jitter_ts is not None:
-                cur_delay_ts = cur_delay_ts + cur_jitter_ts[:, sensor_idx]
-
-            # Get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
-            cur_delay_ts_int = cur_delay_ts.to(dtype=torch.int64)
-
-            # Update shared cached with left data (Zero Order Hold) or linearly interpolated data (First Order)
-            tensor_slice = slice(tensor_start, tensor_start + tensor_size)
-            sensor_cache = shared_cache[:, tensor_slice]
-            data_left = measured_data_timeline.at(cur_delay_ts_int, tensor_slice, per_row=True)
-            if interp:
-                ratio = torch.frac(cur_delay_ts)
-                data_right = measured_data_timeline.at(cur_delay_ts_int + 1, tensor_slice, per_row=True)
-                torch.lerp(data_left, data_right, ratio[:, None], out=sensor_cache)
-            else:
-                sensor_cache.copy_(data_left)
-
-            tensor_start += tensor_size
 
     def _get_formatted_data(self, tensor: torch.Tensor, envs_idx=None) -> torch.Tensor:
         """
@@ -392,10 +413,11 @@ class _SolverLinkGroup(NamedTuple):
 @dataclass
 class KinematicSensorMetadataMixin:
     """
-    Shared metadata for sensors attached to a KinematicEntity (or any subclass, including RigidEntity). Sensors are
-    bucketed at build time into per-solver _SolverLinkGroup entries so the per-step gather is one bulk read per solver.
-    Static sensors (entity_idx<0) are not bucketed and keep an identity link pose, leaving the kernel to apply
-    pos_offset / euler_offset in world frame.
+    Shared metadata for sensors attached to a KinematicEntity (or any subclass, including RigidEntity).
+
+    Sensors are bucketed at build time into per-solver ``_SolverLinkGroup`` entries so the per-step gather is one
+    bulk read per solver. Static sensors (``entity_idx<0``) are not bucketed and keep an identity link pose,
+    leaving the kernel to apply ``pos_offset`` / ``euler_offset`` in world frame.
     """
 
     offsets_pos: torch.Tensor = make_tensor_field((0, 0, 3))
@@ -425,10 +447,12 @@ KinematicSensorMetadataMixinT = TypeVar("KinematicSensorMetadataMixinT", bound=K
 
 class _LinkAttachedSensorMixin:
     """
-    Common boilerplate for sensors attached to a link: holds the python-side `_link` reference, concatenates
-    per-sensor pos/euler offsets into shared metadata at build time, and exposes `set_{pos,quat}_offset`. Subclasses
-    implement `_register_link` to record the link mapping in solver-specific shared-metadata shape (single tensor
-    for RigidSensorMixin, per-solver buckets for KinematicSensorMixin).
+    Common boilerplate for sensors attached to a link.
+
+    Holds the python-side ``_link`` reference, concatenates per-sensor pos/euler offsets into shared metadata at
+    build time, and exposes ``set_{pos,quat}_offset``. Subclasses implement ``_register_link`` to record the link
+    mapping in solver-specific shared-metadata shape (single tensor for ``RigidSensorMixin``, per-solver buckets
+    for ``KinematicSensorMixin``).
     """
 
     _link: "RigidLink | None" = None
@@ -482,8 +506,10 @@ class RigidSensorMixin(_LinkAttachedSensorMixin, Generic[RigidSensorMetadataMixi
 
 class KinematicSensorMixin(_LinkAttachedSensorMixin, Generic[KinematicSensorMetadataMixinT]):
     """
-    Base sensor class for sensors that may attach to entities across solvers (rigid or kinematic). Bucketing into
-    shared_metadata.solver_groups happens at build time so the per-step gather is one bulk read per solver.
+    Base sensor class for sensors that may attach to entities across solvers (rigid or kinematic).
+
+    Bucketing into ``shared_metadata.solver_groups`` happens at build time so the per-step gather is one bulk
+    read per solver.
     """
 
     def _register_link(self, entity, link_idx: int):
@@ -507,36 +533,22 @@ class KinematicSensorMixin(_LinkAttachedSensorMixin, Generic[KinematicSensorMeta
             )
 
 
-@dataclass
-class ImperfectSensorMetadataMixin:
+class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
     """
-    Base shared metadata class for analog sensors that are attached to a RigidEntity.
+    Base class for sensors that use the standard per-step pipeline.
+
+    The pipeline produces raw data into both ground-truth and measured buffers, optionally transforms each (and
+    filters the measured branch with stateful history), applies hardware imperfections on the measured timeline
+    slot (PRE-delay snapshot time), samples delay/jitter into ``intermediate_cache``, then post-processes into
+    ``return_cache``. Concrete sensors override hooks (``_update_raw_data``, ``_update_current_timestep_data``,
+    ``_apply_transform``, ``_apply_hardware_imperfections``) rather than ``_update_shared_cache`` itself.
+
+    Imperfections are applied at snapshot time (PRE-delay) inside the timeline ring's slot 0; the same ring
+    serves both delay sampling and ``read(history_length)`` history. ``_post_process`` is eager (applied once
+    per step at the end of the orchestrator).
     """
 
-    resolution: torch.Tensor = make_tensor_field((0, 0))
-    bias: torch.Tensor = make_tensor_field((0, 0))
-    cur_random_walk: torch.Tensor = make_tensor_field((0, 0))
-    random_walk: torch.Tensor = make_tensor_field((0, 0))
-    cur_noise: torch.Tensor = make_tensor_field((0, 0))
-    noise: torch.Tensor = make_tensor_field((0, 0))
-    jitter_ts: torch.Tensor = make_tensor_field((0, 0))
-    cur_jitter_ts: torch.Tensor = make_tensor_field((0, 0))
-    # Precomputed Python bool flags gate the per-step noise/bias/quantize work without GPU sync. Set at build
-    # from options and refreshed by the corresponding setters. Conservatively True once any sensor has nonzero
-    # value; never flipped back to False (avoids tracking per-sensor state).
-    has_any_noise: bool = False
-    has_any_random_walk: bool = False
-    has_any_bias: bool = False
-    has_any_resolution: bool = False
-
-
-ImperfectSensorMetadataMixinT = TypeVar("ImperfectSensorMetadataMixinT", bound=ImperfectSensorMetadataMixin)
-
-
-class ImperfectSensorMixin(Generic[ImperfectSensorMetadataMixinT]):
-    """
-    Base sensor class for analog sensors that are attached to a RigidEntity.
-    """
+    uses_measured_pipeline: ClassVar[bool] = True
 
     @gs.assert_built
     def set_resolution(self, resolution, envs_idx=None):
@@ -576,6 +588,9 @@ class ImperfectSensorMixin(Generic[ImperfectSensorMetadataMixinT]):
     def build(self):
         """
         Initialize all shared metadata needed to update all noisy sensors.
+
+        Time-related state (``delays_ts``, ``interpolate``) is pushed by ``Sensor.build()``; this method adds
+        the imperfection-parameter state.
         """
         super().build()
         to_tuple = partial(_to_tuple, length_per_value=self._cache_size)
@@ -602,15 +617,13 @@ class ImperfectSensorMixin(Generic[ImperfectSensorMetadataMixinT]):
         self._shared_metadata.random_walk = concat_with_tensor(
             self._shared_metadata.random_walk, to_tuple(self._options.random_walk), expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk)
+        self._shared_metadata._cur_random_walk = torch.zeros_like(self._shared_metadata.random_walk)
         self._shared_metadata.noise = concat_with_tensor(
             self._shared_metadata.noise, to_tuple(self._options.noise), expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_noise = torch.zeros_like(self._shared_metadata.noise)
         self._shared_metadata.jitter_ts = concat_with_tensor(
             self._shared_metadata.jitter_ts, to_tuple(self._options.jitter / self._dt), expand=(batch_size, -1), dim=-1
         )
-        self._shared_metadata.cur_jitter_ts = torch.zeros_like(self._shared_metadata.jitter_ts, device=gs.device)
         if np.any(jitter_np > gs.EPS):
             self._shared_metadata.has_any_jitter = True
         if np.any(np.asarray(self._options.noise, dtype=gs.np_float) > gs.EPS):
@@ -623,28 +636,135 @@ class ImperfectSensorMixin(Generic[ImperfectSensorMetadataMixinT]):
             self._shared_metadata.has_any_resolution = True
 
     @classmethod
-    def reset(cls, shared_metadata: ImperfectSensorMetadataMixin, shared_ground_truth_cache: torch.Tensor, envs_idx):
+    def reset(cls, shared_metadata: SharedSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
-        shared_metadata.cur_random_walk[envs_idx, ...].fill_(0.0)
+        shared_metadata._cur_random_walk[envs_idx, ...].fill_(0.0)
 
     @classmethod
-    def _apply_imperfections(cls, shared_metadata: "ImperfectSensorMetadataMixin", output: torch.Tensor):
-        """Transform ground truth into realistic measured data in-place: apply random_walk drift, Gaussian noise,
-        bias, then quantize to the configured resolution. Each contribution is gated by a precomputed Python bool
-        flag (`has_any_*`) so sensor classes with all-zero values pay no GPU work."""
+    def _update_shared_cache(
+        cls,
+        shared_metadata: SharedSensorMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer | None",
+        intermediate_cache: torch.Tensor,
+        return_cache: torch.Tensor,
+    ):
+        # `intermediate_cache` is the pipeline-internal buffer (shape/dtype from `_get_intermediate_format` /
+        # `_get_intermediate_dtype`). `return_cache` is in `_get_return_format` / `_get_cache_dtype` space. When
+        # `_post_process` is identity (default), the manager passes the same buffer for both (zero-copy alias); when
+        # overridden, they're distinct buffers and `_post_process` is applied at the end.
+        if measured_data_timeline is None:
+            cls._update_raw_data(shared_metadata, current_ground_truth_data_T)
+            cls._apply_transform(shared_metadata, current_ground_truth_data_T.T, timeline=None)
+            intermediate_cache.copy_(current_ground_truth_data_T.T)
+        else:
+            cls._update_current_timestep_data(shared_metadata, current_ground_truth_data_T, measured_data_timeline)
+            cls._apply_transform(shared_metadata, current_ground_truth_data_T.T, timeline=None)
+            measured_slot_0 = measured_data_timeline.at(0, copy=False)
+            cls._apply_transform(shared_metadata, measured_slot_0, timeline=measured_data_timeline)
+            # Imperfections applied PRE-delay so the timeline ring stores post-noise values that serve both delay
+            # sampling below AND `read(history_length=N)`. Timeline stays in intermediate space - required for
+            # `_apply_transform` filter correctness (previous slots must be in the same data space as `data`).
+            cls._apply_hardware_imperfections(shared_metadata, measured_slot_0)
+            # Inlined delay sampling: writes intermediate_cache from measured_data_timeline.
+            # Fast path: when no sensor in the class has any delay or jitter, this is equivalent to copying the most
+            # recent ring frame to the measured cache class-wide. Avoids a Python loop over every sensor. Both flags
+            # are precomputed Python bools (no GPU sync) latched at build / by setters.
+            if not shared_metadata.has_any_delay and not shared_metadata.has_any_jitter:
+                intermediate_cache.copy_(measured_slot_0)
+            else:
+                if shared_metadata.has_any_jitter:
+                    # Sample uniform jitter in [0, jitter_ts) per env per sensor. One-sided so samples are
+                    # non-negative; combined with the `jitter < dt` option constraint, the effective per-step shift
+                    # is strictly bounded within [0, 1) steps and cannot wrap the ring.
+                    cur_jitter_ts = torch.rand_like(shared_metadata.jitter_ts).mul_(shared_metadata.jitter_ts)
+                else:
+                    cur_jitter_ts = None
+                tensor_start = 0
+                for sensor_idx, (tensor_size, interp) in enumerate(
+                    zip(shared_metadata.cache_sizes, shared_metadata.interpolate)
+                ):
+                    # Compute the current delay of the sensor, taking into account jitter if any.
+                    cur_delay_ts = shared_metadata.delays_ts[:, sensor_idx]
+                    if cur_jitter_ts is not None:
+                        cur_delay_ts = cur_delay_ts + cur_jitter_ts[:, sensor_idx]
+                    # Get int for indexing into ring buffer (0 = most recent, 1 = delayed by one timestep, etc.)
+                    cur_delay_ts_int = cur_delay_ts.to(dtype=torch.int64)
+                    tensor_slice = slice(tensor_start, tensor_start + tensor_size)
+                    sensor_cache = intermediate_cache[:, tensor_slice]
+                    data_left = measured_data_timeline.at(cur_delay_ts_int, tensor_slice, per_row=True)
+                    # Update intermediate cache with left data (Zero Order Hold) or linearly interpolated data
+                    # (First Order Hold).
+                    if interp:
+                        ratio = torch.frac(cur_delay_ts)
+                        data_right = measured_data_timeline.at(cur_delay_ts_int + 1, tensor_slice, per_row=True)
+                        torch.lerp(data_left, data_right, ratio[:, None], out=sensor_cache)
+                    else:
+                        sensor_cache.copy_(data_left)
+                    tensor_start += tensor_size
+
+        # Eager post-processing: applied once per step so `read()` is a pure view into the per-class return cache.
+        # When `_post_process` is the identity default, the manager passes `intermediate_cache` as `return_cache`
+        # (zero-copy alias); the buffer-identity check skips the redundant copy in that case.
+        if return_cache is not intermediate_cache:
+            return_cache.copy_(cls._post_process(shared_metadata, intermediate_cache))
+
+    @classmethod
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: SharedSensorMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
+        """
+        Write the current timestep's raw signal into both buffers.
+
+        Default behavior: compute raw GT into ``current_ground_truth_data_T`` via ``_update_raw_data``, then copy
+        it into the measured ring's current slot. Override for sensors with kernel-internal physical-response
+        noise (one kernel writes both GT and the noised measured value in one pass).
+        """
+        cls._update_raw_data(shared_metadata, current_ground_truth_data_T)
+        measured_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
+
+    @classmethod
+    def _update_raw_data(cls, shared_metadata: SharedSensorMetadata, raw_data_T: torch.Tensor):
+        """Sensor-specific kernel computing raw data into ``raw_data_T`` (shape ``(cols, B)``)."""
+        raise NotImplementedError(f"{cls.__name__} has not implemented `_update_raw_data()`.")
+
+    @classmethod
+    def _apply_transform(
+        cls,
+        shared_metadata: SharedSensorMetadata,
+        data: torch.Tensor,
+        *,
+        timeline: "TensorRingBuffer | None" = None,
+    ):
+        """
+        Coordinate transform + optional stateful filter; mutates ``data`` in place.
+
+        Receives ``data`` as a batch-first view ``[B, cache_size, ...]`` and must mutate it in place. ``timeline``
+        is ``None`` on the GT branch and the measured ring on the measured branch; gate filter logic on
+        ``timeline is not None`` and read previous slots with ``timeline.at(1)``, ``timeline.at(2)``, etc.
+        """
+
+    @classmethod
+    def _apply_hardware_imperfections(cls, shared_metadata: SimpleSensorMetadata, measured_slot_0: torch.Tensor):
+        """
+        Apply SimpleSensor's imperfection model in-place at the current measured-timeline slot.
+
+        Opinionated interpretation of the imperfection parameters (noise, bias, random_walk, resolution) as the
+        perturbations introduced by the embedded sampling layer at snapshot time. Applied at slot 0 of the
+        measured timeline (PRE-delay sampling). Each contribution is gated by a precomputed Python bool flag
+        (``has_any_*``) so sensor classes with all-zero values pay no GPU work.
+        """
         if shared_metadata.has_any_random_walk:
-            shared_metadata.cur_random_walk += torch.normal(0.0, shared_metadata.random_walk)
-            output += shared_metadata.cur_random_walk
+            shared_metadata._cur_random_walk += torch.normal(0.0, shared_metadata.random_walk)
+            measured_slot_0 += shared_metadata._cur_random_walk
         if shared_metadata.has_any_noise:
-            torch.normal(0.0, shared_metadata.noise, out=shared_metadata.cur_noise)
-            output += shared_metadata.cur_noise
+            measured_slot_0 += torch.normal(0.0, shared_metadata.noise)
         if shared_metadata.has_any_bias:
-            output += shared_metadata.bias
+            measured_slot_0 += shared_metadata.bias
         if shared_metadata.has_any_resolution:
             resolution = shared_metadata.resolution
             mask = resolution > gs.EPS
-            output[mask] = torch.round(output[mask] / resolution[mask]) * resolution[mask]
-
-    @classmethod
-    def get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
+            measured_slot_0[mask] = torch.round(measured_slot_0[mask] / resolution[mask]) * resolution[mask]

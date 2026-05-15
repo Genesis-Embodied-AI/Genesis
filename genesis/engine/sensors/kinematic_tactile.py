@@ -17,12 +17,11 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
 
 from .base_sensor import (
-    ImperfectSensorMetadataMixin,
-    ImperfectSensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
 )
 
 if TYPE_CHECKING:
@@ -784,7 +783,7 @@ KinematicTactileSensorMetadataMixinT = TypeVar(
 
 class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT]):
     def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        # Store n_probes before super().__init__() since _get_return_format() is called there
+        # Store n_probes before super().__init__() since `_get_return_format` is read there
         self._probe_local_pos = torch.tensor(sensor_options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
         self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
 
@@ -843,10 +842,6 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
             self._shared_metadata.probe_radius, probe_radius_tensor, expand=(self._n_probes,)
         )
 
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
-
     def _draw_debug_probes(self, context: "RasterizerContext", get_magnitude: Callable[[int], float]):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
 
@@ -904,7 +899,7 @@ class KinematicContactProbeData(NamedTuple):
 
 @dataclass
 class KinematicContactProbeMetadata(
-    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata
+    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata
 ):
     stiffness: torch.Tensor = make_tensor_field((0,))
 
@@ -912,8 +907,7 @@ class KinematicContactProbeMetadata(
 class KinematicContactProbe(
     KinematicTactileSensorMixin[KinematicContactProbeMetadata],
     RigidSensorMixin[KinematicContactProbeMetadata],
-    ImperfectSensorMixin[KinematicContactProbeMetadata],
-    Sensor[KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData],
+    SimpleSensor[KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData],
 ):
     """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
 
@@ -921,7 +915,11 @@ class KinematicContactProbe(
         super().__init__(sensor_options, sensor_idx, sensor_manager)
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return (self._n_probes,), (self._n_probes, 3)
+        return ((self._n_probes,), (self._n_probes, 3))
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
 
     def build(self):
         super().build()
@@ -931,16 +929,11 @@ class KinematicContactProbe(
         )
 
     @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: KinematicTactileSensorMetadataMixinT,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
+    def _update_raw_data(cls, shared_metadata: KinematicContactProbeMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
         collider_state = solver.collider._collider_state
 
-        current_ground_truth_data_T.zero_()
+        raw_data_T.zero_()
         _kernel_kinematic_contact_probe(
             shared_metadata.probe_positions,
             shared_metadata.probe_normals,
@@ -962,11 +955,8 @@ class KinematicContactProbe(
             solver.verts_info,
             solver.faces_info,
             gs.EPS,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
-        measured = measured_data_timeline.at(0, copy=False)
-        measured.copy_(current_ground_truth_data_T.T)
-        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: data.penetration)
@@ -974,7 +964,7 @@ class KinematicContactProbe(
 
 @dataclass
 class ElastomerDisplacementSensorMetadata(
-    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata
+    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata
 ):
     contact_buf: torch.Tensor = make_tensor_field((0, 0, 4))
     contact_link_buf: torch.Tensor = make_tensor_field((0, 0))
@@ -1001,8 +991,7 @@ class ElastomerDisplacementSensorMetadata(
 class ElastomerDisplacementSensor(
     KinematicTactileSensorMixin[ElastomerDisplacementSensorMetadata],
     RigidSensorMixin[ElastomerDisplacementSensorMetadata],
-    ImperfectSensorMixin[ElastomerDisplacementSensorMetadata],
-    Sensor[ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata],
+    SimpleSensor[ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata],
 ):
     def __init__(
         self, sensor_options: ElastomerDisplacementSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"
@@ -1015,6 +1004,10 @@ class ElastomerDisplacementSensor(
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (self._n_probes, 3)
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
 
     def build(self):
         super().build()
@@ -1088,12 +1081,7 @@ class ElastomerDisplacementSensor(
         self._shared_metadata.fft_kernel_list.append(kernel_fft)
 
     @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: ElastomerDisplacementSensorMetadata,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
+    def _update_raw_data(cls, shared_metadata: ElastomerDisplacementSensorMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
 
         # Zero buffers allocated with torch.empty to avoid stale data if the kernel
@@ -1126,7 +1114,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.contact_buf,
             shared_metadata.contact_link_buf,
             gs.EPS,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
         _elastomer_displacement_grid_fft_dilate(
             shared_metadata.is_grid,
@@ -1139,7 +1127,7 @@ class ElastomerDisplacementSensor(
             shared_metadata.dilate_coefficient,
             shared_metadata.dilate_max_delta,
             shared_metadata.grid_dilate_out_buffer,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
         _kernel_elastomer_displacement_grid_shear_twist(
             shared_metadata.probe_positions,
@@ -1157,11 +1145,8 @@ class ElastomerDisplacementSensor(
             solver.links_state,
             solver._sim.dt,
             gs.EPS,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
-        measured = measured_data_timeline.at(0, copy=False)
-        measured.copy_(current_ground_truth_data_T.T)
-        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         self._draw_debug_probes(context, lambda data: torch.linalg.norm(data, dim=-1))
