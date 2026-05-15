@@ -400,7 +400,7 @@ def _func_decomp_linesearch_refine(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_search_and_apply``. Dispatches at compile time
+    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_refine_and_apply``. Dispatches at compile time
     on ``constraint_layout_transposed`` to ``_func_decomp_linesearch_refine_coop`` (warp-cooperative, all 32 lanes)
     or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical baseline).
 
@@ -418,7 +418,7 @@ def _func_decomp_linesearch_refine(
 
 
 @qd.func
-def _func_decomp_linesearch_search_and_apply(
+def _func_decomp_linesearch_refine_and_apply(
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
@@ -971,7 +971,7 @@ def _kernel_solve_graph(
             dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
         )
         # Fused: refinement + apply alpha
-        _func_decomp_linesearch_search_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
+        _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
