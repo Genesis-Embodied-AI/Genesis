@@ -2348,10 +2348,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
-    """Reduce the quadratic-coefficient triplets (t_0, t_1, t_2) for up to ``n_alphas`` candidate alphas in a single pass
-    over all friction + contact constraints. Returns 9 scalars laid out as
-    (t_0[0], t_1[0], t_2[0], t_0[1], t_1[1], t_2[1], t_0[2], t_1[2], t_2[2]). Slots beyond ``n_alphas`` hold the
-    equality-only seed and should be ignored by the caller.
+    """Reduce the quadratic-coefficient triplets (const, linear, quad) for up to ``n_alphas`` candidate alphas in a
+    single pass over all friction + contact constraints. Returns 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` where ``tk`` is
+    alpha-slot ``k``'s ``[const, linear, quad]``. Slots beyond ``n_alphas`` hold the equality-only seed and should be
+    ignored by the caller.
 
     Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad coefficients are
     recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array, costing 3 loads per
@@ -2413,7 +2413,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
             t_1[k] = t_1[k] + qf_1 * act
             t_2[k] = t_2[k] + qf_2 * act
 
-    return t_0[0], t_1[0], t_2[0], t_0[1], t_1[1], t_2[1], t_0[2], t_1[2], t_2[2]
+    t0 = qd.Vector([t_0[0], t_1[0], t_2[0]])
+    t1 = qd.Vector([t_0[1], t_1[1], t_2[1]])
+    t2 = qd.Vector([t_0[2], t_1[2], t_2[2]])
+    return t0, t1, t2
 
 
 @qd.func
@@ -2421,21 +2424,19 @@ def _func_linesearch_eval_quadratic_at_alpha(
     i_b,
     tid,
     alpha,
-    t0_0,
-    t0_1,
-    t0_2,
+    t,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Given the reduced quadratic-coefficient triple (t0, t1, t2), plug ``alpha`` into
-    ``cost(alpha) = t0 + t1*alpha + t2*alpha**2`` and its first/second derivatives, and return
+    """Given the reduced quadratic-coefficient triple ``t`` (a ``qd.Vector(3)`` packed as ``[const, linear, quad]``),
+    plug ``alpha`` into ``cost(alpha) = c + l*alpha + q*alpha**2`` and its first/second derivatives, and return
     ``(alpha, cost, grad, hess)``. The hessian is floored at ``EPS`` so downstream Newton steps stay finite. Increments
     ``ls_it`` by 1; under ``coop=True`` the increment is gated to a single thread because lanes share the same per-env
     counter."""
-    cost = alpha * alpha * t0_2 + alpha * t0_1 + t0_0
-    grad = 2 * alpha * t0_2 + t0_1
-    hess = 2 * t0_2
+    cost = alpha * alpha * t[2] + alpha * t[1] + t[0]
+    grad = 2 * alpha * t[2] + t[1]
+    hess = 2 * t[2]
     if hess <= 0.0:
         hess = rigid_global_info.EPS[None]
 
@@ -2459,22 +2460,22 @@ def _func_linesearch_eval_at_alpha(
     env enters this function (typically by gating on ``tid == 0`` upstream).
 
     Note: the reducer call and the post-reduction call live inside the same ``qd.static(coop)`` branch and end with
-    ``return``, because Quadrants' AST transformer doesn't propagate locals across ``if qd.static`` branches — naming
-    a variable in the unified ``return`` statement raises ``Name "t0_0" is not defined`` even when one branch is
+    ``return``, because Quadrants' AST transformer doesn't propagate locals across ``if qd.static`` branches; naming
+    a variable in the unified ``return`` statement raises ``Name "t0" is not defined`` even when one branch is
     DCE'd. Self-contained per-branch returns sidestep this."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_eval_constraints_at_n_alphas_coop(
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alpha, alpha, alpha, constraint_state, n_alphas=1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
-            i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, coop=True
+            i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_linesearch_eval_constraints_at_n_alphas_serial(
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alpha, alpha, alpha, constraint_state, n_alphas=1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
-            i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, coop=False
+            i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=False
         )
 
 
@@ -2492,7 +2493,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
 
     All 32 lanes call this with their own ``tid``; the constraint loop is strided by 32, then each
     accumulator is reduced across the warp via ``subgroup.reduce_all_add(_, 5)`` so every lane ends
-    up with identical scalar return values. Returns the same 9-scalar layout as the serial inner.
+    up with identical return values. Returns the same 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` as the serial inner.
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -2566,7 +2567,10 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
         t_1[k] = qd.simt.subgroup.reduce_all_add(t_1[k], 5)
         t_2[k] = qd.simt.subgroup.reduce_all_add(t_2[k], 5)
 
-    return t_0[0], t_1[0], t_2[0], t_0[1], t_1[1], t_2[1], t_0[2], t_1[2], t_2[2]
+    t0 = qd.Vector([t_0[0], t_1[0], t_2[0]])
+    t1 = qd.Vector([t_0[1], t_1[1], t_2[1]])
+    t2 = qd.Vector([t_0[2], t_1[2], t_2[2]])
+    return t0, t1, t2
 
 
 @qd.func
@@ -2635,22 +2639,16 @@ def _func_linesearch_eval_at_3_alphas(
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the
     rationale for the per-branch return."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
         )
-        t0 = qd.Vector([t0_0, t0_1, t0_2])
-        t1 = qd.Vector([t1_0, t1_1, t1_2])
-        t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
         )
-        t0 = qd.Vector([t0_0, t0_1, t0_2])
-        t1 = qd.Vector([t1_0, t1_1, t1_2])
-        t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=False
         )
