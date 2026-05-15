@@ -2555,7 +2555,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
 
 
 @qd.func
-def _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
+def _func_linesearch_eval_quadratic_at_3_alphas(
     i_b,
     tid,
     alpha_0,
@@ -2621,7 +2621,7 @@ def _func_linesearch_eval_at_3_alphas(
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
-        return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
+        return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b,
             tid,
             alpha_0,
@@ -2644,7 +2644,7 @@ def _func_linesearch_eval_at_3_alphas(
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
-        return _func_linesearch_eval_quadratic_at_alpha_hi_mid_lo(
+        return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b,
             tid,
             alpha_0,
