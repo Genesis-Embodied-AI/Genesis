@@ -2621,9 +2621,7 @@ def _func_linesearch_eval_quadratic_at_3_alphas(
 def _func_linesearch_eval_at_3_alphas(
     i_b,
     tid,
-    alpha_0,
-    alpha_1,
-    alpha_2,
+    alphas,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
@@ -2633,29 +2631,29 @@ def _func_linesearch_eval_at_3_alphas(
     plus, for friction, efc_frictionloss/diag; recompute the per-constraint quad coefficients) is paid once and reused
     for all three alpha evaluations. Combined with the on-the-fly quad recompute (3 loads/contact, 5 loads/friction --
     same bandwidth optimisation as the 1-alpha evaluator) this means each constraint's data is loaded once from global memory
-    and feeds three (cost, grad, hess) results.
+    and feeds three (cost, grad, hess) results. ``alphas`` is a ``qd.Vector(3)`` of candidate step sizes.
 
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the
     rationale for the per-branch return."""
     if qd.static(coop):
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, n_alphas=3
+            i_b, tid, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
         )
         t0 = qd.Vector([t0_0, t0_1, t0_2])
         t1 = qd.Vector([t1_0, t1_1, t1_2])
         t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b, tid, alpha_0, alpha_1, alpha_2, t0, t1, t2, constraint_state, rigid_global_info, coop=True
+            i_b, tid, alphas[0], alphas[1], alphas[2], t0, t1, t2, constraint_state, rigid_global_info, coop=True
         )
     else:
         t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
-            i_b, alpha_0, alpha_1, alpha_2, constraint_state, n_alphas=3
+            i_b, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
         )
         t0 = qd.Vector([t0_0, t0_1, t0_2])
         t1 = qd.Vector([t1_0, t1_1, t1_2])
         t2 = qd.Vector([t2_0, t2_1, t2_2])
         return _func_linesearch_eval_quadratic_at_3_alphas(
-            i_b, tid, alpha_0, alpha_1, alpha_2, t0, t1, t2, constraint_state, rigid_global_info, coop=False
+            i_b, tid, alphas[0], alphas[1], alphas[2], t0, t1, t2, constraint_state, rigid_global_info, coop=False
         )
 
 
@@ -2786,10 +2784,10 @@ def func_linesearch_refine(
             alpha_1 = p1_alpha
             alpha_2 = (p1_alpha + p2_alpha) * 0.5
             while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                costs, grads, hess = _func_linesearch_eval_at_3_alphas(
-                    i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info, coop=coop
-                )
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
+                costs, grads, hess = _func_linesearch_eval_at_3_alphas(
+                    i_b, tid, alphas, constraint_state, rigid_global_info, coop=coop
+                )
                 p1_next = alpha_0
                 p2_next = alpha_1
                 best_a = gs.qd_float(0.0)
