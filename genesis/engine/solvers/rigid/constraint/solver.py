@@ -1864,7 +1864,7 @@ def func_cholesky_and_solve_fused_tiled(
             while j < i_d:
                 dot = dot + L_sh[i_d, j] * v_sh[j]
                 j = j + 16
-            dot = qd.simt.subgroup.reduce_all_add(dot, 4)
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
@@ -1877,7 +1877,7 @@ def func_cholesky_and_solve_fused_tiled(
             while j < n_dofs:
                 dot = dot + L_sh[j, i_d] * v_sh[j]
                 j = j + 16
-            dot = qd.simt.subgroup.reduce_all_add(dot, 4)
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
             if tid == 0:
                 v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
             qd.simt.block.sync()
