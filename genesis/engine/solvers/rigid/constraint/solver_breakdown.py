@@ -29,7 +29,7 @@ def _ls_eval_cost_grad(
 ):
     """Compute cost and analytical gradient at alpha (thread-0 only).
 
-    Follows the same quadratic-coefficient approach as func_ls_point_fn_opt in solver.py.
+    Follows the same quadratic-coefficient approach as func_ls_point_fn in solver.py.
     Reuses quad_gauss and eq_sum precomputed by the p0 kernel.
     Returns (cost, grad).
     """
@@ -315,16 +315,16 @@ def _func_decomp_linesearch_refine_coop(
     static_rigid_sim_config: qd.template(),
 ):
     """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
-    ``func_ls_point_fn_opt`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
+    ``func_ls_point_fn`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
     template arg). Writes to ``ls_alpha`` are tid==0-guarded since the result is per-env, not per-lane."""
     if alpha_newton > 0.0:
         if tid == 0:
             constraint_state.ls_alpha[i_b] = 0.0
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn(
             i_b, tid, alpha_newton, constraint_state, rigid_global_info, True
         )
         if p0_cost < p1_cost:
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn(
                 i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, True
             )
         if p1_cost < p0_cost and tid == 0:
@@ -362,11 +362,11 @@ def _func_decomp_linesearch_refine_serial(
     Only ``tid == 0`` runs the work; the unified helpers are called with the Python literal ``False`` for ``coop``."""
     if alpha_newton > 0.0 and tid == 0:
         constraint_state.ls_alpha[i_b] = 0.0
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn(
             i_b, tid, alpha_newton, constraint_state, rigid_global_info, False
         )
         if p0_cost < p1_cost:
-            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn(
                 i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, False
             )
         if p1_cost < p0_cost:
@@ -405,7 +405,7 @@ def _func_decomp_linesearch_refine(
     or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical baseline).
 
     Each branch passes the literal Python ``True`` / ``False`` for the ``coop`` template arg of the unified
-    ``func_ls_point_fn_opt`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
+    ``func_ls_point_fn`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
     auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         _func_decomp_linesearch_refine_coop(

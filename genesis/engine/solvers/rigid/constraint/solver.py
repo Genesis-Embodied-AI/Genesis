@@ -2219,7 +2219,7 @@ def func_cholesky_solve_tiled(
 
 
 @qd.func
-def func_ls_init_and_eval_p0_opt(
+def func_ls_init_and_eval_p0(
     i_b,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -2340,7 +2340,7 @@ def func_ls_init_and_eval_p0_opt(
 
 
 @qd.func
-def _func_ls_quad_reduce_opt_serial(
+def _func_ls_quad_reduce_serial(
     i_b,
     alpha_0,
     alpha_1,
@@ -2413,7 +2413,7 @@ def _func_ls_quad_reduce_opt_serial(
 
 
 @qd.func
-def _func_ls_point_fn_opt_post(
+def _func_ls_point_fn_post(
     i_b,
     tid,
     alpha,
@@ -2424,7 +2424,7 @@ def _func_ls_point_fn_opt_post(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Shared post-reduction logic for ``func_ls_point_fn_opt``. Computes cost/grad/hess
+    """Shared post-reduction logic for ``func_ls_point_fn``. Computes cost/grad/hess
     from the reduced quadratic coefficients and increments ``ls_it``."""
     cost = alpha * alpha * t0_2 + alpha * t0_1 + t0_0
     grad = 2 * alpha * t0_2 + t0_1
@@ -2439,7 +2439,7 @@ def _func_ls_point_fn_opt_post(
 
 
 @qd.func
-def func_ls_point_fn_opt(
+def func_ls_point_fn(
     i_b,
     tid,
     alpha,
@@ -2456,19 +2456,19 @@ def func_ls_point_fn_opt(
     a variable in the unified ``return`` statement raises ``Name "t0_0" is not defined`` even when one branch is
     DCE'd. Self-contained per-branch returns sidestep this."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_coop(
+        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_coop(
             i_b, tid, alpha, alpha, alpha, constraint_state, 1
         )
-        return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True)
+        return _func_ls_point_fn_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, True)
     else:
-        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_opt_serial(
+        t0_0, t0_1, t0_2, _u0, _u1, _u2, _u3, _u4, _u5 = _func_ls_quad_reduce_serial(
             i_b, alpha, alpha, alpha, constraint_state, 1
         )
-        return _func_ls_point_fn_opt_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
+        return _func_ls_point_fn_post(i_b, tid, alpha, t0_0, t0_1, t0_2, constraint_state, rigid_global_info, False)
 
 
 @qd.func
-def _func_ls_quad_reduce_opt_coop(
+def _func_ls_quad_reduce_coop(
     i_b,
     tid,
     alpha_0,
@@ -2477,7 +2477,7 @@ def _func_ls_quad_reduce_opt_coop(
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
-    """Cooperative (32-lane subgroup) variant of ``_func_ls_quad_reduce_opt_serial``.
+    """Cooperative (32-lane subgroup) variant of ``_func_ls_quad_reduce_serial``.
 
     All 32 lanes call this with their own ``tid``; the constraint loop is strided by 32, then each
     accumulator is reduced across the warp via ``subgroup.reduce_all_add(_, 5)`` so every lane ends
@@ -2570,7 +2570,7 @@ def _func_ls_point_fn_3alphas_post(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """Shared post-reduction logic for ``func_ls_point_fn_3alphas_opt``."""
+    """Shared post-reduction logic for ``func_ls_point_fn_3alphas``."""
     EPS = rigid_global_info.EPS[None]
 
     cost_0 = alpha_0 * alpha_0 * t0_2 + alpha_0 * t0_1 + t0_0
@@ -2601,7 +2601,7 @@ def _func_ls_point_fn_3alphas_post(
 
 
 @qd.func
-def func_ls_point_fn_3alphas_opt(
+def func_ls_point_fn_3alphas(
     i_b,
     tid,
     alpha_0,
@@ -2611,10 +2611,10 @@ def func_ls_point_fn_3alphas_opt(
     rigid_global_info: array_class.RigidGlobalInfo,
     coop: qd.template(),
 ):
-    """3-alpha linesearch evaluator. See ``func_ls_point_fn_opt`` for the serial-vs-cooperative contract and the
+    """3-alpha linesearch evaluator. See ``func_ls_point_fn`` for the serial-vs-cooperative contract and the
     rationale for the per-branch return."""
     if qd.static(coop):
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_coop(
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_coop(
             i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
         return _func_ls_point_fn_3alphas_post(
@@ -2637,7 +2637,7 @@ def func_ls_point_fn_3alphas_opt(
             True,
         )
     else:
-        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_opt_serial(
+        t0_0, t0_1, t0_2, t1_0, t1_1, t1_2, t2_0, t2_1, t2_2 = _func_ls_quad_reduce_serial(
             i_b, alpha_0, alpha_1, alpha_2, constraint_state, 3
         )
         return _func_ls_point_fn_3alphas_post(
@@ -2762,7 +2762,7 @@ def func_linesearch_refine(
     while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
         p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
         p2update = 1
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
             i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info, coop
         )
         if qd.abs(p1_deriv_0) < gtol:
@@ -2783,7 +2783,7 @@ def func_linesearch_refine(
             alpha_1 = p1_alpha
             alpha_2 = (p1_alpha + p2_alpha) * 0.5
             while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
-                costs, grads, hess = func_ls_point_fn_3alphas_opt(
+                costs, grads, hess = func_ls_point_fn_3alphas(
                     i_b, tid, alpha_0, alpha_1, alpha_2, constraint_state, rigid_global_info, coop
                 )
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
@@ -2876,7 +2876,7 @@ def func_linesearch_batch(
         res_alpha = 0.0
     else:
         # Phase 1: Init + p0 + p1
-        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_init_and_eval_p0_opt(
+        p0_alpha, p0_cost, p0_deriv_0, p0_deriv_1 = func_ls_init_and_eval_p0(
             i_b,
             entities_info=entities_info,
             dofs_state=dofs_state,
@@ -2884,7 +2884,7 @@ def func_linesearch_batch(
             rigid_global_info=rigid_global_info,
             static_rigid_sim_config=static_rigid_sim_config,
         )
-        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn_opt(
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = func_ls_point_fn(
             i_b, 0, p0_alpha - p0_deriv_0 / p0_deriv_1, constraint_state, rigid_global_info, False
         )
 
