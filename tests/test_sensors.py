@@ -56,9 +56,10 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         textwrap.dedent(
             """\
         from dataclasses import dataclass
+        from functools import cached_property
 
         import genesis as gs
-        from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
+        from genesis.engine.sensors.base_sensor import Sensor, SensorDataSpec, SharedSensorMetadata
 
         from .options import FakeSensorOptions
 
@@ -69,15 +70,12 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
 
 
         class FakeSensor(Sensor[FakeSensorOptions, FakeSensorMetadata]):
-            def _get_return_format(self):
-                return (1,)
+            @cached_property
+            def return_spec(self):
+                return SensorDataSpec(shape=(1,), dtype=gs.tc_float)
 
             @classmethod
-            def _get_cache_dtype(cls):
-                return gs.tc_float
-
-            @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline):
+            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline, intermediate_cache, return_cache):
                 pass
 
             @classmethod
@@ -120,6 +118,26 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
             if mod_name.startswith("fake_sensor_plugin"):
                 del sys.modules[mod_name]
         SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+
+
+@pytest.mark.required
+def test_post_process_requires_intermediate_spec():
+    # Strict-override rule: a subclass overriding `_post_process` without also overriding `intermediate_spec` must
+    # raise TypeError at class-definition time. Prevents silent guessing about the intermediate data space.
+    from functools import cached_property
+
+    from genesis.engine.sensors.base_sensor import Sensor, SensorDataSpec, SharedSensorMetadata
+
+    with pytest.raises(TypeError, match="intermediate_spec"):
+
+        class BadSensor(Sensor):
+            @cached_property
+            def return_spec(self):
+                return SensorDataSpec(shape=(1,), dtype=gs.tc_float)
+
+            @classmethod
+            def _post_process(cls, shared_metadata, tensor):
+                return tensor * 2
 
 
 @pytest.mark.required
@@ -581,8 +599,10 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     # Moving force back in world frame because box is not perfectly flat on the ground due to CoM offset
     with np.testing.assert_raises(AssertionError):
         assert_allclose(box.get_quat(), 0.0, atol=tol)
+    # Unsaturated GT physics check uses force_sensor (no max_force). force_sensor_noisy clamps in _post_process,
+    # which applies uniformly to read() and read_ground_truth().
     assert_allclose(
-        gu.transform_by_quat(force_sensor_noisy.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
+        gu.transform_by_quat(force_sensor.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
     )
 
     # FIXME: Adding CoM offset on box is disturbing contact force computations on box_2 for some reason...
@@ -1869,7 +1889,8 @@ def test_read_sensors_bulk_api(show_viewer, n_envs):
         scene.step()
 
     # Scene-wide read returns every sensor class. Per-entity reads restrict to classes present on that entity, so the
-    # static camera class is excluded from both box_a and box_b reads.
+    # static camera class is excluded from both box_a and box_b reads. `copy=False` (the default) returns views into
+    # each per-class return cache — honest for every sensor class under v17's eager `_post_process`.
     scene_data = scene.read_sensors()
     a_data = box_a.read_sensors()
     b_data = box_b.read_sensors()
@@ -1920,7 +1941,8 @@ def test_read_sensors_bulk_api(show_viewer, n_envs):
 
     # View vs copy: storage data_ptr is the discriminating metadata. Two copy=False reads must share storage (both
     # views into the same backing cache), and the scene-level and entity-level views must share storage too. copy=True
-    # must always allocate fresh storage. Verified for both the float (IMU) and bool (Contact) dtypes.
+    # must always allocate fresh storage. Verified on both IMU (identity `_post_process`, return cache aliases the
+    # intermediate slice) and Contact (overridden `_post_process`, return cache is its own per-class bool buffer).
     for type_tag in (gs.sensors.types.IMU, gs.sensors.types.Contact):
         scene_view = scene.read_sensors(copy=False)[type_tag]
         entity_view = box_a.read_sensors(copy=False)[type_tag]

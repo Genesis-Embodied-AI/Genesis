@@ -4,6 +4,7 @@ Camera sensors for rendering: Rasterizer, Raytracer, and Batch Renderer.
 
 import sys
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Type
 
 import numpy as np
@@ -36,6 +37,7 @@ from .base_sensor import (
     KinematicSensorMetadataMixin,
     KinematicSensorMixin,
     Sensor,
+    SensorDataSpec,
     SharedSensorMetadata,
 )
 
@@ -238,22 +240,22 @@ class BaseCameraSensor(KinematicSensorMixin, Sensor[OptionsT, SharedSensorMetada
 
     # ========================== Cache Integration (shared) ==========================
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+    @cached_property
+    def return_spec(self) -> SensorDataSpec:
         w, h = self._options.res
-        return ((h, w, 3),)
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return torch.uint8
+        return SensorDataSpec(shape=((h, w, 3),), dtype=torch.uint8)
 
     @classmethod
     def _update_shared_cache(
         cls,
         shared_metadata: SharedSensorMetadata,
         current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
+        measured_data_timeline: "TensorRingBuffer | None",
+        intermediate_cache: torch.Tensor,
+        return_cache: torch.Tensor,
     ):
-        # No per-step measured-cache update for cameras (handled lazily on read()).
+        # No per-step measured-cache update for cameras (handled lazily on read()). Camera inherits
+        # `uses_measured_pipeline = False` from the Sensor base default, so `measured_data_timeline` is always None.
         pass
 
     def _draw_debug(self, context: "RasterizerContext"):

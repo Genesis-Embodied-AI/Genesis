@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -14,12 +15,12 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.raycast_qd import get_triangle_vertices
 
 from .base_sensor import (
-    ImperfectSensorMetadataMixin,
-    ImperfectSensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SensorDataSpec,
+    SimpleSensorMetadata,
 )
 from .kinematic_tactile import _func_closest_point_on_triangle
 
@@ -131,16 +132,13 @@ class ProximitySensorMetadataMixin:
 
 
 @dataclass
-class ProximityMetadata(
-    ProximitySensorMetadataMixin, RigidSensorMetadataMixin, ImperfectSensorMetadataMixin, SharedSensorMetadata
-):
+class ProximityMetadata(ProximitySensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
     """Shared metadata for the Proximity sensor class."""
 
 
 class ProximitySensor(
     RigidSensorMixin[ProximityMetadata],
-    ImperfectSensorMixin[ProximityMetadata],
-    Sensor[ProximityOptions, ProximityMetadata, tuple],
+    SimpleSensor[ProximityOptions, ProximityMetadata, tuple],
 ):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
 
@@ -151,12 +149,9 @@ class ProximitySensor(
         self._debug_objects: list = []
         self._nearest_points_slice: slice = slice(None)
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return (self._n_probes,)
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
+    @cached_property
+    def return_spec(self) -> SensorDataSpec:
+        return SensorDataSpec(shape=(self._n_probes,), dtype=gs.tc_float)
 
     def build(self):
         super().build()
@@ -217,14 +212,9 @@ class ProximitySensor(
         shared_metadata.nearest_positions[envs_idx] = shared_metadata.probe_positions
 
     @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: ProximityMetadata,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
+    def _update_raw_data(cls, shared_metadata: ProximityMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
-        current_ground_truth_data_T.zero_()
+        raw_data_T.zero_()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -246,11 +236,8 @@ class ProximitySensor(
             solver.fixed_verts_state,
             solver.free_verts_state,
             shared_metadata.nearest_positions,
-            current_ground_truth_data_T,
+            raw_data_T,
         )
-        measured = measured_data_timeline.at(0, copy=False)
-        measured.copy_(current_ground_truth_data_T.T)
-        cls._apply_imperfections(shared_metadata, measured)
 
     def _draw_debug(self, context: "RasterizerContext"):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None

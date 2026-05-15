@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
@@ -28,7 +29,9 @@ from .base_sensor import (
     KinematicSensorMetadataMixin,
     KinematicSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SensorDataSpec,
+    SimpleSensorMetadata,
+    SimpleSensor,
 )
 
 if TYPE_CHECKING:
@@ -50,7 +53,7 @@ class _SolverBVH(NamedTuple):
 
 
 @dataclass
-class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SharedSensorMetadata):
+class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata):
     # All BVHs (one per active solver per mesh type) cast against each frame. The first is written into the output
     # cache with is_merge=False (initializes hits or no_hit_value), the rest merge in closer hits. Per-sensor link
     # poses are gathered via KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
@@ -85,7 +88,7 @@ class RaycasterData(NamedTuple):
     distances: torch.Tensor
 
 
-class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
+class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, RaycasterSharedMetadata, RaycasterData]):
     def __init__(self, options: RaycasterOptions, sensor_idx: int, manager: "SensorManager"):
         super().__init__(options, sensor_idx, manager)
         self.debug_objects: list["Mesh"] = []
@@ -234,21 +237,13 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
         super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         cls._update_bvh(shared_metadata)
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+    @cached_property
+    def return_spec(self) -> SensorDataSpec:
         shape = self._options.pattern.return_shape
-        return (*shape, 3), shape
+        return SensorDataSpec(shape=((*shape, 3), shape), dtype=gs.tc_float)
 
     @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
-
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: RaycasterSharedMetadata,
-        current_ground_truth_data_T: torch.Tensor,
-        measured_data_timeline: "TensorRingBuffer",
-    ):
+    def _update_raw_data(cls, shared_metadata: RaycasterSharedMetadata, raw_data_T: torch.Tensor):
         cls._update_bvh(shared_metadata)
 
         # Allocate the link-pose scratch buffers on first cast (B and n_sensors are known here). Identity quat is
@@ -264,8 +259,6 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
             )
             shared_metadata.links_quat[:, :, 0] = 1.0
 
-        # Gather link poses per sensor. Sensors are pre-bucketed into shared_metadata.solver_groups at build time so
-        # this loop issues one bulk get_links_pos / get_links_quat per solver with already-tensor-typed indices.
         links_pos = shared_metadata.links_pos
         links_quat = shared_metadata.links_quat
         for group in shared_metadata.solver_groups:
@@ -295,7 +288,7 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                 shared_metadata.sensor_cache_offsets,
                 shared_metadata.sensor_point_offsets,
                 shared_metadata.sensor_point_counts,
-                current_ground_truth_data_T,
+                raw_data_T,
                 gs.EPS,
                 i > 0,
             )
@@ -315,8 +308,6 @@ class RaycasterSensor(KinematicSensorMixin, Sensor[RaycasterOptions, RaycasterSh
                     solver.vgeoms_state,
                     *args_common,
                 )
-
-        measured_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """
