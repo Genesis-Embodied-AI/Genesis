@@ -13,15 +13,8 @@ from genesis.options.sensors import SurfaceDistanceProbe as SurfaceDistanceProbe
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices
 
-from .base_sensor import (
-    ProbeSensorMetadataMixin,
-    ProbeSensorMixin,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    SimpleSensor,
-    SimpleSensorMetadata,
-    func_noised_probe_radius,
-)
+from .base_sensor import RigidSensorMetadataMixin, RigidSensorMixin, SimpleSensor, SimpleSensorMetadata
+from .probe import ProbeSensorMetadataMixin, ProbeSensorMixin, func_noised_probe_radius
 
 if TYPE_CHECKING:
     from genesis.utils.ring_buffer import TensorRingBuffer
@@ -31,12 +24,7 @@ if TYPE_CHECKING:
 
 
 @qd.func
-def _func_closest_point_on_triangle(
-    point: gs.qd_vec3,
-    v0: gs.qd_vec3,
-    v1: gs.qd_vec3,
-    v2: gs.qd_vec3,
-) -> gs.qd_vec3:
+def _func_closest_point_on_triangle(point: gs.qd_vec3, v0: gs.qd_vec3, v1: gs.qd_vec3, v2: gs.qd_vec3) -> gs.qd_vec3:
     """
     Find the point on the surface of a triangle closest to a given point.
 
@@ -213,9 +201,7 @@ class SurfaceDistanceProbeSensorMetadataMixin(ProbeSensorMetadataMixin):
 
 @dataclass
 class SurfaceDistanceProbeMetadata(
-    SurfaceDistanceProbeSensorMetadataMixin,
-    RigidSensorMetadataMixin,
-    SimpleSensorMetadata,
+    SurfaceDistanceProbeSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata
 ):
     """Shared metadata for the SurfaceDistanceProbe sensor class."""
 
@@ -230,7 +216,7 @@ class SurfaceDistanceProbeSensor(
     def __init__(self, sensor_options: SurfaceDistanceProbeOptions, sensor_idx: int, sensor_manager: "SensorManager"):
         super().__init__(sensor_options, sensor_idx, sensor_manager)
         self._debug_objects: list = []
-        self._nearest_points_slice: slice = slice(None)
+        self._nearest_points_slice: slice | None = None
 
     def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
         return (self._n_probes,)
@@ -272,21 +258,26 @@ class SurfaceDistanceProbeSensor(
     @classmethod
     def reset(cls, shared_metadata: SurfaceDistanceProbeMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
         super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
-        shared_metadata.nearest_positions[envs_idx] = shared_metadata.probe_positions
-        shared_metadata.nearest_positions_measured[envs_idx] = shared_metadata.probe_positions
+        # Pre-first-step placeholder. The kernel writes world-frame nearest points on each step; before that, an
+        # uninitialized read returns zeros rather than misleading link-local positions.
+        shared_metadata.nearest_positions[envs_idx] = 0.0
+        shared_metadata.nearest_positions_measured[envs_idx] = 0.0
 
     @classmethod
     def _update_current_timestep_data(
         cls,
         shared_metadata: SurfaceDistanceProbeMetadata,
         current_ground_truth_data_T: torch.Tensor,
+        ground_truth_data_timeline: "TensorRingBuffer | None",
         measured_data_timeline: "TensorRingBuffer",
     ):
         solver = shared_metadata.solver
         current_ground_truth_data_T.zero_()
         measured = measured_data_timeline.at(0, copy=False)
         measured.zero_()
-        measured_cols_b = torch.empty_like(current_ground_truth_data_T)
+        if shared_metadata.measured_scratch_T.shape != current_ground_truth_data_T.shape:
+            shared_metadata.measured_scratch_T = torch.empty_like(current_ground_truth_data_T)
+        measured_cols_b = shared_metadata.measured_scratch_T
 
         _kernel_surface_distance_probe(
             shared_metadata.probe_positions,
@@ -313,6 +304,8 @@ class SurfaceDistanceProbeSensor(
             current_ground_truth_data_T,
             measured_cols_b,
         )
+        if ground_truth_data_timeline is not None:
+            ground_truth_data_timeline.at(0, copy=False).copy_(current_ground_truth_data_T.T)
         measured.copy_(measured_cols_b.T)
 
     def _draw_debug(self, context: "RasterizerContext"):

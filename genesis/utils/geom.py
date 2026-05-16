@@ -2126,11 +2126,10 @@ def generate_ring_points_on_sphere(
             pts.append(radius * direction)
 
     points = np.stack(pts, axis=0)
-    if return_normals:
-        normals = points / radius
-        return points, normals
-    else:
+    if not return_normals:
         return points
+    normals = points / radius
+    return points, normals
 
 
 # ------------------------------------------------------------------------------------

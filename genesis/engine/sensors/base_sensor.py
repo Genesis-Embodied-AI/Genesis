@@ -3,7 +3,6 @@ from functools import partial
 from typing import TYPE_CHECKING, ClassVar, Generic, NamedTuple, TypeVar, get_args, get_origin
 
 import numpy as np
-import quadrants as qd
 import torch
 from typing_extensions import TypeVar as TypeVarWithDefault
 
@@ -15,7 +14,6 @@ from genesis.utils.misc import broadcast_tensor, concat_with_tensor, make_tensor
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
-    from genesis.engine.mesh import Mesh
     from genesis.engine.solvers import RigidSolver
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
     from genesis.options.sensors.options import SensorOptions
@@ -38,17 +36,6 @@ def _to_tuple(*values: NumArrayType, length_per_value: int = 3) -> tuple[Numeric
             value = value.reshape((-1,))
         full_tuple += tuple(value)
     return full_tuple
-
-
-@qd.func
-def func_noised_probe_radius(probe_radius: gs.qd_float, probe_radius_noise: gs.qd_float) -> gs.qd_float:
-    radius = probe_radius
-    if probe_radius_noise > gs.EPS:
-        radius = qd.max(
-            gs.qd_float(0.0),
-            probe_radius + (qd.random(gs.qd_float) * gs.qd_float(2.0) - gs.qd_float(1.0)) * probe_radius_noise,
-        )
-    return radius
 
 
 # Note: dataclass is used as opposed to pydantic.BaseModel since torch.Tensors are not supported by default
@@ -888,119 +875,3 @@ class SimpleSensor(Sensor[OptionsT, SharedSensorMetadataT, DataT]):
             resolution = shared_metadata.resolution
             mask = resolution > gs.EPS
             measured_slot_0[mask] = torch.round(measured_slot_0[mask] / resolution[mask]) * resolution[mask]
-
-
-@dataclass
-class ProbeSensorMetadataMixin:
-    """
-    Shared metadata for sensors that register multiple probes in a fused layout.
-    """
-
-    total_n_probes: int = 0
-    probe_positions: torch.Tensor = make_tensor_field((0, 3))
-    probe_radii: torch.Tensor = make_tensor_field((0,))
-    probe_radii_noise: torch.Tensor = make_tensor_field((0,))
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-
-
-ProbeSensorSharedMetadataT = TypeVar("ProbeSensorSharedMetadataT", bound=ProbeSensorMetadataMixin)
-
-
-class ProbeSensorMixin(Generic[ProbeSensorSharedMetadataT]):
-    """
-    Shared logic for registering this sensor's probes in ``ProbeSensorMetadataMixin`` fields.
-    """
-
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        # Store n_probes before super().__init__() since _get_return_format() is called there
-        self._probe_local_pos = torch.tensor(sensor_options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
-        self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
-
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
-
-        self._debug_objects: list["Mesh | None"] = []
-
-    def build(self) -> None:
-        super().build()
-        self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start, self._shared_metadata.total_n_probes, expand=(1,)
-        )
-        self._shared_metadata.total_n_probes += self._n_probes
-        self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
-            self._shared_metadata.n_probes_per_sensor, self._n_probes, expand=(1,)
-        )
-        self._shared_metadata.sensor_cache_start = concat_with_tensor(
-            self._shared_metadata.sensor_cache_start,
-            sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0,
-            expand=(1,),
-        )
-        self._shared_metadata.probe_sensor_idx = concat_with_tensor(
-            self._shared_metadata.probe_sensor_idx,
-            torch.full((self._n_probes,), self._idx, dtype=gs.tc_int, device=gs.device),
-            expand=(self._n_probes,),
-        )
-        self._shared_metadata.probe_positions = concat_with_tensor(
-            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(self._n_probes, 3)
-        )
-        self._shared_metadata.probe_radii = concat_with_tensor(
-            self._shared_metadata.probe_radii,
-            (
-                torch.full((self._n_probes,), self._options.probe_radius, dtype=gs.tc_float, device=gs.device)
-                if isinstance(self._options.probe_radius, float)
-                else torch.tensor(self._options.probe_radius, dtype=gs.tc_float, device=gs.device)
-            ),
-            expand=(self._n_probes,),
-        )
-        self._shared_metadata.probe_radii_noise = concat_with_tensor(
-            self._shared_metadata.probe_radii_noise,
-            torch.full((self._n_probes,), self._options.probe_radius_noise, dtype=gs.tc_float, device=gs.device),
-            expand=(self._n_probes,),
-        )
-
-    @property
-    def probe_local_pos(self) -> torch.Tensor:
-        return self._probe_local_pos
-
-    @property
-    def n_probes(self) -> int:
-        return self._n_probes
-
-
-@dataclass
-class ProbesWithNormalSensorMetadataMixin(ProbeSensorMetadataMixin):
-    """
-    Shared metadata for sensors that register multiple probes in a fused layout.
-    """
-
-    probe_local_normal: torch.Tensor = make_tensor_field((0, 3))
-
-
-ProbesWithNormalSensorSharedMetadataT = TypeVar(
-    "ProbesWithNormalSensorSharedMetadataT", bound=ProbesWithNormalSensorMetadataMixin
-)
-
-
-class ProbesWithNormalSensorMixin(Generic[ProbesWithNormalSensorSharedMetadataT]):
-    """
-    Base sensor class for sensors that register multiple probes in a fused layout.
-    """
-
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
-
-        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        if self._probe_local_normal.ndim == 1:
-            self._probe_local_normal = self._probe_local_normal.expand(self._n_probes, 3).contiguous()
-
-    def build(self):
-        super().build()
-        self._shared_metadata.probe_local_normal = concat_with_tensor(
-            self._shared_metadata.probe_local_normal, self._probe_local_normal, expand=(self._n_probes, 3)
-        )
-
-    @property
-    def probe_local_normal(self) -> torch.Tensor:
-        return self._probe_local_normal

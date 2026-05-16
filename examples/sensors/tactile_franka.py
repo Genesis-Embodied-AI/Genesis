@@ -3,8 +3,6 @@ Interactive demo of tactile sensors attached to Franka Panda grippers and matplo
 Sensor types: ContactDepthProbe, ElastomerTaxel, KinematicTaxel, ProximityTaxel.
 """
 
-from __future__ import annotations
-
 import argparse
 import os
 from typing import TYPE_CHECKING
@@ -32,13 +30,13 @@ DROT = 0.04
 
 def _add_tactile_sensor(
     scene: gs.Scene,
-    entity: RigidEntity,
+    entity: "RigidEntity",
     link_idx_local: int,
     sensor_type: str,
     probe_local_pos: np.ndarray,
     probe_normal: tuple[float, float, float],
     track_link_idx: tuple[int, ...],
-) -> Sensor:
+) -> "Sensor":
     common = dict(
         entity_idx=entity.idx,
         link_idx_local=link_idx_local,
@@ -101,7 +99,7 @@ def _plot_tactile_sensor(
     scene: gs.Scene,
     sensor_type: str,
     labels: tuple[str, ...],
-    sensors: tuple[Sensor, ...],
+    sensors: "tuple[Sensor, ...]",
     plot_normal: tuple[float, float, float] = (0.0, 0.0, -1.0),
 ) -> None:
     if not IS_MATPLOTLIB_AVAILABLE:

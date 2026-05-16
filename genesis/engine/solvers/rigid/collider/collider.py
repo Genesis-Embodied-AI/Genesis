@@ -560,6 +560,10 @@ class Collider:
             self._collider_info.terrain_scale.from_numpy(scale)
             self._collider_info.terrain_xyz_maxmin.from_numpy(xyz_maxmin)
 
+    def activate_sdf(self) -> None:
+        """Enable SDF queries against this collider's geometry. Idempotent."""
+        self._sdf.activate()
+
     def reset(self, envs_idx=None, *, cache_only: bool = True) -> None:
         self._contact_data_cache.clear()
         if gs.use_zerocopy:

@@ -1567,8 +1567,7 @@ def test_temperature_grid_simulate_all_link_temps(show_viewer, tol, n_envs):
 
 @pytest.mark.required
 @pytest.mark.parametrize("n_envs", [0, 2])
-def test_surface_distance_sensor_box_sphere(n_envs, show_viewer, tol):
-    """Test proximity sensor returns distance and nearest points with correct shapes and plausible values."""
+def test_surface_distance_sensor_box_sphere(show_viewer, tol, n_envs):
     SPHERE_RADIUS = 0.05
     DISTANCE = 0.15
     MAX_RANGE = 10.0
@@ -1705,22 +1704,26 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     SPHERE_RADIUS = 0.1
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     scene.add_entity(gs.morphs.Plane())
     box = scene.add_entity(
         gs.morphs.Box(
             size=(BOX_SIZE, BOX_SIZE, BOX_SIZE),
-            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),
-            fixed=False,
+            pos=(0.0, 0.0, BOX_SIZE / 2 - PENETRATION),  # box is penetrating ground plane
+            fixed=False,  # probe will not detect fixed-fixed contact
         )
     )
     sphere = scene.add_entity(
         gs.morphs.Sphere(
             radius=SPHERE_RADIUS,
-            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),
+            pos=(0.0, 0.0, BOX_SIZE + SPHERE_RADIUS + 0.2),  # start with sphere above the box
             fixed=True,
         )
     )
@@ -1796,15 +1799,19 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
 
     assert_equal(contact, depth > CONTACT_THRESHOLD)
     assert _as_env_batch(noisy_radius_depth_probe.read(), n_envs).shape == depth.shape
+    # Check that the box's bottom probe (idx 3) detects the ground.
     assert (depth[..., 3] > tol).all(), "Bottom probe should detect the ground."
     assert (force[..., 3, 2] > tol).all(), "Bottom taxel force should point upward."
+    # Top probes should not detect anything yet.
     assert_allclose(depth[..., :3], 0.0, tol=gs.EPS)
     assert_allclose(force[..., :3, :], 0.0, tol=gs.EPS)
     assert_allclose(torque, 0.0, tol=gs.EPS)
 
+    # Forces should be equivalent to the penetration * stiffness along normal vector.
     expected_normals = -torch.tensor(probe_normals, dtype=gs.tc_float, device=gs.device)
     assert_allclose(force, depth.unsqueeze(-1) * STIFFNESS * expected_normals, tol=tol)
 
+    # Now position the sphere to penetrate the top of the box.
     box_top_z = BOX_SIZE - PENETRATION
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS - PENETRATION))
     scene.step()
@@ -1821,6 +1828,7 @@ def test_kinematic_contact_probe_box_sphere_support(show_viewer, tol, n_envs):
     assert (depth[..., 2] > tol).all(), "Large offset probe should detect the nearby sphere."
     assert (sphere_force[..., 0, 2] > tol).all(), "Sphere taxel should see the box underneath."
 
+    # Move sphere away and check no contact.
     sphere.set_pos((0.0, 0.0, box_top_z + SPHERE_RADIUS + PROBE_RADIUS + 0.2))
     scene.step()
     assert_allclose(sphere_taxel.read_ground_truth().force, 0.0, tol=gs.EPS)
@@ -1839,8 +1847,12 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
     SHEAR_SCALE = 100.0
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
 
@@ -1851,6 +1863,7 @@ def test_elastomer_sensor_sphere_ground_dilate_shear(show_viewer, tol, n_envs):
             fixed=True,
         )
     )
+    # Sphere penetrating the ground (center below z=0 by PENETRATION).
     sphere_init_pos = (0.0, 0.0, SPHERE_RADIUS - PENETRATION)
     sphere = scene.add_entity(
         gs.morphs.Sphere(
@@ -1942,8 +1955,12 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     SHEAR_SCALE = 100.0
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     sphere = scene.add_entity(
@@ -2015,6 +2032,7 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     scene.build(n_envs=n_envs)
     scene.step()
 
+    # Test dilate displacement: grid sensor should match the flat-layout sensor and detect contact magnitude.
     grid_data = elastomer_grid_sensor.read_ground_truth()
     flat_data = elastomer_sensor.read_ground_truth()
     assert_allclose(flat_data, grid_data, tol=tol)
@@ -2022,6 +2040,7 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     assert_allclose(shear_sensor.read_ground_truth(), 0.0, tol=tol)
     assert_allclose(combined_sensor.read_ground_truth(), flat_data, tol=tol)
 
+    # Test combined displacement: dilate + shear contributions should add when the box slides laterally.
     box.set_pos((LATERAL_SHIFT, 0.0, SPHERE_RADIUS * 2 + BOX_SIZE / 2 - PENETRATION))
     scene.step()
     dilate_data = elastomer_sensor.read_ground_truth()
@@ -2030,6 +2049,7 @@ def test_elastomer_sensor_grid_box_sphere(show_viewer, tol, n_envs):
     assert torch.linalg.norm(torch.as_tensor(shear_data, device=gs.device), dim=-1).max() > tol
     assert_allclose(combined_data, dilate_data + shear_data, tol=5e-5)
 
+    # Move box away and check no contact.
     box.set_pos((0.0, 0.0, BOX_SIZE + SPHERE_RADIUS * 2 + 0.05))
     scene.step()
     assert_equal(elastomer_grid_sensor.read_ground_truth(), 0.0, err_msg="ElastomerTaxel should be zero in air.")
@@ -2044,8 +2064,12 @@ def test_proximity_sensor_box_on_box(show_viewer, tol, n_envs):
     PENETRATION = 0.01
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     support = scene.add_entity(
@@ -2102,8 +2126,12 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
     OUTER_PROBE = (0.13, 0.0, PAD_SIZE[2] / 2)
 
     scene = gs.Scene(
-        sim_options=gs.options.SimOptions(gravity=(0.0, 0.0, 0.0)),
-        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, 0.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
         show_viewer=show_viewer,
     )
     pad = scene.add_entity(
@@ -2115,10 +2143,16 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
     )
     obj = scene.add_entity(
         morph=[
-            gs.morphs.Box(size=(BOX_XY_SIZE, BOX_XY_SIZE, OBJECT_Z_SIZE)),
-            gs.morphs.Sphere(radius=SPHERE_RADIUS),
+            gs.morphs.Box(
+                size=(BOX_XY_SIZE, BOX_XY_SIZE, OBJECT_Z_SIZE),
+            ),
+            gs.morphs.Sphere(
+                radius=SPHERE_RADIUS,
+            ),
         ],
-        material=gs.materials.Rigid(friction=0.5),
+        material=gs.materials.Rigid(
+            friction=0.5,
+        ),
     )
 
     probe_local_pos = (CENTER_PROBE, OUTER_PROBE)
@@ -2175,14 +2209,10 @@ def test_tactile_sensors_heterogeneous_object(show_viewer, tol):
 
     scene.build(n_envs=2)
     obj.set_pos(
-        torch.tensor(
-            [
-                [0.0, 0.0, PAD_TOP_Z + OBJECT_Z_SIZE / 2 - PENETRATION],
-                [0.0, 0.0, PAD_TOP_Z + SPHERE_RADIUS - PENETRATION],
-            ],
-            dtype=gs.tc_float,
-            device=gs.device,
-        )
+        [
+            [0.0, 0.0, PAD_TOP_Z + OBJECT_Z_SIZE / 2 - PENETRATION],
+            [0.0, 0.0, PAD_TOP_Z + SPHERE_RADIUS - PENETRATION],
+        ]
     )
     scene.step()
 

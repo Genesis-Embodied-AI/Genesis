@@ -5,14 +5,14 @@ Sensor types: ContactDepthProbe, ElastomerTaxel, KinematicTaxel, ProximityTaxel.
 Note that the sensor readings here have not been calibrated to any units, and is purely for visualization purposes.
 """
 
-from __future__ import annotations
-
 import argparse
 import os
+import tempfile
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
@@ -42,13 +42,13 @@ OBJ_PER_ENV_LABELS = ("torus", "sphere", "duck", "dragon")
 
 def _add_tactile_sensor(
     scene: gs.Scene,
-    entity: RigidEntity,
+    entity: "RigidEntity",
     link_idx_local: int,
     sensor_type: str,
     probe_local_pos: np.ndarray,
     probe_normal: tuple[float, float, float] | np.ndarray,
     track_link_idx: tuple[int, ...],
-) -> Sensor:
+) -> "Sensor":
     common = dict(
         entity_idx=entity.idx,
         link_idx_local=link_idx_local,
@@ -112,7 +112,7 @@ def _plot_tactile_sensor(
     scene: gs.Scene,
     sensor_type: str,
     labels: tuple[str, ...],
-    sensors: tuple[Sensor, ...],
+    sensors: "tuple[Sensor, ...]",
     n_envs: int = 1,
     plot_normal: tuple[float, float, float] = (0.0, 0.0, -1.0),
 ) -> None:
@@ -173,7 +173,7 @@ def _plot_tactile_sensor(
             )
 
 
-def _print_sensor_reading(sensor_type: str, sensor: Sensor, t: float) -> None:
+def _print_sensor_reading(sensor_type: str, sensor: "Sensor", t: float) -> None:
     data = sensor.read()
     if sensor_type == "elastomer":
         magnitude = torch.linalg.norm(data, dim=-1)
@@ -248,8 +248,12 @@ def main() -> None:
         )
     sensor_obj = scene.add_entity(
         morph=sensor_morph,
-        surface=gs.surfaces.Default(color=(0.8, 0.8, 0.8, 1.0)),
-        material=gs.materials.Rigid(friction=0.6),
+        surface=gs.surfaces.Default(
+            color=(0.8, 0.8, 0.8, 1.0),
+        ),
+        material=gs.materials.Rigid(
+            friction=0.6,
+        ),
     )
     probe_normal_axis = (0.0, 0.0, 1.0)
     if args.dome:
@@ -272,10 +276,15 @@ def main() -> None:
             ny=GRID_SIZE,
         )
 
+    # Procedural torus written to a temp .obj (avoids checking a 2k-line mesh into the repo).
+    torus_path = os.path.join(tempfile.gettempdir(), "tactile_sandbox_torus.obj")
+    if not os.path.exists(torus_path):
+        trimesh.creation.torus(major_radius=0.3, minor_radius=0.1).export(torus_path)
+
     obj = scene.add_entity(
         morph=[
             gs.morphs.Mesh(
-                file="meshes/torus.obj",
+                file=torus_path,
                 euler=(90.0, 0.0, 0.0),
                 scale=OBJECT_SIZE,
             ),

@@ -130,7 +130,7 @@ def sample_mesh_point_cloud(
     n_candidates = max(n_candidates, n_points)
 
     if seed is None:
-        seed = np.random.seed()
+        seed = int(np.random.SeedSequence().entropy)
 
     cache_path = get_fps_pc_path(verts, faces, n_points, n_candidates, return_normals, seed)
 
@@ -139,17 +139,12 @@ def sample_mesh_point_cloud(
         try:
             with open(cache_path, "rb") as f:
                 data = pkl.load(f)
-            if return_normals:
-                if not (isinstance(data, tuple) and len(data) == 2):
-                    gs.logger.info("Ignoring FPS point cloud cache (expected positions+normals tuple).")
-                else:
-                    pts, nrm = data
-                    return pts.astype(gs.np_float, copy=False), nrm.astype(gs.np_float, copy=False)
-            else:
-                if isinstance(data, tuple):
-                    gs.logger.info("Ignoring FPS point cloud cache (unexpected tuple for positions-only).")
-                else:
-                    return data.astype(gs.np_float, copy=False)
+            if return_normals and isinstance(data, tuple) and len(data) == 2:
+                pts, nrm = data
+                return pts.astype(gs.np_float, copy=False), nrm.astype(gs.np_float, copy=False)
+            if not return_normals and not isinstance(data, tuple):
+                return data.astype(gs.np_float, copy=False)
+            gs.logger.info("Ignoring FPS point cloud cache (payload shape mismatches return_normals).")
         except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError, ValueError):
             gs.logger.info("Ignoring corrupted FPS point cloud cache.")
 
@@ -157,7 +152,7 @@ def sample_mesh_point_cloud(
     candidates, face_idx = trimesh.sample.sample_surface(tmesh, n_candidates, seed=seed)
     candidates = np.asarray(candidates, dtype=np.float32)
 
-    fps_rng = np.random.default_rng(seed) if seed is not None else None
+    fps_rng = np.random.default_rng(seed)
     if return_normals:
         candidate_normals = np.asarray(tmesh.face_normals[face_idx], dtype=np.float32)
         points, selected = _furthest_point_sample_impl(candidates, n_points, fps_rng, return_indices=True)

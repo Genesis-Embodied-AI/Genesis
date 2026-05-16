@@ -5,8 +5,10 @@ from . import (
     depth_camera,
     imu,
     kinematic_tactile,
-    surface_distance_probe,
+    point_cloud_tactile,
+    probe,
     raycaster,
+    surface_distance_probe,
     temperature,
 )
 from .sensor_manager import SensorManager
