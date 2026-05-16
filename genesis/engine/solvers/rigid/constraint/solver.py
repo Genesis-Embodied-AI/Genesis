@@ -2752,7 +2752,7 @@ def func_linesearch_refine(
 
     ls_it_local = constraint_state.ls_it[i_b]
     if qd.static(coop):
-        ls_it_local = qd.simt.subgroup.broadcast(ls_it_local, 0)
+        ls_it_local = qd.simt.subgroup.broadcast(ls_it_local, qd.u32(0))
     ls_iter_limit = rigid_global_info.ls_iterations[None]
 
     direction = (p1_deriv_0 < 0) * 2 - 1
