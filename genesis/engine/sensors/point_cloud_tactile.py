@@ -164,8 +164,8 @@ def _sample_track_links_point_cloud_tensors(
 
 
 @qd.func
-def _func_vec3_at(values: qd.types.ndarray(), i: int) -> gs.qd_vec3:
-    return qd.Vector([values[i, 0], values[i, 1], values[i, 2]], dt=gs.qd_float)
+def _func_vec3_at(values: qd.types.ndarray(), i: int):  # -> gs.qd_vec3:
+    return qd.Vector([values[i, 0], values[i, 1], values[i, 2]], dt=float)
 
 
 @qd.kernel
@@ -663,7 +663,7 @@ def _normalize_elastomer_probe_layout(
 @qd.func
 def _func_elastomer_min_sdf_over_active_geoms(
     i_b: int,
-    point_world: gs.qd_vec3,
+    point_world,  # : gs.qd_vec3,
     geom_start: int,
     geom_n: int,
     geom_idx: qd.types.ndarray(),
@@ -671,8 +671,8 @@ def _func_elastomer_min_sdf_over_active_geoms(
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
     sdf_info: array_class.SDFInfo,
-) -> gs.qd_float:
-    min_sdf = gs.qd_float(1.0e6)
+) -> float:
+    min_sdf = float(1.0e6)
     geom_end = geom_start + geom_n
     for i_gm in range(geom_start, geom_end):
         if not geom_active_envs_mask[i_gm, i_b]:
@@ -685,7 +685,10 @@ def _func_elastomer_min_sdf_over_active_geoms(
 
 
 @qd.func
-def _func_elastomer_tangent(vec: gs.qd_vec3, normal: gs.qd_vec3) -> gs.qd_vec3:
+def _func_elastomer_tangent(
+    vec,  # : gs.qd_vec3,
+    normal,  # : gs.qd_vec3
+):  # -> gs.qd_vec3:
     return vec - normal * vec.dot(normal)
 
 
@@ -709,10 +712,10 @@ def _func_elastomer_clear_surface_state(
 def _func_elastomer_update_surface_anchor(
     i_b: int,
     i_o: int,
-    sdf_value: gs.qd_float,
-    point_sensor: gs.qd_vec3,
-    sdf_enter: gs.qd_float,
-    sdf_exit: gs.qd_float,
+    sdf_value: float,
+    point_sensor,  # : gs.qd_vec3,
+    sdf_enter: float,
+    sdf_exit: float,
     surface_entry_pos_sensor_buf: qd.types.ndarray(),
     surface_initialized_buf: qd.types.ndarray(),
 ):
@@ -728,14 +731,14 @@ def _func_elastomer_update_surface_anchor(
 
 @qd.func
 def _func_elastomer_direct_dilate_contribution(
-    source_pos: gs.qd_vec3,
-    source_normal: gs.qd_vec3,
-    target_pos: gs.qd_vec3,
-    target_normal: gs.qd_vec3,
-    depth: gs.qd_float,
-    lam: gs.qd_float,
-    scale: gs.qd_float,
-) -> gs.qd_vec3:
+    source_pos,  # : gs.qd_vec3,
+    source_normal,  # : gs.qd_vec3,
+    target_pos,  # : gs.qd_vec3,
+    target_normal,  # : gs.qd_vec3,
+    depth: float,
+    lam: float,
+    scale: float,
+):  # -> gs.qd_vec3:
     source_contact_pos = source_pos - source_normal * depth
     diff = target_pos - source_contact_pos
     planar_diff = _func_elastomer_tangent(diff, target_normal)
@@ -744,15 +747,15 @@ def _func_elastomer_direct_dilate_contribution(
 
 @qd.func
 def _func_elastomer_direct_shear_contribution(
-    point_sensor: gs.qd_vec3,
-    entry_sensor: gs.qd_vec3,
-    probe_pos: gs.qd_vec3,
-    probe_normal: gs.qd_vec3,
-    depth: gs.qd_float,
-    lam: gs.qd_float,
-    scale: gs.qd_float,
+    point_sensor,  # : gs.qd_vec3,
+    entry_sensor,  # : gs.qd_vec3,
+    probe_pos,  # : gs.qd_vec3,
+    probe_normal,  # : gs.qd_vec3,
+    depth: float,
+    lam: float,
+    scale: float,
     eps: float,
-) -> gs.qd_vec3:
+):  # -> gs.qd_vec3:
     shear_disp = point_sensor - entry_sensor
     shear_tangent = _func_elastomer_tangent(shear_disp, probe_normal)
     contribution = qd.Vector.zero(gs.qd_float, 3)

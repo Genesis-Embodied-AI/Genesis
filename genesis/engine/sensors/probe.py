@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 @qd.func
-def func_noised_probe_radius(probe_radius: gs.qd_float, probe_radius_noise: gs.qd_float) -> gs.qd_float:
+def func_noised_probe_radius(probe_radius: float, probe_radius_noise: float) -> float:
     radius = probe_radius
     if probe_radius_noise > gs.EPS:
         radius = qd.max(

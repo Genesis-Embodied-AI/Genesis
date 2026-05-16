@@ -145,7 +145,7 @@ class FrameImageExporter:
         executor: Executor | None = None,
     ):
         """
-        Export multiple frames from a single camera but different environments in parrallel as PNG files.
+        Export multiple frames from a single camera but different environments in parallel as PNG files.
 
         Parameters
         ----------

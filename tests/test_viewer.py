@@ -32,7 +32,6 @@ def wait_for_viewer_events(viewer, condition_fn, timeout=300.0, sleep_interval=0
 
 @pytest.mark.required
 @pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
-@pytest.mark.xfail(sys.platform == "win32", raises=OpenGL.error.Error, reason="Invalid OpenGL context.")
 def test_interactive_viewer_disable_viewer_defaults():
     """Test that keyboard shortcuts can be disabled in the interactive viewer."""
 
