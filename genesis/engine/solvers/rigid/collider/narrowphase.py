@@ -737,80 +737,106 @@ def func_convex_convex_contact(
                                 )
 
                     ### GJK, MJ_GJK
-                    if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
-                        if prefer_gjk:
+                    if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR) and prefer_gjk:
+                        if qd.static(static_rigid_sim_config.requires_grad):
+                            diff_gjk.func_gjk_contact(
+                                links_state,
+                                links_info,
+                                geoms_state,
+                                geoms_info,
+                                geoms_init_AABB,
+                                verts_info,
+                                faces_info,
+                                rigid_global_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_info,
+                                support_field_info,
+                                diff_contact_input,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                ga_pos_current,
+                                ga_quat_current,
+                                gb_pos_current,
+                                gb_quat_current,
+                                diff_pos_tolerance,
+                                diff_normal_tolerance,
+                            )
+                        else:
+                            gjk.func_gjk_contact(
+                                geoms_state,
+                                geoms_info,
+                                verts_info,
+                                faces_info,
+                                rigid_global_info,
+                                static_rigid_sim_config,
+                                collider_state,
+                                collider_static_config,
+                                gjk_state,
+                                gjk_info,
+                                gjk_static_config,
+                                support_field_info,
+                                i_ga,
+                                i_gb,
+                                i_b,
+                                ga_pos_current,
+                                ga_quat_current,
+                                gb_pos_current,
+                                gb_quat_current,
+                            )
+
+                        is_col = gjk_state.is_col[i_b] == 1
+                        penetration = gjk_state.penetration[i_b]
+                        n_contacts = gjk_state.n_contacts[i_b]
+
+                        if is_col:
                             if qd.static(static_rigid_sim_config.requires_grad):
-                                diff_gjk.func_gjk_contact(
-                                    links_state,
-                                    links_info,
-                                    geoms_state,
-                                    geoms_info,
-                                    geoms_init_AABB,
-                                    verts_info,
-                                    faces_info,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_static_config,
-                                    gjk_state,
-                                    gjk_info,
-                                    support_field_info,
-                                    diff_contact_input,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    ga_pos_current,
-                                    ga_quat_current,
-                                    gb_pos_current,
-                                    gb_quat_current,
-                                    diff_pos_tolerance,
-                                    diff_normal_tolerance,
-                                )
-                            else:
-                                gjk.func_gjk_contact(
-                                    geoms_state,
-                                    geoms_info,
-                                    verts_info,
-                                    faces_info,
-                                    rigid_global_info,
-                                    static_rigid_sim_config,
-                                    collider_state,
-                                    collider_static_config,
-                                    gjk_state,
-                                    gjk_info,
-                                    gjk_static_config,
-                                    support_field_info,
-                                    i_ga,
-                                    i_gb,
-                                    i_b,
-                                    ga_pos_current,
-                                    ga_quat_current,
-                                    gb_pos_current,
-                                    gb_quat_current,
-                                )
-
-                            is_col = gjk_state.is_col[i_b] == 1
-                            penetration = gjk_state.penetration[i_b]
-                            n_contacts = gjk_state.n_contacts[i_b]
-
-                            if is_col:
-                                if qd.static(static_rigid_sim_config.requires_grad):
-                                    for i_c in range(n_contacts):
-                                        func_add_diff_contact_input(
-                                            i_ga,
-                                            i_gb,
-                                            i_b,
-                                            i_c,
-                                            gjk_state,
-                                            collider_state,
-                                            collider_info,
-                                        )
+                                for i_c in range(n_contacts):
+                                    func_add_diff_contact_input(
+                                        i_ga,
+                                        i_gb,
+                                        i_b,
+                                        i_c,
+                                        gjk_state,
+                                        collider_state,
+                                        collider_info,
+                                    )
+                                    func_add_contact(
+                                        i_ga,
+                                        i_gb,
+                                        gjk_state.normal[i_b, i_c],
+                                        gjk_state.contact_pos[i_b, i_c],
+                                        gjk_state.diff_penetration[i_b, i_c],
+                                        i_b,
+                                        i_pair,
+                                        geoms_state,
+                                        geoms_info,
+                                        collider_state,
+                                        collider_info,
+                                        errno,
+                                    )
+                                break
+                            elif gjk_state.multi_contact_flag[i_b]:
+                                # Since we already found multiple contact points, add the discovered contact
+                                # points and stop multi-contact search.
+                                for i_c in range(n_contacts):
+                                    # Ignore contact points if the number of contacts exceeds the limit.
+                                    if i_c < qd.static(collider_static_config.n_contacts_per_pair):
+                                        contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                        normal = gjk_state.normal[i_b, i_c]
+                                        # NOTE: no diff_penetration read here -- this branch is the
+                                        # `elif` after `if qd.static(requires_grad)` above, so we are
+                                        # statically in the non-diff path; the per-batch
+                                        # `penetration` from the GJK call is used as-is.
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
-                                            gjk_state.normal[i_b, i_c],
-                                            gjk_state.contact_pos[i_b, i_c],
-                                            gjk_state.diff_penetration[i_b, i_c],
+                                            normal,
+                                            contact_pos,
+                                            penetration,
                                             i_b,
                                             i_pair,
                                             geoms_state,
@@ -819,38 +845,11 @@ def func_convex_convex_contact(
                                             collider_info,
                                             errno,
                                         )
-                                    break
-                                elif gjk_state.multi_contact_flag[i_b]:
-                                    # Since we already found multiple contact points, add the discovered contact
-                                    # points and stop multi-contact search.
-                                    for i_c in range(n_contacts):
-                                        # Ignore contact points if the number of contacts exceeds the limit.
-                                        if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                            contact_pos = gjk_state.contact_pos[i_b, i_c]
-                                            normal = gjk_state.normal[i_b, i_c]
-                                            # NOTE: no diff_penetration read here -- this branch is the
-                                            # `elif` after `if qd.static(requires_grad)` above, so we are
-                                            # statically in the non-diff path; the per-batch
-                                            # `penetration` from the GJK call is used as-is.
-                                            func_add_contact(
-                                                i_ga,
-                                                i_gb,
-                                                normal,
-                                                contact_pos,
-                                                penetration,
-                                                i_b,
-                                                i_pair,
-                                                geoms_state,
-                                                geoms_info,
-                                                collider_state,
-                                                collider_info,
-                                                errno,
-                                            )
 
-                                    break
-                                else:
-                                    contact_pos = gjk_state.contact_pos[i_b, 0]
-                                    normal = gjk_state.normal[i_b, 0]
+                                break
+                            else:
+                                contact_pos = gjk_state.contact_pos[i_b, 0]
+                                normal = gjk_state.normal[i_b, 0]
 
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
