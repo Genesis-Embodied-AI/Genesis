@@ -953,24 +953,23 @@ def func_convex_convex_contact(
                         if (contact_pos - prev_contact).norm() < tolerance:
                             repeated = True
 
-                if not repeated:
-                    if penetration > -tolerance:
-                        penetration = qd.max(penetration, 0.0)
-                        func_add_contact(
-                            i_ga,
-                            i_gb,
-                            normal,
-                            contact_pos,
-                            penetration,
-                            i_b,
-                            i_pair,
-                            geoms_state,
-                            geoms_info,
-                            collider_state,
-                            collider_info,
-                            errno,
-                        )
-                        n_con = n_con + 1
+                if (not repeated) and penetration > -tolerance:
+                    penetration = qd.max(penetration, 0.0)
+                    func_add_contact(
+                        i_ga,
+                        i_gb,
+                        normal,
+                        contact_pos,
+                        penetration,
+                        i_b,
+                        i_pair,
+                        geoms_state,
+                        geoms_info,
+                        collider_state,
+                        collider_info,
+                        errno,
+                    )
+                    n_con = n_con + 1
 
 
 @qd.func
