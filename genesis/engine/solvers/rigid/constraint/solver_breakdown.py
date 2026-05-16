@@ -29,9 +29,8 @@ def _ls_eval_cost_grad(
 ):
     """Compute cost and analytical gradient at alpha (thread-0 only).
 
-    Follows the same quadratic-coefficient approach as func_ls_point_fn_opt in solver.py.
-    Reuses quad_gauss and eq_sum precomputed by the p0 kernel.
-    Returns (cost, grad).
+    Follows the same quadratic-coefficient approach as _func_linesearch_eval_at_alpha in solver.py. Reuses quad_gauss
+    and eq_sum precomputed by the p0 kernel. Returns (cost, grad).
     """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
@@ -84,7 +83,7 @@ def _ls_eval_cost_grad(
 
 
 @qd.func
-def _func_parallel_linesearch_p0(
+def _func_decomp_linesearch_p0(
     dofs_info: array_class.DofsInfo,
     entities_info: array_class.EntitiesInfo,
     dofs_state: array_class.DofsState,
@@ -304,14 +303,142 @@ def _func_parallel_linesearch_p0(
 
 
 @qd.func
-def _func_parallel_linesearch_eval(
+def _func_decomp_linesearch_refine_coop(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
     constraint_state: array_class.ConstraintState,
     rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
 ):
-    """Decomposed solver eval kernel: serial refinement from Newton step + cooperative apply.
+    """Warp-cooperative variant of ``_func_decomp_linesearch_refine``: all 32 lanes drive the unified
+    ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine`` (called with the Python literal ``True`` for the ``coop``
+    template arg). Writes to ``ls_alpha`` are tid==0-guarded since the result is per-env, not per-lane."""
+    # Gated: skip when the Newton step is zero (degenerate hessian).
+    if alpha_newton > 0.0:
+        if tid == 0:
+            constraint_state.ls_alpha[i_b] = 0.0
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop=True
+        )
+        if p0_cost < p1_cost:
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop=True
+            )
+        if p1_cost < p0_cost and tid == 0:
+            constraint_state.ls_alpha[i_b] = p1_alpha
+        if qd.abs(p1_deriv_0) > gtol:
+            res_alpha, ls_result = solver.func_linesearch_refine(
+                i_b,
+                tid,
+                p1_alpha,
+                p1_cost,
+                p1_deriv_0,
+                p1_deriv_1,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_global_info,
+                coop=True,
+            )
+            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
+            # p1_alpha already written above.
+            if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7 and tid == 0:
+                constraint_state.ls_alpha[i_b] = res_alpha
 
-    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via func_linesearch_refine, then
-    cooperatively applies the chosen alpha to qacc, Ma, and Jaref.
+
+@qd.func
+def _func_decomp_linesearch_refine_serial(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """1-thread-per-env variant of ``_func_decomp_linesearch_refine``: bit-identical to the pre-coop baseline.
+    Only ``tid == 0`` runs the work; the unified helpers are called with the Python literal ``False`` for ``coop``."""
+    # Gated: skip when the Newton step is zero (degenerate hessian).
+    if alpha_newton > 0.0 and tid == 0:
+        constraint_state.ls_alpha[i_b] = 0.0
+        p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
+            i_b, tid, alpha_newton, constraint_state, rigid_global_info, coop=False
+        )
+        if p0_cost < p1_cost:
+            p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver._func_linesearch_eval_at_alpha(
+                i_b, tid, gs.qd_float(0.0), constraint_state, rigid_global_info, coop=False
+            )
+        if p1_cost < p0_cost:
+            constraint_state.ls_alpha[i_b] = p1_alpha
+        if qd.abs(p1_deriv_0) > gtol:
+            res_alpha, ls_result = solver.func_linesearch_refine(
+                i_b,
+                tid,
+                p1_alpha,
+                p1_cost,
+                p1_deriv_0,
+                p1_deriv_1,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_global_info,
+                coop=False,
+            )
+            # Skip status 7 (brackets stalled, midpoint non-improving) to preserve the validated
+            # p1_alpha already written above.
+            if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
+                constraint_state.ls_alpha[i_b] = res_alpha
+
+
+@qd.func
+def _func_decomp_linesearch_refine(
+    i_b,
+    tid,
+    alpha_newton,
+    p0_cost,
+    gtol,
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Linesearch refinement body, called per-env from ``_func_decomp_linesearch_refine_and_apply``. Dispatches at compile time
+    on ``constraint_layout_transposed`` to ``_func_decomp_linesearch_refine_coop`` (warp-cooperative, all 32 lanes)
+    or ``_func_decomp_linesearch_refine_serial`` (1-thread-per-env, bit-identical baseline).
+
+    Each branch passes the literal Python ``True`` / ``False`` for the ``coop`` template arg of the unified
+    ``_func_linesearch_eval_at_alpha`` / ``func_linesearch_refine``: Quadrants' ``qd.template()`` machinery does not
+    auto-promote a struct member access to a compile-time value, so we cannot share a single call site here."""
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        _func_decomp_linesearch_refine_coop(
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+    else:
+        _func_decomp_linesearch_refine_serial(
+            i_b, tid, alpha_newton, p0_cost, gtol, constraint_state, rigid_global_info, static_rigid_sim_config
+        )
+
+
+@qd.func
+def _func_decomp_linesearch_refine_and_apply(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Decomposed solver eval kernel: linesearch refinement from Newton step + cooperative apply.
+
+    The P0 kernel precomputes a Newton step (ls_alpha_newton). This kernel refines it via the unified
+    ``func_linesearch_refine`` (templated on ``coop``: serial-on-tid-0 when False, cooperative across the 32-lane
+    warp when True), gated on ``constraint_layout_transposed``. It then cooperatively applies the chosen alpha to
+    qacc, Ma, and Jaref.
+
+    The cooperative path is only safe when the layout-flippable constraint-state tensors are stored with
+    ``layout=(1, 0)`` (so per-lane strided reads of ``Jaref[i_c, i_b]`` etc. are coalesced across constraints for a
+    fixed env). The qd.Tensor layout rewrite makes the canonical indexing identical in both paths; only the access
+    pattern changes.
     """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(LS_PARALLEL_K)
@@ -328,43 +455,16 @@ def _func_parallel_linesearch_eval(
             gtol = constraint_state.ls_gtol[i_b]
             alpha_newton = constraint_state.ls_alpha_newton[i_b]
 
-            # === Serial linesearch refinement (thread 0) ===
-            # Gated: skip when the Newton step is zero (degenerate hessian)
-            if alpha_newton > 0.0 and tid == 0:
-                constraint_state.ls_alpha[i_b] = 0.0
-                p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                    i_b,
-                    alpha_newton,
-                    constraint_state,
-                    rigid_global_info,
-                )
-                if p0_cost < p1_cost:
-                    p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = solver.func_ls_point_fn_opt(
-                        i_b,
-                        gs.qd_float(0.0),
-                        constraint_state,
-                        rigid_global_info,
-                    )
-
-                if p1_cost < p0_cost:
-                    constraint_state.ls_alpha[i_b] = p1_alpha
-
-                if qd.abs(p1_deriv_0) > gtol:
-                    res_alpha, ls_result = solver.func_linesearch_refine(
-                        i_b,
-                        p1_alpha,
-                        p1_cost,
-                        p1_deriv_0,
-                        p1_deriv_1,
-                        p0_cost,
-                        gtol,
-                        constraint_state,
-                        rigid_global_info,
-                    )
-                    # Skip status 7 (brackets stalled, midpoint non-improving) to preserve
-                    # the validated p1_alpha already written above
-                    if qd.abs(res_alpha) > rigid_global_info.EPS[None] and ls_result != 7:
-                        constraint_state.ls_alpha[i_b] = res_alpha
+            _func_decomp_linesearch_refine(
+                i_b,
+                tid,
+                alpha_newton,
+                p0_cost,
+                gtol,
+                constraint_state,
+                rigid_global_info,
+                static_rigid_sim_config,
+            )
             qd.simt.block.sync()
         else:
             if tid == 0:
@@ -413,40 +513,63 @@ def _func_cg_only_save_prev_grad(
 
 
 @qd.func
+def _func_update_constraint_forces_body(
+    i_c,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Per-element body for ``_func_update_constraint_forces``. Factored out so the two
+    ndrange orderings (coalescing-optimal for each layout) share a single implementation."""
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+
+    constraint_state.active[i_c, i_b] = True
+    floss_force = gs.qd_float(0.0)
+
+    if ne <= i_c and i_c < nef:
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+        linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+        constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+        floss_force = linear_neg * f + linear_pos * -f
+    elif nef <= i_c:
+        constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+
+    constraint_state.efc_force[i_c, i_b] = floss_force + (
+        -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+    )
+
+
+@qd.func
 def _func_update_constraint_forces(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute active flags and efc_force, parallelized over (constraint, env)."""
+    """Compute active flags and efc_force, parallelized over (constraint, env).
+
+    Iteration order is picked at compile time so adjacent lanes always cover the *physical* contiguous dimension of the
+    layout-flippable constraint-state tensors:
+      - layout False (canonical [i_c, i_b], physical [i_c, i_b]):  ndrange(len_constraints, _B)
+      - layout True  (canonical [i_c, i_b], physical [i_b, i_c]):  ndrange(_B, len_constraints)
+    """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_forces")
-    for i_c, i_b in qd.ndrange(len_constraints, _B):
-        if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
-            ne = constraint_state.n_constraints_equality[i_b]
-            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
-
-            if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
-                constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
-
-            constraint_state.active[i_c, i_b] = True
-            floss_force = gs.qd_float(0.0)
-
-            if ne <= i_c and i_c < nef:
-                f = constraint_state.efc_frictionloss[i_c, i_b]
-                r = constraint_state.diag[i_c, i_b]
-                rf = r * f
-                linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
-                linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
-                constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
-                floss_force = linear_neg * f + linear_pos * -f
-            elif nef <= i_c:
-                constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
-
-            constraint_state.efc_force[i_c, i_b] = floss_force + (
-                -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
-            )
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        for i_b, i_c in qd.ndrange(_B, len_constraints):
+            if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
+                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+    else:
+        for i_c, i_b in qd.ndrange(len_constraints, _B):
+            if i_c < constraint_state.n_constraints[i_b] and constraint_state.improved[i_b]:
+                _func_update_constraint_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
@@ -469,12 +592,78 @@ def _func_update_constraint_qfrc(
 
 
 @qd.func
-def _func_update_constraint_cost(
+def _func_update_constraint_cost_coop(
     dofs_state: array_class.DofsState,
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute gauss and cost (reductions over dofs and constraints). One thread per env."""
+    """Warp-per-env cooperative variant of ``_func_update_constraint_cost``: 32 lanes stride through dofs and
+    constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add``. Per-lane reads of
+    Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when those
+    layout-flippable constraint-state tensors were allocated with ``layout=(1, 0)``)."""
+    _B = constraint_state.grad.shape[1]
+    _K = qd.static(32)
+
+    qd.loop_config(name="update_constraint_cost", block_dim=_K)
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
+        if constraint_state.n_constraints[i_b] > 0 and constraint_state.improved[i_b]:
+            n_dofs = constraint_state.qfrc_constraint.shape[0]
+            ne = constraint_state.n_constraints_equality[i_b]
+            nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+            n_con = constraint_state.n_constraints[i_b]
+
+            if tid == 0:
+                constraint_state.prev_cost[i_b] = constraint_state.cost[i_b]
+
+            cost_i = gs.qd_float(0.0)
+            gauss_i = gs.qd_float(0.0)
+
+            # Gauss cost from dofs (lane-strided)
+            i_d = tid
+            while i_d < n_dofs:
+                v = (
+                    0.5
+                    * (constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
+                    * (constraint_state.qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+                )
+                gauss_i += v
+                cost_i += v
+                i_d = i_d + _K
+
+            # Constraint cost: quadratic + friction linear (lane-strided over constraints)
+            i_c = tid
+            while i_c < n_con:
+                Jaref_c = constraint_state.Jaref[i_c, i_b]
+                cost_i += 0.5 * (
+                    Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+                )
+                if ne <= i_c and i_c < nef:
+                    f = constraint_state.efc_frictionloss[i_c, i_b]
+                    r = constraint_state.diag[i_c, i_b]
+                    rf = r * f
+                    linear_neg = Jaref_c <= -rf
+                    linear_pos = Jaref_c >= rf
+                    cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+                i_c = i_c + _K
+
+            cost_i = qd.simt.subgroup.reduce_all_add(cost_i, 5)
+            gauss_i = qd.simt.subgroup.reduce_all_add(gauss_i, 5)
+
+            if tid == 0:
+                constraint_state.gauss[i_b] = gauss_i
+                constraint_state.cost[i_b] = cost_i
+
+
+@qd.func
+def _func_update_constraint_cost_serial(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """1-thread-per-env variant of ``_func_update_constraint_cost``. Bit-identical to the pre-coop baseline: one thread
+    runs the full reduction over dofs + constraints in straight ``for`` loops."""
     _B = constraint_state.grad.shape[1]
 
     qd.loop_config(name="update_constraint_cost", block_dim=32)
@@ -519,6 +708,21 @@ def _func_update_constraint_cost(
 
             constraint_state.gauss[i_b] = gauss_i
             constraint_state.cost[i_b] = cost_i
+
+
+@qd.func
+def _func_update_constraint_cost(
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Compute gauss and cost (reductions over dofs and constraints). Dispatches at compile time on
+    ``constraint_layout_transposed`` to ``_func_update_constraint_cost_coop`` (warp-per-env) or
+    ``_func_update_constraint_cost_serial`` (1-thread-per-env, bit-identical baseline)."""
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        _func_update_constraint_cost_coop(dofs_state, constraint_state, static_rigid_sim_config)
+    else:
+        _func_update_constraint_cost_serial(dofs_state, constraint_state, static_rigid_sim_config)
 
 
 # Number of full Hessian+Cholesky rebuilds at the start of the solver loop (after the init's iter-0 full rebuild).
@@ -769,11 +973,11 @@ def _kernel_solve_graph(
 ):
     while qd.graph_do_while(graph_counter):
         # Fused: mv + jv + snorm + quad_gauss + eq_sum + p0_cost
-        _func_parallel_linesearch_p0(
+        _func_decomp_linesearch_p0(
             dofs_info, entities_info, dofs_state, constraint_state, rigid_global_info, static_rigid_sim_config
         )
         # Fused: refinement + apply alpha
-        _func_parallel_linesearch_eval(constraint_state, rigid_global_info)
+        _func_decomp_linesearch_refine_and_apply(constraint_state, rigid_global_info, static_rigid_sim_config)
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)

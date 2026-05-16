@@ -394,12 +394,33 @@ class RigidSolver(KinematicSolver):
             cores_per_unit = 64 if torch.version.hip else 128
             gpu_cores = gpu_props.multi_processor_count * cores_per_unit
         elif gs.backend == gs.metal:
-            # Upper-bound estimate for Apple Silicon: 40 GPU cores × 128 ALUs
+            # Upper-bound estimate for Apple Silicon: 40 GPU cores * 128 ALUs
             gpu_cores = 5120
         else:
             # Fallback for other GPU backends (e.g. Vulkan)
             gpu_cores = 16384
         return self.n_envs <= gpu_cores
+
+    def _should_transpose_constraint_layout(self) -> bool:
+        """Decide whether to allocate the layout-flippable constraint-state with layout=(1, 0).
+
+        The transposed layout (plus its companion cooperative kernels) wins on workloads with enough per-env compute
+        density to amortize the warp-per-env overhead, and loses when envs are sparse and many: in those cases the
+        legacy 1-thread-per-env path is already coalesced under (len_constraints_, _B) and warp scheduling dominates.
+
+        Empirical pattern from `perso_hugh/doc/linesearch_shuffle.md` (Exp 5):
+          - Wins (>+3%): dex_hand, g1_fall, box_pyramid_3..6; all 4096 envs, n_dofs >= ~18.
+          - Wash / regression: anymal/franka families; 30000 envs, n_dofs <= ~12.
+
+        Heuristic: enable transpose when both (a) n_envs is small enough that env-parallelism does not already
+        saturate the GPU, and (b) per-env DoF count is large enough to keep a 32-lane warp busy on the cooperative
+        reductions.
+        """
+        if gs.backend == gs.cpu or self.sim.options.requires_grad:
+            return False
+        n_envs = self._sim._B
+        n_dofs = self.n_dofs
+        return n_envs <= 8192 and n_dofs >= 16
 
     def _build_static_config(self):
         static_rigid_sim_config = dict(
@@ -421,6 +442,7 @@ class RigidSolver(KinematicSolver):
             solver_type=self._options.constraint_solver,
             broadphase_traversal=self._resolve_broadphase_traversal(),
             parallel_init=self._should_use_parallel_init(),
+            constraint_layout_transposed=self._should_transpose_constraint_layout(),
         )
 
         # Prefer the monolith solver on CPU (always faster there, perf dispatch is a waste of effort)
