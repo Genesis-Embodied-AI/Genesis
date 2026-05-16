@@ -729,12 +729,14 @@ def func_convex_convex_contact(
                         # Fallback on GJK if collision is detected by MPR if the initial penetration is already quite
                         # large, and either no collision direction was cached or the geometries have large overlap. This
                         # contact information provided by MPR may be unreliable in these cases.
-                        if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR):
-                            if penetration > tolerance:
-                                prefer_gjk = not is_mpr_guess_direction_available or (
-                                    collider_info.mc_tolerance[None] * penetration
-                                    >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
-                                )
+                        if (
+                            qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MPR)
+                            and penetration > tolerance
+                        ):
+                            prefer_gjk = not is_mpr_guess_direction_available or (
+                                collider_info.mc_tolerance[None] * penetration
+                                >= collider_info.mpr_to_gjk_overlap_ratio[None] * tolerance
+                            )
 
                     ### GJK, MJ_GJK
                     if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR) and prefer_gjk:
