@@ -697,11 +697,16 @@ def func_convex_convex_contact(
                             # in contact while they actually are. This helps to improve contact persistence without
                             # increasing much the overall computational cost since the fallback should not be
                             # triggered very often.
-                            if i_mpr == 1 and qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                if (i_detection == 0) and not is_col and is_mpr_guess_direction_available:
-                                    normal_ws = qd.Vector.zero(gs.qd_float, 3)
-                                    is_mpr_guess_direction_available = False
-                                    is_mpr_updated = False
+                            if (
+                                i_mpr == 1
+                                and qd.static(not static_rigid_sim_config.enable_mujoco_compatibility)
+                                and i_detection == 0
+                                and not is_col
+                                and is_mpr_guess_direction_available
+                            ):
+                                normal_ws = qd.Vector.zero(gs.qd_float, 3)
+                                is_mpr_guess_direction_available = False
+                                is_mpr_updated = False
 
                             if not is_mpr_updated:
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
