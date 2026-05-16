@@ -2342,16 +2342,15 @@ def func_ls_init_and_eval_p0(
 @qd.func
 def _func_linesearch_eval_constraints_at_n_alphas_serial(
     i_b,
-    alpha_0,
-    alpha_1,
-    alpha_2,
+    alphas,
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
-    """Reduce the quadratic-coefficient triplets (const, linear, quad) for up to ``n_alphas`` candidate alphas in a
-    single pass over all friction + contact constraints. Returns 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` where ``tk`` is
-    alpha-slot ``k``'s ``[const, linear, quad]``. Slots beyond ``n_alphas`` hold the equality-only seed and should be
-    ignored by the caller.
+    """Reduce the quadratic-coefficient triplets (const, linear, quad) for up to ``n_alphas`` candidate alphas (passed
+    as a ``qd.Vector(3)`` ``alphas``; only the first ``n_alphas`` slots are read) in a single pass over all friction +
+    contact constraints. Returns 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` where ``tk`` is alpha-slot ``k``'s
+    ``[const, linear, quad]``. Slots beyond ``n_alphas`` hold the equality-only seed and should be ignored by the
+    caller.
 
     Equality constraints are skipped via ``quad_gauss + eq_sum`` (pre-computed during init). Quad coefficients are
     recomputed on the fly from Jaref, jv, efc_D rather than read from a precomputed quad array, costing 3 loads per
@@ -2384,7 +2383,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
         qf_2 = D * (0.5 * jv_c * jv_c)
         rf = r * f
         for k in qd.static(range(n_alphas)):
-            alpha_k = (alpha_0, alpha_1, alpha_2)[k]
+            alpha_k = alphas[k]
             x = Jaref_c + alpha_k * jv_c
             ln = x <= -rf
             lp = x >= rf
@@ -2406,7 +2405,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_serial(
         qf_1 = D * (jv_c * Jaref_c)
         qf_2 = D * (0.5 * jv_c * jv_c)
         for k in qd.static(range(n_alphas)):
-            alpha_k = (alpha_0, alpha_1, alpha_2)[k]
+            alpha_k = alphas[k]
             x = Jaref_c + alpha_k * jv_c
             act = gs.qd_bool(x < 0)
             t_0[k] = t_0[k] + qf_0 * act
@@ -2463,17 +2462,16 @@ def _func_linesearch_eval_at_alpha(
     ``return``, because Quadrants' AST transformer doesn't propagate locals across ``if qd.static`` branches; naming
     a variable in the unified ``return`` statement raises ``Name "t0" is not defined`` even when one branch is
     DCE'd. Self-contained per-branch returns sidestep this."""
+    alphas = qd.Vector([alpha, alpha, alpha])
     if qd.static(coop):
         t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alpha, alpha, alpha, constraint_state, n_alphas=1
+            i_b, tid, alphas, constraint_state, n_alphas=1
         )
         return _func_linesearch_eval_quadratic_at_alpha(
             i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
-            i_b, alpha, alpha, alpha, constraint_state, n_alphas=1
-        )
+        t0, _u1, _u2 = _func_linesearch_eval_constraints_at_n_alphas_serial(i_b, alphas, constraint_state, n_alphas=1)
         return _func_linesearch_eval_quadratic_at_alpha(
             i_b, tid, alpha, t0, constraint_state, rigid_global_info, coop=False
         )
@@ -2483,9 +2481,7 @@ def _func_linesearch_eval_at_alpha(
 def _func_linesearch_eval_constraints_at_n_alphas_coop(
     i_b,
     tid,
-    alpha_0,
-    alpha_1,
-    alpha_2,
+    alphas,
     constraint_state: array_class.ConstraintState,
     n_alphas: qd.template(),
 ):
@@ -2527,7 +2523,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
         qf_2 = D * (0.5 * jv_c * jv_c)
         rf = r * f
         for k in qd.static(range(n_alphas)):
-            alpha_k = (alpha_0, alpha_1, alpha_2)[k]
+            alpha_k = alphas[k]
             x = Jaref_c + alpha_k * jv_c
             ln = x <= -rf
             lp = x >= rf
@@ -2552,7 +2548,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
         qf_1 = D * (jv_c * Jaref_c)
         qf_2 = D * (0.5 * jv_c * jv_c)
         for k in qd.static(range(n_alphas)):
-            alpha_k = (alpha_0, alpha_1, alpha_2)[k]
+            alpha_k = alphas[k]
             x = Jaref_c + alpha_k * jv_c
             act = gs.qd_bool(x < 0)
             t_0[k] = t_0[k] + qf_0 * act
@@ -2639,16 +2635,12 @@ def _func_linesearch_eval_at_3_alphas(
     See ``_func_linesearch_eval_at_alpha`` for the serial-vs-cooperative contract (forwarded via ``coop``) and the
     rationale for the per-branch return."""
     if qd.static(coop):
-        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(
-            i_b, tid, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
-        )
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_coop(i_b, tid, alphas, constraint_state, n_alphas=3)
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=True
         )
     else:
-        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(
-            i_b, alphas[0], alphas[1], alphas[2], constraint_state, n_alphas=3
-        )
+        t0, t1, t2 = _func_linesearch_eval_constraints_at_n_alphas_serial(i_b, alphas, constraint_state, n_alphas=3)
         return _func_linesearch_eval_quadratic_at_3_alphas(
             i_b, tid, alphas, t0, t1, t2, constraint_state, rigid_global_info, coop=False
         )
