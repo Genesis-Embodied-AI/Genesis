@@ -10,18 +10,12 @@ import quadrants as qd
 import genesis as gs
 import genesis.utils.array_class as array_class
 
-from .utils import (
-    func_is_geom_aabbs_overlap,
-)
+from .utils import func_is_geom_aabbs_overlap
 
 
 @qd.func
 def func_find_intersect_midpoint(
-    i_ga,
-    i_gb,
-    i_b,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
+    i_ga, i_gb, i_b, geoms_state: array_class.GeomsState, geoms_info: array_class.GeomsInfo
 ):
     # return the center of the intersecting AABB of AABBs of two geoms
     intersect_lower = qd.max(geoms_state.aabb_min[i_ga, i_b], geoms_state.aabb_min[i_gb, i_b])

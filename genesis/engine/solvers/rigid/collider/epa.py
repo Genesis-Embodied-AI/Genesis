@@ -20,9 +20,7 @@ from .gjk_utils import (
     func_origin_tetra_intersection,
     func_project_origin_to_plane,
 )
-from .utils import (
-    func_is_discrete_geoms,
-)
+from .utils import func_is_discrete_geoms
 
 # Import func_support from gjk_support to avoid circular dependency
 from .gjk_support import func_support
@@ -228,13 +226,7 @@ def func_epa(
 
 
 @qd.func
-def func_epa_witness(
-    gjk_state: array_class.GJKState,
-    i_ga,
-    i_gb,
-    i_b,
-    i_f,
-):
+def func_epa_witness(gjk_state: array_class.GJKState, i_ga, i_gb, i_b, i_f):
     """
     Compute the witness points from the geometries for the face i_f of the polytope.
     """
@@ -247,12 +239,7 @@ def func_epa_witness(
     face_v3 = gjk_state.polytope_verts.mink[i_b, face_iv3]
     face_normal = gjk_state.polytope_faces.normal[i_b, i_f]
 
-    _lambda = func_triangle_affine_coords(
-        face_normal,
-        face_v1,
-        face_v2,
-        face_v3,
-    )
+    _lambda = func_triangle_affine_coords(face_normal, face_v1, face_v2, face_v3)
 
     # Point on geom 1
     v1 = gjk_state.polytope_verts.obj1[i_b, face_iv1]
@@ -271,12 +258,7 @@ def func_epa_witness(
 
 
 @qd.func
-def func_epa_horizon(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    nearest_i_f,
-):
+def func_epa_horizon(gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_b, nearest_i_f):
     """
     Compute the horizon, which represents the area of the polytope that is visible from the vertex w, and thus
     should be deleted for the expansion of the polytope.
@@ -341,12 +323,7 @@ def func_epa_horizon(
 
 
 @qd.func
-def func_add_edge_to_horizon(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-    i_e,
-):
+def func_add_edge_to_horizon(gjk_state: array_class.GJKState, i_b, i_f, i_e):
     """
     Add an edge to the horizon data structure.
     """
@@ -359,12 +336,7 @@ def func_add_edge_to_horizon(
 
 
 @qd.func
-def func_get_edge_idx(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-    i_v,
-):
+def func_get_edge_idx(gjk_state: array_class.GJKState, i_b, i_f, i_v):
     """
     Get the edge index from the face, starting from the vertex i_v.
 
@@ -381,11 +353,7 @@ def func_get_edge_idx(
 
 
 @qd.func
-def func_delete_face_from_polytope(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_f,
-):
+def func_delete_face_from_polytope(gjk_state: array_class.GJKState, i_b, i_f):
     """
     Delete the face from the polytope.
     """
@@ -728,13 +696,7 @@ def func_epa_init_polytope_3d(
 
 
 @qd.func
-def func_epa_init_polytope_4d(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
+def func_epa_init_polytope_4d(gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_ga, i_gb, i_b):
     """
     Create the polytope for EPA from a 3-simplex (tetrahedron).
 
@@ -884,15 +846,7 @@ def func_epa_support(
 
 @qd.func
 def func_attach_face_to_polytope(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-    i_a1,
-    i_a2,
-    i_a3,
+    gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3
 ):
     """
     Attach a face to the polytope.
@@ -932,13 +886,7 @@ def func_attach_face_to_polytope(
 
 
 @qd.func
-def func_replace_simplex_3(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-):
+def func_replace_simplex_3(gjk_state: array_class.GJKState, i_b, i_v1, i_v2, i_v3):
     """
     Replace the simplex with a 2-simplex (triangle) from polytope vertices.
 
@@ -1181,14 +1129,7 @@ def func_safe_epa(
 
 
 @qd.func
-def func_safe_epa_witness(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
-    i_f,
-):
+def func_safe_epa_witness(gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_ga, i_gb, i_b, i_f):
     """
     Compute the witness points from the geometries for the face i_f of the polytope.
     """
@@ -1248,13 +1189,7 @@ def func_safe_epa_witness(
 
 
 @qd.func
-def func_safe_epa_init(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_ga,
-    i_gb,
-    i_b,
-):
+def func_safe_epa_init(gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_ga, i_gb, i_b):
     """
     Create the polytope for safe EPA from a 3-simplex (tetrahedron).
 
@@ -1302,15 +1237,7 @@ def func_safe_epa_init(
 
 @qd.func
 def func_safe_attach_face_to_polytope(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    i_v1,
-    i_v2,
-    i_v3,
-    i_a1,
-    i_a2,
-    i_a3,
+    gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_b, i_v1, i_v2, i_v3, i_a1, i_a2, i_a3
 ):
     """
     Attach a face to the polytope.
@@ -1386,12 +1313,7 @@ def func_safe_attach_face_to_polytope(
 
 
 @qd.func
-def func_plane_normal(
-    gjk_info: array_class.GJKInfo,
-    v1,
-    v2,
-    v3,
-):
+def func_plane_normal(gjk_info: array_class.GJKInfo, v1, v2, v3):
     """
     Compute the reliable normal of the plane defined by three points.
     """

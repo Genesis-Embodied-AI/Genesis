@@ -6,13 +6,7 @@ from genesis.constants import GEOM_TYPE
 
 
 @qd.func
-def func_closest_points_on_segments(
-    seg_a_p1,
-    seg_a_p2,
-    seg_b_p1,
-    seg_b_p2,
-    EPS,
-):
+def func_closest_points_on_segments(seg_a_p1, seg_a_p2, seg_b_p1, seg_b_p2, EPS):
     """
     Compute closest points on two line segments using analytical solution.
 
@@ -66,11 +60,7 @@ def func_closest_points_on_segments(
 
 
 @qd.func
-def func_det3(
-    v1,
-    v2,
-    v3,
-):
+def func_det3(v1, v2, v3):
     """
     Compute the determinant of a 3x3 matrix M = [v1 | v2 | v3].
     """
@@ -103,10 +93,7 @@ def func_is_geom_aabbs_overlap(geoms_state: array_class.GeomsState, i_ga, i_gb, 
 
 
 @qd.func
-def func_is_discrete_geom(
-    geoms_info: array_class.GeomsInfo,
-    i_g,
-):
+def func_is_discrete_geom(geoms_info: array_class.GeomsInfo, i_g):
     """
     Check if the given geom is a discrete geometry.
     """
@@ -115,11 +102,7 @@ def func_is_discrete_geom(
 
 
 @qd.func
-def func_is_discrete_geoms(
-    geoms_info: array_class.GeomsInfo,
-    i_ga,
-    i_gb,
-):
+def func_is_discrete_geoms(geoms_info: array_class.GeomsInfo, i_ga, i_gb):
     """
     Check if the given geoms are discrete geometries.
     """

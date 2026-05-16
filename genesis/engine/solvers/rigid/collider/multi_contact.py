@@ -13,9 +13,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 
 from .constants import RETURN_CODE
-from .utils import (
-    func_is_equal_vec,
-)
+from .utils import func_is_equal_vec
 
 
 @qd.func
@@ -259,14 +257,7 @@ def func_multi_contact(
 
 
 @qd.func
-def func_simplex_dim(
-    v1i,
-    v2i,
-    v3i,
-    v1,
-    v2,
-    v3,
-):
+def func_simplex_dim(v1i, v2i, v3i, v1, v2, v3):
     """
     Determine the dimension of the given simplex (1-3).
 
@@ -420,13 +411,7 @@ def func_potential_box_normals(
 
 
 @qd.func
-def func_cmp_bit(
-    v1,
-    v2,
-    v3,
-    n,
-    shift,
-):
+def func_cmp_bit(v1, v2, v3, n, shift):
     """
     Compare one bit of v1 and v2 that sits at position `shift` (shift = 0 for the LSB, 1 for the next bit, ...).
 
@@ -477,8 +462,7 @@ def func_box_normal_from_collision_normal(
     """
     # Every box face normal
     normals = qd.Vector(
-        [1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0],
-        dt=gs.qd_float,
+        [1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0], dt=gs.qd_float
     )
 
     # Get local collision normal
@@ -579,13 +563,7 @@ def func_potential_mesh_normals(
 
 
 @qd.func
-def func_find_aligned_faces(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    nv,
-    nw,
-):
+def func_find_aligned_faces(gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_b, nv, nw):
     """
     Find if any two faces from [contact_faces] are aligned.
     """
@@ -746,10 +724,7 @@ def func_potential_mesh_edge_normals(
 
 
 @qd.func
-def func_safe_normalize(
-    gjk_info: array_class.GJKInfo,
-    v,
-):
+def func_safe_normalize(gjk_info: array_class.GJKInfo, v):
     """
     Normalize the vector [v] safely.
     """
@@ -769,12 +744,7 @@ def func_safe_normalize(
 
 @qd.func
 def func_find_aligned_edge_face(
-    gjk_state: array_class.GJKState,
-    gjk_info: array_class.GJKInfo,
-    i_b,
-    nedge,
-    nface,
-    is_edge_face,
+    gjk_state: array_class.GJKState, gjk_info: array_class.GJKInfo, i_b, nedge, nface, is_edge_face
 ):
     """
     Find if an edge and face from [contact_faces] are aligned.
@@ -1057,12 +1027,7 @@ def func_clip_polygon(
 
 
 @qd.func
-def func_halfspace(
-    gjk_info: array_class.GJKInfo,
-    a,
-    n,
-    p,
-):
+def func_halfspace(gjk_info: array_class.GJKInfo, a, n, p):
     """
     Check if the point [p] is inside the half-space defined by the plane with normal [n] and point [a].
     """
@@ -1070,13 +1035,7 @@ def func_halfspace(
 
 
 @qd.func
-def func_plane_intersect(
-    gjk_info: array_class.GJKInfo,
-    pn,
-    pd,
-    v1,
-    v2,
-):
+def func_plane_intersect(gjk_info: array_class.GJKInfo, pn, pd, v1, v2):
     """
     Compute the intersection point of the line segment [v1, v2]
     with the plane defined by the normal [pn] and distance [pd].
@@ -1102,12 +1061,7 @@ def func_plane_intersect(
 
 
 @qd.func
-def func_approximate_polygon_with_quad(
-    gjk_state: array_class.GJKState,
-    i_b,
-    polygon_start,
-    nverts,
-):
+def func_approximate_polygon_with_quad(gjk_state: array_class.GJKState, i_b, polygon_start, nverts):
     """
     Find a convex quadrilateral that approximates the given N-gon [polygon]. We find it by selecting the four
     vertices in the polygon that form the maximum area quadrilateral.
@@ -1165,15 +1119,7 @@ def func_approximate_polygon_with_quad(
 
 
 @qd.func
-def func_quadrilateral_area(
-    gjk_state: array_class.GJKState,
-    i_b,
-    i_0,
-    i_v0,
-    i_v1,
-    i_v2,
-    i_v3,
-):
+def func_quadrilateral_area(gjk_state: array_class.GJKState, i_b, i_0, i_v0, i_v1, i_v2, i_v3):
     """
     Compute the area of the quadrilateral formed by vertices [i_v0, i_v1, i_v2, i_v3] in the [verts] array.
     """

@@ -81,11 +81,7 @@ class SupportField:
         )
 
         _kernel_init_support(
-            self.solver._static_rigid_sim_config,
-            self._support_field_info,
-            support_cell_start,
-            support_v,
-            support_vid,
+            self.solver._static_rigid_sim_config, self._support_field_info, support_cell_start, support_v, support_vid
         )
 
         self._is_active = True
@@ -265,11 +261,7 @@ def _func_support_capsule(
 
 
 @qd.func
-def _func_support_prism(
-    collider_state: array_class.ColliderState,
-    d,
-    i_b,
-):
+def _func_support_prism(collider_state: array_class.ColliderState, d, i_b):
     istart = 3
     if d[2] < 0:
         istart = 0
@@ -311,10 +303,7 @@ def _func_support_box(
 
 @qd.func
 def _func_count_supports_world(
-    support_field_info: array_class.SupportFieldInfo,
-    d,
-    i_g,
-    quat: qd.types.vector(4, dtype=gs.qd_float),
+    support_field_info: array_class.SupportFieldInfo, d, i_g, quat: qd.types.vector(4, dtype=gs.qd_float)
 ):
     """
     Count the number of valid support points for the given world direction.
@@ -325,11 +314,7 @@ def _func_count_supports_world(
 
 
 @qd.func
-def _func_count_supports_mesh(
-    support_field_info: array_class.SupportFieldInfo,
-    d_mesh,
-    i_g,
-):
+def _func_count_supports_mesh(support_field_info: array_class.SupportFieldInfo, d_mesh, i_g):
     """
     Count the number of distinct support vertices tied for the maximum dot product in the given direction.
 
@@ -397,10 +382,7 @@ def _func_count_supports_mesh(
 
 
 @qd.func
-def _func_count_supports_box(
-    d,
-    quat: qd.types.vector(4, dtype=gs.qd_float),
-):
+def _func_count_supports_box(d, quat: qd.types.vector(4, dtype=gs.qd_float)):
     """
     Count the number of valid support points for a box in the given direction.
 

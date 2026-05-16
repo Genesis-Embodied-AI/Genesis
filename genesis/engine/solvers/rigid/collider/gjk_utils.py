@@ -13,13 +13,7 @@ from .utils import func_det3
 
 
 @qd.func
-def func_ray_triangle_intersection(
-    ray_v1,
-    ray_v2,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_ray_triangle_intersection(ray_v1, ray_v2, tri_v1, tri_v2, tri_v3):
     """
     Check if the ray intersects the triangle.
 
@@ -46,12 +40,7 @@ def func_ray_triangle_intersection(
 
 
 @qd.func
-def func_triangle_affine_coords(
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_triangle_affine_coords(point, tri_v1, tri_v2, tri_v3):
     """
     Compute the affine coordinates of the point with respect to the triangle.
     """
@@ -107,13 +96,7 @@ def func_triangle_affine_coords(
 
 
 @qd.func
-def func_point_triangle_intersection(
-    gjk_info: array_class.GJKInfo,
-    point,
-    tri_v1,
-    tri_v2,
-    tri_v3,
-):
+def func_point_triangle_intersection(gjk_info: array_class.GJKInfo, point, tri_v1, tri_v2, tri_v3):
     """
     Check if the point is inside the triangle.
     """
@@ -132,12 +115,7 @@ def func_point_triangle_intersection(
 
 
 @qd.func
-def func_point_plane_same_side(
-    point,
-    plane_v1,
-    plane_v2,
-    plane_v3,
-):
+def func_point_plane_same_side(point, plane_v1, plane_v2, plane_v3):
     """
     Check if the point is on the same side of the plane as the origin.
     """
@@ -157,12 +135,7 @@ def func_point_plane_same_side(
 
 
 @qd.func
-def func_origin_tetra_intersection(
-    tet_v1,
-    tet_v2,
-    tet_v3,
-    tet_v4,
-):
+def func_origin_tetra_intersection(tet_v1, tet_v2, tet_v3, tet_v4):
     """
     Check if the origin is inside the tetrahedron.
     """
@@ -182,12 +155,7 @@ def func_origin_tetra_intersection(
 
 
 @qd.func
-def func_project_origin_to_plane(
-    gjk_info: array_class.GJKInfo,
-    v1,
-    v2,
-    v3,
-):
+def func_project_origin_to_plane(gjk_info: array_class.GJKInfo, v1, v2, v3):
     """
     Project the origin onto the plane defined by the simplex vertices.
     """
