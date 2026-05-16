@@ -386,6 +386,7 @@ def func_contact_mpr_terrain(
     i_gb,
     i_b,
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
 ):
@@ -473,6 +474,7 @@ def func_contact_mpr_terrain(
 
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
                                     gst,
+                                    mpr_state,
                                     static_rigid_sim_config,
                                     collider_static_config,
                                     i_ga,
@@ -527,6 +529,8 @@ def func_convex_convex_contact(
     i_gb,
     i_b,
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -672,6 +676,7 @@ def func_convex_convex_contact(
                             if not is_mpr_updated:
                                 is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
                                     gst,
+                                    mpr_state,
                                     static_rigid_sim_config,
                                     collider_static_config,
                                     i_ga,
@@ -701,6 +706,7 @@ def func_convex_convex_contact(
                             if qd.static(static_rigid_sim_config.requires_grad):
                                 diff_gjk.func_gjk_contact(
                                     gst,
+                                    gjk_state,
                                     static_rigid_sim_config,
                                     collider_static_config,
                                     i_ga,
@@ -716,6 +722,7 @@ def func_convex_convex_contact(
                             else:
                                 gjk.func_gjk_contact(
                                     gst,
+                                    gjk_state,
                                     static_rigid_sim_config,
                                     collider_static_config,
                                     gjk_static_config,
@@ -728,44 +735,44 @@ def func_convex_convex_contact(
                                     gb_quat_current,
                                 )
 
-                            is_col = gst.gjk_state.is_col[i_b] == 1
-                            penetration = gst.gjk_state.penetration[i_b]
-                            n_contacts = gst.gjk_state.n_contacts[i_b]
+                            is_col = gjk_state.is_col[i_b] == 1
+                            penetration = gjk_state.penetration[i_b]
+                            n_contacts = gjk_state.n_contacts[i_b]
 
                             if is_col:
                                 if qd.static(static_rigid_sim_config.requires_grad):
                                     for i_c in range(n_contacts):
-                                        func_add_diff_contact_input(i_ga, i_gb, i_b, i_c, gst)
+                                        func_add_diff_contact_input(i_ga, i_gb, i_b, i_c, gst, gjk_state)
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
-                                            gst.gjk_state.normal[i_b, i_c],
-                                            gst.gjk_state.contact_pos[i_b, i_c],
-                                            gst.gjk_state.diff_penetration[i_b, i_c],
+                                            gjk_state.normal[i_b, i_c],
+                                            gjk_state.contact_pos[i_b, i_c],
+                                            gjk_state.diff_penetration[i_b, i_c],
                                             i_b,
                                             i_pair,
                                             gst,
                                         )
                                     break
                                 else:
-                                    if gst.gjk_state.multi_contact_flag[i_b]:
+                                    if gjk_state.multi_contact_flag[i_b]:
                                         # Since we already found multiple contact points, add the discovered contact
                                         # points and stop multi-contact search.
                                         for i_c in range(n_contacts):
                                             # Ignore contact points if the number of contacts exceeds the limit.
                                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                                contact_pos = gst.gjk_state.contact_pos[i_b, i_c]
-                                                normal = gst.gjk_state.normal[i_b, i_c]
+                                                contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                                normal = gjk_state.normal[i_b, i_c]
                                                 if qd.static(static_rigid_sim_config.requires_grad):
-                                                    penetration = gst.gjk_state.diff_penetration[i_b, i_c]
+                                                    penetration = gjk_state.diff_penetration[i_b, i_c]
                                                 func_add_contact(
                                                     i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst
                                                 )
 
                                         break
                                     else:
-                                        contact_pos = gst.gjk_state.contact_pos[i_b, 0]
-                                        normal = gst.gjk_state.normal[i_b, 0]
+                                        contact_pos = gjk_state.contact_pos[i_b, 0]
+                                        normal = gjk_state.normal[i_b, 0]
 
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
@@ -858,6 +865,8 @@ def _func_multicontact_run_detection(
     gb_pos: qd.types.vector(3, dtype=gs.qd_float),
     gb_quat: qd.types.vector(4, dtype=gs.qd_float),
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -911,6 +920,7 @@ def _func_multicontact_run_detection(
                     if not is_mpr_updated:
                         is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
                             gst,
+                            mpr_state,
                             static_rigid_sim_config,
                             collider_static_config,
                             i_ga,
@@ -929,6 +939,7 @@ def _func_multicontact_run_detection(
                 if qd.static(not static_rigid_sim_config.requires_grad):
                     gjk.func_gjk_contact(
                         gst,
+                        gjk_state,
                         static_rigid_sim_config,
                         collider_static_config,
                         gjk_static_config,
@@ -940,11 +951,11 @@ def _func_multicontact_run_detection(
                         gb_pos,
                         gb_quat,
                     )
-                    is_col = gst.gjk_state.is_col[i_scratch] == 1
-                    penetration = gst.gjk_state.penetration[i_scratch]
+                    is_col = gjk_state.is_col[i_scratch] == 1
+                    penetration = gjk_state.penetration[i_scratch]
                     if is_col:
-                        contact_pos = gst.gjk_state.contact_pos[i_scratch, 0]
-                        normal = gst.gjk_state.normal[i_scratch, 0]
+                        contact_pos = gjk_state.contact_pos[i_scratch, 0]
+                        normal = gjk_state.normal[i_scratch, 0]
                     used_gjk = True
 
     return is_col, normal, contact_pos, penetration, used_gjk
@@ -961,6 +972,8 @@ def _func_multicontact_mpr(
     normal_0: qd.types.vector(3, dtype=gs.qd_float),
     penetration_0,
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -1016,6 +1029,8 @@ def _func_multicontact_mpr(
                 gb_pos_current,
                 gb_quat_current,
                 gst,
+                mpr_state,
+                gjk_state,
                 static_rigid_sim_config,
                 collider_static_config,
                 gjk_static_config,
@@ -1116,6 +1131,8 @@ def _func_multicontact_gjk_full(
     i_gb,
     i_pair,
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -1188,6 +1205,8 @@ def _func_multicontact_gjk_full(
                     gb_pos_current,
                     gb_quat_current,
                     gst,
+                    mpr_state,
+                    gjk_state,
                     static_rigid_sim_config,
                     collider_static_config,
                     gjk_static_config,
@@ -1197,16 +1216,16 @@ def _func_multicontact_gjk_full(
                 )
 
                 if is_col and _used_gjk:
-                    n_contacts_gjk = gst.gjk_state.n_contacts[i_scratch]
-                    if gst.gjk_state.multi_contact_flag[i_scratch]:
+                    n_contacts_gjk = gjk_state.n_contacts[i_scratch]
+                    if gjk_state.multi_contact_flag[i_scratch]:
                         for i_c in range(n_contacts_gjk):
                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                local_contact_pos[n_con, 0] = gst.gjk_state.contact_pos[i_scratch, i_c][0]
-                                local_contact_pos[n_con, 1] = gst.gjk_state.contact_pos[i_scratch, i_c][1]
-                                local_contact_pos[n_con, 2] = gst.gjk_state.contact_pos[i_scratch, i_c][2]
-                                local_normal[n_con, 0] = gst.gjk_state.normal[i_scratch, i_c][0]
-                                local_normal[n_con, 1] = gst.gjk_state.normal[i_scratch, i_c][1]
-                                local_normal[n_con, 2] = gst.gjk_state.normal[i_scratch, i_c][2]
+                                local_contact_pos[n_con, 0] = gjk_state.contact_pos[i_scratch, i_c][0]
+                                local_contact_pos[n_con, 1] = gjk_state.contact_pos[i_scratch, i_c][1]
+                                local_contact_pos[n_con, 2] = gjk_state.contact_pos[i_scratch, i_c][2]
+                                local_normal[n_con, 0] = gjk_state.normal[i_scratch, i_c][0]
+                                local_normal[n_con, 1] = gjk_state.normal[i_scratch, i_c][1]
+                                local_normal[n_con, 2] = gjk_state.normal[i_scratch, i_c][2]
                                 local_penetration[n_con, 0] = penetration
                                 n_con = n_con + 1
                         gjk_multi_done = True
@@ -1300,6 +1319,8 @@ def _func_multicontact_gjk_full(
 @qd.kernel(fastcache=True)
 def _func_narrowphase_multicontact_mixed(
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -1326,6 +1347,8 @@ def _func_narrowphase_multicontact_mixed(
                     i_gb,
                     i_pair,
                     gst,
+                    mpr_state,
+                    gjk_state,
                     static_rigid_sim_config,
                     collider_static_config,
                     gjk_static_config,
@@ -1354,6 +1377,8 @@ def _func_narrowphase_multicontact_mixed(
                     normal_0,
                     penetration_0,
                     gst,
+                    mpr_state,
+                    gjk_state,
                     static_rigid_sim_config,
                     collider_static_config,
                     gjk_static_config,
@@ -1416,6 +1441,8 @@ def _func_enqueue_for_multicontact(
 @qd.kernel(fastcache=True)
 def _func_narrowphase_contact0(
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     n_envs: qd.template(),
@@ -1511,9 +1538,10 @@ def _func_narrowphase_contact0(
                 if qd.static(
                     collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.GJK, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
-                    gjk.clear_cache(gst, flat_idx)
+                    gjk.clear_cache(gst, gjk_state, flat_idx)
                     distance = gjk.func_gjk(
                         gst,
+                        gjk_state,
                         static_rigid_sim_config,
                         collider_static_config,
                         i_ga,
@@ -1544,6 +1572,7 @@ def _func_narrowphase_contact0(
                         if not is_mpr_updated:
                             is_col, normal, penetration, contact_pos = mpr.func_mpr_contact(
                                 gst,
+                                mpr_state,
                                 static_rigid_sim_config,
                                 collider_static_config,
                                 i_ga,
@@ -1592,6 +1621,8 @@ def _func_narrowphase_contact0(
 @qd.kernel(fastcache=True)
 def func_narrow_phase_convex_vs_convex(
     gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    gjk_state: array_class.GJKState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
@@ -1622,6 +1653,8 @@ def func_narrow_phase_convex_vs_convex(
                 ):
                     func_convex_convex_contact(
                         gst=gst,
+                        mpr_state=mpr_state,
+                        gjk_state=gjk_state,
                         i_ga=i_ga,
                         i_gb=i_gb,
                         i_b=i_b,
@@ -1632,7 +1665,11 @@ def func_narrow_phase_convex_vs_convex(
 
 
 @qd.kernel(fastcache=True)
-def func_narrow_phase_diff_convex_vs_convex(gst: array_class.GlobalState, static_rigid_sim_config: qd.template()):
+def func_narrow_phase_diff_convex_vs_convex(
+    gst: array_class.GlobalState,
+    gjk_state: array_class.GJKState,
+    static_rigid_sim_config: qd.template(),
+):
     # Compute reference contacts
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_c, i_b in qd.ndrange(gst.collider_state.contact_data.pos.shape[0], gst.collider_state.active_buffer.shape[1]):
@@ -1645,7 +1682,7 @@ def func_narrow_phase_diff_convex_vs_convex(gst: array_class.GlobalState, static
             if is_ref:
                 ref_penetration = -1.0
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    gst, i_ga, i_gb, i_b, i_c, ref_penetration
+                    gst, gjk_state, i_ga, i_gb, i_b, i_c, ref_penetration
                 )
                 gst.collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
@@ -1672,7 +1709,7 @@ def func_narrow_phase_diff_convex_vs_convex(gst: array_class.GlobalState, static
             if not is_ref:
                 ref_penetration = gst.collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                    gst, i_ga, i_gb, i_b, i_c, ref_penetration
+                    gst, gjk_state, i_ga, i_gb, i_b, i_c, ref_penetration
                 )
 
                 func_set_contact(
@@ -1712,7 +1749,10 @@ def func_narrow_phase_convex_specializations(
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_any_vs_terrain(
-    gst: array_class.GlobalState, static_rigid_sim_config: qd.template(), collider_static_config: qd.template()
+    gst: array_class.GlobalState,
+    mpr_state: array_class.MPRState,
+    static_rigid_sim_config: qd.template(),
+    collider_static_config: qd.template(),
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1732,7 +1772,9 @@ def func_narrow_phase_any_vs_terrain(
                     i_ga, i_gb = i_gb, i_ga
 
                 if gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
-                    func_contact_mpr_terrain(i_ga, i_gb, i_b, gst, static_rigid_sim_config, collider_static_config)
+                    func_contact_mpr_terrain(
+                        i_ga, i_gb, i_b, gst, mpr_state, static_rigid_sim_config, collider_static_config
+                    )
 
 
 @qd.kernel(fastcache=True)

@@ -588,7 +588,7 @@ class Collider:
         collider_kernel_reset(
             envs_idx,
             self._solver._static_rigid_sim_config,
-            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+            self._build_global_state(),
             cache_only,
         )
 
@@ -652,18 +652,16 @@ class Collider:
             fn = kernel_collider_clear
         fn(
             envs_idx,
-            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+            self._build_global_state(),
             self._solver._static_rigid_sim_config,
         )
 
-    def _build_global_state(
-        self, mpr_state: array_class.MPRState, gjk_state: array_class.GJKState
-    ) -> array_class.GlobalState:
+    def _build_global_state(self) -> array_class.GlobalState:
         """Bundle every dataclass narrowphase wants into a single GlobalState.
 
-        ``mpr_state`` / ``gjk_state`` vary per narrowphase entry point (e.g. contact0 uses dedicated
-        scratch buffers, ``_call_multicontact`` uses the multicontact ones). The remaining fields
-        come from the solver / subsystem objects that are stable for the lifetime of the Collider.
+        The fields come from the solver / subsystem objects that are stable for the lifetime of
+        the Collider; algorithm-local scratch buffers (MPRState / GJKState) are not part of
+        ``GlobalState`` -- they are passed explicitly to the kernels that need them.
         """
         s = self._solver
         return array_class.GlobalState(
@@ -671,9 +669,7 @@ class Collider:
             constraint_state=s.constraint_solver.constraint_state,
             collider_state=self._collider_state,
             collider_info=self._collider_info,
-            mpr_state=mpr_state,
             mpr_info=self._mpr._mpr_info,
-            gjk_state=gjk_state,
             gjk_info=self._gjk._gjk_info,
             sdf_info=self._sdf._sdf_info,
             support_field_info=self._support_field._support_field_info,
@@ -696,7 +692,9 @@ class Collider:
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact_mixed(
-            self._build_global_state(mpr_state=self._multicontact_mpr_state, gjk_state=self._multicontact_gjk_state),
+            self._build_global_state(),
+            self._multicontact_mpr_state,
+            self._multicontact_gjk_state,
             self._solver._static_rigid_sim_config,
             self._collider_static_config,
             self._gjk._gjk_static_config,
@@ -728,50 +726,51 @@ class Collider:
             self._solver._errno,
         )
         if self._use_split_narrowphase:
-            narrowphase._func_reset_narrowphase_work_queues(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state)
-            )
+            narrowphase._func_reset_narrowphase_work_queues(self._build_global_state())
             narrowphase._func_narrowphase_contact0(
-                self._build_global_state(mpr_state=self._contact0_mpr_state, gjk_state=self._contact0_gjk_state),
+                self._build_global_state(),
+                self._contact0_mpr_state,
+                self._contact0_gjk_state,
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
                 self._solver._B,
                 self._contact0_n_chunks,
             )
             self._call_multicontact()
-            narrowphase._func_prepare_gjk_rerun(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state)
-            )
+            narrowphase._func_prepare_gjk_rerun(self._build_global_state())
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
             narrowphase.func_narrow_phase_convex_vs_convex(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
+                self._mpr._mpr_state,
+                self._gjk._gjk_state,
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
                 self._gjk._gjk_static_config,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
             )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
+                self._mpr._mpr_state,
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
             )
 
         if self._use_split_narrowphase:
             func_clamp_and_sort_contacts(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
                 self._solver._static_rigid_sim_config,
             )
 
@@ -833,7 +832,7 @@ class Collider:
                 iout,
                 fout,
                 self._solver._static_rigid_sim_config,
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(),
             )
 
         # Build structured view (no copy)
@@ -889,12 +888,13 @@ class Collider:
             dL_dposition,
             dL_dnormal,
             dL_dpenetration,
-            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+            self._build_global_state(),
         )
 
         # Compute gradient
         func_narrow_phase_diff_convex_vs_convex.grad(
-            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+            self._build_global_state(),
+            self._gjk._gjk_state,
             self._solver._static_rigid_sim_config,
         )
 

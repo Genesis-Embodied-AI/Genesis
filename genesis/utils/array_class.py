@@ -2010,10 +2010,10 @@ def get_rigid_adjoint_cache(solver):
 
 # =========================================== GlobalState ===========================================
 #
-# Container for the per-call set of rigid-solver dataclass state. Holding them in a single nested-dataclass argument
-# lets ``@qd.func`` and ``@qd.kernel`` signatures stay short and add new state without touching every callee. The
-# ``mpr_state``/``gjk_state`` fields are call-site specific (e.g. ``_call_multicontact`` uses different state objects
-# than ``detection``), so a ``GlobalState`` is constructed per call site rather than cached on the solver.
+# Container for the rigid-solver-wide dataclass state.  Holding it in a single nested-dataclass argument lets
+# ``@qd.func`` and ``@qd.kernel`` signatures stay short and add new state without touching every callee.  The
+# instance is stable for the lifetime of the ``Collider``; algorithm-local scratch buffers (e.g. ``MPRState`` /
+# ``GJKState``) are passed as separate parameters since each entry point uses its own.
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -2022,9 +2022,7 @@ class GlobalState:
     constraint_state: ConstraintState
     collider_state: ColliderState
     collider_info: ColliderInfo
-    mpr_state: MPRState
     mpr_info: MPRInfo
-    gjk_state: GJKState
     gjk_info: GJKInfo
     sdf_info: SDFInfo
     support_field_info: SupportFieldInfo
