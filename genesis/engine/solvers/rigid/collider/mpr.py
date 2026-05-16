@@ -26,39 +26,39 @@ def clear(mpr_state: qd.template()):
 
 
 @qd.func
-def func_find_intersect_midpoint(global_state: array_class.GlobalState, i_ga, i_gb, i_b):
+def func_find_intersect_midpoint(gst: array_class.GlobalState, i_ga, i_gb, i_b):
     # return the center of the intersecting AABB of AABBs of two geoms
-    intersect_lower = qd.max(global_state.geoms_state.aabb_min[i_ga, i_b], global_state.geoms_state.aabb_min[i_gb, i_b])
-    intersect_upper = qd.min(global_state.geoms_state.aabb_max[i_ga, i_b], global_state.geoms_state.aabb_max[i_gb, i_b])
+    intersect_lower = qd.max(gst.geoms_state.aabb_min[i_ga, i_b], gst.geoms_state.aabb_min[i_gb, i_b])
+    intersect_upper = qd.min(gst.geoms_state.aabb_max[i_ga, i_b], gst.geoms_state.aabb_max[i_gb, i_b])
     return 0.5 * (intersect_lower + intersect_upper)
 
 
 @qd.func
-def mpr_swap(global_state: array_class.GlobalState, i, j, i_ga, i_gb, i_b):
-    global_state.mpr_state.simplex_support.v1[i, i_b], global_state.mpr_state.simplex_support.v1[j, i_b] = (
-        global_state.mpr_state.simplex_support.v1[j, i_b],
-        global_state.mpr_state.simplex_support.v1[i, i_b],
+def mpr_swap(gst: array_class.GlobalState, i, j, i_ga, i_gb, i_b):
+    gst.mpr_state.simplex_support.v1[i, i_b], gst.mpr_state.simplex_support.v1[j, i_b] = (
+        gst.mpr_state.simplex_support.v1[j, i_b],
+        gst.mpr_state.simplex_support.v1[i, i_b],
     )
-    global_state.mpr_state.simplex_support.v2[i, i_b], global_state.mpr_state.simplex_support.v2[j, i_b] = (
-        global_state.mpr_state.simplex_support.v2[j, i_b],
-        global_state.mpr_state.simplex_support.v2[i, i_b],
+    gst.mpr_state.simplex_support.v2[i, i_b], gst.mpr_state.simplex_support.v2[j, i_b] = (
+        gst.mpr_state.simplex_support.v2[j, i_b],
+        gst.mpr_state.simplex_support.v2[i, i_b],
     )
-    global_state.mpr_state.simplex_support.v[i, i_b], global_state.mpr_state.simplex_support.v[j, i_b] = (
-        global_state.mpr_state.simplex_support.v[j, i_b],
-        global_state.mpr_state.simplex_support.v[i, i_b],
+    gst.mpr_state.simplex_support.v[i, i_b], gst.mpr_state.simplex_support.v[j, i_b] = (
+        gst.mpr_state.simplex_support.v[j, i_b],
+        gst.mpr_state.simplex_support.v[i, i_b],
     )
 
 
 @qd.func
-def mpr_point_segment_dist2(global_state: array_class.GlobalState, P, A, B):
+def mpr_point_segment_dist2(gst: array_class.GlobalState, P, A, B):
     AB = B - A
     AP = P - A
     AB_AB = AB.dot(AB)
     AP_AB = AP.dot(AB)
     t = AP_AB / AB_AB
-    if t < global_state.mpr_info.CCD_EPS[None]:
+    if t < gst.mpr_info.CCD_EPS[None]:
         t = gs.qd_float(0.0)
-    elif t > 1.0 - global_state.mpr_info.CCD_EPS[None]:
+    elif t > 1.0 - gst.mpr_info.CCD_EPS[None]:
         t = gs.qd_float(1.0)
     Q = A + AB * t
 
@@ -66,7 +66,7 @@ def mpr_point_segment_dist2(global_state: array_class.GlobalState, P, A, B):
 
 
 @qd.func
-def mpr_point_tri_depth(global_state: array_class.GlobalState, P, x0, B, C):
+def mpr_point_tri_depth(gst: array_class.GlobalState, P, x0, B, C):
     d1 = B - x0
     d2 = C - x0
     a = x0 - P
@@ -79,29 +79,29 @@ def mpr_point_tri_depth(global_state: array_class.GlobalState, P, x0, B, C):
     d = w * v - r * r
     dist = s = t = gs.qd_float(0.0)
     pdir = gs.qd_vec3([0.0, 0.0, 0.0])
-    if qd.abs(d) < global_state.mpr_info.CCD_EPS[None]:
+    if qd.abs(d) < gst.mpr_info.CCD_EPS[None]:
         s = t = -1.0
     else:
         s = (q * r - w * p) / d
         t = (-s * r - q) / w
 
     if (
-        (s > -global_state.mpr_info.CCD_EPS[None])
-        and (s < 1.0 + global_state.mpr_info.CCD_EPS[None])
-        and (t > -global_state.mpr_info.CCD_EPS[None])
-        and (t < 1.0 + global_state.mpr_info.CCD_EPS[None])
-        and (t + s < 1.0 + global_state.mpr_info.CCD_EPS[None])
+        (s > -gst.mpr_info.CCD_EPS[None])
+        and (s < 1.0 + gst.mpr_info.CCD_EPS[None])
+        and (t > -gst.mpr_info.CCD_EPS[None])
+        and (t < 1.0 + gst.mpr_info.CCD_EPS[None])
+        and (t + s < 1.0 + gst.mpr_info.CCD_EPS[None])
     ):
         pdir = x0 + d1 * s + d2 * t
         dist = (P - pdir).norm_sqr()
     else:
-        dist, pdir = mpr_point_segment_dist2(global_state, P, x0, B)
-        dist2, pdir2 = mpr_point_segment_dist2(global_state, P, x0, C)
+        dist, pdir = mpr_point_segment_dist2(gst, P, x0, B)
+        dist2, pdir2 = mpr_point_segment_dist2(gst, P, x0, C)
         if dist2 < dist:
             dist = dist2
             pdir = pdir2
 
-        dist2, pdir2 = mpr_point_segment_dist2(global_state, P, B, C)
+        dist2, pdir2 = mpr_point_segment_dist2(gst, P, B, C)
         if dist2 < dist:
             dist = dist2
             pdir = pdir2
@@ -110,38 +110,38 @@ def mpr_point_tri_depth(global_state: array_class.GlobalState, P, x0, B, C):
 
 
 @qd.func
-def mpr_portal_dir(global_state: array_class.GlobalState, i_ga, i_gb, i_b):
-    v2v1 = global_state.mpr_state.simplex_support.v[2, i_b] - global_state.mpr_state.simplex_support.v[1, i_b]
-    v3v1 = global_state.mpr_state.simplex_support.v[3, i_b] - global_state.mpr_state.simplex_support.v[1, i_b]
+def mpr_portal_dir(gst: array_class.GlobalState, i_ga, i_gb, i_b):
+    v2v1 = gst.mpr_state.simplex_support.v[2, i_b] - gst.mpr_state.simplex_support.v[1, i_b]
+    v3v1 = gst.mpr_state.simplex_support.v[3, i_b] - gst.mpr_state.simplex_support.v[1, i_b]
     direction = v2v1.cross(v3v1).normalized()
     return direction
 
 
 @qd.func
-def mpr_portal_encapsules_origin(global_state: array_class.GlobalState, direction, i_ga, i_gb, i_b):
-    dot = global_state.mpr_state.simplex_support.v[1, i_b].dot(direction)
-    return dot > -global_state.mpr_info.CCD_EPS[None]
+def mpr_portal_encapsules_origin(gst: array_class.GlobalState, direction, i_ga, i_gb, i_b):
+    dot = gst.mpr_state.simplex_support.v[1, i_b].dot(direction)
+    return dot > -gst.mpr_info.CCD_EPS[None]
 
 
 @qd.func
-def mpr_portal_can_encapsule_origin(global_state: array_class.GlobalState, v, direction):
+def mpr_portal_can_encapsule_origin(gst: array_class.GlobalState, v, direction):
     dot = v.dot(direction)
-    return dot > -global_state.mpr_info.CCD_EPS[None]
+    return dot > -gst.mpr_info.CCD_EPS[None]
 
 
 @qd.func
-def mpr_portal_reach_tolerance(global_state: array_class.GlobalState, v, direction, i_ga, i_gb, i_b):
-    dv1 = global_state.mpr_state.simplex_support.v[1, i_b].dot(direction)
-    dv2 = global_state.mpr_state.simplex_support.v[2, i_b].dot(direction)
-    dv3 = global_state.mpr_state.simplex_support.v[3, i_b].dot(direction)
+def mpr_portal_reach_tolerance(gst: array_class.GlobalState, v, direction, i_ga, i_gb, i_b):
+    dv1 = gst.mpr_state.simplex_support.v[1, i_b].dot(direction)
+    dv2 = gst.mpr_state.simplex_support.v[2, i_b].dot(direction)
+    dv3 = gst.mpr_state.simplex_support.v[3, i_b].dot(direction)
     dv4 = v.dot(direction)
     dot1 = qd.min(dv4 - dv1, dv4 - dv2, dv4 - dv3)
-    return dot1 < global_state.mpr_info.CCD_TOLERANCE[None] + global_state.mpr_info.CCD_EPS[None] * qd.max(1.0, dot1)
+    return dot1 < gst.mpr_info.CCD_TOLERANCE[None] + gst.mpr_info.CCD_EPS[None] * qd.max(1.0, dot1)
 
 
 @qd.func
 def support_driver(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     collider_static_config: qd.template(),
     direction,
     i_g,
@@ -150,29 +150,29 @@ def support_driver(
     quat: qd.types.vector(4, dtype=gs.qd_float),
 ):
     v = qd.Vector.zero(gs.qd_float, 3)
-    geom_type = global_state.geoms_info.type[i_g]
+    geom_type = gst.geoms_info.type[i_g]
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        v, v_, vid = support_field._func_support_sphere(global_state.geoms_info, direction, i_g, pos, quat, False)
+        v, v_, vid = support_field._func_support_sphere(gst.geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        v = support_field._func_support_ellipsoid(global_state.geoms_info, direction, i_g, pos, quat)
+        v = support_field._func_support_ellipsoid(gst.geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
-        v = support_field._func_support_capsule(global_state.geoms_info, direction, i_g, pos, quat, False)
+        v = support_field._func_support_capsule(gst.geoms_info, direction, i_g, pos, quat, False)
     elif geom_type == gs.GEOM_TYPE.BOX:
-        v, v_, vid = support_field._func_support_box(global_state.geoms_info, direction, i_g, pos, quat)
+        v, v_, vid = support_field._func_support_box(gst.geoms_info, direction, i_g, pos, quat)
     elif geom_type == gs.GEOM_TYPE.TERRAIN:
         if qd.static(collider_static_config.has_terrain):
-            # Terrain support doesn't depend on geometry pos/quat - uses global_state.collider_state.prism
+            # Terrain support doesn't depend on geometry pos/quat - uses gst.collider_state.prism
             # Terrain is global and not perturbed, so we use the global state directly
-            v, _ = support_field._func_support_prism(global_state.collider_state, direction, i_b)
+            v, _ = support_field._func_support_prism(gst.collider_state, direction, i_b)
     else:
-        v, v_, vid = support_field._func_support_world(global_state.support_field_info, direction, i_g, pos, quat)
+        v, v_, vid = support_field._func_support_world(gst.support_field_info, direction, i_g, pos, quat)
 
     return v
 
 
 @qd.func
 def compute_support(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     collider_static_config: qd.template(),
     direction,
     i_ga,
@@ -183,8 +183,8 @@ def compute_support(
     pos_b: qd.types.vector(3, dtype=gs.qd_float),
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
 ):
-    v1 = support_driver(global_state, collider_static_config, direction, i_ga, i_b, pos_a, quat_a)
-    v2 = support_driver(global_state, collider_static_config, -direction, i_gb, i_b, pos_b, quat_b)
+    v1 = support_driver(gst, collider_static_config, direction, i_ga, i_b, pos_a, quat_a)
+    v2 = support_driver(gst, collider_static_config, -direction, i_gb, i_b, pos_b, quat_b)
 
     v = v1 - v2
     return v, v1, v2
@@ -192,7 +192,7 @@ def compute_support(
 
 @qd.func
 def func_geom_support(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     direction,
     i_g,
     pos: qd.types.vector(3, dtype=gs.qd_float),
@@ -204,8 +204,8 @@ def func_geom_support(
     v = qd.Vector.zero(gs.qd_float, 3)
     vid = 0
 
-    for i_v in range(global_state.geoms_info.vert_start[i_g], global_state.geoms_info.vert_end[i_g]):
-        pos_local = global_state.verts_info.init_pos[i_v]
+    for i_v in range(gst.geoms_info.vert_start[i_g], gst.geoms_info.vert_end[i_g]):
+        pos_local = gst.verts_info.init_pos[i_v]
         dot = pos_local.dot(direction_in_init_frame)
         if dot > dot_max:
             v = pos_local
@@ -218,7 +218,7 @@ def func_geom_support(
 
 @qd.func
 def mpr_refine_portal(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     collider_static_config: qd.template(),
     i_ga,
     i_gb,
@@ -230,83 +230,79 @@ def mpr_refine_portal(
 ):
     ret = 1
     while True:
-        direction = mpr_portal_dir(global_state, i_ga, i_gb, i_b)
+        direction = mpr_portal_dir(gst, i_ga, i_gb, i_b)
 
-        if mpr_portal_encapsules_origin(global_state, direction, i_ga, i_gb, i_b):
+        if mpr_portal_encapsules_origin(gst, direction, i_ga, i_gb, i_b):
             ret = 0
             break
 
         v, v1, v2 = compute_support(
-            global_state, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
+            gst, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
         )
 
-        if not mpr_portal_can_encapsule_origin(global_state, v, direction) or mpr_portal_reach_tolerance(
-            global_state, v, direction, i_ga, i_gb, i_b
+        if not mpr_portal_can_encapsule_origin(gst, v, direction) or mpr_portal_reach_tolerance(
+            gst, v, direction, i_ga, i_gb, i_b
         ):
             ret = -1
             break
 
-        mpr_expand_portal(global_state, v, v1, v2, i_ga, i_gb, i_b)
+        mpr_expand_portal(gst, v, v1, v2, i_ga, i_gb, i_b)
     return ret
 
 
 @qd.func
-def mpr_find_pos(static_rigid_sim_config: qd.template(), global_state: array_class.GlobalState, i_ga, i_gb, i_b):
+def mpr_find_pos(static_rigid_sim_config: qd.template(), gst: array_class.GlobalState, i_ga, i_gb, i_b):
     b = qd.Vector([0.0, 0.0, 0.0, 0.0], dt=gs.qd_float)
 
     # Only look into the direction of the portal for consistency with penetration depth computation
     if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
         for i in range(4):
             i1, i2, i3 = (i % 2) + 1, (i + 2) % 4, 3 * ((i + 1) % 2)
-            vec = global_state.mpr_state.simplex_support.v[i1, i_b].cross(
-                global_state.mpr_state.simplex_support.v[i2, i_b]
-            )
-            b[i] = vec.dot(global_state.mpr_state.simplex_support.v[i3, i_b]) * (1 - 2 * (((i + 1) // 2) % 2))
+            vec = gst.mpr_state.simplex_support.v[i1, i_b].cross(gst.mpr_state.simplex_support.v[i2, i_b])
+            b[i] = vec.dot(gst.mpr_state.simplex_support.v[i3, i_b]) * (1 - 2 * (((i + 1) // 2) % 2))
 
     sum_ = b.sum()
 
-    if sum_ < global_state.mpr_info.CCD_EPS[None]:
-        direction = mpr_portal_dir(global_state, i_ga, i_gb, i_b)
+    if sum_ < gst.mpr_info.CCD_EPS[None]:
+        direction = mpr_portal_dir(gst, i_ga, i_gb, i_b)
         b[0] = 0.0
         for i in range(1, 4):
             i1, i2 = i % 3 + 1, (i + 1) % 3 + 1
-            vec = global_state.mpr_state.simplex_support.v[i1, i_b].cross(
-                global_state.mpr_state.simplex_support.v[i2, i_b]
-            )
+            vec = gst.mpr_state.simplex_support.v[i1, i_b].cross(gst.mpr_state.simplex_support.v[i2, i_b])
             b[i] = vec.dot(direction)
         sum_ = b.sum()
 
     p1 = gs.qd_vec3([0.0, 0.0, 0.0])
     p2 = gs.qd_vec3([0.0, 0.0, 0.0])
     for i in range(4):
-        p1 += b[i] * global_state.mpr_state.simplex_support.v1[i, i_b]
-        p2 += b[i] * global_state.mpr_state.simplex_support.v2[i, i_b]
+        p1 += b[i] * gst.mpr_state.simplex_support.v1[i, i_b]
+        p2 += b[i] * gst.mpr_state.simplex_support.v2[i, i_b]
 
     return (0.5 / sum_) * (p1 + p2)
 
 
 @qd.func
-def mpr_find_penetr_touch(global_state: array_class.GlobalState, i_ga, i_gb, i_b):
+def mpr_find_penetr_touch(gst: array_class.GlobalState, i_ga, i_gb, i_b):
     is_col = True
     penetration = gs.qd_float(0.0)
-    normal = -global_state.mpr_state.simplex_support.v[0, i_b].normalized()
-    pos = (global_state.mpr_state.simplex_support.v1[1, i_b] + global_state.mpr_state.simplex_support.v2[1, i_b]) * 0.5
+    normal = -gst.mpr_state.simplex_support.v[0, i_b].normalized()
+    pos = (gst.mpr_state.simplex_support.v1[1, i_b] + gst.mpr_state.simplex_support.v2[1, i_b]) * 0.5
     return is_col, normal, penetration, pos
 
 
 @qd.func
-def mpr_find_penetr_segment(global_state: array_class.GlobalState, i_ga, i_gb, i_b):
+def mpr_find_penetr_segment(gst: array_class.GlobalState, i_ga, i_gb, i_b):
     is_col = True
-    penetration = global_state.mpr_state.simplex_support.v[1, i_b].norm()
-    normal = -global_state.mpr_state.simplex_support.v[1, i_b].normalized()
-    pos = (global_state.mpr_state.simplex_support.v1[1, i_b] + global_state.mpr_state.simplex_support.v2[1, i_b]) * 0.5
+    penetration = gst.mpr_state.simplex_support.v[1, i_b].norm()
+    normal = -gst.mpr_state.simplex_support.v[1, i_b].normalized()
+    pos = (gst.mpr_state.simplex_support.v1[1, i_b] + gst.mpr_state.simplex_support.v2[1, i_b]) * 0.5
 
     return is_col, normal, penetration, pos
 
 
 @qd.func
 def mpr_find_penetration(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     i_ga,
@@ -325,13 +321,13 @@ def mpr_find_penetration(
     penetration = gs.qd_float(0.0)
 
     while True:
-        direction = mpr_portal_dir(global_state, i_ga, i_gb, i_b)
+        direction = mpr_portal_dir(gst, i_ga, i_gb, i_b)
         v, v1, v2 = compute_support(
-            global_state, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
+            gst, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
         )
         if (
-            mpr_portal_reach_tolerance(global_state, v, direction, i_ga, i_gb, i_b)
-            or iterations > global_state.mpr_info.CCD_ITERATIONS[None]
+            mpr_portal_reach_tolerance(gst, v, direction, i_ga, i_gb, i_b)
+            or iterations > gst.mpr_info.CCD_ITERATIONS[None]
         ):
             # The contact point is defined as the projection of the origin onto the portal, i.e. the closest point
             # to the origin that lies inside the portal.
@@ -356,49 +352,49 @@ def mpr_find_penetration(
             # https://archive.org/details/game-programming-gems-7
             if qd.static(static_rigid_sim_config.enable_mujoco_compatibility):
                 penetration, pdir = mpr_point_tri_depth(
-                    global_state,
+                    gst,
                     gs.qd_vec3([0.0, 0.0, 0.0]),
-                    global_state.mpr_state.simplex_support.v[1, i_b],
-                    global_state.mpr_state.simplex_support.v[2, i_b],
-                    global_state.mpr_state.simplex_support.v[3, i_b],
+                    gst.mpr_state.simplex_support.v[1, i_b],
+                    gst.mpr_state.simplex_support.v[2, i_b],
+                    gst.mpr_state.simplex_support.v[3, i_b],
                 )
                 normal = -pdir.normalized()
             else:
-                penetration = direction.dot(global_state.mpr_state.simplex_support.v[1, i_b])
+                penetration = direction.dot(gst.mpr_state.simplex_support.v[1, i_b])
                 normal = -direction
 
             is_col = True
-            pos = mpr_find_pos(static_rigid_sim_config, global_state, i_ga, i_gb, i_b)
+            pos = mpr_find_pos(static_rigid_sim_config, gst, i_ga, i_gb, i_b)
             break
 
-        mpr_expand_portal(global_state, v, v1, v2, i_ga, i_gb, i_b)
+        mpr_expand_portal(gst, v, v1, v2, i_ga, i_gb, i_b)
         iterations += 1
 
     return is_col, normal, penetration, pos
 
 
 @qd.func
-def mpr_expand_portal(global_state: array_class.GlobalState, v, v1, v2, i_ga, i_gb, i_b):
-    v4v0 = v.cross(global_state.mpr_state.simplex_support.v[0, i_b])
-    dot = global_state.mpr_state.simplex_support.v[1, i_b].dot(v4v0)
+def mpr_expand_portal(gst: array_class.GlobalState, v, v1, v2, i_ga, i_gb, i_b):
+    v4v0 = v.cross(gst.mpr_state.simplex_support.v[0, i_b])
+    dot = gst.mpr_state.simplex_support.v[1, i_b].dot(v4v0)
 
     i_s = gs.qd_int(0)
     if dot > 0:
-        dot = global_state.mpr_state.simplex_support.v[2, i_b].dot(v4v0)
+        dot = gst.mpr_state.simplex_support.v[2, i_b].dot(v4v0)
         i_s = 1 if dot > 0 else 3
 
     else:
-        dot = global_state.mpr_state.simplex_support.v[3, i_b].dot(v4v0)
+        dot = gst.mpr_state.simplex_support.v[3, i_b].dot(v4v0)
         i_s = 2 if dot > 0 else 1
 
-    global_state.mpr_state.simplex_support.v1[i_s, i_b] = v1
-    global_state.mpr_state.simplex_support.v2[i_s, i_b] = v2
-    global_state.mpr_state.simplex_support.v[i_s, i_b] = v
+    gst.mpr_state.simplex_support.v1[i_s, i_b] = v1
+    gst.mpr_state.simplex_support.v2[i_s, i_b] = v2
+    gst.mpr_state.simplex_support.v[i_s, i_b] = v
 
 
 @qd.func
 def mpr_discover_portal(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     collider_static_config: qd.template(),
     i_ga,
     i_gb,
@@ -410,104 +406,94 @@ def mpr_discover_portal(
     pos_b: qd.types.vector(3, dtype=gs.qd_float),
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
 ):
-    global_state.mpr_state.simplex_support.v1[0, i_b] = center_a
-    global_state.mpr_state.simplex_support.v2[0, i_b] = center_b
-    global_state.mpr_state.simplex_support.v[0, i_b] = center_a - center_b
-    global_state.mpr_state.simplex_size[i_b] = 1
+    gst.mpr_state.simplex_support.v1[0, i_b] = center_a
+    gst.mpr_state.simplex_support.v2[0, i_b] = center_b
+    gst.mpr_state.simplex_support.v[0, i_b] = center_a - center_b
+    gst.mpr_state.simplex_size[i_b] = 1
 
-    if (qd.abs(global_state.mpr_state.simplex_support.v[0, i_b]) < global_state.mpr_info.CCD_EPS[None]).all():
-        global_state.mpr_state.simplex_support.v[0, i_b][0] += 10.0 * global_state.mpr_info.CCD_EPS[None]
+    if (qd.abs(gst.mpr_state.simplex_support.v[0, i_b]) < gst.mpr_info.CCD_EPS[None]).all():
+        gst.mpr_state.simplex_support.v[0, i_b][0] += 10.0 * gst.mpr_info.CCD_EPS[None]
 
-    direction = -global_state.mpr_state.simplex_support.v[0, i_b].normalized()
+    direction = -gst.mpr_state.simplex_support.v[0, i_b].normalized()
 
-    v, v1, v2 = compute_support(
-        global_state, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
-    )
+    v, v1, v2 = compute_support(gst, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b)
 
-    global_state.mpr_state.simplex_support.v1[1, i_b] = v1
-    global_state.mpr_state.simplex_support.v2[1, i_b] = v2
-    global_state.mpr_state.simplex_support.v[1, i_b] = v
-    global_state.mpr_state.simplex_size[i_b] = 2
+    gst.mpr_state.simplex_support.v1[1, i_b] = v1
+    gst.mpr_state.simplex_support.v2[1, i_b] = v2
+    gst.mpr_state.simplex_support.v[1, i_b] = v
+    gst.mpr_state.simplex_size[i_b] = 2
 
     dot = v.dot(direction)
 
     ret = 0
-    if dot < global_state.mpr_info.CCD_EPS[None]:
+    if dot < gst.mpr_info.CCD_EPS[None]:
         ret = -1
     else:
-        direction = global_state.mpr_state.simplex_support.v[0, i_b].cross(
-            global_state.mpr_state.simplex_support.v[1, i_b]
-        )
-        if direction.dot(direction) < global_state.mpr_info.CCD_EPS[None]:
-            if (qd.abs(global_state.mpr_state.simplex_support.v[1, i_b]) < global_state.mpr_info.CCD_EPS[None]).all():
+        direction = gst.mpr_state.simplex_support.v[0, i_b].cross(gst.mpr_state.simplex_support.v[1, i_b])
+        if direction.dot(direction) < gst.mpr_info.CCD_EPS[None]:
+            if (qd.abs(gst.mpr_state.simplex_support.v[1, i_b]) < gst.mpr_info.CCD_EPS[None]).all():
                 ret = 1
             else:
                 ret = 2
         else:
             direction = direction.normalized()
             v, v1, v2 = compute_support(
-                global_state, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
+                gst, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
             )
             dot = v.dot(direction)
-            if dot < global_state.mpr_info.CCD_EPS[None]:
+            if dot < gst.mpr_info.CCD_EPS[None]:
                 ret = -1
             else:
-                global_state.mpr_state.simplex_support.v1[2, i_b] = v1
-                global_state.mpr_state.simplex_support.v2[2, i_b] = v2
-                global_state.mpr_state.simplex_support.v[2, i_b] = v
-                global_state.mpr_state.simplex_size[i_b] = 3
+                gst.mpr_state.simplex_support.v1[2, i_b] = v1
+                gst.mpr_state.simplex_support.v2[2, i_b] = v2
+                gst.mpr_state.simplex_support.v[2, i_b] = v
+                gst.mpr_state.simplex_size[i_b] = 3
 
-                va = global_state.mpr_state.simplex_support.v[1, i_b] - global_state.mpr_state.simplex_support.v[0, i_b]
-                vb = global_state.mpr_state.simplex_support.v[2, i_b] - global_state.mpr_state.simplex_support.v[0, i_b]
+                va = gst.mpr_state.simplex_support.v[1, i_b] - gst.mpr_state.simplex_support.v[0, i_b]
+                vb = gst.mpr_state.simplex_support.v[2, i_b] - gst.mpr_state.simplex_support.v[0, i_b]
                 direction = va.cross(vb)
                 direction = direction.normalized()
 
-                dot = direction.dot(global_state.mpr_state.simplex_support.v[0, i_b])
+                dot = direction.dot(gst.mpr_state.simplex_support.v[0, i_b])
                 if dot > 0:
-                    mpr_swap(global_state, 1, 2, i_ga, i_gb, i_b)
+                    mpr_swap(gst, 1, 2, i_ga, i_gb, i_b)
                     direction = -direction
 
                 # FIXME: This algorithm may get stuck in an infinite loop if the actually penetration is smaller
                 # then `CCD_EPS` and at least one of the center of each geometry is outside their convex hull.
                 # Since this deadlock happens very rarely, a simple fix is to abort computation after a few trials.
                 num_trials = gs.qd_int(0)
-                while global_state.mpr_state.simplex_size[i_b] < 4:
+                while gst.mpr_state.simplex_size[i_b] < 4:
                     v, v1, v2 = compute_support(
-                        global_state, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
+                        gst, collider_static_config, direction, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
                     )
                     dot = v.dot(direction)
-                    if dot < global_state.mpr_info.CCD_EPS[None]:
+                    if dot < gst.mpr_info.CCD_EPS[None]:
                         ret = -1
                         break
 
                     cont = False
 
-                    va = global_state.mpr_state.simplex_support.v[1, i_b].cross(v)
-                    dot = va.dot(global_state.mpr_state.simplex_support.v[0, i_b])
-                    if dot < -global_state.mpr_info.CCD_EPS[None]:
-                        global_state.mpr_state.simplex_support.v1[2, i_b] = v1
-                        global_state.mpr_state.simplex_support.v2[2, i_b] = v2
-                        global_state.mpr_state.simplex_support.v[2, i_b] = v
+                    va = gst.mpr_state.simplex_support.v[1, i_b].cross(v)
+                    dot = va.dot(gst.mpr_state.simplex_support.v[0, i_b])
+                    if dot < -gst.mpr_info.CCD_EPS[None]:
+                        gst.mpr_state.simplex_support.v1[2, i_b] = v1
+                        gst.mpr_state.simplex_support.v2[2, i_b] = v2
+                        gst.mpr_state.simplex_support.v[2, i_b] = v
                         cont = True
 
                     if not cont:
-                        va = v.cross(global_state.mpr_state.simplex_support.v[2, i_b])
-                        dot = va.dot(global_state.mpr_state.simplex_support.v[0, i_b])
-                        if dot < -global_state.mpr_info.CCD_EPS[None]:
-                            global_state.mpr_state.simplex_support.v1[1, i_b] = v1
-                            global_state.mpr_state.simplex_support.v2[1, i_b] = v2
-                            global_state.mpr_state.simplex_support.v[1, i_b] = v
+                        va = v.cross(gst.mpr_state.simplex_support.v[2, i_b])
+                        dot = va.dot(gst.mpr_state.simplex_support.v[0, i_b])
+                        if dot < -gst.mpr_info.CCD_EPS[None]:
+                            gst.mpr_state.simplex_support.v1[1, i_b] = v1
+                            gst.mpr_state.simplex_support.v2[1, i_b] = v2
+                            gst.mpr_state.simplex_support.v[1, i_b] = v
                             cont = True
 
                     if cont:
-                        va = (
-                            global_state.mpr_state.simplex_support.v[1, i_b]
-                            - global_state.mpr_state.simplex_support.v[0, i_b]
-                        )
-                        vb = (
-                            global_state.mpr_state.simplex_support.v[2, i_b]
-                            - global_state.mpr_state.simplex_support.v[0, i_b]
-                        )
+                        va = gst.mpr_state.simplex_support.v[1, i_b] - gst.mpr_state.simplex_support.v[0, i_b]
+                        vb = gst.mpr_state.simplex_support.v[2, i_b] - gst.mpr_state.simplex_support.v[0, i_b]
                         direction = va.cross(vb)
                         direction = direction.normalized()
                         num_trials = num_trials + 1
@@ -515,17 +501,17 @@ def mpr_discover_portal(
                             ret = -1
                             break
                     else:
-                        global_state.mpr_state.simplex_support.v1[3, i_b] = v1
-                        global_state.mpr_state.simplex_support.v2[3, i_b] = v2
-                        global_state.mpr_state.simplex_support.v[3, i_b] = v
-                        global_state.mpr_state.simplex_size[i_b] = 4
+                        gst.mpr_state.simplex_support.v1[3, i_b] = v1
+                        gst.mpr_state.simplex_support.v2[3, i_b] = v2
+                        gst.mpr_state.simplex_support.v[3, i_b] = v
+                        gst.mpr_state.simplex_size[i_b] = 4
 
     return ret
 
 
 @qd.func
 def guess_geoms_center(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     i_ga,
     i_gb,
@@ -561,24 +547,22 @@ def guess_geoms_center(
     # is a real issue, one way to address it is to evaluate the exact signed distance of each center wrt their
     # respective geometry. If one of the center is off, its offset from the original center is divided by 2 and the
     # signed distance is computed once again until to find a valid point. This procedure should be cheap.
-    EPS = global_state.rigid_global_info.EPS[None]
+    EPS = gst.rigid_global_info.EPS[None]
 
     # Transform geometry centers to world space using thread-local pos/quat
-    center_a = gu.qd_transform_by_trans_quat(global_state.geoms_info.center[i_ga], pos_a, quat_a)
-    center_b = gu.qd_transform_by_trans_quat(global_state.geoms_info.center[i_gb], pos_b, quat_b)
+    center_a = gu.qd_transform_by_trans_quat(gst.geoms_info.center[i_ga], pos_a, quat_a)
+    center_b = gu.qd_transform_by_trans_quat(gst.geoms_info.center[i_gb], pos_b, quat_b)
 
     # Completely different center logics if a normal guess is provided
     if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-        if (qd.abs(normal_ws) > global_state.mpr_info.CCD_EPS[None]).any():
+        if (qd.abs(normal_ws) > gst.mpr_info.CCD_EPS[None]).any():
             # Must start from the center of each bounding box
             center_a_local = 0.5 * (
-                global_state.rigid_global_info.geoms_init_AABB[i_ga, 7]
-                + global_state.rigid_global_info.geoms_init_AABB[i_ga, 0]
+                gst.rigid_global_info.geoms_init_AABB[i_ga, 7] + gst.rigid_global_info.geoms_init_AABB[i_ga, 0]
             )
             center_a = gu.qd_transform_by_trans_quat(center_a_local, pos_a, quat_a)
             center_b_local = 0.5 * (
-                global_state.rigid_global_info.geoms_init_AABB[i_gb, 7]
-                + global_state.rigid_global_info.geoms_init_AABB[i_gb, 0]
+                gst.rigid_global_info.geoms_init_AABB[i_gb, 7] + gst.rigid_global_info.geoms_init_AABB[i_gb, 0]
             )
             center_b = gu.qd_transform_by_trans_quat(center_b_local, pos_b, quat_b)
             delta = center_a - center_b
@@ -599,12 +583,10 @@ def guess_geoms_center(
                     dir_offset_local_a = gu.qd_inv_transform_by_quat(dir_offset, quat_a)
                     dir_offset_local_b = gu.qd_inv_transform_by_quat(dir_offset, quat_b)
                     box_size_a = (
-                        global_state.rigid_global_info.geoms_init_AABB[i_ga, 7]
-                        - global_state.rigid_global_info.geoms_init_AABB[i_ga, 0]
+                        gst.rigid_global_info.geoms_init_AABB[i_ga, 7] - gst.rigid_global_info.geoms_init_AABB[i_ga, 0]
                     )
                     box_size_b = (
-                        global_state.rigid_global_info.geoms_init_AABB[i_gb, 7]
-                        - global_state.rigid_global_info.geoms_init_AABB[i_gb, 0]
+                        gst.rigid_global_info.geoms_init_AABB[i_gb, 7] - gst.rigid_global_info.geoms_init_AABB[i_gb, 0]
                     )
                     length_a = box_size_a.dot(qd.abs(dir_offset_local_a))
                     length_b = box_size_b.dot(qd.abs(dir_offset_local_b))
@@ -619,7 +601,7 @@ def guess_geoms_center(
 
 @qd.func
 def func_mpr_contact_from_centers(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     i_ga,
@@ -633,7 +615,7 @@ def func_mpr_contact_from_centers(
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
 ):
     res = mpr_discover_portal(
-        global_state=global_state,
+        gst=gst,
         collider_static_config=collider_static_config,
         i_ga=i_ga,
         i_gb=i_gb,
@@ -652,30 +634,21 @@ def func_mpr_contact_from_centers(
     penetration = gs.qd_float(0.0)
 
     if res == 1:
-        is_col, normal, penetration, pos = mpr_find_penetr_touch(global_state, i_ga, i_gb, i_b)
+        is_col, normal, penetration, pos = mpr_find_penetr_touch(gst, i_ga, i_gb, i_b)
     elif res == 2:
-        is_col, normal, penetration, pos = mpr_find_penetr_segment(global_state, i_ga, i_gb, i_b)
+        is_col, normal, penetration, pos = mpr_find_penetr_segment(gst, i_ga, i_gb, i_b)
     elif res == 0:
-        res = mpr_refine_portal(global_state, collider_static_config, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b)
+        res = mpr_refine_portal(gst, collider_static_config, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b)
         if res >= 0:
             is_col, normal, penetration, pos = mpr_find_penetration(
-                global_state,
-                static_rigid_sim_config,
-                collider_static_config,
-                i_ga,
-                i_gb,
-                i_b,
-                pos_a,
-                quat_a,
-                pos_b,
-                quat_b,
+                gst, static_rigid_sim_config, collider_static_config, i_ga, i_gb, i_b, pos_a, quat_a, pos_b, quat_b
             )
     return is_col, normal, penetration, pos
 
 
 @qd.func
 def func_mpr_contact(
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     i_ga,
@@ -688,10 +661,10 @@ def func_mpr_contact(
     quat_b: qd.types.vector(4, dtype=gs.qd_float),
 ):
     center_a, center_b = guess_geoms_center(
-        global_state, static_rigid_sim_config, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, normal_ws
+        gst, static_rigid_sim_config, i_ga, i_gb, pos_a, quat_a, pos_b, quat_b, normal_ws
     )
     return func_mpr_contact_from_centers(
-        global_state=global_state,
+        gst=gst,
         static_rigid_sim_config=static_rigid_sim_config,
         collider_static_config=collider_static_config,
         i_ga=i_ga,

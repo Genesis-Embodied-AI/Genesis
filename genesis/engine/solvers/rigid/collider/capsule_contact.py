@@ -7,7 +7,7 @@ import genesis.utils.array_class as array_class
 
 
 @qd.func
-def func_capsule_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, global_state: array_class.GlobalState):
+def func_capsule_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, gst: array_class.GlobalState):
     """
     Analytical capsule-capsule collision detection.
 
@@ -22,19 +22,19 @@ def func_capsule_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, g
     ga_pos, ga_quat : Position and orientation of capsule A (may be perturbed for multi-contact).
     gb_pos, gb_quat : Position and orientation of capsule B (may be perturbed for multi-contact).
     """
-    EPS = global_state.rigid_global_info.EPS[None]
+    EPS = gst.rigid_global_info.EPS[None]
 
     # Get capsule A parameters
     pos_a = ga_pos
     quat_a = ga_quat
-    radius_a = global_state.geoms_info.data[i_ga][0]
-    halflength_a = 0.5 * global_state.geoms_info.data[i_ga][1]
+    radius_a = gst.geoms_info.data[i_ga][0]
+    halflength_a = 0.5 * gst.geoms_info.data[i_ga][1]
 
     # Get capsule B parameters
     pos_b = gb_pos
     quat_b = gb_quat
-    radius_b = global_state.geoms_info.data[i_gb][0]
-    halflength_b = 0.5 * global_state.geoms_info.data[i_gb][1]
+    radius_b = gst.geoms_info.data[i_gb][0]
+    halflength_b = 0.5 * gst.geoms_info.data[i_gb][1]
 
     # Capsules are aligned along local Z-axis by convention
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)
@@ -90,7 +90,7 @@ def func_capsule_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, g
 
 
 @qd.func
-def func_sphere_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, global_state: array_class.GlobalState):
+def func_sphere_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, gst: array_class.GlobalState):
     """
     Analytical sphere-capsule collision detection.
 
@@ -104,25 +104,25 @@ def func_sphere_capsule_contact(i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, gl
     ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multi-contact).
     gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multi-contact).
     """
-    EPS = global_state.rigid_global_info.EPS[None]
+    EPS = gst.rigid_global_info.EPS[None]
 
     # Ensure sphere is always i_ga and capsule is i_gb
     normal_dir = 1
     sphere_center = ga_pos
     capsule_center = gb_pos
     capsule_q = gb_quat
-    if global_state.geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
+    if gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE:
         i_ga, i_gb = i_gb, i_ga
         sphere_center = gb_pos
         capsule_center = ga_pos
         capsule_q = ga_quat
         normal_dir = -1
 
-    sphere_radius = global_state.geoms_info.data[i_ga][0]
+    sphere_radius = gst.geoms_info.data[i_ga][0]
 
     capsule_quat = capsule_q
-    capsule_radius = global_state.geoms_info.data[i_gb][0]
-    capsule_halflength = 0.5 * global_state.geoms_info.data[i_gb][1]
+    capsule_radius = gst.geoms_info.data[i_gb][0]
+    capsule_halflength = 0.5 * gst.geoms_info.data[i_gb][1]
 
     # Capsule is aligned along local Z-axis
     local_z_unit = qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float)

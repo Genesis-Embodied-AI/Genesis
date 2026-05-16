@@ -34,92 +34,92 @@ def rotmatx(matin, i0, i1, i2, f0, f1, f2):
 def collider_kernel_reset(
     envs_idx: qd.types.ndarray(),
     static_rigid_sim_config: qd.template(),
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     cache_only: qd.template(),
 ):
-    max_possible_pairs = global_state.collider_state.contact_cache.normal.shape[0]
+    max_possible_pairs = gst.collider_state.contact_cache.normal.shape[0]
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
 
         if qd.static(not cache_only):
-            global_state.collider_state.first_time[i_b] = True
+            gst.collider_state.first_time[i_b] = True
 
         for i_pair in range(max_possible_pairs):
-            global_state.collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            gst.collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
 
 @qd.func
-def func_collider_clear_env(i_b, global_state: array_class.GlobalState, static_rigid_sim_config: qd.template()):
+def func_collider_clear_env(i_b, gst: array_class.GlobalState, static_rigid_sim_config: qd.template()):
     if qd.static(static_rigid_sim_config.use_hibernation):
-        global_state.collider_state.n_contacts_hibernated[i_b] = 0
+        gst.collider_state.n_contacts_hibernated[i_b] = 0
 
-        for i_c in range(global_state.collider_state.n_contacts[i_b]):
-            i_la = global_state.collider_state.contact_data.link_a[i_c, i_b]
-            i_lb = global_state.collider_state.contact_data.link_b[i_c, i_b]
+        for i_c in range(gst.collider_state.n_contacts[i_b]):
+            i_la = gst.collider_state.contact_data.link_a[i_c, i_b]
+            i_lb = gst.collider_state.contact_data.link_b[i_c, i_b]
 
             I_la = [i_la, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_la
             I_lb = [i_lb, i_b] if qd.static(static_rigid_sim_config.batch_links_info) else i_lb
 
-            if (global_state.links_state.hibernated[i_la, i_b] and global_state.links_info.is_fixed[I_lb]) or (
-                global_state.links_state.hibernated[i_lb, i_b] and global_state.links_info.is_fixed[I_la]
+            if (gst.links_state.hibernated[i_la, i_b] and gst.links_info.is_fixed[I_lb]) or (
+                gst.links_state.hibernated[i_lb, i_b] and gst.links_info.is_fixed[I_la]
             ):
-                i_c_hibernated = global_state.collider_state.n_contacts_hibernated[i_b]
+                i_c_hibernated = gst.collider_state.n_contacts_hibernated[i_b]
                 if i_c != i_c_hibernated:
                     # fmt: off
-                    global_state.collider_state.contact_data.geom_a[i_c_hibernated, i_b] = global_state.collider_state.contact_data.geom_a[i_c, i_b]
-                    global_state.collider_state.contact_data.geom_b[i_c_hibernated, i_b] = global_state.collider_state.contact_data.geom_b[i_c, i_b]
-                    global_state.collider_state.contact_data.penetration[i_c_hibernated, i_b] = global_state.collider_state.contact_data.penetration[i_c, i_b]
-                    global_state.collider_state.contact_data.normal[i_c_hibernated, i_b] = global_state.collider_state.contact_data.normal[i_c, i_b]
-                    global_state.collider_state.contact_data.pos[i_c_hibernated, i_b] = global_state.collider_state.contact_data.pos[i_c, i_b]
-                    global_state.collider_state.contact_data.friction[i_c_hibernated, i_b] = global_state.collider_state.contact_data.friction[i_c, i_b]
-                    global_state.collider_state.contact_data.sol_params[i_c_hibernated, i_b] = global_state.collider_state.contact_data.sol_params[i_c, i_b]
-                    global_state.collider_state.contact_data.force[i_c_hibernated, i_b] = global_state.collider_state.contact_data.force[i_c, i_b]
-                    global_state.collider_state.contact_data.link_a[i_c_hibernated, i_b] = global_state.collider_state.contact_data.link_a[i_c, i_b]
-                    global_state.collider_state.contact_data.link_b[i_c_hibernated, i_b] = global_state.collider_state.contact_data.link_b[i_c, i_b]
+                    gst.collider_state.contact_data.geom_a[i_c_hibernated, i_b] = gst.collider_state.contact_data.geom_a[i_c, i_b]
+                    gst.collider_state.contact_data.geom_b[i_c_hibernated, i_b] = gst.collider_state.contact_data.geom_b[i_c, i_b]
+                    gst.collider_state.contact_data.penetration[i_c_hibernated, i_b] = gst.collider_state.contact_data.penetration[i_c, i_b]
+                    gst.collider_state.contact_data.normal[i_c_hibernated, i_b] = gst.collider_state.contact_data.normal[i_c, i_b]
+                    gst.collider_state.contact_data.pos[i_c_hibernated, i_b] = gst.collider_state.contact_data.pos[i_c, i_b]
+                    gst.collider_state.contact_data.friction[i_c_hibernated, i_b] = gst.collider_state.contact_data.friction[i_c, i_b]
+                    gst.collider_state.contact_data.sol_params[i_c_hibernated, i_b] = gst.collider_state.contact_data.sol_params[i_c, i_b]
+                    gst.collider_state.contact_data.force[i_c_hibernated, i_b] = gst.collider_state.contact_data.force[i_c, i_b]
+                    gst.collider_state.contact_data.link_a[i_c_hibernated, i_b] = gst.collider_state.contact_data.link_a[i_c, i_b]
+                    gst.collider_state.contact_data.link_b[i_c_hibernated, i_b] = gst.collider_state.contact_data.link_b[i_c, i_b]
                     # fmt: on
 
-                global_state.collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
+                gst.collider_state.n_contacts_hibernated[i_b] = i_c_hibernated + 1
 
-    for i_c in range(global_state.collider_state.n_contacts[i_b]):
+    for i_c in range(gst.collider_state.n_contacts[i_b]):
         should_clear = True
         if qd.static(static_rigid_sim_config.use_hibernation):
-            should_clear = i_c >= global_state.collider_state.n_contacts_hibernated[i_b]
+            should_clear = i_c >= gst.collider_state.n_contacts_hibernated[i_b]
         if should_clear:
-            global_state.collider_state.contact_data.link_a[i_c, i_b] = -1
-            global_state.collider_state.contact_data.link_b[i_c, i_b] = -1
-            global_state.collider_state.contact_data.geom_a[i_c, i_b] = -1
-            global_state.collider_state.contact_data.geom_b[i_c, i_b] = -1
-            global_state.collider_state.contact_data.penetration[i_c, i_b] = 0.0
-            global_state.collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            global_state.collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
-            global_state.collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            gst.collider_state.contact_data.link_a[i_c, i_b] = -1
+            gst.collider_state.contact_data.link_b[i_c, i_b] = -1
+            gst.collider_state.contact_data.geom_a[i_c, i_b] = -1
+            gst.collider_state.contact_data.geom_b[i_c, i_b] = -1
+            gst.collider_state.contact_data.penetration[i_c, i_b] = 0.0
+            gst.collider_state.contact_data.pos[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            gst.collider_state.contact_data.normal[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
+            gst.collider_state.contact_data.force[i_c, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
     if qd.static(static_rigid_sim_config.use_hibernation):
-        global_state.collider_state.n_contacts[i_b] = global_state.collider_state.n_contacts_hibernated[i_b]
+        gst.collider_state.n_contacts[i_b] = gst.collider_state.n_contacts_hibernated[i_b]
     else:
-        global_state.collider_state.n_contacts[i_b] = 0
+        gst.collider_state.n_contacts[i_b] = 0
 
 
 # only used with hibernation ??
 @qd.kernel(fastcache=True)
 def kernel_collider_clear(
-    envs_idx: qd.types.ndarray(), global_state: array_class.GlobalState, static_rigid_sim_config: qd.template()
+    envs_idx: qd.types.ndarray(), gst: array_class.GlobalState, static_rigid_sim_config: qd.template()
 ):
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b_ in range(envs_idx.shape[0]):
         i_b = envs_idx[i_b_]
-        func_collider_clear_env(i_b, global_state, static_rigid_sim_config)
+        func_collider_clear_env(i_b, gst, static_rigid_sim_config)
 
 
 @qd.kernel(fastcache=True)
 def kernel_masked_collider_clear(
-    envs_mask: qd.types.ndarray(), global_state: array_class.GlobalState, static_rigid_sim_config: qd.template()
+    envs_mask: qd.types.ndarray(), gst: array_class.GlobalState, static_rigid_sim_config: qd.template()
 ):
     for i_b in range(envs_mask.shape[0]):
         if envs_mask[i_b]:
-            func_collider_clear_env(i_b, global_state, static_rigid_sim_config)
+            func_collider_clear_env(i_b, gst, static_rigid_sim_config)
 
 
 @qd.kernel(fastcache=True)
@@ -128,15 +128,15 @@ def collider_kernel_get_contacts(
     iout: qd.types.ndarray(),
     fout: qd.types.ndarray(),
     static_rigid_sim_config: qd.template(),
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
 ):
-    _B = global_state.collider_state.active_buffer.shape[1]
+    _B = gst.collider_state.active_buffer.shape[1]
 
     # TODO: Better implementation from Quadrants for this kind of reduction.
     n_contacts_max = gs.qd_int(0)
     qd.loop_config(serialize=True)
     for i_b in range(_B):
-        n_contacts = global_state.collider_state.n_contacts[i_b]
+        n_contacts = gst.collider_state.n_contacts[i_b]
         if n_contacts > n_contacts_max:
             n_contacts_max = n_contacts
 
@@ -147,20 +147,20 @@ def collider_kernel_get_contacts(
             i_c_start = i_b * n_contacts_max
         else:
             for j_b in range(i_b):
-                i_c_start = i_c_start + global_state.collider_state.n_contacts[j_b]
+                i_c_start = i_c_start + gst.collider_state.n_contacts[j_b]
 
-        for i_c_ in range(global_state.collider_state.n_contacts[i_b]):
+        for i_c_ in range(gst.collider_state.n_contacts[i_b]):
             i_c = i_c_start + i_c_
 
-            iout[i_c, 0] = global_state.collider_state.contact_data.link_a[i_c_, i_b]
-            iout[i_c, 1] = global_state.collider_state.contact_data.link_b[i_c_, i_b]
-            iout[i_c, 2] = global_state.collider_state.contact_data.geom_a[i_c_, i_b]
-            iout[i_c, 3] = global_state.collider_state.contact_data.geom_b[i_c_, i_b]
-            fout[i_c, 0] = global_state.collider_state.contact_data.penetration[i_c_, i_b]
+            iout[i_c, 0] = gst.collider_state.contact_data.link_a[i_c_, i_b]
+            iout[i_c, 1] = gst.collider_state.contact_data.link_b[i_c_, i_b]
+            iout[i_c, 2] = gst.collider_state.contact_data.geom_a[i_c_, i_b]
+            iout[i_c, 3] = gst.collider_state.contact_data.geom_b[i_c_, i_b]
+            fout[i_c, 0] = gst.collider_state.contact_data.penetration[i_c_, i_b]
             for j in qd.static(range(3)):
-                fout[i_c, 1 + j] = global_state.collider_state.contact_data.pos[i_c_, i_b][j]
-                fout[i_c, 4 + j] = global_state.collider_state.contact_data.normal[i_c_, i_b][j]
-                fout[i_c, 7 + j] = global_state.collider_state.contact_data.force[i_c_, i_b][j]
+                fout[i_c, 1 + j] = gst.collider_state.contact_data.pos[i_c_, i_b][j]
+                fout[i_c, 4 + j] = gst.collider_state.contact_data.normal[i_c_, i_b][j]
+                fout[i_c, 7 + j] = gst.collider_state.contact_data.force[i_c_, i_b][j]
 
 
 @qd.func
@@ -172,35 +172,35 @@ def func_add_contact(
     penetration,
     i_b,
     i_pair,
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
     errno: qd.Tensor,
     use_atomic: qd.template() = False,
 ):
     i_c = 0
     if qd.static(use_atomic):
-        i_c = qd.atomic_add(global_state.collider_state.n_contacts[i_b], 1)
+        i_c = qd.atomic_add(gst.collider_state.n_contacts[i_b], 1)
     else:
-        i_c = global_state.collider_state.n_contacts[i_b]
-    if i_c < global_state.collider_info.max_contact_pairs[None]:
-        friction_a = global_state.geoms_info.friction[i_ga] * global_state.geoms_state.friction_ratio[i_ga, i_b]
-        friction_b = global_state.geoms_info.friction[i_gb] * global_state.geoms_state.friction_ratio[i_gb, i_b]
+        i_c = gst.collider_state.n_contacts[i_b]
+    if i_c < gst.collider_info.max_contact_pairs[None]:
+        friction_a = gst.geoms_info.friction[i_ga] * gst.geoms_state.friction_ratio[i_ga, i_b]
+        friction_b = gst.geoms_info.friction[i_gb] * gst.geoms_state.friction_ratio[i_gb, i_b]
 
         # b to a
-        global_state.collider_state.contact_data.geom_a[i_c, i_b] = i_ga
-        global_state.collider_state.contact_data.geom_b[i_c, i_b] = i_gb
-        global_state.collider_state.contact_data.normal[i_c, i_b] = normal
-        global_state.collider_state.contact_data.pos[i_c, i_b] = contact_pos
-        global_state.collider_state.contact_data.penetration[i_c, i_b] = penetration
-        global_state.collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-        global_state.collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
-            global_state.geoms_info.sol_params[i_ga] + global_state.geoms_info.sol_params[i_gb]
+        gst.collider_state.contact_data.geom_a[i_c, i_b] = i_ga
+        gst.collider_state.contact_data.geom_b[i_c, i_b] = i_gb
+        gst.collider_state.contact_data.normal[i_c, i_b] = normal
+        gst.collider_state.contact_data.pos[i_c, i_b] = contact_pos
+        gst.collider_state.contact_data.penetration[i_c, i_b] = penetration
+        gst.collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
+        gst.collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
+            gst.geoms_info.sol_params[i_ga] + gst.geoms_info.sol_params[i_gb]
         )
-        global_state.collider_state.contact_data.link_a[i_c, i_b] = global_state.geoms_info.link_idx[i_ga]
-        global_state.collider_state.contact_data.link_b[i_c, i_b] = global_state.geoms_info.link_idx[i_gb]
-        global_state.collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
+        gst.collider_state.contact_data.link_a[i_c, i_b] = gst.geoms_info.link_idx[i_ga]
+        gst.collider_state.contact_data.link_b[i_c, i_b] = gst.geoms_info.link_idx[i_gb]
+        gst.collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
         if not qd.static(use_atomic):
-            global_state.collider_state.n_contacts[i_b] = i_c + 1
+            gst.collider_state.n_contacts[i_b] = i_c + 1
     else:
         errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
@@ -215,115 +215,106 @@ def func_set_contact(
     i_b,
     i_c,
     i_pair,
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
 ):
     """
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
     contact data.
     """
-    friction_a = global_state.geoms_info.friction[i_ga] * global_state.geoms_state.friction_ratio[i_ga, i_b]
-    friction_b = global_state.geoms_info.friction[i_gb] * global_state.geoms_state.friction_ratio[i_gb, i_b]
+    friction_a = gst.geoms_info.friction[i_ga] * gst.geoms_state.friction_ratio[i_ga, i_b]
+    friction_b = gst.geoms_info.friction[i_gb] * gst.geoms_state.friction_ratio[i_gb, i_b]
 
     # b to a
-    global_state.collider_state.contact_data.geom_a[i_c, i_b] = i_ga
-    global_state.collider_state.contact_data.geom_b[i_c, i_b] = i_gb
-    global_state.collider_state.contact_data.normal[i_c, i_b] = normal
-    global_state.collider_state.contact_data.pos[i_c, i_b] = contact_pos
-    global_state.collider_state.contact_data.penetration[i_c, i_b] = penetration
-    global_state.collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
-    global_state.collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
-        global_state.geoms_info.sol_params[i_ga] + global_state.geoms_info.sol_params[i_gb]
+    gst.collider_state.contact_data.geom_a[i_c, i_b] = i_ga
+    gst.collider_state.contact_data.geom_b[i_c, i_b] = i_gb
+    gst.collider_state.contact_data.normal[i_c, i_b] = normal
+    gst.collider_state.contact_data.pos[i_c, i_b] = contact_pos
+    gst.collider_state.contact_data.penetration[i_c, i_b] = penetration
+    gst.collider_state.contact_data.friction[i_c, i_b] = qd.max(qd.max(friction_a, friction_b), 1e-2)
+    gst.collider_state.contact_data.sol_params[i_c, i_b] = 0.5 * (
+        gst.geoms_info.sol_params[i_ga] + gst.geoms_info.sol_params[i_gb]
     )
-    global_state.collider_state.contact_data.link_a[i_c, i_b] = global_state.geoms_info.link_idx[i_ga]
-    global_state.collider_state.contact_data.link_b[i_c, i_b] = global_state.geoms_info.link_idx[i_gb]
-    global_state.collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
+    gst.collider_state.contact_data.link_a[i_c, i_b] = gst.geoms_info.link_idx[i_ga]
+    gst.collider_state.contact_data.link_b[i_c, i_b] = gst.geoms_info.link_idx[i_gb]
+    gst.collider_state.contact_data.pair_idx[i_c, i_b] = i_pair
 
 
 @qd.func
-def func_add_diff_contact_input(i_ga, i_gb, i_b, i_d, global_state: array_class.GlobalState):
-    i_c = global_state.collider_state.n_contacts[i_b]
-    if i_c < global_state.collider_info.max_contact_pairs[None]:
-        global_state.collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
-        global_state.collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
-        global_state.collider_state.diff_contact_input.local_pos1_a[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos1_a[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.local_pos1_b[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos1_b[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.local_pos1_c[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos1_c[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.local_pos2_a[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos2_a[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.local_pos2_b[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos2_b[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.local_pos2_c[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.local_pos2_c[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.w_local_pos1[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.w_local_pos1[i_b, i_d]
-        )
-        global_state.collider_state.diff_contact_input.w_local_pos2[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.w_local_pos2[i_b, i_d]
-        )
+def func_add_diff_contact_input(i_ga, i_gb, i_b, i_d, gst: array_class.GlobalState):
+    i_c = gst.collider_state.n_contacts[i_b]
+    if i_c < gst.collider_info.max_contact_pairs[None]:
+        gst.collider_state.diff_contact_input.geom_a[i_b, i_c] = i_ga
+        gst.collider_state.diff_contact_input.geom_b[i_b, i_c] = i_gb
+        gst.collider_state.diff_contact_input.local_pos1_a[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos1_a[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.local_pos1_b[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos1_b[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.local_pos1_c[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos1_c[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.local_pos2_a[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos2_a[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.local_pos2_b[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos2_b[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.local_pos2_c[i_b, i_c] = gst.gjk_state.diff_contact_input.local_pos2_c[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.w_local_pos1[i_b, i_c] = gst.gjk_state.diff_contact_input.w_local_pos1[
+            i_b, i_d
+        ]
+        gst.collider_state.diff_contact_input.w_local_pos2[i_b, i_c] = gst.gjk_state.diff_contact_input.w_local_pos2[
+            i_b, i_d
+        ]
         # The first contact point is the reference contact point
-        global_state.collider_state.diff_contact_input.ref_id[i_b, i_c] = i_c - i_d
-        global_state.collider_state.diff_contact_input.ref_penetration[i_b, i_c] = (
-            global_state.gjk_state.diff_contact_input.ref_penetration[i_b, i_d]
+        gst.collider_state.diff_contact_input.ref_id[i_b, i_c] = i_c - i_d
+        gst.collider_state.diff_contact_input.ref_penetration[i_b, i_c] = (
+            gst.gjk_state.diff_contact_input.ref_penetration[i_b, i_d]
         )
 
 
 @qd.func
-def func_compute_geom_rbound(i_g, global_state: array_class.GlobalState):
+def func_compute_geom_rbound(i_g, gst: array_class.GlobalState):
     """Compute the bounding sphere radius for a geom, matching MuJoCo's geom_rbound."""
-    geom_type = global_state.geoms_info.type[i_g]
+    geom_type = gst.geoms_info.type[i_g]
     rbound = gs.qd_float(0.0)
     if geom_type == gs.GEOM_TYPE.SPHERE:
-        rbound = global_state.geoms_info.data[i_g][0]
+        rbound = gst.geoms_info.data[i_g][0]
     elif geom_type == gs.GEOM_TYPE.CAPSULE:
         # radius + half_length (MuJoCo stores size as [radius, half_length])
         # Genesis stores data as [radius, full_length], so half_length = 0.5 * data[1]
-        rbound = global_state.geoms_info.data[i_g][0] + 0.5 * global_state.geoms_info.data[i_g][1]
+        rbound = gst.geoms_info.data[i_g][0] + 0.5 * gst.geoms_info.data[i_g][1]
     elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
-        rbound = qd.max(
-            global_state.geoms_info.data[i_g][0],
-            qd.max(global_state.geoms_info.data[i_g][1], global_state.geoms_info.data[i_g][2]),
-        )
+        rbound = qd.max(gst.geoms_info.data[i_g][0], qd.max(gst.geoms_info.data[i_g][1], gst.geoms_info.data[i_g][2]))
     elif geom_type == gs.GEOM_TYPE.BOX:
-        d0 = global_state.geoms_info.data[i_g][0]
-        d1 = global_state.geoms_info.data[i_g][1]
-        d2 = global_state.geoms_info.data[i_g][2]
+        d0 = gst.geoms_info.data[i_g][0]
+        d1 = gst.geoms_info.data[i_g][1]
+        d2 = gst.geoms_info.data[i_g][2]
         rbound = qd.sqrt(d0 * d0 + d1 * d1 + d2 * d2)
     else:
         # For mesh and other types, approximate as half AABB diagonal
         rbound = (
-            0.5
-            * (
-                global_state.rigid_global_info.geoms_init_AABB[i_g, 7]
-                - global_state.rigid_global_info.geoms_init_AABB[i_g, 0]
-            ).norm()
+            0.5 * (gst.rigid_global_info.geoms_init_AABB[i_g, 7] - gst.rigid_global_info.geoms_init_AABB[i_g, 0]).norm()
         )
     return rbound
 
 
 @qd.func
-def func_compute_tolerance(i_ga, i_gb, i_b, tolerance, global_state: array_class.GlobalState):
+def func_compute_tolerance(i_ga, i_gb, i_b, tolerance, gst: array_class.GlobalState):
     # Note that the original world-aligned bounding box is used to computed the absolute tolerance from the
     # relative one. This way, it is a constant that does not depends on the orientation of the geometry, which
     # makes sense since the scale of the geometries is an intrinsic property and not something that is supposed
     # to change dynamically.
     aabb_size_b = (
-        global_state.rigid_global_info.geoms_init_AABB[i_gb, 7]
-        - global_state.rigid_global_info.geoms_init_AABB[i_gb, 0]
+        gst.rigid_global_info.geoms_init_AABB[i_gb, 7] - gst.rigid_global_info.geoms_init_AABB[i_gb, 0]
     ).norm()
     aabb_size = aabb_size_b
-    if global_state.geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
+    if gst.geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
         aabb_size_a = (
-            global_state.rigid_global_info.geoms_init_AABB[i_ga, 7]
-            - global_state.rigid_global_info.geoms_init_AABB[i_ga, 0]
+            gst.rigid_global_info.geoms_init_AABB[i_ga, 7] - gst.rigid_global_info.geoms_init_AABB[i_ga, 0]
         ).norm()
         aabb_size = qd.min(aabb_size_a, aabb_size_b)
 
@@ -331,23 +322,18 @@ def func_compute_tolerance(i_ga, i_gb, i_b, tolerance, global_state: array_class
 
 
 @qd.func
-def func_compute_mj_tolerance(i_ga, i_gb, tolerance, global_state: array_class.GlobalState):
+def func_compute_mj_tolerance(i_ga, i_gb, tolerance, gst: array_class.GlobalState):
     """Compute tolerance matching MuJoCo's formula: relative_tolerance * min(rbound_g1, rbound_g2)."""
-    rbound_a = func_compute_geom_rbound(i_ga, global_state)
-    rbound_b = func_compute_geom_rbound(i_gb, global_state)
+    rbound_a = func_compute_geom_rbound(i_ga, gst)
+    rbound_b = func_compute_geom_rbound(i_gb, gst)
     return tolerance * qd.min(rbound_a, rbound_b)
 
 
 @qd.func
 def func_contact_orthogonals(
-    i_ga,
-    i_gb,
-    normal: qd.types.vector(3),
-    i_b,
-    global_state: array_class.GlobalState,
-    static_rigid_sim_config: qd.template(),
+    i_ga, i_gb, normal: qd.types.vector(3), i_b, gst: array_class.GlobalState, static_rigid_sim_config: qd.template()
 ):
-    EPS = global_state.rigid_global_info.EPS[None]
+    EPS = gst.rigid_global_info.EPS[None]
 
     axis_0 = qd.Vector.zero(gs.qd_float, 3)
     axis_1 = qd.Vector.zero(gs.qd_float, 3)
@@ -370,16 +356,16 @@ def func_contact_orthogonals(
         # the contact point. Basically, the smallest one between the two, which can be approximated
         # by the volume of their respective bounding box.
         i_g = i_gb
-        if global_state.geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
-            size_ga = global_state.rigid_global_info.geoms_init_AABB[i_ga, 7]
+        if gst.geoms_info.type[i_ga] != gs.GEOM_TYPE.PLANE:
+            size_ga = gst.rigid_global_info.geoms_init_AABB[i_ga, 7]
             volume_ga = size_ga[0] * size_ga[1] * size_ga[2]
-            size_gb = global_state.rigid_global_info.geoms_init_AABB[i_gb, 7]
+            size_gb = gst.rigid_global_info.geoms_init_AABB[i_gb, 7]
             volume_gb = size_gb[0] * size_gb[1] * size_gb[2]
             i_g = i_ga if volume_ga < volume_gb else i_gb
 
         # Compute orthogonal basis mixing principal inertia axes of geometry with contact normal
-        i_l = global_state.geoms_info.link_idx[i_g]
-        rot = gu.qd_quat_to_R(global_state.links_state.i_quat[i_l, i_b], EPS)
+        i_l = gst.geoms_info.link_idx[i_g]
+        rot = gu.qd_quat_to_R(gst.links_state.i_quat[i_l, i_b], EPS)
         axis_idx = gs.qd_int(0)
         axis_angle_max = gs.qd_float(0.0)
         for i in qd.static(range(3)):
@@ -417,7 +403,7 @@ def func_rotate_frame(
 
 
 @qd.kernel(fastcache=True)
-def func_clamp_and_sort_contacts(global_state: array_class.GlobalState, static_rigid_sim_config: qd.template()):
+def func_clamp_and_sort_contacts(gst: array_class.GlobalState, static_rigid_sim_config: qd.template()):
     """Sort contacts spatially by x-coordinate, moving entire geom-pair groups as units, while clamping number of
     contacts to avoid unbounded memory access.
 
@@ -433,115 +419,97 @@ def func_clamp_and_sort_contacts(global_state: array_class.GlobalState, static_r
     1. Insertion sort on a compact (key, index) pair — 8 bytes per swap instead of moving all 11 contact fields
     2. In-place cycle-following permutation that moves each contact record exactly once
     """
-    _B = global_state.collider_state.n_contacts.shape[0]
-    max_contact_pairs = global_state.collider_info.max_contact_pairs[None]
+    _B = gst.collider_state.n_contacts.shape[0]
+    max_contact_pairs = gst.collider_info.max_contact_pairs[None]
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
-        n_con = qd.min(global_state.collider_state.n_contacts[i_b], max_contact_pairs)
-        global_state.collider_state.n_contacts[i_b] = n_con
+        n_con = qd.min(gst.collider_state.n_contacts[i_b], max_contact_pairs)
+        gst.collider_state.n_contacts[i_b] = n_con
 
         # Phase 1: initialise and insertion-sort the (key, idx) arrays.
         group_key = gs.qd_float(0.0)
         for i in range(n_con):
-            ga = global_state.collider_state.contact_data.geom_a[i, i_b]
-            gb = global_state.collider_state.contact_data.geom_b[i, i_b]
+            ga = gst.collider_state.contact_data.geom_a[i, i_b]
+            gb = gst.collider_state.contact_data.geom_b[i, i_b]
             if (
                 i == 0
-                or ga != global_state.collider_state.contact_data.geom_a[i - 1, i_b]
-                or gb != global_state.collider_state.contact_data.geom_b[i - 1, i_b]
+                or ga != gst.collider_state.contact_data.geom_a[i - 1, i_b]
+                or gb != gst.collider_state.contact_data.geom_b[i - 1, i_b]
             ):
-                group_key = global_state.collider_state.contact_data.pos[i, i_b][0]
-            global_state.collider_state.contact_sort_key[i, i_b] = group_key
-            global_state.collider_state.contact_sort_idx[i, i_b] = i
+                group_key = gst.collider_state.contact_data.pos[i, i_b][0]
+            gst.collider_state.contact_sort_key[i, i_b] = group_key
+            gst.collider_state.contact_sort_idx[i, i_b] = i
 
         for i in range(1, n_con):
-            curr_key = global_state.collider_state.contact_sort_key[i, i_b]
-            if global_state.collider_state.contact_sort_key[i - 1, i_b] <= curr_key:
+            curr_key = gst.collider_state.contact_sort_key[i, i_b]
+            if gst.collider_state.contact_sort_key[i - 1, i_b] <= curr_key:
                 continue
 
-            curr_idx = global_state.collider_state.contact_sort_idx[i, i_b]
+            curr_idx = gst.collider_state.contact_sort_idx[i, i_b]
             j = i - 1
             while j >= 0:
-                if global_state.collider_state.contact_sort_key[j, i_b] <= curr_key:
+                if gst.collider_state.contact_sort_key[j, i_b] <= curr_key:
                     break
-                global_state.collider_state.contact_sort_key[j + 1, i_b] = global_state.collider_state.contact_sort_key[
-                    j, i_b
-                ]
-                global_state.collider_state.contact_sort_idx[j + 1, i_b] = global_state.collider_state.contact_sort_idx[
-                    j, i_b
-                ]
+                gst.collider_state.contact_sort_key[j + 1, i_b] = gst.collider_state.contact_sort_key[j, i_b]
+                gst.collider_state.contact_sort_idx[j + 1, i_b] = gst.collider_state.contact_sort_idx[j, i_b]
                 j = j - 1
-            global_state.collider_state.contact_sort_key[j + 1, i_b] = curr_key
-            global_state.collider_state.contact_sort_idx[j + 1, i_b] = curr_idx
+            gst.collider_state.contact_sort_key[j + 1, i_b] = curr_key
+            gst.collider_state.contact_sort_idx[j + 1, i_b] = curr_idx
 
         # Phase 2: apply permutation in-place via cycle decomposition.
         # Each contact is read and written exactly once.
         for i in range(n_con):
-            if global_state.collider_state.contact_sort_idx[i, i_b] != i:
-                tmp_geom_a = global_state.collider_state.contact_data.geom_a[i, i_b]
-                tmp_geom_b = global_state.collider_state.contact_data.geom_b[i, i_b]
-                tmp_penetration = global_state.collider_state.contact_data.penetration[i, i_b]
-                tmp_normal = global_state.collider_state.contact_data.normal[i, i_b]
-                tmp_pos = global_state.collider_state.contact_data.pos[i, i_b]
-                tmp_friction = global_state.collider_state.contact_data.friction[i, i_b]
-                tmp_sol_params = global_state.collider_state.contact_data.sol_params[i, i_b]
-                tmp_force = global_state.collider_state.contact_data.force[i, i_b]
-                tmp_link_a = global_state.collider_state.contact_data.link_a[i, i_b]
-                tmp_link_b = global_state.collider_state.contact_data.link_b[i, i_b]
-                tmp_pair_idx = global_state.collider_state.contact_data.pair_idx[i, i_b]
+            if gst.collider_state.contact_sort_idx[i, i_b] != i:
+                tmp_geom_a = gst.collider_state.contact_data.geom_a[i, i_b]
+                tmp_geom_b = gst.collider_state.contact_data.geom_b[i, i_b]
+                tmp_penetration = gst.collider_state.contact_data.penetration[i, i_b]
+                tmp_normal = gst.collider_state.contact_data.normal[i, i_b]
+                tmp_pos = gst.collider_state.contact_data.pos[i, i_b]
+                tmp_friction = gst.collider_state.contact_data.friction[i, i_b]
+                tmp_sol_params = gst.collider_state.contact_data.sol_params[i, i_b]
+                tmp_force = gst.collider_state.contact_data.force[i, i_b]
+                tmp_link_a = gst.collider_state.contact_data.link_a[i, i_b]
+                tmp_link_b = gst.collider_state.contact_data.link_b[i, i_b]
+                tmp_pair_idx = gst.collider_state.contact_data.pair_idx[i, i_b]
 
                 j = i
-                while global_state.collider_state.contact_sort_idx[j, i_b] != i:
-                    src = global_state.collider_state.contact_sort_idx[j, i_b]
-                    global_state.collider_state.contact_data.geom_a[j, i_b] = (
-                        global_state.collider_state.contact_data.geom_a[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.geom_b[j, i_b] = (
-                        global_state.collider_state.contact_data.geom_b[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.penetration[j, i_b] = (
-                        global_state.collider_state.contact_data.penetration[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.normal[j, i_b] = (
-                        global_state.collider_state.contact_data.normal[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.pos[j, i_b] = global_state.collider_state.contact_data.pos[
+                while gst.collider_state.contact_sort_idx[j, i_b] != i:
+                    src = gst.collider_state.contact_sort_idx[j, i_b]
+                    gst.collider_state.contact_data.geom_a[j, i_b] = gst.collider_state.contact_data.geom_a[src, i_b]
+                    gst.collider_state.contact_data.geom_b[j, i_b] = gst.collider_state.contact_data.geom_b[src, i_b]
+                    gst.collider_state.contact_data.penetration[j, i_b] = gst.collider_state.contact_data.penetration[
                         src, i_b
                     ]
-                    global_state.collider_state.contact_data.friction[j, i_b] = (
-                        global_state.collider_state.contact_data.friction[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.sol_params[j, i_b] = (
-                        global_state.collider_state.contact_data.sol_params[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.force[j, i_b] = (
-                        global_state.collider_state.contact_data.force[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.link_a[j, i_b] = (
-                        global_state.collider_state.contact_data.link_a[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.link_b[j, i_b] = (
-                        global_state.collider_state.contact_data.link_b[src, i_b]
-                    )
-                    global_state.collider_state.contact_data.pair_idx[j, i_b] = (
-                        global_state.collider_state.contact_data.pair_idx[src, i_b]
-                    )
-                    global_state.collider_state.contact_sort_idx[j, i_b] = j
+                    gst.collider_state.contact_data.normal[j, i_b] = gst.collider_state.contact_data.normal[src, i_b]
+                    gst.collider_state.contact_data.pos[j, i_b] = gst.collider_state.contact_data.pos[src, i_b]
+                    gst.collider_state.contact_data.friction[j, i_b] = gst.collider_state.contact_data.friction[
+                        src, i_b
+                    ]
+                    gst.collider_state.contact_data.sol_params[j, i_b] = gst.collider_state.contact_data.sol_params[
+                        src, i_b
+                    ]
+                    gst.collider_state.contact_data.force[j, i_b] = gst.collider_state.contact_data.force[src, i_b]
+                    gst.collider_state.contact_data.link_a[j, i_b] = gst.collider_state.contact_data.link_a[src, i_b]
+                    gst.collider_state.contact_data.link_b[j, i_b] = gst.collider_state.contact_data.link_b[src, i_b]
+                    gst.collider_state.contact_data.pair_idx[j, i_b] = gst.collider_state.contact_data.pair_idx[
+                        src, i_b
+                    ]
+                    gst.collider_state.contact_sort_idx[j, i_b] = j
                     j = src
 
-                global_state.collider_state.contact_data.geom_a[j, i_b] = tmp_geom_a
-                global_state.collider_state.contact_data.geom_b[j, i_b] = tmp_geom_b
-                global_state.collider_state.contact_data.penetration[j, i_b] = tmp_penetration
-                global_state.collider_state.contact_data.normal[j, i_b] = tmp_normal
-                global_state.collider_state.contact_data.pos[j, i_b] = tmp_pos
-                global_state.collider_state.contact_data.friction[j, i_b] = tmp_friction
-                global_state.collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
-                global_state.collider_state.contact_data.force[j, i_b] = tmp_force
-                global_state.collider_state.contact_data.link_a[j, i_b] = tmp_link_a
-                global_state.collider_state.contact_data.link_b[j, i_b] = tmp_link_b
-                global_state.collider_state.contact_data.pair_idx[j, i_b] = tmp_pair_idx
-                global_state.collider_state.contact_sort_idx[j, i_b] = j
+                gst.collider_state.contact_data.geom_a[j, i_b] = tmp_geom_a
+                gst.collider_state.contact_data.geom_b[j, i_b] = tmp_geom_b
+                gst.collider_state.contact_data.penetration[j, i_b] = tmp_penetration
+                gst.collider_state.contact_data.normal[j, i_b] = tmp_normal
+                gst.collider_state.contact_data.pos[j, i_b] = tmp_pos
+                gst.collider_state.contact_data.friction[j, i_b] = tmp_friction
+                gst.collider_state.contact_data.sol_params[j, i_b] = tmp_sol_params
+                gst.collider_state.contact_data.force[j, i_b] = tmp_force
+                gst.collider_state.contact_data.link_a[j, i_b] = tmp_link_a
+                gst.collider_state.contact_data.link_b[j, i_b] = tmp_link_b
+                gst.collider_state.contact_data.pair_idx[j, i_b] = tmp_pair_idx
+                gst.collider_state.contact_sort_idx[j, i_b] = j
 
 
 @qd.kernel
@@ -549,12 +517,12 @@ def func_set_upstream_grad(
     dL_dposition: qd.types.ndarray(),
     dL_dnormal: qd.types.ndarray(),
     dL_dpenetration: qd.types.ndarray(),
-    global_state: array_class.GlobalState,
+    gst: array_class.GlobalState,
 ):
     _B = dL_dposition.shape[0]
     _C = dL_dposition.shape[1]
     for i_b, i_c in qd.ndrange(_B, _C):
         for j in qd.static(range(3)):
-            global_state.collider_state.contact_data.pos.grad[i_c, i_b][j] = dL_dposition[i_b, i_c, j]
-            global_state.collider_state.contact_data.normal.grad[i_c, i_b][j] = dL_dnormal[i_b, i_c, j]
-        global_state.collider_state.contact_data.penetration.grad[i_c, i_b] = dL_dpenetration[i_b, i_c]
+            gst.collider_state.contact_data.pos.grad[i_c, i_b][j] = dL_dposition[i_b, i_c, j]
+            gst.collider_state.contact_data.normal.grad[i_c, i_b][j] = dL_dnormal[i_b, i_c, j]
+        gst.collider_state.contact_data.penetration.grad[i_c, i_b] = dL_dpenetration[i_b, i_c]
