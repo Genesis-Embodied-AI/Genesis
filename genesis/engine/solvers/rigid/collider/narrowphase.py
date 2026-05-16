@@ -476,16 +476,12 @@ def func_contact_mpr_terrain(
                             valid = True
                             i_c = collider_state.n_contacts[i_b]
                             for j in range(n_con):
-                                if (
-                                    contact_pos - collider_state.contact_data.pos[i_c - j - 1, i_b]
-                                ).norm() < tolerance:
+                                if (contact_pos - collider_state.contact_data.pos[i_c - j - 1, i_b]).norm() < tolerance:
                                     valid = False
                                     break
 
                             if valid:
-                                i_pair = collider_info.collision_pair_idx[
-                                    (i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)
-                                ]
+                                i_pair = collider_info.collision_pair_idx[(i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)]
                                 func_add_contact(
                                     i_ga,
                                     i_gb,
@@ -1423,9 +1419,7 @@ def _func_multicontact_gjk_full(
         if multi_contact and is_col_0:
             axis = (2 * (i_detection % 2) - 1) * axis_0 + (1 - 2 * ((i_detection // 2) % 2)) * axis_1
             qrot = gu.qd_rotvec_to_quat(collider_info.mc_perturbation[None] * axis, EPS)
-            ga_pos_current, ga_quat_current = func_rotate_frame(
-                ga_pos_original, ga_quat_original, contact_pos_0, qrot
-            )
+            ga_pos_current, ga_quat_current = func_rotate_frame(ga_pos_original, ga_quat_original, contact_pos_0, qrot)
             gb_pos_current, gb_quat_current = func_rotate_frame(
                 gb_pos_original, gb_quat_original, contact_pos_0, gu.qd_inv_quat(qrot)
             )
@@ -1502,9 +1496,7 @@ def _func_multicontact_gjk_full(
                         static_rigid_sim_config,
                     )
 
-                if qd.static(
-                    collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)
-                ):
+                if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
             else:
                 collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
@@ -2297,7 +2289,9 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
 
             if qd.static(not collider_static_config.has_nonconvex_nonterrain):
                 continue
-            if (geoms_info.is_convex[i_ga] and geoms_info.is_convex[i_gb]) or geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
+            if (geoms_info.is_convex[i_ga] and geoms_info.is_convex[i_gb]) or geoms_info.type[
+                i_gb
+            ] == gs.GEOM_TYPE.TERRAIN:
                 continue
             is_col = False
             tolerance = func_compute_tolerance(
