@@ -2088,64 +2088,66 @@ def func_narrow_phase_diff_convex_vs_convex(
     # Compute reference contacts
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
     for i_c, i_b in qd.ndrange(collider_state.contact_data.pos.shape[0], collider_state.active_buffer.shape[1]):
-        if i_c >= collider_state.n_contacts[i_b]:
-            continue
-        ref_id = collider_state.diff_contact_input.ref_id[i_b, i_c]
-        is_ref = i_c == ref_id
-        i_ga = collider_state.diff_contact_input.geom_a[i_b, i_c]
-        i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
+        # NOTE: `continue` for this guard is not used because Quadrants reverse-mode autodiff (this
+        # kernel is later invoked as `.grad(...)`) rejects `continue` inside differentiable kernels --
+        # the original positive-condition `if` is kept here for that reason.
+        if i_c < collider_state.n_contacts[i_b]:
+            ref_id = collider_state.diff_contact_input.ref_id[i_b, i_c]
+            is_ref = i_c == ref_id
+            i_ga = collider_state.diff_contact_input.geom_a[i_b, i_c]
+            i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
-        if is_ref:
-            ref_penetration = -1.0
-            contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-            )
-            collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
+            if is_ref:
+                ref_penetration = -1.0
+                contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
+                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                )
+                collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
-            func_set_contact(
-                i_ga,
-                i_gb,
-                contact_normal,
-                contact_pos,
-                penetration * weight,
-                i_b,
-                i_c,
-                collider_state.contact_data.pair_idx[i_c, i_b],
-                geoms_state,
-                geoms_info,
-                collider_state,
-                collider_info,
-            )
+                func_set_contact(
+                    i_ga,
+                    i_gb,
+                    contact_normal,
+                    contact_pos,
+                    penetration * weight,
+                    i_b,
+                    i_c,
+                    collider_state.contact_data.pair_idx[i_c, i_b],
+                    geoms_state,
+                    geoms_info,
+                    collider_state,
+                    collider_info,
+                )
 
     # Compute other contacts
     for i_c, i_b in qd.ndrange(collider_state.contact_data.pos.shape[0], collider_state.active_buffer.shape[1]):
-        if i_c >= collider_state.n_contacts[i_b]:
-            continue
-        ref_id = collider_state.diff_contact_input.ref_id[i_b, i_c]
-        is_ref = i_c == ref_id
-        i_ga = collider_state.diff_contact_input.geom_a[i_b, i_c]
-        i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
+        # See note above re: positive-form `if` for autodiff compatibility.
+        if i_c < collider_state.n_contacts[i_b]:
+            ref_id = collider_state.diff_contact_input.ref_id[i_b, i_c]
+            is_ref = i_c == ref_id
+            i_ga = collider_state.diff_contact_input.geom_a[i_b, i_c]
+            i_gb = collider_state.diff_contact_input.geom_b[i_b, i_c]
 
-        if not is_ref:
-            ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
-            contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
-                geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-            )
+            if not is_ref:
+                ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
+                contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
+                    geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                )
 
-            func_set_contact(
-                i_ga,
-                i_gb,
-                contact_normal,
-                contact_pos,
-                penetration * weight,
-                i_b,
-                i_c,
-                collider_state.contact_data.pair_idx[i_c, i_b],
-                geoms_state,
-                geoms_info,
-                collider_state,
-                collider_info,
-            )
+                func_set_contact(
+                    i_ga,
+                    i_gb,
+                    contact_normal,
+                    contact_pos,
+                    penetration * weight,
+                    i_b,
+                    i_c,
+                    collider_state.contact_data.pair_idx[i_c, i_b],
+                    geoms_state,
+                    geoms_info,
+                    collider_state,
+                    collider_info,
+                )
 
 
 @qd.kernel(fastcache=True)
