@@ -193,7 +193,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         rigid_solver.update_geoms_render_T()
         rigid_solver.update_vgeoms()
         rigid_solver.update_vgeoms_render_T()
-        ctx = self.viewer.context
+        ctx = self.viewer.gs_context
         ctx.update_link_frame()
         ctx.update_rigid()
 
@@ -210,7 +210,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             return
 
         with self.viewer.render_lock:
-            ctx = self.viewer.context
+            ctx = self.viewer.gs_context
             rigid_solver = self.scene.rigid_solver
 
             old_geoms = entity.vgeoms if old_mode == "visual" else entity.geoms
@@ -539,7 +539,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
         if imgui.button("Reset", size=button_size_with_min(imgui, "Reset", 60.0)):
             with self.viewer.render_lock:
                 self.scene.reset()
-                self.viewer.context.clear_dynamic_nodes(only_outdated=False)
+                self.viewer.gs_context.clear_dynamic_nodes(only_outdated=False)
                 self._refresh_visuals()
 
         # Time display (frame count * dt = simulation time)
@@ -993,7 +993,7 @@ class ImGuiOverlayPlugin(ViewerPlugin):
             changed_wf, new_wf = imgui.checkbox(f"Wireframe##wf_{entity_idx}", is_wireframe)
             if changed_wf:
                 self._wireframe_state[entity_idx] = new_wf
-                ctx = self.viewer.context
+                ctx = self.viewer.gs_context
                 geoms = entity.vgeoms if entity.surface.vis_mode == "visual" else entity.geoms
                 for geom in geoms:
                     node = ctx.rigid_nodes.get(geom.uid)
