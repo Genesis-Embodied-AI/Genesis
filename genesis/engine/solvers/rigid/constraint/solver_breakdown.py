@@ -598,7 +598,7 @@ def _func_update_constraint_cost_coop(
     static_rigid_sim_config: qd.template(),
 ):
     """Warp-per-env cooperative variant of ``_func_update_constraint_cost``: 32 lanes stride through dofs and
-    constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add``. Per-lane reads of
+    constraints, with the final per-env scalar produced by ``subgroup.reduce_all_add_tiled``. Per-lane reads of
     Jaref/efc_D/active are coalesced under the [_B, len_constraints_] physical layout (i.e. when those
     layout-flippable constraint-state tensors were allocated with ``layout=(1, 0)``)."""
     _B = constraint_state.grad.shape[1]
@@ -648,8 +648,8 @@ def _func_update_constraint_cost_coop(
                     cost_i += linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
                 i_c = i_c + _K
 
-            cost_i = qd.simt.subgroup.reduce_all_add(cost_i, 5)
-            gauss_i = qd.simt.subgroup.reduce_all_add(gauss_i, 5)
+            cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
+            gauss_i = qd.simt.subgroup.reduce_all_add_tiled(gauss_i, 5)
 
             if tid == 0:
                 constraint_state.gauss[i_b] = gauss_i

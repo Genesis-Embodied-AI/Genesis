@@ -2488,7 +2488,7 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     """Cooperative (32-lane subgroup) variant of ``_func_linesearch_eval_constraints_at_n_alphas_serial``.
 
     All 32 lanes call this with their own ``tid``; the constraint loop is strided by 32, then each
-    accumulator is reduced across the warp via ``subgroup.reduce_all_add(_, 5)`` so every lane ends
+    accumulator is reduced across the warp via ``subgroup.reduce_all_add_tiled(_, 5)`` so every lane ends
     up with identical return values. Returns the same 3 ``qd.Vector(3)``s ``(t0, t1, t2)`` as the serial inner.
     """
     ne = constraint_state.n_constraints_equality[i_b]
@@ -2559,9 +2559,9 @@ def _func_linesearch_eval_constraints_at_n_alphas_coop(
     # Warp-tree reduction: every lane's 9 partial sums collapse into the per-env totals; after this
     # all 32 lanes hold identical scalars. The `5` is log2(32) tree levels.
     for k in qd.static(range(n_alphas)):
-        t_0[k] = qd.simt.subgroup.reduce_all_add(t_0[k], 5)
-        t_1[k] = qd.simt.subgroup.reduce_all_add(t_1[k], 5)
-        t_2[k] = qd.simt.subgroup.reduce_all_add(t_2[k], 5)
+        t_0[k] = qd.simt.subgroup.reduce_all_add_tiled(t_0[k], 5)
+        t_1[k] = qd.simt.subgroup.reduce_all_add_tiled(t_1[k], 5)
+        t_2[k] = qd.simt.subgroup.reduce_all_add_tiled(t_2[k], 5)
 
     t0 = qd.Vector([t_0[0], t_1[0], t_2[0]])
     t1 = qd.Vector([t_0[1], t_1[1], t_2[1]])
