@@ -255,6 +255,21 @@ def init(
             random_seed=seed,
         )
 
+    # On Metal, share PyTorch MPS's command queue with Quadrants so that GPU-side ordering is automatic and the
+    # per-interop-point sync overhead (qd.sync / torch.mps.synchronize) is eliminated.
+    if backend == _gs_backend.metal and device.type == "mps":
+        mps_queue = qd.interop.get_mps_command_queue()
+        if not mps_queue:
+            raise_exception(
+                "Failed to extract PyTorch MPS's Metal command queue. This is required on Apple Metal for correct "
+                "GPU synchronisation between Genesis and PyTorch. Please ensure you are using a supported PyTorch "
+                "version (>= 2.0)."
+            )
+        qd_init_kwargs.update(
+            external_metal_command_queue=mps_queue,
+            external_metal_command_queue_is_torch_queue=True,
+        )
+
     # init quadrants
     qd_debug = debug and (os.environ.get("QD_DEBUG") != "0")
     with redirect_stdout(_qd_outputs):
