@@ -1,5 +1,47 @@
 # Genesis Release Note
 
+## 0.4.7
+
+This release introduces a new type of tactile sensors while improving the existing raycasting-based and tactile sensors. Besides, a new opt-in experimental viewer plugin to interact with the simulation is now available.
+
+### Breaking changes
+
+* [MISC] Default constraint solver tolerance based on precision. (@duburcqa) (#2713)
+
+### New Features
+
+* Add ImGui overlay for interactive joint control and visualization. (@YilingQiao, @duburcqa) (#2541, #2780)
+* Add public API to set / get vertex positions of visual rigid geometries. (@duburcqa) (#2776)
+* Add support of visual-mesh to camera and raycasting-based sensors. (@Kashu7100, @duburcqa) (#2769, #2783)
+* Add `history_length` to Sensors (@Milotrince) (#2655)
+* Add new point-cloud-based tactile sensors. (@Milotrince) (#2735)
+
+### Bug Fixes
+
+* Fix 'qd_zero_grad' not supporting qd.Tensor. (@duburcqa) (#2753)
+* Fix zero-copy race condition on Apple Metal. (@duburcqa) (#2758)
+* Fix rigid body Jacobian getter for compound joints. (@vlordier) (#2706)
+* Fix ImGui interactive viewer plugin. (@Kashu7100) (#2789)
+* Fix safe GJK fallback. (@duburcqa) (#2716, #2717)
+* Workaround buggy float modulo on AMDGPU. (@duburcqa) (#2714)
+* Reject 'CoacdOptions.pca=True' due to upstream CoACD bug (@voidborne-d) (#2757)
+* Make Surface shortcut resolution idempotent. (@Kashu7100) (#2761)
+* Robust device handling in slerp utils. (@Kashu7100) (#2754)
+
+### Miscellaneous
+
+* Speedup noslip post-processing step used to suppress slip/drift. (@erizmr) (#2671, #2672, #2703)
+* Unify linesearch refinement between decomposed and monolith solver paths. (@duburcqa) (#2710)
+* Improve stability of CI performance benchmarks. (@hughperkins) (#2722, #2723, #2724, #2731)
+* Speedup rigid constraint solver. (@hughperkins) (#2659, #2762)
+* Serialize USD bake operations to prevent deadlocks. (@hughperkins) (#2739)
+* Migrate to unified Quadrant's tensor abstraction. (@hughperkins) (#2751)
+* Add support of autodiff with dynamic loops. (@duburcqa) (#2742, #2743)
+* Viewer plugin updates: orthographic cam mode, multi-env mouse interaction, auto dark mode. (@Milotrince) (#2728)
+* Refactor sensor pipeline. (@duburcqa, @Milotrince) (#2770, #2786, #2792)
+* Avoid manually sync between torch and quadrants on Metal. (@hughperkins) (#2760)
+* Update Dockerfile for Ubuntu 24.04 (@alnI3S) (#2744)
+
 ## 0.4.6
 
 This release brings recent performance benefits that where CUDA only to all GPU backends while relaxing CUDA Toolkit requirement. Besides, all reported CUDA crashes have been fixed.
