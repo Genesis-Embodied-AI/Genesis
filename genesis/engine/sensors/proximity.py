@@ -14,12 +14,11 @@ from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_
 from genesis.utils.raycast_qd import get_triangle_vertices
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
     Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
 )
 from .kinematic_tactile import _func_closest_point_on_triangle
 
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from .sensor_manager import SensorManager
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel
 def _kernel_proximity(
     probe_positions_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
@@ -131,16 +130,13 @@ class ProximitySensorMetadataMixin:
 
 
 @dataclass
-class ProximityMetadata(
-    ProximitySensorMetadataMixin, RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata
-):
+class ProximityMetadata(ProximitySensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
     """Shared metadata for the Proximity sensor class."""
 
 
 class ProximitySensor(
     RigidSensorMixin[ProximityMetadata],
-    NoisySensorMixin[ProximityMetadata],
-    Sensor[ProximityOptions, ProximityMetadata, tuple],
+    SimpleSensor[ProximityOptions, ProximityMetadata, tuple],
 ):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
 
@@ -151,7 +147,7 @@ class ProximitySensor(
         self._debug_objects: list = []
         self._nearest_points_slice: slice = slice(None)
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+    def _get_return_format(self) -> tuple[int, ...]:
         return (self._n_probes,)
 
     @classmethod
@@ -212,16 +208,14 @@ class ProximitySensor(
         self._nearest_points_slice = slice(slice_start, slice_start + self._n_probes)
 
     @classmethod
-    def reset(cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: ProximityMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         shared_metadata.nearest_positions[envs_idx] = shared_metadata.probe_positions
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: ProximityMetadata, shared_ground_truth_cache: torch.Tensor
-    ):
+    def _update_raw_data(cls, shared_metadata: ProximityMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
-        shared_ground_truth_cache.zero_()
+        raw_data_T.zero_()
         _kernel_proximity(
             shared_metadata.probe_positions,
             shared_metadata.probe_sensor_idx,
@@ -243,28 +237,8 @@ class ProximitySensor(
             solver.fixed_verts_state,
             solver.free_verts_state,
             shared_metadata.nearest_positions,
-            shared_ground_truth_cache,
+            raw_data_T,
         )
-
-    @classmethod
-    def _update_shared_cache(
-        cls,
-        shared_metadata: ProximityMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
-    ):
-        buffered_data.set(shared_ground_truth_cache)
-        torch.normal(0.0, shared_metadata.jitter_ts, out=shared_metadata.cur_jitter_ts)
-        cls._apply_delay_to_shared_cache(
-            shared_metadata,
-            shared_cache,
-            buffered_data,
-            shared_metadata.cur_jitter_ts,
-            shared_metadata.interpolate,
-        )
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
 
     def _draw_debug(self, context: "RasterizerContext"):
         env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
@@ -275,7 +249,7 @@ class ProximitySensor(
         link_pos = self._link.get_pos(env_idx).squeeze()
         link_quat = self._link.get_quat(env_idx).squeeze()
         probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
-        points = self.nearest_points[env_idx]
+        points = tensor_to_array(self.nearest_points[env_idx])
 
         self._debug_objects.append(
             context.draw_debug_spheres(

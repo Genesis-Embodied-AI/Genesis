@@ -8,13 +8,14 @@ import time
 import numpy as np
 import pytest
 import torch
+import trimesh
 
 import genesis as gs
 import genesis.utils.geom as gu
 from genesis.options.sensors import RasterizerCameraOptions
 from genesis.utils import set_random_seed
 from genesis.utils.image_exporter import FrameImageExporter, as_grayscale_image
-from genesis.utils.misc import tensor_to_array
+from genesis.utils.misc import qd_to_numpy, tensor_to_array
 from genesis.vis.keybindings import Key
 
 from .conftest import IS_INTERACTIVE_VIEWER_AVAILABLE, SKIP_NO_LUISA, SKIP_NO_MADRONA, SKIP_NO_VIEWER
@@ -163,13 +164,18 @@ def test_render_api(show_viewer, renderer_type, renderer):
 def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
     IS_BATCHRENDER = renderer_type in (RENDERER_TYPE.BATCHRENDER_RASTERIZER, RENDERER_TYPE.BATCHRENDER_RAYTRACER)
 
+    CAM_POS_LOCAL = (0.0, 0.0, 2.0)
+    CAM_LOOKAT_LOCAL = (0.0, 0.0, 0.0)
+
     scene = gs.Scene(
         vis_options=gs.options.VisOptions(
             # rendered_envs_idx=(0, 1, 2),
             env_separate_rigid=False,
+            # When env are not separated, their world pos is different, which affects lighting
+            shadow=False,
         ),
         renderer=renderer,
-        show_viewer=show_viewer,
+        show_viewer=False,
         show_FPS=False,
     )
     if IS_BATCHRENDER:
@@ -190,7 +196,9 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
             intensity=0.5,
         )
     scene.add_entity(
-        morph=gs.morphs.Plane(),
+        morph=gs.morphs.Plane(
+            plane_size=(1.5, 1.5),
+        ),
         surface=gs.surfaces.Aluminium(
             ior=10.0,
         ),
@@ -299,14 +307,21 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"),
     )
     cam = scene.add_camera(
-        pos=(0.9, 0.0, 0.4),
-        lookat=(0.0, 0.0, 0.4),
+        pos=CAM_POS_LOCAL,
+        lookat=CAM_LOOKAT_LOCAL,
         res=(500, 500),
         fov=60,
         spp=512,
-        GUI=False,
+        GUI=show_viewer,
     )
     scene.build(n_envs=3, env_spacing=(2.0, 2.0))
+
+    # Apple Software Renderer is fully deterministic: successive captures do not match exactly
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        tol_env = tol_step = 1.0
+    else:
+        tol_env = 0.002
+        tol_step = gs.EPS
 
     cam.start_recording()
     for _ in range(7):
@@ -318,21 +333,32 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
         steps_rgb_arrays = []
         for _ in range(2):
             scene.step()
-
-            robots_rgb_arrays = []
             robot.set_qpos(qpos)
-            if show_viewer:
-                scene.visualizer.update()
-            for i in range(3):
-                pos_i = scene.envs_offset[i] + np.array([0.9, 0.0, 0.4])
-                lookat_i = scene.envs_offset[i] + np.array([0.0, 0.0, 0.4])
-                cam.set_pose(pos=pos_i, lookat=lookat_i)
-                rgb_array, *_ = cam.render(
+
+            if IS_BATCHRENDER:
+                rgb_array_all, *_ = cam.render(
                     rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
                 )
-                rgb_std = tensor_to_array(rgb_array).reshape((-1, 3)).astype(np.float32).std(axis=0).max()
+
+            env_rgb_array = None
+            for i_b in range(scene.n_envs):
+                if IS_BATCHRENDER:
+                    rgb_array = rgb_array_all[i_b]
+                else:
+                    # When env are not separated, scene cameras observe ALL batched environments. Moreover, scene
+                    # cameras are operating in local frame of the env they bind to rather than world-frame, for
+                    # consistency with camera sensors. As a result, the pos offset to apply for looking at each parallel
+                    # env depends on the env the camera is bound to.
+                    env_offset = scene.envs_offset[i_b] - scene.envs_offset[cam.env_idx]
+                    cam.set_pose(pos=CAM_POS_LOCAL + env_offset, lookat=CAM_LOOKAT_LOCAL + env_offset)
+                    rgb_array, *_ = cam.render(
+                        rgb=True, depth=False, segmentation=False, colorize_seg=False, normal=False, force_render=True
+                    )
+                rgb_array = tensor_to_array(rgb_array).astype(np.float32)
+
+                rgb_std = rgb_array.reshape((-1, 3)).std(axis=0).max()
                 try:
-                    assert rgb_std > 10.0
+                    assert rgb_std > 20.0
                 except AssertionError:
                     if rgb_std < gs.EPS:
                         if sys.platform == "darwin" and scene.visualizer.is_software:
@@ -340,16 +366,17 @@ def test_deterministic(tmp_path, renderer_type, renderer, show_viewer, tol):
                                 "Flaky on MacOS with Apple Software Renderer. Nothing but the background was rendered."
                             )
                     raise
-                robots_rgb_arrays.append(rgb_array)
-            steps_rgb_arrays.append(robots_rgb_arrays)
+                if env_rgb_array is None:
+                    env_rgb_array = rgb_array
+                else:
+                    rgb_env_diff = np.abs(env_rgb_array - rgb_array)
+                    assert rgb_env_diff.mean() < tol_env, "Per-env renders do not match"
 
-        try:
-            for i in range(3):
-                assert_allclose(steps_rgb_arrays[0][i], steps_rgb_arrays[1][i], tol=tol)
-        except AssertionError:
-            if sys.platform == "darwin" and scene.visualizer.is_software:
-                pytest.xfail("Flaky on MacOS with Apple Software Renderer. Successive captures do not match.")
-            raise
+            steps_rgb_arrays.append(env_rgb_array)
+
+        rgb_step_diff = np.abs(np.diff(steps_rgb_arrays, axis=0))
+        assert rgb_step_diff.mean() < tol_step, "Per-step renders do not match"
+
     cam.stop_recording(save_to_filename=(tmp_path / "video.mp4"))
 
 
@@ -377,6 +404,7 @@ def test_render_api_advanced(tmp_path, n_envs, show_viewer, png_snapshot, render
             enable_collision=False,
         ),
         vis_options=gs.options.VisOptions(
+            env_separate_rigid=False,
             # Disable shadows systematically for Rasterizer because they are forcibly disabled on CPU backend anyway
             shadow=(renderer_type != RENDERER_TYPE.RASTERIZER),
         ),
@@ -1957,3 +1985,243 @@ def test_rasterizer_sensor_env_spacing_invariance(renderer, context_mode):
     # Per-env sensor images must be invariant to env_spacing — the offset is purely for
     # visual separation in the interactive viewer and must be transparent to sensors.
     assert np.abs(img_ref.astype(np.float32) - img_test.astype(np.float32)).mean() < 1.0
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+@pytest.mark.skipif(not IS_INTERACTIVE_VIEWER_AVAILABLE, reason=SKIP_NO_VIEWER)
+def test_render_offscreen_oversized_resolution(renderer):
+    # Verify that ``render_offscreen`` honors the user-requested viewport size even when it exceeds the available
+    # display area, by requesting a viewer larger than GitHub-hosted Apple M1 macos-15 runners can actually allocate
+    # and checking the returned image dimensions still match the request.
+    requested_res = (1920, 1440)
+    scene = gs.Scene(
+        viewer_options=gs.options.ViewerOptions(
+            res=requested_res,
+        ),
+        renderer=renderer,
+        show_viewer=True,
+        show_FPS=False,
+    )
+    scene.build()
+    pyrender_viewer = scene.visualizer.viewer._pyrender_viewer
+    assert pyrender_viewer.is_active
+    rgb, *_ = pyrender_viewer.render_offscreen(
+        pyrender_viewer._camera_node,
+        pyrender_viewer._renderer,
+        rgb=True,
+        depth=False,
+        seg=False,
+        normal=False,
+    )
+    assert rgb.shape[:2] == (requested_res[1], requested_res[0])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_set_vverts(renderer, show_viewer):
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=False,
+        show_FPS=False,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    entity = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.2,
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+    )
+    cam = scene.add_camera(
+        res=(160, 120),
+        pos=(0.0, -1.5, 0.5),
+        lookat=(0.0, 0.0, 0.5),
+    )
+    scene.build(n_envs=3)
+
+    # vfaces_info covers all vgeoms in global vvert space, not just opt-in entities.
+    solver = scene.sim.rigid_solver
+    vfaces_idx = qd_to_numpy(solver.vfaces_info.vverts_idx)
+    assert vfaces_idx.shape[0] == solver.n_vfaces
+    for vg in solver.vgeoms:
+        assert_equal(vfaces_idx[vg.vface_start : vg.vface_end], vg.init_vfaces + vg._vvert_start)
+
+    scene.step()
+    scene.visualizer.update_visual_states()
+    fk_vverts = tensor_to_array(entity.get_vverts())
+
+    # Render baseline through FK path before any set_vverts, to compare deformed vs FK pixels.
+    rgb_baseline = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
+
+    # User-driven vverts survive step() because FK does not overwrite the custom buffer.
+    entity.set_vverts(7.0)
+    scene.step()
+    scene.visualizer.update_visual_states()
+    assert_equal(entity.get_vverts(), 7.0)
+
+    # A strong out-of-frame override visibly changes the render through the per-env vverts path.
+    entity.set_vverts((0.0, 0.0, 10.0))
+    rgb_deformed = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
+    assert np.abs(rgb_deformed - rgb_baseline).mean() > 5.0
+
+    # set_vverts(None) re-runs FK over the entity's vgeoms and writes the result back.
+    entity.set_vverts(None)
+    scene.step()
+    scene.visualizer.update_visual_states()
+    assert_allclose(entity.get_vverts(), fk_vverts, tol=gs.EPS)
+    rgb_restored = tensor_to_array(cam.render(rgb=True, force_render=True)[0])
+    if sys.platform == "darwin" and scene.visualizer.is_software:
+        assert np.abs(rgb_restored.astype(np.float32) - rgb_baseline.astype(np.float32)).mean() < 1.0
+    else:
+        assert_equal(rgb_restored, rgb_baseline)
+
+    # Vgeom-level write affects only the slice owned by that vgeom.
+    vg = entity.vgeoms[0]
+    vg.set_vverts(3.0)
+    scene.step()
+    scene.visualizer.update_visual_states()
+    after_vg = tensor_to_array(entity.get_vverts())
+    assert_equal(after_vg[..., vg.vvert_start : vg.vvert_end, :], 3.0)
+    entity.set_vverts(None)
+
+    # get_vverts returns a copy: mutating the result does not change the underlying buffer.
+    copy = entity.get_vverts()
+    copy[:] = 99.0
+    assert (tensor_to_array(entity.get_vverts()) != 99.0).any()
+
+    # Mix user-driven and FK-driven envs in the same entity.
+    entity.set_vverts(7.0, envs_idx=0)
+    entity.set_vverts(9.0, envs_idx=[2])
+    scene.step()
+    scene.visualizer.update_visual_states()
+    v = tensor_to_array(entity.get_vverts())
+    assert_equal(v[0], 7.0)
+    assert_allclose(v[1], fk_vverts[1], tol=gs.EPS)
+    assert_equal(v[2], 9.0)
+
+    # set_vverts requires the entity's morph to be created with ``enable_custom_vverts=True``.
+    with pytest.raises(gs.GenesisException, match="enable_custom_vverts=True"):
+        plane.set_vverts(0.0)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("renderer_type", [RENDERER_TYPE.RASTERIZER])
+def test_set_vverts_sphere_to_box(renderer, show_viewer):
+    # Build a grid-subdivided cube (10 segments per edge -> 602 vertices) so the topology has vertices at every cube
+    # corner and edge. ``spherify`` maps the cube grid onto the sphere surface with the same triangulation. The
+    # deformable is loaded with the spherified mesh and ``set_vverts`` later swaps the verts back to the cube
+    # positions. The reference sphere and box are the standard ``gs.morphs.Sphere`` / ``gs.morphs.Box`` primitives;
+    # the cube grid already has vertices at every cube corner, so the post-morph silhouette is byte-equal to the
+    # primitive box, while the spherified mesh differs from the primitive sphere by a handful of boundary pixels
+    # (different tessellations of the same circle outline).
+    n_seg = 10
+    coords = np.linspace(-1.0, 1.0, n_seg + 1)
+    cube_verts_list: list[np.ndarray] = []
+    vert_index: dict[tuple, int] = {}
+    faces: list[list[int]] = []
+    for axis in range(3):
+        for sign in (-1.0, 1.0):
+            i, j = (axis + 1) % 3, (axis + 2) % 3
+            grid = np.empty((n_seg + 1, n_seg + 1), dtype=int)
+            for a in range(n_seg + 1):
+                for b in range(n_seg + 1):
+                    p = np.zeros(3)
+                    p[axis] = sign
+                    p[i] = coords[a]
+                    p[j] = coords[b]
+                    key = tuple(np.round(p, 8))
+                    idx = vert_index.get(key)
+                    if idx is None:
+                        idx = len(cube_verts_list)
+                        vert_index[key] = idx
+                        cube_verts_list.append(p)
+                    grid[a, b] = idx
+            for a in range(n_seg):
+                for b in range(n_seg):
+                    v00, v10 = int(grid[a, b]), int(grid[a + 1, b])
+                    v01, v11 = int(grid[a, b + 1]), int(grid[a + 1, b + 1])
+                    if sign > 0:
+                        faces.append([v00, v10, v11])
+                        faces.append([v00, v11, v01])
+                    else:
+                        faces.append([v00, v11, v10])
+                        faces.append([v00, v01, v11])
+
+    radius = 0.2
+    cube_verts = np.asarray(cube_verts_list, dtype=gs.np_float) * radius
+    faces_arr = np.asarray(faces, dtype=gs.np_int)
+    x, y, z = cube_verts[:, 0] / radius, cube_verts[:, 1] / radius, cube_verts[:, 2] / radius
+    sphere_verts = radius * np.column_stack(
+        [
+            x * np.sqrt(np.maximum(0.0, 1 - y * y / 2 - z * z / 2 + y * y * z * z / 3)),
+            y * np.sqrt(np.maximum(0.0, 1 - z * z / 2 - x * x / 2 + z * z * x * x / 3)),
+            z * np.sqrt(np.maximum(0.0, 1 - x * x / 2 - y * y / 2 + x * x * y * y / 3)),
+        ]
+    )
+    sphere_tri = trimesh.Trimesh(vertices=sphere_verts, faces=faces_arr, process=False)
+
+    pos_sphere = (0.0, 0.0, 1.0)
+    pos_box = (5.0, 0.0, 1.0)
+    pos_deformable = (10.0, 0.0, 1.0)
+    cam_dz = 1.0
+
+    scene = gs.Scene(
+        renderer=renderer,
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Sphere(
+            radius=radius,
+            pos=pos_sphere,
+            fixed=True,
+        ),
+    )
+    scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(2.0 * radius, 2.0 * radius, 2.0 * radius),
+            pos=pos_box,
+            fixed=True,
+        ),
+    )
+    deformable = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            files=(sphere_tri,),
+            pos=pos_deformable,
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+    )
+    cam = scene.add_camera(
+        res=(256, 256),
+        pos=(pos_sphere[0], pos_sphere[1], pos_sphere[2] + cam_dz),
+        lookat=pos_sphere,
+        up=(0.0, 1.0, 0.0),
+        GUI=show_viewer,
+    )
+    scene.build()
+
+    cam.set_pose(pos=(pos_sphere[0], pos_sphere[1], pos_sphere[2] + cam_dz), lookat=pos_sphere)
+    mask_sphere = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+
+    cam.set_pose(pos=(pos_box[0], pos_box[1], pos_box[2] + cam_dz), lookat=pos_box)
+    mask_box = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+
+    # The reference primitive sphere uses a different tessellation than the spherified cube grid, so the two circle
+    # silhouettes differ by a handful of boundary pixels - bound the symmetric difference at 0.5% of the area.
+    sphere_tolerance = max(int(0.005 * mask_sphere.sum()), 1)
+
+    cam.set_pose(pos=(pos_deformable[0], pos_deformable[1], pos_deformable[2] + cam_dz), lookat=pos_deformable)
+    mask_deformable_sphere = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert int((mask_deformable_sphere ^ mask_sphere).sum()) < sphere_tolerance
+
+    deformable.set_vverts(cube_verts + np.array(pos_deformable, dtype=gs.np_float))
+    mask_deformable_box = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert_equal(mask_deformable_box, mask_box)
+
+    deformable.set_vverts(None)
+    mask_deformable_restored = tensor_to_array(cam.render(rgb=False, segmentation=True, force_render=True)[2]) > 0
+    assert int((mask_deformable_restored ^ mask_sphere).sum()) < sphere_tolerance

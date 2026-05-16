@@ -1,7 +1,6 @@
-import math
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING
 
 import numpy as np
 import quadrants as qd
@@ -13,21 +12,18 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.options.sensors import TemperatureGrid as TemperatureGridOptions
 from genesis.options.sensors import TemperatureProperties
-from genesis.utils import mesh as mu
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
+from genesis.utils.ring_buffer import TensorRingBuffer
 
 from .base_sensor import (
-    NoisySensorMetadataMixin,
-    NoisySensorMixin,
+    SimpleSensor,
     RigidSensorMetadataMixin,
     RigidSensorMixin,
-    Sensor,
-    SharedSensorMetadata,
+    SimpleSensorMetadata,
 )
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
-    from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
 
     from .sensor_manager import SensorManager
@@ -220,7 +216,7 @@ def _qd_polygon_area_from_points_3d(
     return area
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel
 def _kernel_compute_contact_areas(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -297,7 +293,7 @@ def _qd_k_eff(k_a: float, k_b: float, eps: float) -> float:
     return gs.qd_float(2.0) * k_a * k_b / (k_a + k_b + eps)
 
 
-@qd.kernel(fastcache=True)
+@qd.kernel
 def _kernel_contact_heat(
     links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
@@ -493,7 +489,7 @@ def _apply_T_measured_filter(
 
 
 @dataclass
-class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadataMixin, SharedSensorMetadata):
+class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata):
     """Shared metadata for all temperature grid sensors."""
 
     ambient_temperature: float = 21.0
@@ -523,8 +519,7 @@ class TemperatureGridSensorMetadata(RigidSensorMetadataMixin, NoisySensorMetadat
 
 class TemperatureGridSensor(
     RigidSensorMixin[TemperatureGridSensorMetadata],
-    NoisySensorMixin[TemperatureGridSensorMetadata],
-    Sensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
+    SimpleSensor[TemperatureGridOptions, TemperatureGridSensorMetadata, TemperatureGridSensorMetadata],
 ):
     def __init__(self, sensor_options: TemperatureGridOptions, sensor_idx: int, sensor_manager: "SensorManager"):
         super().__init__(sensor_options, sensor_idx, sensor_manager)
@@ -676,7 +671,7 @@ class TemperatureGridSensor(
             (solver._B, n_c_max, len(_ScratchIdx)), device=gs.device, dtype=gs.tc_float
         )
 
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+    def _get_return_format(self) -> tuple[int, ...]:
         return (self._options.grid_size,)
 
     @classmethod
@@ -684,14 +679,14 @@ class TemperatureGridSensor(
         return gs.tc_float
 
     @classmethod
-    def reset(cls, shared_metadata: TemperatureGridSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
-        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+    def reset(cls, shared_metadata: TemperatureGridSensorMetadata, current_ground_truth_data_T: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, current_ground_truth_data_T, envs_idx)
         for i_s in range(shared_metadata.sensor_cache_start.shape[0]):
             link_idx = shared_metadata.links_idx[i_s].item()
             mat_idx = shared_metadata.link_to_material_idx[link_idx].item()
             base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP][mat_idx].item()
             start = shared_metadata.sensor_cache_start[i_s].item()
-            shared_ground_truth_cache[start : start + shared_metadata.cache_sizes[i_s], envs_idx] = base_T
+            current_ground_truth_data_T[start : start + shared_metadata.cache_sizes[i_s], envs_idx] = base_T
         if shared_metadata.link_temps.numel() > 0:
             ambient_T = shared_metadata.ambient_temperature
             link_base_T = shared_metadata.link_material_properties[_PropIdx.BASE_TEMP]
@@ -705,9 +700,7 @@ class TemperatureGridSensor(
             shared_metadata.link_temps[envs_idx, :] = base_T_per_link.unsqueeze(0).expand(n_envs, -1)
 
     @classmethod
-    def _update_shared_ground_truth_cache(
-        cls, shared_metadata: TemperatureGridSensorMetadata, shared_ground_truth_cache: torch.Tensor
-    ):
+    def _update_raw_data(cls, shared_metadata: TemperatureGridSensorMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
         dt = solver._sim.dt
         props = shared_metadata.link_material_properties
@@ -730,7 +723,7 @@ class TemperatureGridSensor(
             shared_metadata.K2_spectral,
             dt,
             gs.EPS,
-            shared_ground_truth_cache,
+            raw_data_T,
         )
         # 3) Contact heat transfer
         collider_state = solver.collider._collider_state
@@ -761,9 +754,9 @@ class TemperatureGridSensor(
             shared_metadata.contact_area_buffer,
             dt,
             gs.EPS,
-            shared_ground_truth_cache,
+            raw_data_T,
         )
-        shared_ground_truth_cache.clamp_(-MAX_TEMP, MAX_TEMP)
+        raw_data_T.clamp_(-MAX_TEMP, MAX_TEMP)
         # 4) Radiation and convection
         _apply_radiation_convection(
             shared_metadata.sensor_cache_start,
@@ -779,30 +772,32 @@ class TemperatureGridSensor(
             shared_metadata.ambient_temperature,
             shared_metadata.convection_coeff,
             dt,
-            shared_ground_truth_cache,
+            raw_data_T,
         )
 
     @classmethod
-    def _update_shared_cache(
+    def _apply_transform(
         cls,
         shared_metadata: TemperatureGridSensorMetadata,
-        shared_ground_truth_cache: torch.Tensor,
-        shared_cache: torch.Tensor,
-        buffered_data: "TensorRingBuffer",
+        data: torch.Tensor,
+        *,
+        timeline=None,
     ):
-        dt = shared_metadata.solver._sim.dt
-        buffered_data.set(shared_ground_truth_cache)
+        if timeline is None:
+            return
+        # First-order RC filter: data <- prev_measured + (dt/tau) * (raw - prev_measured), where data initially
+        # holds the raw seed copied by the default `_update_current_timestep_data`.
+        raw = data.clone()
+        filtered = timeline.at(1).clone()
         _apply_T_measured_filter(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_time_const,
-            dt,
-            shared_ground_truth_cache,
-            buffered_data.at(0),
+            shared_metadata.solver._sim.dt,
+            raw,
+            filtered,
         )
-        cls._apply_delay_to_shared_cache(shared_metadata, shared_cache, buffered_data)
-        cls._add_noise_drift_bias(shared_metadata, shared_cache)
-        cls._quantize_to_resolution(shared_metadata.resolution, shared_cache)
+        data.copy_(filtered)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """

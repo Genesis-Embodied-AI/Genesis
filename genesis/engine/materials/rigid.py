@@ -76,6 +76,8 @@ class Rigid(Kinematic["RigidEntity"]):
         ``IPCCouplerOptions.contact_resistance``. Default is None.
     """
 
+    use_visual_raycasting: StrictBool = False
+
     rho: ValidFloat | None = None
     friction: Annotated[ValidFloat, Field(ge=0.01, le=5.0)] | None = None
     needs_coup: StrictBool = True

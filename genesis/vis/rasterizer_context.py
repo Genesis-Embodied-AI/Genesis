@@ -102,6 +102,9 @@ class RasterizerContext:
         self.link_frame_nodes = dict()
         self.frustum_nodes = dict()  # nodes camera frustums
         self.rigid_nodes = dict()
+        # (env_idx, geom.uid) -> per-env pyrender node for kinematic entities currently driven by set_vverts
+        self.vverts_nodes = dict()
+        self._per_env_vverts_entity_uids: set = set()
         self.static_nodes = dict()  # used across all frames
         self.dynamic_nodes = dict()  # nodes that live within single frame
         self.external_nodes = dict()  # nodes added by external user
@@ -175,12 +178,14 @@ class RasterizerContext:
             self.link_frame_nodes,
             self.frustum_nodes,
             self.rigid_nodes,
+            self.vverts_nodes,
             self.static_nodes,
             self.external_nodes,
         ):
             for external_node in node_registry.values():
                 self.remove_node(external_node)
             node_registry.clear()
+        self._per_env_vverts_entity_uids.clear()
 
     def reset(self):
         self._t = -1
@@ -436,11 +441,17 @@ class RasterizerContext:
                         mesh = geom.get_trimesh()
                     geom_T = geoms_T[geom.idx][geom_envs_idx]
 
-                    # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting
+                    # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting,
+                    # unless they do not overlap.
                     env_shared = not self.env_separate_rigid
                     if not env_shared and isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal = entity.morph.normal
-                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                        if (
+                            abs(plane_normal[0]) < gs.EPS
+                            and abs(plane_normal[1]) < gs.EPS
+                            and self.scene.env_spacing[0] < plane_size[0]
+                            and self.scene.env_spacing[1] < plane_size[1]
+                        ):
                             geom_T = geom_T[:1]
                             env_shared = True
 
@@ -466,6 +477,73 @@ class RasterizerContext:
                 if entity.surface.vis_mode == "visual":
                     geoms = entity.vgeoms
                     geoms_T = solver._vgeoms_render_T
+                    if entity._morph.enable_custom_vverts:
+                        if entity.uid not in self._per_env_vverts_entity_uids:
+                            # The per-env node's GL buffers are only allocated during the upcoming render pass, so any
+                            # queued update_buffer call resolving its id right now would hit -1 and be silently
+                            # dropped. Seed primitive.positions with the current world-space vverts directly so the
+                            # first frame is already correct.
+                            vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                            envs_offset = self.scene.envs_offset
+                            custom_offset = entity._custom_vvert_start - entity._vvert_start
+                            for geom in entity.vgeoms:
+                                old_node = self.rigid_nodes.pop(geom.uid, None)
+                                if old_node is not None:
+                                    self.remove_node_seg(old_node)
+                                    self.remove_node(old_node)
+
+                                geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                                if len(geom_envs_idx) == 0:
+                                    continue
+
+                                mesh = geom.get_trimesh()
+                                v_start = geom.vvert_start + custom_offset
+                                v_end = geom.vvert_end + custom_offset
+                                for i_b in geom_envs_idx:
+                                    node = self.add_node(
+                                        pyrender.Mesh.from_trimesh(
+                                            mesh=mesh,
+                                            smooth=geom.surface.smooth,
+                                            double_sided=geom.surface.double_sided,
+                                        ),
+                                    )
+                                    env_i = self.rendered_envs_idx.index(i_b)
+                                    geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
+                                    node.mesh.primitives[0].positions = self._scene.reorder_vertices(
+                                        node, geom_vverts.astype(np.float32)
+                                    )
+                                    self.vverts_nodes[(i_b, geom.uid)] = node
+                                    if self.segmentation_level == "geom":
+                                        seg_key = (geom.entity.idx, geom.link.idx, geom.idx)
+                                    elif self.segmentation_level == "link":
+                                        seg_key = (geom.entity.idx, geom.link.idx)
+                                    elif self.segmentation_level == "entity":
+                                        seg_key = geom.entity.idx
+                                    else:
+                                        gs.raise_exception(f"Unsupported segmentation level: {self.segmentation_level}")
+                                    self.create_node_seg(seg_key, node)
+                            self._per_env_vverts_entity_uids.add(entity.uid)
+
+                        vverts = qd_to_numpy(solver.vverts_state.pos, self.rendered_envs_idx, transpose=True)
+                        envs_offset = self.scene.envs_offset
+                        custom_offset = entity._custom_vvert_start - entity._vvert_start
+                        for geom in entity.vgeoms:
+                            geom_envs_idx = self._get_geom_active_envs_idx(geom, self.rendered_envs_idx)
+                            if len(geom_envs_idx) == 0:
+                                continue
+                            v_start = geom.vvert_start + custom_offset
+                            v_end = geom.vvert_end + custom_offset
+                            for env_i, i_b in enumerate(self.rendered_envs_idx):
+                                if i_b not in geom_envs_idx:
+                                    continue
+                                node = self.vverts_nodes[(i_b, geom.uid)]
+                                geom_vverts = vverts[env_i, v_start:v_end, :] + envs_offset[i_b]
+                                update_data = self._scene.reorder_vertices(node, geom_vverts.astype(np.float32))
+                                self.jit.update_buffer(self._scene.get_buffer_id(node, "pos"), update_data)
+                                normal_data = self.jit.update_normal(node, update_data)
+                                if normal_data is not None:
+                                    self.jit.update_buffer(self._scene.get_buffer_id(node, "normal"), normal_data)
+                        continue
                 else:
                     geoms = entity.geoms
                     geoms_T = solver._geoms_render_T
@@ -485,8 +563,13 @@ class RasterizerContext:
 
                     # Keep single-instance for z-axis normal planes (see on_rigid)
                     if isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal = entity.morph.normal
-                        if abs(plane_normal[0]) < gs.EPS and abs(plane_normal[1]) < gs.EPS:
+                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                        if (
+                            abs(plane_normal[0]) < gs.EPS
+                            and abs(plane_normal[1]) < gs.EPS
+                            and self.scene.env_spacing[0] < plane_size[0]
+                            and self.scene.env_spacing[1] < plane_size[1]
+                        ):
                             geom_T = geom_T[:1]
 
                     node = self.rigid_nodes[geom.uid]

@@ -1,10 +1,13 @@
 from typing import TYPE_CHECKING
 
+import torch
+
 import genesis as gs
 from genesis.repr_base import RBC
 
 if TYPE_CHECKING:
     from genesis.engine.scene import Scene
+    from genesis.engine.sensors.base_sensor import Sensor
 
 
 class Entity(RBC):
@@ -101,6 +104,32 @@ class Entity(RBC):
             morph type and UID is returned.
         """
         return self._name
+
+    @property
+    def sensors(self) -> "gs.List[Sensor]":
+        """List of sensors attached to this entity."""
+        return self._sim._sensor_manager.get_sensors_by_entity(self._idx)
+
+    @gs.assert_built
+    def read_sensors(self, envs_idx=None) -> "dict[type[Sensor], torch.Tensor]":
+        """
+        Read every sensor attached to this entity as a tensor per sensor class.
+
+        Always returns a fresh tensor independent of the internal sensor storage; the caller is free to mutate the
+        result.
+
+        Parameters
+        ----------
+        envs_idx : array-like | int | slice | None
+            Environment selection. Defaults to all environments.
+
+        Returns
+        -------
+        dict[Type[Sensor], torch.Tensor]
+            For each sensor class with at least one sensor on this entity, a tensor of shape
+            (B, [history,] entity_cache_size_for_class).
+        """
+        return self._sim._sensor_manager.read_sensors(entity_idx=self._idx, envs_idx=envs_idx)
 
     # ------------------------------------------------------------------------------------
     # --------------------------------- naming methods -----------------------------------

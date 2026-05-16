@@ -14,7 +14,7 @@ from genesis.typing import (
     NonNegativeFloat,
 )
 
-from .options import NoisySensorOptionsMixin, RigidSensorOptionsMixin, SensorOptions, SensorT
+from .options import SimpleSensorOptions, RigidSensorOptionsMixin, SensorOptions, SensorT
 
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ class KinematicTactileSensorMixin(SensorOptions[SensorT]):
 
 class KinematicContactProbe(
     RigidSensorOptionsMixin["KinematicContactProbeSensor"],
-    NoisySensorOptionsMixin["KinematicContactProbeSensor"],
+    SimpleSensorOptions["KinematicContactProbeSensor"],
     KinematicTactileSensorMixin["KinematicContactProbeSensor"],
 ):
     """
@@ -96,7 +96,7 @@ class KinematicContactProbe(
 
 class ElastomerDisplacement(
     RigidSensorOptionsMixin["ElastomerDisplacementSensor"],
-    NoisySensorOptionsMixin["ElastomerDisplacementSensor"],
+    SimpleSensorOptions["ElastomerDisplacementSensor"],
     KinematicTactileSensorMixin["ElastomerDisplacementSensor"],
 ):
     """

@@ -10,6 +10,7 @@ import torch
 
 import genesis as gs
 import genesis.utils.geom as gu
+from genesis.utils.misc import tensor_to_array
 
 from .utils import assert_allclose, assert_equal
 
@@ -57,6 +58,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
         from dataclasses import dataclass
 
         import genesis as gs
+        import torch
         from genesis.engine.sensors.base_sensor import Sensor, SharedSensorMetadata
 
         from .options import FakeSensorOptions
@@ -76,11 +78,7 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_shared_ground_truth_cache(cls, metadata, cache):
-                pass
-
-            @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, cache, buffer):
+            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline, intermediate_cache, return_cache):
                 pass
 
             @classmethod
@@ -123,6 +121,32 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
             if mod_name.startswith("fake_sensor_plugin"):
                 del sys.modules[mod_name]
         SensorManager.SENSOR_TYPES_MAP.pop(FakeSensorOptions, None)
+
+
+@pytest.mark.required
+def test_post_process_requires_intermediate_override():
+    # Strict-override rule: a subclass overriding `_post_process` without also overriding `_get_intermediate_format`
+    # or `_get_intermediate_dtype` must raise TypeError at class-definition time. The intermediate buffer is
+    # structurally distinct from the return buffer (timeline ring is in intermediate space); the explicit override
+    # forces the author to declare it - even a no-op override is acceptable when shape/dtype coincide with return.
+    # Local import: importing `genesis.engine.sensors.base_sensor` at module top triggers the sensors package
+    # `__init__.py`, which transitively loads `genesis.utils.sdf` and dereferences `gs.qd_float`. That attribute is
+    # only set by `gs.init(...)`, which runs in the autouse conftest fixture after pytest collection. Defer here.
+    from genesis.engine.sensors.base_sensor import Sensor
+
+    with pytest.raises(TypeError, match="_get_intermediate"):
+
+        class BadSensor(Sensor):
+            def _get_return_format(self):
+                return (1,)
+
+            @classmethod
+            def _get_cache_dtype(cls):
+                return gs.tc_float
+
+            @classmethod
+            def _post_process(cls, shared_metadata, tensor):
+                return tensor * 2
 
 
 @pytest.mark.required
@@ -352,6 +376,83 @@ def test_imu_sensor(show_viewer, tol, n_envs):
     assert_allclose(imu.read().mag, MAG_FIELD, tol=tol)
 
 
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_sensor_history_length_contact_and_imu(show_viewer, tol, n_envs):
+    """history_length stacks recent frames from ring snapshot buffers (Contact + IMU)."""
+    GRAVITY = -10.0
+    DT = 1e-2
+    HISTORY_LEN = 4
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=DT,
+            gravity=(0.0, 0.0, GRAVITY),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(gs.morphs.Plane())
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+
+    contact_h = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_h = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            history_length=HISTORY_LEN,
+        )
+    )
+    imu_ref = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+        )
+    )
+
+    scene.build(n_envs=n_envs)
+
+    def _expected_shape_with_history(shape: tuple[int, ...]):
+        return (HISTORY_LEN, *shape) if n_envs == 0 else (n_envs, HISTORY_LEN, *shape)
+
+    prev_c = None
+    prev_i = None
+    for _ in range(HISTORY_LEN * 2):
+        scene.step()
+        cg = contact_h.read_ground_truth()
+        assert cg.shape == _expected_shape_with_history((1,))
+        ig = imu_h.read_ground_truth()
+        assert ig.lin_acc.shape == _expected_shape_with_history((3,))
+        assert ig.ang_vel.shape == _expected_shape_with_history((3,))
+        assert ig.mag.shape == _expected_shape_with_history((3,))
+
+        assert_equal(contact_h.read(), cg)
+
+        batch_shape = () if n_envs == 0 else (slice(None),)
+        cur_slice = (*batch_shape, 0)
+        prev_slice = (*batch_shape, 1)
+        assert_allclose(ig.lin_acc[cur_slice], imu_ref.read_ground_truth().lin_acc, tol=tol)
+        assert_allclose(ig.ang_vel[cur_slice], imu_ref.read_ground_truth().ang_vel, tol=tol)
+        assert_allclose(ig.mag[cur_slice], imu_ref.read_ground_truth().mag, tol=tol)
+
+        if prev_c is not None:
+            assert_equal(cg[prev_slice], prev_c[cur_slice])
+        if prev_i is not None:
+            assert_allclose(ig.lin_acc[prev_slice], prev_i.lin_acc[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.ang_vel[prev_slice], prev_i.ang_vel[cur_slice], tol=gs.EPS)
+            assert_allclose(ig.mag[prev_slice], prev_i.mag[cur_slice], tol=gs.EPS)
+        prev_c = cg
+        prev_i = ig
+
+
 # ------------------------------------------------------------------------------------------
 # ------------------------------------ Contact Sensors -------------------------------------
 # ------------------------------------------------------------------------------------------
@@ -364,10 +465,13 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     GRAVITY = -10.0
     BIAS = (0.1, 0.2, 0.3)
     NOISE = 0.01
+    DT = 1e-2
+    DELAY_STEPS = 2
 
     scene = gs.Scene(
         sim_options=gs.options.SimOptions(
             gravity=(0.0, 0.0, GRAVITY),
+            dt=DT,
         ),
         profiling_options=gs.options.ProfilingOptions(
             show_FPS=False,
@@ -390,7 +494,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box = scene.add_entity(
         morph=gs.morphs.Box(
             size=(1.0, 1.0, 1.0),  # volume = 1 m^3
-            pos=(0.0, 0.0, 0.51),
+            pos=(0.0, 0.0, 0.55),
         ),
         material=gs.materials.Rigid(
             rho=1.0,  # mass = 1.0 kg
@@ -452,7 +556,7 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
             noise=NOISE,
             bias=BIAS,
             random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
-            delay=0.05,
+            delay=DT * DELAY_STEPS,
             jitter=0.01,
             interpolate=True,
         )
@@ -477,7 +581,8 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     box_3.set_dofs_position((-np.pi / 2, -np.pi / 4, -np.pi / 2), dofs_idx_local=slice(3, None))
 
     # Note that it is necessary to do a first step, because the initial state right after reset is not valid
-    scene.step()
+    for _ in range(DELAY_STEPS + 1):
+        scene.step()
 
     # Make sure that box CoM is valid
     assert_allclose(box.get_links_pos(ref="root_com")[..., :2], box_com_offset[:2], tol=tol)
@@ -488,14 +593,14 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     assert_allclose(force_sensor.read(), force_sensor_noisy.read_ground_truth(), tol=gs.EPS)
     assert_allclose(force_sensor_noisy.read(), BIAS, tol=NOISE * 3)
 
-    for _ in range(10):
+    for _ in range(20):
         scene.step()
 
     assert bool_sensor_floor.read().all(), "ContactSensor for floor should detect contact with the ground"
     assert not bool_sensor_box_2.read().any(), "ContactSensor for box_2 should not detect any contact yet."
     assert_allclose(force_sensor_noisy.read(), force_sensor_noisy.read(), tol=gs.EPS)
 
-    for _ in range(90):
+    for _ in range(80):
         scene.step()
 
     assert bool_sensor_box_2.read().all(), "ContactSensor for box_2 should detect contact with the ground"
@@ -503,8 +608,10 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
     # Moving force back in world frame because box is not perfectly flat on the ground due to CoM offset
     with np.testing.assert_raises(AssertionError):
         assert_allclose(box.get_quat(), 0.0, atol=tol)
+    # Unsaturated GT physics check uses force_sensor (no max_force). force_sensor_noisy clamps in _post_process,
+    # which applies uniformly to read() and read_ground_truth().
     assert_allclose(
-        gu.transform_by_quat(force_sensor_noisy.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
+        gu.transform_by_quat(force_sensor.read_ground_truth(), box.get_quat()), (0.0, 0.0, -GRAVITY), tol=tol
     )
 
     # FIXME: Adding CoM offset on box is disturbing contact force computations on box_2 for some reason...
@@ -512,6 +619,57 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
 
     assert_allclose(force_sensor_noisy.read()[..., :2], BIAS[:2], tol=NOISE * 3)
     assert_allclose(force_sensor_noisy.read()[..., 2], -GRAVITY / 2, tol=gs.EPS)
+
+
+@pytest.mark.required
+def test_contact_sensor_filter_link_idx(show_viewer):
+    """Contact sensor filter_link_idx ignores contacts whose other participant is a listed link."""
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(show_FPS=False),
+        show_viewer=show_viewer,
+    )
+    floor = scene.add_entity(morph=gs.morphs.Plane())
+    box_on_floor = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.0, 0.1),
+        ),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.2, 0.2, 0.2),
+            pos=(0.0, 0.5, 0.1),
+        ),
+    )
+    sensor = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_on_floor.idx,
+        )
+    )
+    sensor_filtered = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_on_floor.idx,
+            filter_link_idx=(floor.link_start,),
+        )
+    )
+    scene.build(n_envs=2)
+    box.set_pos(
+        (
+            (0.0, 0.5, 0.1),  # box not touching box_on_floor
+            (0.0, 0.0, 0.3),  # box on top of box_on_floor
+        )
+    )
+    for _ in range(20):  # make sure the boxes are stably resting
+        scene.step()
+    data = sensor.read()
+    filtered_data = sensor_filtered.read()
+    assert data[0], "Contact sensor should detect contact with the floor"
+    assert not filtered_data[0], "Contact sensor with filter_link_idx should filter out contact with the floor"
+    assert data[1], "Contact sensor should detect contact with the box"
+    assert filtered_data[1], "Contact sensor with filter_link_idx should still detect contact with the box"
 
 
 # ------------------------------------------------------------------------------------------
@@ -693,6 +851,132 @@ def test_raycaster_hits(show_viewer, n_envs):
     grid_distances_ref[(..., *hit_ij)] = RAYCAST_HEIGHT - BOX_SIZE
     grid_distances_ref += offset[..., 2].reshape((*(-1 for e in batch_shape), 1, 1))
     assert_allclose(grid_distances, grid_distances_ref, tol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+@pytest.mark.parametrize("kin_raycastable", [True, False])
+def test_raycaster_against_visual(tmp_path, show_viewer, n_envs, kin_raycastable):
+    # Two depth cameras, one per entity:
+    #   - cam_kin -> KinematicEntity sphere. When use_visual_raycasting=True the depth camera reads the entity's
+    #     visual mesh (including set_vverts overrides, which survive step() until set_vverts(None) hands control
+    #     back to FK). When False the kinematic entity is completely ignored by the raycaster.
+    #   - cam_rigid -> RigidEntity whose visual mesh (sphere radius 0.2) is intentionally different from its collision
+    #     mesh (capsule radius 0.05). With use_visual_raycasting=True the depth must match the visual sphere.
+    urdf_path = tmp_path / "vis_diff.urdf"
+    urdf_path.write_text(
+        textwrap.dedent(
+            """
+            <robot name="vis_diff">
+                <link name="root">
+                    <visual>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <sphere radius="0.2"/>
+                        </geometry>
+                    </visual>
+                    <collision>
+                        <origin rpy="0 0 0" xyz="0 0 0"/>
+                        <geometry>
+                            <capsule radius="0.05" length="0.05"/>
+                        </geometry>
+                    </collision>
+                </link>
+            </robot>
+            """
+        )
+    )
+
+    scene = gs.Scene(
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    plane = scene.add_entity(gs.morphs.Plane())
+    kin_sphere = scene.add_entity(
+        morph=gs.morphs.Mesh(
+            file="meshes/sphere.obj",
+            scale=0.2,
+            pos=(0.0, 0.0, 0.5),
+            fixed=True,
+            enable_custom_vverts=True,
+        ),
+        material=gs.materials.Kinematic(use_visual_raycasting=kin_raycastable),
+    )
+    scene.add_entity(
+        morph=gs.morphs.URDF(
+            file=str(urdf_path),
+            pos=(0.0, 0.0, 1.5),
+            fixed=True,
+        ),
+        material=gs.materials.Rigid(use_visual_raycasting=True),
+    )
+    cam_kin = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 0.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
+    cam_rigid = scene.add_sensor(
+        gs.sensors.DepthCamera(
+            pattern=gs.sensors.DepthCameraPattern(
+                res=(40, 30),
+                fov_horizontal=30.0,
+            ),
+            entity_idx=plane.idx,
+            link_idx_local=0,
+            pos_offset=(-1.0, 0.0, 1.5),
+            euler_offset=(0.0, 0.0, 0.0),
+            max_range=5.0,
+            return_world_frame=True,
+        ),
+    )
+    if n_envs > 0:
+        scene.build(n_envs=n_envs)
+    else:
+        scene.build()
+    scene.step()
+
+    # Each camera at x=-1 along its own z-row looks along +x. The center pixel hits the closest point of its target
+    # sphere at x=-0.2 -> depth 0.8. For cam_rigid this comes from the visual BVH (not the collision capsule). When
+    # the kinematic entity opts out of raycasting, cam_kin sees nothing and returns the no_hit_value (max_range=5.0).
+    NO_HIT = 5.0  # max_range
+    kin_at_origin = 0.8 if kin_raycastable else NO_HIT
+    kin_scaled = 0.6 if kin_raycastable else NO_HIT
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Scale the kinematic sphere by 2x around its center via per-vertex set_vverts. The new radius is 0.4, so the
+    # closest point becomes x=-0.4 and the depth at the center pixel drops to 0.6. Scaling perturbs each vvert by a
+    # different amount, so only the correct vvert-to-state mapping yields 0.6. cam_rigid is unaffected.
+    fk_vverts = tensor_to_array(kin_sphere.get_vverts())
+    center = np.array([0.0, 0.0, 0.5], dtype=np.float32)
+    kin_sphere.set_vverts((fk_vverts - center) * 2.0 + center)
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_scaled, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Push the kinematic sphere far away. cam_kin should report no_hit_value at the center pixel; cam_rigid still sees
+    # the rigid visual sphere.
+    kin_sphere.set_vverts((100.0, 100.0, 100.0))
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], NO_HIT, tol=gs.EPS)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
+
+    # Restoring FK control returns the original hit distance on cam_kin; cam_rigid stays put.
+    kin_sphere.set_vverts(None)
+    scene.step()
+    assert_allclose(cam_kin.read_image()[..., 15, 20], kin_at_origin, tol=1e-2)
+    assert_allclose(cam_rigid.read_image()[..., 15, 20], 0.8, tol=1e-2)
 
 
 @pytest.mark.required
@@ -1529,3 +1813,193 @@ def test_proximity_sensor_box_sphere(n_envs, show_viewer, tol):
         tol=tol,
         err_msg="When out of range, points should be the probe position in world frame",
     )
+
+
+# ------------------------------------------------------------------------------------------
+# ----------------------------------- Bulk read API ----------------------------------------
+# ------------------------------------------------------------------------------------------
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 3])
+def test_read_sensors_bulk_api(show_viewer, n_envs):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box_a = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    box_b = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.5, 0.0, 0.2),
+        ),
+    )
+
+    # Diverse sensor set covering multiple dtypes (float for IMU/ContactForce, bool for Contact, uint8 for the static
+    # camera) and heterogeneous per-sensor cache sizes within the float dtype (9 cells for IMU vs 3 for ContactForce).
+    # Two IMUs on box_a, one IMU on box_b. ContactForce and Contact sensors on both boxes. A static camera not attached
+    # to any entity (entity_idx defaults to -1).
+    imu_a1 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_a2 = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_a.idx,
+        ),
+    )
+    imu_b = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box_b.idx,
+        ),
+    )
+    force_a = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_a.idx,
+        ),
+    )
+    force_b = scene.add_sensor(
+        gs.sensors.ContactForce(
+            entity_idx=box_b.idx,
+        ),
+    )
+    contact_a = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_a.idx,
+        ),
+    )
+    contact_b = scene.add_sensor(
+        gs.sensors.Contact(
+            entity_idx=box_b.idx,
+        ),
+    )
+    static_cam = scene.add_sensor(
+        gs.sensors.RasterizerCameraOptions(
+            res=(32, 32),
+        ),
+    )
+
+    scene.build(n_envs=n_envs)
+    for _ in range(5):
+        scene.step()
+
+    # Scene-wide read returns every sensor class. Per-entity reads restrict to classes present on that entity, so the
+    # static camera class is excluded from both box_a and box_b reads. Each call allocates a fresh tensor per class.
+    scene_data = scene.read_sensors()
+    a_data = box_a.read_sensors()
+    b_data = box_b.read_sensors()
+    assert set(scene_data.keys()) == {
+        gs.sensors.types.IMU,
+        gs.sensors.types.ContactForce,
+        gs.sensors.types.Contact,
+        gs.sensors.types.RasterizerCameraOptions,
+    }
+    assert set(a_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+    assert set(b_data.keys()) == {gs.sensors.types.IMU, gs.sensors.types.ContactForce, gs.sensors.types.Contact}
+
+    # Sensors within a class are sorted by entity_idx, so per-entity reads must match contiguous slices of the
+    # scene-wide read.
+    for type_tag, a_slice, b_slice in (
+        (gs.sensors.types.IMU, slice(0, 18), slice(18, 27)),
+        (gs.sensors.types.ContactForce, slice(0, 3), slice(3, 6)),
+        (gs.sensors.types.Contact, slice(0, 1), slice(1, 2)),
+    ):
+        assert_equal(a_data[type_tag], scene_data[type_tag][..., a_slice])
+        assert_equal(b_data[type_tag], scene_data[type_tag][..., b_slice])
+
+    # Individual sensor reads must agree with bulk reads at both scene and entity levels.
+    # IMU cache layout per sensor is 3 acc + 3 gyro + 3 mag in that order.
+    for local_idx, imu in enumerate((imu_a1, imu_a2, imu_b)):
+        base = local_idx * 9
+        imu_data = imu.read()
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(scene_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    for entity_local_idx, imu in enumerate((imu_a1, imu_a2)):
+        base = entity_local_idx * 9
+        imu_data = imu.read()
+        assert_equal(a_data[gs.sensors.types.IMU][..., base : base + 3], imu_data.lin_acc)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 3 : base + 6], imu_data.ang_vel)
+        assert_equal(a_data[gs.sensors.types.IMU][..., base + 6 : base + 9], imu_data.mag)
+    # ContactForce returns a 3-vector per sensor.
+    for local_idx, force in enumerate((force_a, force_b)):
+        base = local_idx * 3
+        assert_equal(scene_data[gs.sensors.types.ContactForce][..., base : base + 3], force.read())
+    assert_equal(a_data[gs.sensors.types.ContactForce], force_a.read())
+    assert_equal(b_data[gs.sensors.types.ContactForce], force_b.read())
+    # Contact returns a bool per sensor.
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 0:1], contact_a.read())
+    assert_equal(scene_data[gs.sensors.types.Contact][..., 1:2], contact_b.read())
+    assert_equal(a_data[gs.sensors.types.Contact], contact_a.read())
+    assert_equal(b_data[gs.sensors.types.Contact], contact_b.read())
+
+    # `read_sensors` always returns a fresh tensor independent of internal sensor storage. Two successive calls (at
+    # the scene level or the entity level) must back onto distinct storage. Verified on both IMU (identity
+    # `_post_process`, intermediate-space ring) and Contact (overridden `_post_process`, per-class return-space ring).
+    for type_tag in (gs.sensors.types.IMU, gs.sensors.types.Contact):
+        scene_a = scene.read_sensors()[type_tag]
+        scene_b = scene.read_sensors()[type_tag]
+        entity_a = box_a.read_sensors()[type_tag]
+        assert scene_a.untyped_storage().data_ptr() != scene_b.untyped_storage().data_ptr()
+        assert scene_a.untyped_storage().data_ptr() != entity_a.untyped_storage().data_ptr()
+        assert_equal(scene_a, scene_b)
+
+    # Batching must be exercised end-to-end. For n_envs > 0, every per-env row of the bulk view must equal that env's
+    # individual sensor read.
+    if n_envs > 0:
+        for env_idx in range(n_envs):
+            assert_equal(scene.read_sensors()[gs.sensors.types.IMU][env_idx, 0:3], imu_a1.read().lin_acc[env_idx])
+            assert_equal(scene.read_sensors()[gs.sensors.types.Contact][env_idx, 0:1], contact_a.read()[env_idx])
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("n_envs", [0, 2])
+def test_imu_resolution_only_quantizes(show_viewer, n_envs):
+    # IMU with only `*_resolution` set (no other noise/delay) returns acceleration components quantized to that
+    # resolution.
+    RESOLUTION = 0.5
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            gravity=(0.0, 0.0, -10.0),
+        ),
+        profiling_options=gs.options.ProfilingOptions(
+            show_FPS=False,
+        ),
+        show_viewer=show_viewer,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Plane(),
+    )
+    box = scene.add_entity(
+        morph=gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+            pos=(0.0, 0.0, 0.2),
+        ),
+    )
+    imu = scene.add_sensor(
+        gs.sensors.IMU(
+            entity_idx=box.idx,
+            acc_resolution=RESOLUTION,
+        ),
+    )
+    scene.build(n_envs=n_envs)
+    for _ in range(3):
+        scene.step()
+
+    measured = imu.read().lin_acc
+    remainders = (measured / RESOLUTION) - torch.round(measured / RESOLUTION)
+    assert_allclose(remainders, 0.0, tol=gs.EPS)
