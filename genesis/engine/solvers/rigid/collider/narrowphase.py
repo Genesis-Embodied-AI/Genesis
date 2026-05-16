@@ -820,38 +820,37 @@ def func_convex_convex_contact(
                                             errno,
                                         )
                                     break
-                                else:
-                                    if gjk_state.multi_contact_flag[i_b]:
-                                        # Since we already found multiple contact points, add the discovered contact
-                                        # points and stop multi-contact search.
-                                        for i_c in range(n_contacts):
-                                            # Ignore contact points if the number of contacts exceeds the limit.
-                                            if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                                contact_pos = gjk_state.contact_pos[i_b, i_c]
-                                                normal = gjk_state.normal[i_b, i_c]
-                                                # NOTE: no diff_penetration read here -- this block is the
-                                                # `else` branch of `if qd.static(requires_grad)` above, so
-                                                # we are statically in the non-diff path; the per-batch
-                                                # `penetration` from the GJK call is used as-is.
-                                                func_add_contact(
-                                                    i_ga,
-                                                    i_gb,
-                                                    normal,
-                                                    contact_pos,
-                                                    penetration,
-                                                    i_b,
-                                                    i_pair,
-                                                    geoms_state,
-                                                    geoms_info,
-                                                    collider_state,
-                                                    collider_info,
-                                                    errno,
-                                                )
+                                elif gjk_state.multi_contact_flag[i_b]:
+                                    # Since we already found multiple contact points, add the discovered contact
+                                    # points and stop multi-contact search.
+                                    for i_c in range(n_contacts):
+                                        # Ignore contact points if the number of contacts exceeds the limit.
+                                        if i_c < qd.static(collider_static_config.n_contacts_per_pair):
+                                            contact_pos = gjk_state.contact_pos[i_b, i_c]
+                                            normal = gjk_state.normal[i_b, i_c]
+                                            # NOTE: no diff_penetration read here -- this branch is the
+                                            # `elif` after `if qd.static(requires_grad)` above, so we are
+                                            # statically in the non-diff path; the per-batch
+                                            # `penetration` from the GJK call is used as-is.
+                                            func_add_contact(
+                                                i_ga,
+                                                i_gb,
+                                                normal,
+                                                contact_pos,
+                                                penetration,
+                                                i_b,
+                                                i_pair,
+                                                geoms_state,
+                                                geoms_info,
+                                                collider_state,
+                                                collider_info,
+                                                errno,
+                                            )
 
-                                        break
-                                    else:
-                                        contact_pos = gjk_state.contact_pos[i_b, 0]
-                                        normal = gjk_state.normal[i_b, 0]
+                                    break
+                                else:
+                                    contact_pos = gjk_state.contact_pos[i_b, 0]
+                                    normal = gjk_state.normal[i_b, 0]
 
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
