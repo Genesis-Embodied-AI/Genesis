@@ -2738,10 +2738,22 @@ def func_linesearch_refine(
 
     ``coop=True`` runs cooperatively across the 32-lane warp (caller passes the lane id as ``tid``); ``coop=False`` runs
     serially (1-thread-per-env, caller is responsible for ensuring only ``tid == 0`` enters this function). The inner
-    cost evaluators dispatch on the same ``coop`` flag, so ``coop`` is forwarded unchanged."""
+    cost evaluators dispatch on the same ``coop`` flag, so ``coop`` is forwarded unchanged.
+
+    The loop predicates use a lane-uniform local ``ls_it_local`` rather than rereading
+    ``constraint_state.ls_it[i_b]``: in cooperative mode only ``tid == 0`` writes the global counter from the inner
+    evaluators, and there is no warp sync between that gated store and the next-iter read of the global counter, so
+    different lanes could otherwise observe different iteration counts and diverge on the predicate (which would
+    deadlock the next ``subgroup.reduce_all_add``). We snapshot once at entry, broadcast lane-0's value across the
+    warp, and bump locally on each eval call (eval helpers still update the global counter for downstream readers)."""
     res_alpha = gs.qd_float(0.0)
     ls_result = 0
     done = False
+
+    ls_it_local = constraint_state.ls_it[i_b]
+    if qd.static(coop):
+        ls_it_local = qd.simt.subgroup.broadcast(ls_it_local, 0)
+    ls_iter_limit = rigid_global_info.ls_iterations[None]
 
     direction = (p1_deriv_0 < 0) * 2 - 1
     p2update = 0
@@ -2749,18 +2761,19 @@ def func_linesearch_refine(
     p2_cost = p1_cost
     p2_deriv_0 = p1_deriv_0
     p2_deriv_1 = p1_deriv_1
-    while p1_deriv_0 * direction <= -gtol and constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+    while p1_deriv_0 * direction <= -gtol and ls_it_local < ls_iter_limit:
         p2_alpha, p2_cost, p2_deriv_0, p2_deriv_1 = p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1
         p2update = 1
         p1_alpha, p1_cost, p1_deriv_0, p1_deriv_1 = _func_linesearch_eval_at_alpha(
             i_b, tid, p1_alpha - p1_deriv_0 / p1_deriv_1, constraint_state, rigid_global_info, coop=coop
         )
+        ls_it_local = ls_it_local + 1
         if qd.abs(p1_deriv_0) < gtol:
             res_alpha = p1_alpha
             done = True
             break
     if not done:
-        if constraint_state.ls_it[i_b] >= rigid_global_info.ls_iterations[None]:
+        if ls_it_local >= ls_iter_limit:
             ls_result = 3
             res_alpha = p1_alpha
             done = True
@@ -2772,11 +2785,12 @@ def func_linesearch_refine(
             alpha_0 = p1_alpha - p1_deriv_0 / p1_deriv_1
             alpha_1 = p1_alpha
             alpha_2 = (p1_alpha + p2_alpha) * 0.5
-            while constraint_state.ls_it[i_b] < rigid_global_info.ls_iterations[None]:
+            while ls_it_local < ls_iter_limit:
                 alphas = qd.Vector([alpha_0, alpha_1, alpha_2])
                 costs, grads, hess = _func_linesearch_eval_at_3_alphas(
                     i_b, tid, alphas, constraint_state, rigid_global_info, coop=coop
                 )
+                ls_it_local = ls_it_local + 3
                 p1_next = alpha_0
                 p2_next = alpha_1
                 best_a = gs.qd_float(0.0)
