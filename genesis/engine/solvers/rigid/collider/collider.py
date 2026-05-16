@@ -700,7 +700,6 @@ class Collider:
             self._solver._static_rigid_sim_config,
             self._collider_static_config,
             self._gjk._gjk_static_config,
-            self._solver._errno,
             self._multicontact_n_gjk_threads,
             self._multicontact_n_total_threads,
             self._multicontact_max_items_per_thread,
@@ -736,7 +735,6 @@ class Collider:
                 self._build_global_state(mpr_state=self._contact0_mpr_state, gjk_state=self._contact0_gjk_state),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
-                self._solver._errno,
                 self._solver._B,
                 self._contact0_n_chunks,
             )
@@ -751,28 +749,24 @@ class Collider:
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
                 self._gjk._gjk_static_config,
-                self._solver._errno,
             )
         if self._collider_static_config.has_convex_specialization:
             func_narrow_phase_convex_specializations(
                 self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
-                self._solver._errno,
             )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
                 self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
-                self._solver._errno,
             )
         if self._collider_static_config.has_nonconvex_nonterrain:
             func_narrow_phase_nonconvex_vs_nonterrain(
                 self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
-                self._solver._errno,
             )
 
         if self._use_split_narrowphase:
