@@ -585,7 +585,12 @@ class Collider:
             return
 
         envs_idx = self._solver._scene._sanitize_envs_idx(envs_idx)
-        collider_kernel_reset(envs_idx, self._solver._static_rigid_sim_config, self._collider_state, cache_only)
+        collider_kernel_reset(
+            envs_idx,
+            self._solver._static_rigid_sim_config,
+            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+            cache_only,
+        )
 
     def clear(self, envs_idx=None):
         self.reset(envs_idx, cache_only=False)
@@ -647,10 +652,8 @@ class Collider:
             fn = kernel_collider_clear
         fn(
             envs_idx,
-            self._solver.links_state,
-            self._solver.links_info,
+            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
             self._solver._static_rigid_sim_config,
-            self._collider_state,
         )
 
     def _build_global_state(
@@ -773,7 +776,8 @@ class Collider:
 
         if self._use_split_narrowphase:
             func_clamp_and_sort_contacts(
-                self._collider_state, self._collider_info, self._solver._static_rigid_sim_config
+                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._solver._static_rigid_sim_config,
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):
@@ -830,7 +834,11 @@ class Collider:
         # Copy contact data
         if n_contacts_max > 0:
             collider_kernel_get_contacts(
-                as_tensor, iout, fout, self._solver._static_rigid_sim_config, self._collider_state
+                as_tensor,
+                iout,
+                fout,
+                self._solver._static_rigid_sim_config,
+                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
             )
 
         # Build structured view (no copy)
@@ -882,7 +890,12 @@ class Collider:
         return contact_data.copy()
 
     def backward(self, dL_dposition, dL_dnormal, dL_dpenetration):
-        func_set_upstream_grad(dL_dposition, dL_dnormal, dL_dpenetration, self._collider_state)
+        func_set_upstream_grad(
+            dL_dposition,
+            dL_dnormal,
+            dL_dpenetration,
+            self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+        )
 
         # Compute gradient
         func_narrow_phase_diff_convex_vs_convex.grad(

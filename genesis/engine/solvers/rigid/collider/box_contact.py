@@ -13,12 +13,7 @@ import genesis.utils.geom as gu
 import genesis.utils.array_class as array_class
 from . import support_field
 
-from .contact import (
-    func_add_contact,
-    func_compute_tolerance,
-    rotaxis,
-    rotmatx,
-)
+from .contact import func_add_contact, func_compute_tolerance, rotaxis, rotmatx
 
 
 @qd.func
@@ -27,71 +22,47 @@ def func_plane_box_contact(
     i_gb,
     i_b,
     i_pair,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    geoms_init_AABB: array_class.GeomsInitAABB,
-    verts_info: array_class.VertsInfo,
+    global_state: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
     collider_static_config: qd.template(),
     errno: qd.Tensor,
 ):
-    ga_pos, ga_quat = geoms_state.pos[i_ga, i_b], geoms_state.quat[i_ga, i_b]
-    gb_pos, gb_quat = geoms_state.pos[i_gb, i_b], geoms_state.quat[i_gb, i_b]
+    ga_pos, ga_quat = global_state.geoms_state.pos[i_ga, i_b], global_state.geoms_state.quat[i_ga, i_b]
+    gb_pos, gb_quat = global_state.geoms_state.pos[i_gb, i_b], global_state.geoms_state.quat[i_gb, i_b]
 
     plane_dir = qd.Vector(
-        [geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float
+        [
+            global_state.geoms_info.data[i_ga][0],
+            global_state.geoms_info.data[i_ga][1],
+            global_state.geoms_info.data[i_ga][2],
+        ],
+        dt=gs.qd_float,
     )
     plane_dir = gu.qd_transform_by_quat(plane_dir, ga_quat)
     normal = -plane_dir.normalized()
 
-    v1, _, _ = support_field._func_support_box(geoms_info, normal, i_gb, gb_pos, gb_quat)
+    v1, _, _ = support_field._func_support_box(global_state.geoms_info, normal, i_gb, gb_pos, gb_quat)
     penetration = normal.dot(v1 - ga_pos)
 
     if penetration > 0.0:
         contact_pos = v1 - 0.5 * penetration * normal
-        func_add_contact(
-            i_ga,
-            i_gb,
-            normal,
-            contact_pos,
-            penetration,
-            i_b,
-            i_pair,
-            geoms_state,
-            geoms_info,
-            collider_state,
-            collider_info,
-            errno,
-        )
+        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, global_state, errno)
 
         if qd.static(static_rigid_sim_config.enable_multi_contact):
             n_con = 1
             contact_pos_0 = contact_pos
             tolerance = func_compute_tolerance(
-                i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
+                i_ga, i_gb, i_b, global_state.collider_info.mc_tolerance[None], global_state
             )
-            for i_v in range(geoms_info.vert_start[i_gb], geoms_info.vert_end[i_gb]):
+            for i_v in range(global_state.geoms_info.vert_start[i_gb], global_state.geoms_info.vert_end[i_gb]):
                 if n_con < qd.static(collider_static_config.n_contacts_per_pair):
-                    pos_corner = gu.qd_transform_by_trans_quat(verts_info.init_pos[i_v], gb_pos, gb_quat)
+                    pos_corner = gu.qd_transform_by_trans_quat(global_state.verts_info.init_pos[i_v], gb_pos, gb_quat)
                     penetration = normal.dot(pos_corner - ga_pos)
                     if penetration > 0.0:
                         contact_pos = pos_corner - 0.5 * penetration * normal
                         if (contact_pos - contact_pos_0).norm() > tolerance:
                             func_add_contact(
-                                i_ga,
-                                i_gb,
-                                normal,
-                                contact_pos,
-                                penetration,
-                                i_b,
-                                i_pair,
-                                geoms_state,
-                                geoms_info,
-                                collider_state,
-                                collider_info,
-                                errno,
+                                i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, global_state, errno
                             )
                             n_con = n_con + 1
 
@@ -102,11 +73,7 @@ def func_box_box_contact(
     i_gb,
     i_b,
     i_pair,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    collider_state: array_class.ColliderState,
-    collider_info: array_class.ColliderInfo,
-    rigid_global_info: array_class.RigidGlobalInfo,
+    global_state: array_class.GlobalState,
     collider_static_config: qd.template(),
     errno: qd.Tensor,
 ):
@@ -119,7 +86,7 @@ def func_box_box_contact(
 
     https://github.com/google-deepmind/mujoco/blob/main/src/engine/engine_collision_box.c
     """
-    EPS = rigid_global_info.EPS[None]
+    EPS = global_state.rigid_global_info.EPS[None]
 
     n = 0
     code = -1
@@ -131,16 +98,32 @@ def func_box_box_contact(
     margin2 = margin * margin
     rotmore = qd.Matrix.zero(gs.qd_float, 3, 3)
 
-    ga_pos = geoms_state.pos[i_ga, i_b]
-    gb_pos = geoms_state.pos[i_gb, i_b]
-    ga_quat = geoms_state.quat[i_ga, i_b]
-    gb_quat = geoms_state.quat[i_gb, i_b]
+    ga_pos = global_state.geoms_state.pos[i_ga, i_b]
+    gb_pos = global_state.geoms_state.pos[i_gb, i_b]
+    ga_quat = global_state.geoms_state.quat[i_ga, i_b]
+    gb_quat = global_state.geoms_state.quat[i_gb, i_b]
 
     size1 = (
-        qd.Vector([geoms_info.data[i_ga][0], geoms_info.data[i_ga][1], geoms_info.data[i_ga][2]], dt=gs.qd_float) / 2
+        qd.Vector(
+            [
+                global_state.geoms_info.data[i_ga][0],
+                global_state.geoms_info.data[i_ga][1],
+                global_state.geoms_info.data[i_ga][2],
+            ],
+            dt=gs.qd_float,
+        )
+        / 2
     )
     size2 = (
-        qd.Vector([geoms_info.data[i_gb][0], geoms_info.data[i_gb][1], geoms_info.data[i_gb][2]], dt=gs.qd_float) / 2
+        qd.Vector(
+            [
+                global_state.geoms_info.data[i_gb][0],
+                global_state.geoms_info.data[i_gb][1],
+                global_state.geoms_info.data[i_gb][2],
+            ],
+            dt=gs.qd_float,
+        )
+        / 2
     )
 
     pos1, pos2 = ga_pos, gb_pos
@@ -324,42 +307,48 @@ def func_box_box_contact(
                 lp = lp + rt[i, :] * s[i] * (1 if (clcorner & (1 << i)) else -1)
 
             m, k = 0, 0
-            collider_state.box_pts[m, i_b] = lp
+            global_state.collider_state.box_pts[m, i_b] = lp
             m = m + 1
 
             for i in qd.static(range(3)):
                 if qd.abs(r[2, i]) < 0.5:
-                    collider_state.box_pts[m, i_b] = rt[i, :] * s[i] * (-2 if (clcorner & (1 << i)) else 2)
+                    global_state.collider_state.box_pts[m, i_b] = rt[i, :] * s[i] * (-2 if (clcorner & (1 << i)) else 2)
                     m = m + 1
 
-            collider_state.box_pts[3, i_b] = collider_state.box_pts[0, i_b] + collider_state.box_pts[1, i_b]
-            collider_state.box_pts[4, i_b] = collider_state.box_pts[0, i_b] + collider_state.box_pts[2, i_b]
-            collider_state.box_pts[5, i_b] = collider_state.box_pts[3, i_b] + collider_state.box_pts[2, i_b]
+            global_state.collider_state.box_pts[3, i_b] = (
+                global_state.collider_state.box_pts[0, i_b] + global_state.collider_state.box_pts[1, i_b]
+            )
+            global_state.collider_state.box_pts[4, i_b] = (
+                global_state.collider_state.box_pts[0, i_b] + global_state.collider_state.box_pts[2, i_b]
+            )
+            global_state.collider_state.box_pts[5, i_b] = (
+                global_state.collider_state.box_pts[3, i_b] + global_state.collider_state.box_pts[2, i_b]
+            )
 
             if m > 1:
-                collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[0, i_b]
-                collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[1, i_b]
+                global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[0, i_b]
+                global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[1, i_b]
                 k = k + 1
 
             if m > 2:
-                collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[0, i_b]
-                collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[2, i_b]
+                global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[0, i_b]
+                global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[2, i_b]
                 k = k + 1
 
-                collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[3, i_b]
-                collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[2, i_b]
+                global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[3, i_b]
+                global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[2, i_b]
                 k = k + 1
 
-                collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[4, i_b]
-                collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[1, i_b]
+                global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[4, i_b]
+                global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[1, i_b]
                 k = k + 1
 
             for i in range(k):
                 for q in qd.static(range(2)):
-                    a = collider_state.box_lines[i, i_b][0 + q]
-                    b = collider_state.box_lines[i, i_b][3 + q]
-                    c = collider_state.box_lines[i, i_b][1 - q]
-                    d = collider_state.box_lines[i, i_b][4 - q]
+                    a = global_state.collider_state.box_lines[i, i_b][0 + q]
+                    b = global_state.collider_state.box_lines[i, i_b][3 + q]
+                    c = global_state.collider_state.box_lines[i, i_b][1 - q]
+                    d = global_state.collider_state.box_lines[i, i_b][4 - q]
                     if qd.abs(b) > EPS:
                         for _j in qd.static(range(2)):
                             j = 2 * _j - 1
@@ -368,15 +357,15 @@ def func_box_box_contact(
                             if 0 <= c1 and c1 <= 1:
                                 c2 = c + d * c1
                                 if qd.abs(c2) <= ss[1 - q]:
-                                    collider_state.box_points[n, i_b] = (
-                                        collider_state.box_lines[i, i_b][0:3]
-                                        + collider_state.box_lines[i, i_b][3:6] * c1
+                                    global_state.collider_state.box_points[n, i_b] = (
+                                        global_state.collider_state.box_lines[i, i_b][0:3]
+                                        + global_state.collider_state.box_lines[i, i_b][3:6] * c1
                                     )
                                     n = n + 1
-            a = collider_state.box_pts[1, i_b][0]
-            b = collider_state.box_pts[2, i_b][0]
-            c = collider_state.box_pts[1, i_b][1]
-            d = collider_state.box_pts[2, i_b][1]
+            a = global_state.collider_state.box_pts[1, i_b][0]
+            b = global_state.collider_state.box_pts[2, i_b][0]
+            c = global_state.collider_state.box_pts[1, i_b][1]
+            d = global_state.collider_state.box_pts[2, i_b][1]
             c1 = a * d - b * c
 
             if m > 2:
@@ -384,76 +373,66 @@ def func_box_box_contact(
                     llx = lx if (i // 2) else -lx
                     lly = ly if (i % 2) else -ly
 
-                    x = llx - collider_state.box_pts[0, i_b][0]
-                    y = lly - collider_state.box_pts[0, i_b][1]
+                    x = llx - global_state.collider_state.box_pts[0, i_b][0]
+                    y = lly - global_state.collider_state.box_pts[0, i_b][1]
 
                     u = (x * d - y * b) / c1
                     v = (y * a - x * c) / c1
 
                     if 0 < u and u < 1 and 0 < v and v < 1:
-                        collider_state.box_points[n, i_b] = qd.Vector(
+                        global_state.collider_state.box_points[n, i_b] = qd.Vector(
                             [
                                 llx,
                                 lly,
-                                collider_state.box_pts[0, i_b][2]
-                                + u * collider_state.box_pts[1, i_b][2]
-                                + v * collider_state.box_pts[2, i_b][2],
+                                global_state.collider_state.box_pts[0, i_b][2]
+                                + u * global_state.collider_state.box_pts[1, i_b][2]
+                                + v * global_state.collider_state.box_pts[2, i_b][2],
                             ]
                         )
                         n = n + 1
 
             for i in range(1 << (m - 1)):
-                tmp1 = collider_state.box_pts[0 if i == 0 else i + 2, i_b]
+                tmp1 = global_state.collider_state.box_pts[0 if i == 0 else i + 2, i_b]
                 if not (i and (tmp1[0] <= -lx or tmp1[0] >= lx or tmp1[1] <= -ly or tmp1[1] >= ly)):
-                    collider_state.box_points[n, i_b] = tmp1
+                    global_state.collider_state.box_points[n, i_b] = tmp1
                     n = n + 1
             m = n
             n = 0
 
             for i in range(m):
-                if collider_state.box_points[i, i_b][2] <= margin:
-                    collider_state.box_points[n, i_b] = collider_state.box_points[i, i_b]
-                    collider_state.box_depth[n, i_b] = collider_state.box_points[n, i_b][2]
-                    collider_state.box_points[n, i_b][2] = collider_state.box_points[n, i_b][2] * 0.5
+                if global_state.collider_state.box_points[i, i_b][2] <= margin:
+                    global_state.collider_state.box_points[n, i_b] = global_state.collider_state.box_points[i, i_b]
+                    global_state.collider_state.box_depth[n, i_b] = global_state.collider_state.box_points[n, i_b][2]
+                    global_state.collider_state.box_points[n, i_b][2] = (
+                        global_state.collider_state.box_points[n, i_b][2] * 0.5
+                    )
                     n = n + 1
             r = (mat2 if q2 else mat1) @ rotmore.transpose()
             p = pos2 if q2 else pos1
             tmp2 = qd.Vector(
-                [(-1 if q2 else 1) * r[0, 2], (-1 if q2 else 1) * r[1, 2], (-1 if q2 else 1) * r[2, 2]],
-                dt=gs.qd_float,
+                [(-1 if q2 else 1) * r[0, 2], (-1 if q2 else 1) * r[1, 2], (-1 if q2 else 1) * r[2, 2]], dt=gs.qd_float
             )
             normal_0 = tmp2
 
             n_added = 0
-            n_start = collider_state.n_contacts[i_b]
+            n_start = global_state.collider_state.n_contacts[i_b]
             for i in range(n):
                 if n_added < qd.static(collider_static_config.n_contacts_per_pair):
-                    dist = collider_state.box_points[i, i_b][2]
-                    collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
-                    contact_pos = p + r @ collider_state.box_points[i, i_b]
+                    dist = global_state.collider_state.box_points[i, i_b][2]
+                    global_state.collider_state.box_points[i, i_b][2] = (
+                        global_state.collider_state.box_points[i, i_b][2] + hz
+                    )
+                    contact_pos = p + r @ global_state.collider_state.box_points[i, i_b]
 
                     # Filter out redundant contact points
                     is_valid = True
                     for j_ in range(n_added):
                         j = n_start + j_
-                        if (qd.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                        if (qd.abs(contact_pos - global_state.collider_state.contact_data.pos[j, i_b]) < EPS).all():
                             is_valid = False
 
                     if is_valid:
-                        func_add_contact(
-                            i_ga,
-                            i_gb,
-                            -normal_0,
-                            contact_pos,
-                            -dist,
-                            i_b,
-                            i_pair,
-                            geoms_state,
-                            geoms_info,
-                            collider_state,
-                            collider_info,
-                            errno,
-                        )
+                        func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, global_state, errno)
                         n_added = n_added + 1
         else:
             code = code - 12
@@ -533,40 +512,52 @@ def func_box_box_contact(
             p[2] = p[2] - hz
 
             n = 0
-            collider_state.box_points[n, i_b] = p
+            global_state.collider_state.box_points[n, i_b] = p
 
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[ax1, :] * size2[ax1] * (
-                1 if (cle2 & (1 << ax1)) else -1
-            )
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[ax2, :] * size2[ax2] * (
-                1 if (cle2 & (1 << ax2)) else -1
-            )
+            global_state.collider_state.box_points[n, i_b] = global_state.collider_state.box_points[n, i_b] + rt[
+                ax1, :
+            ] * size2[ax1] * (1 if (cle2 & (1 << ax1)) else -1)
+            global_state.collider_state.box_points[n, i_b] = global_state.collider_state.box_points[n, i_b] + rt[
+                ax2, :
+            ] * size2[ax2] * (1 if (cle2 & (1 << ax2)) else -1)
 
-            collider_state.box_points[n + 1, i_b] = collider_state.box_points[n, i_b]
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[q2, :] * size2[q2]
+            global_state.collider_state.box_points[n + 1, i_b] = global_state.collider_state.box_points[n, i_b]
+            global_state.collider_state.box_points[n, i_b] = (
+                global_state.collider_state.box_points[n, i_b] + rt[q2, :] * size2[q2]
+            )
 
             n = 1
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] - rt[q2, :] * size2[q2]
+            global_state.collider_state.box_points[n, i_b] = (
+                global_state.collider_state.box_points[n, i_b] - rt[q2, :] * size2[q2]
+            )
 
             n = 2
-            collider_state.box_points[n, i_b] = p
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[ax1, :] * size2[ax1] * (
-                -1 if (cle2 & (1 << ax1)) else 1
-            )
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[ax2, :] * size2[ax2] * (
-                1 if (cle2 & (1 << ax2)) else -1
-            )
+            global_state.collider_state.box_points[n, i_b] = p
+            global_state.collider_state.box_points[n, i_b] = global_state.collider_state.box_points[n, i_b] + rt[
+                ax1, :
+            ] * size2[ax1] * (-1 if (cle2 & (1 << ax1)) else 1)
+            global_state.collider_state.box_points[n, i_b] = global_state.collider_state.box_points[n, i_b] + rt[
+                ax2, :
+            ] * size2[ax2] * (1 if (cle2 & (1 << ax2)) else -1)
 
-            collider_state.box_points[n + 1, i_b] = collider_state.box_points[n, i_b]
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + rt[q2, :] * size2[q2]
+            global_state.collider_state.box_points[n + 1, i_b] = global_state.collider_state.box_points[n, i_b]
+            global_state.collider_state.box_points[n, i_b] = (
+                global_state.collider_state.box_points[n, i_b] + rt[q2, :] * size2[q2]
+            )
 
             n = 3
-            collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] - rt[q2, :] * size2[q2]
+            global_state.collider_state.box_points[n, i_b] = (
+                global_state.collider_state.box_points[n, i_b] - rt[q2, :] * size2[q2]
+            )
 
             n = 4
-            collider_state.box_axi[0, i_b] = collider_state.box_points[0, i_b]
-            collider_state.box_axi[1, i_b] = collider_state.box_points[1, i_b] - collider_state.box_points[0, i_b]
-            collider_state.box_axi[2, i_b] = collider_state.box_points[2, i_b] - collider_state.box_points[0, i_b]
+            global_state.collider_state.box_axi[0, i_b] = global_state.collider_state.box_points[0, i_b]
+            global_state.collider_state.box_axi[1, i_b] = (
+                global_state.collider_state.box_points[1, i_b] - global_state.collider_state.box_points[0, i_b]
+            )
+            global_state.collider_state.box_axi[2, i_b] = (
+                global_state.collider_state.box_points[2, i_b] - global_state.collider_state.box_points[0, i_b]
+            )
 
             if qd.abs(rnorm[2]) < EPS:
                 is_return = True
@@ -574,60 +565,66 @@ def func_box_box_contact(
                 innorm = (1 / rnorm[2]) * (-1 if in_ else 1)
 
                 for i in qd.static(range(4)):
-                    c1 = -collider_state.box_points[i, i_b][2] / rnorm[2]
-                    collider_state.box_pu[i, i_b] = collider_state.box_points[i, i_b]
-                    collider_state.box_points[i, i_b] = collider_state.box_points[i, i_b] + c1 * rnorm
+                    c1 = -global_state.collider_state.box_points[i, i_b][2] / rnorm[2]
+                    global_state.collider_state.box_pu[i, i_b] = global_state.collider_state.box_points[i, i_b]
+                    global_state.collider_state.box_points[i, i_b] = (
+                        global_state.collider_state.box_points[i, i_b] + c1 * rnorm
+                    )
 
-                    collider_state.box_ppts2[i, 0, i_b] = collider_state.box_points[i, i_b][0]
-                    collider_state.box_ppts2[i, 1, i_b] = collider_state.box_points[i, i_b][1]
-                collider_state.box_pts[0, i_b] = collider_state.box_points[0, i_b]
-                collider_state.box_pts[1, i_b] = collider_state.box_points[1, i_b] - collider_state.box_points[0, i_b]
-                collider_state.box_pts[2, i_b] = collider_state.box_points[2, i_b] - collider_state.box_points[0, i_b]
+                    global_state.collider_state.box_ppts2[i, 0, i_b] = global_state.collider_state.box_points[i, i_b][0]
+                    global_state.collider_state.box_ppts2[i, 1, i_b] = global_state.collider_state.box_points[i, i_b][1]
+                global_state.collider_state.box_pts[0, i_b] = global_state.collider_state.box_points[0, i_b]
+                global_state.collider_state.box_pts[1, i_b] = (
+                    global_state.collider_state.box_points[1, i_b] - global_state.collider_state.box_points[0, i_b]
+                )
+                global_state.collider_state.box_pts[2, i_b] = (
+                    global_state.collider_state.box_points[2, i_b] - global_state.collider_state.box_points[0, i_b]
+                )
 
                 m = 3
                 k = 0
                 n = 0
 
                 if m > 1:
-                    collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[0, i_b]
-                    collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[1, i_b]
-                    collider_state.box_linesu[k, i_b][0:3] = collider_state.box_axi[0, i_b]
-                    collider_state.box_linesu[k, i_b][3:6] = collider_state.box_axi[1, i_b]
+                    global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[0, i_b]
+                    global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[1, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][0:3] = global_state.collider_state.box_axi[0, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][3:6] = global_state.collider_state.box_axi[1, i_b]
                     k = k + 1
 
                 if m > 2:
-                    collider_state.box_lines[k, i_b][0:3] = collider_state.box_pts[0, i_b]
-                    collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[2, i_b]
-                    collider_state.box_linesu[k, i_b][0:3] = collider_state.box_axi[0, i_b]
-                    collider_state.box_linesu[k, i_b][3:6] = collider_state.box_axi[2, i_b]
+                    global_state.collider_state.box_lines[k, i_b][0:3] = global_state.collider_state.box_pts[0, i_b]
+                    global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[2, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][0:3] = global_state.collider_state.box_axi[0, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][3:6] = global_state.collider_state.box_axi[2, i_b]
                     k = k + 1
 
-                    collider_state.box_lines[k, i_b][0:3] = (
-                        collider_state.box_pts[0, i_b] + collider_state.box_pts[1, i_b]
+                    global_state.collider_state.box_lines[k, i_b][0:3] = (
+                        global_state.collider_state.box_pts[0, i_b] + global_state.collider_state.box_pts[1, i_b]
                     )
-                    collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[2, i_b]
-                    collider_state.box_linesu[k, i_b][0:3] = (
-                        collider_state.box_axi[0, i_b] + collider_state.box_axi[1, i_b]
+                    global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[2, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][0:3] = (
+                        global_state.collider_state.box_axi[0, i_b] + global_state.collider_state.box_axi[1, i_b]
                     )
-                    collider_state.box_linesu[k, i_b][3:6] = collider_state.box_axi[2, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][3:6] = global_state.collider_state.box_axi[2, i_b]
                     k = k + 1
 
-                    collider_state.box_lines[k, i_b][0:3] = (
-                        collider_state.box_pts[0, i_b] + collider_state.box_pts[2, i_b]
+                    global_state.collider_state.box_lines[k, i_b][0:3] = (
+                        global_state.collider_state.box_pts[0, i_b] + global_state.collider_state.box_pts[2, i_b]
                     )
-                    collider_state.box_lines[k, i_b][3:6] = collider_state.box_pts[1, i_b]
-                    collider_state.box_linesu[k, i_b][0:3] = (
-                        collider_state.box_axi[0, i_b] + collider_state.box_axi[2, i_b]
+                    global_state.collider_state.box_lines[k, i_b][3:6] = global_state.collider_state.box_pts[1, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][0:3] = (
+                        global_state.collider_state.box_axi[0, i_b] + global_state.collider_state.box_axi[2, i_b]
                     )
-                    collider_state.box_linesu[k, i_b][3:6] = collider_state.box_axi[1, i_b]
+                    global_state.collider_state.box_linesu[k, i_b][3:6] = global_state.collider_state.box_axi[1, i_b]
                     k = k + 1
 
                 for i in range(k):
                     for q in qd.static(range(2)):
-                        a = collider_state.box_lines[i, i_b][q]
-                        b = collider_state.box_lines[i, i_b][q + 3]
-                        c = collider_state.box_lines[i, i_b][1 - q]
-                        d = collider_state.box_lines[i, i_b][4 - q]
+                        a = global_state.collider_state.box_lines[i, i_b][q]
+                        b = global_state.collider_state.box_lines[i, i_b][q + 3]
+                        c = global_state.collider_state.box_lines[i, i_b][1 - q]
+                        d = global_state.collider_state.box_lines[i, i_b][4 - q]
 
                         if qd.abs(b) > EPS:
                             for _j in qd.static(range(2)):
@@ -638,40 +635,40 @@ def func_box_box_contact(
                                     c2 = c + d * c1
                                     if (qd.abs(c2) <= s[1 - q]) and (
                                         (
-                                            collider_state.box_linesu[i, i_b][2]
-                                            + collider_state.box_linesu[i, i_b][5] * c1
+                                            global_state.collider_state.box_linesu[i, i_b][2]
+                                            + global_state.collider_state.box_linesu[i, i_b][5] * c1
                                         )
                                         * innorm
                                         <= margin
                                     ):
-                                        collider_state.box_points[n, i_b] = (
-                                            collider_state.box_linesu[i, i_b][0:3] * 0.5
-                                            + c1 * 0.5 * collider_state.box_linesu[i, i_b][3:6]
+                                        global_state.collider_state.box_points[n, i_b] = (
+                                            global_state.collider_state.box_linesu[i, i_b][0:3] * 0.5
+                                            + c1 * 0.5 * global_state.collider_state.box_linesu[i, i_b][3:6]
                                         )
-                                        collider_state.box_points[n, i_b][q] = (
-                                            collider_state.box_points[n, i_b][q] + 0.5 * l
+                                        global_state.collider_state.box_points[n, i_b][q] = (
+                                            global_state.collider_state.box_points[n, i_b][q] + 0.5 * l
                                         )
-                                        collider_state.box_points[n, i_b][1 - q] = (
-                                            collider_state.box_points[n, i_b][1 - q] + 0.5 * c2
+                                        global_state.collider_state.box_points[n, i_b][1 - q] = (
+                                            global_state.collider_state.box_points[n, i_b][1 - q] + 0.5 * c2
                                         )
-                                        collider_state.box_depth[n, i_b] = (
-                                            collider_state.box_points[n, i_b][2] * innorm * 2
+                                        global_state.collider_state.box_depth[n, i_b] = (
+                                            global_state.collider_state.box_points[n, i_b][2] * innorm * 2
                                         )
                                         n = n + 1
 
                 nl = n
-                a = collider_state.box_pts[1, i_b][0]
-                b = collider_state.box_pts[2, i_b][0]
-                c = collider_state.box_pts[1, i_b][1]
-                d = collider_state.box_pts[2, i_b][1]
+                a = global_state.collider_state.box_pts[1, i_b][0]
+                b = global_state.collider_state.box_pts[2, i_b][0]
+                c = global_state.collider_state.box_pts[1, i_b][1]
+                d = global_state.collider_state.box_pts[2, i_b][1]
                 c1 = a * d - b * c
 
                 for i in range(4):
                     llx = lx if (i // 2) else -lx
                     lly = ly if (i % 2) else -ly
 
-                    x = llx - collider_state.box_pts[0, i_b][0]
-                    y = lly - collider_state.box_pts[0, i_b][1]
+                    x = llx - global_state.collider_state.box_pts[0, i_b][0]
+                    y = lly - global_state.collider_state.box_pts[0, i_b][1]
 
                     u = (x * d - y * b) / c1
                     v = (y * a - x * c) / c1
@@ -685,29 +682,36 @@ def func_box_box_contact(
                     u = qd.math.clamp(u, 0, 1)
                     v = qd.math.clamp(v, 0, 1)
                     tmp1 = (
-                        collider_state.box_pu[0, i_b] * (1 - u - v)
-                        + collider_state.box_pu[1, i_b] * u
-                        + collider_state.box_pu[2, i_b] * v
+                        global_state.collider_state.box_pu[0, i_b] * (1 - u - v)
+                        + global_state.collider_state.box_pu[1, i_b] * u
+                        + global_state.collider_state.box_pu[2, i_b] * v
                     )
-                    collider_state.box_points[n, i_b][0] = llx
-                    collider_state.box_points[n, i_b][1] = lly
-                    collider_state.box_points[n, i_b][2] = 0
+                    global_state.collider_state.box_points[n, i_b][0] = llx
+                    global_state.collider_state.box_points[n, i_b][1] = lly
+                    global_state.collider_state.box_points[n, i_b][2] = 0
 
-                    tmp2 = collider_state.box_points[n, i_b] - tmp1
+                    tmp2 = global_state.collider_state.box_points[n, i_b] - tmp1
 
                     c2 = tmp2.dot(tmp2)
 
                     if not (tmp1[2] > 0 and c2 > margin2):
-                        collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] + tmp1
-                        collider_state.box_points[n, i_b] = collider_state.box_points[n, i_b] * 0.5
+                        global_state.collider_state.box_points[n, i_b] = (
+                            global_state.collider_state.box_points[n, i_b] + tmp1
+                        )
+                        global_state.collider_state.box_points[n, i_b] = (
+                            global_state.collider_state.box_points[n, i_b] * 0.5
+                        )
 
-                        collider_state.box_depth[n, i_b] = qd.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
+                        global_state.collider_state.box_depth[n, i_b] = qd.sqrt(c2) * (-1 if tmp1[2] < 0 else 1)
                         n = n + 1
 
                 nf = n
 
                 for i in range(4):
-                    x, y = collider_state.box_ppts2[i, 0, i_b], collider_state.box_ppts2[i, 1, i_b]
+                    x, y = (
+                        global_state.collider_state.box_ppts2[i, 0, i_b],
+                        global_state.collider_state.box_ppts2[i, 1, i_b],
+                    )
 
                     if nl == 0:
                         if (nf != 0) and (x < -lx or x > lx) and (y < -ly or y > ly):
@@ -717,35 +721,37 @@ def func_box_box_contact(
 
                     c1 = 0
                     for j in qd.static(range(2)):
-                        if collider_state.box_ppts2[i, j, i_b] < -s[j]:
-                            c1 = c1 + (collider_state.box_ppts2[i, j, i_b] + s[j]) ** 2
-                        elif collider_state.box_ppts2[i, j, i_b] > s[j]:
-                            c1 = c1 + (collider_state.box_ppts2[i, j, i_b] - s[j]) ** 2
+                        if global_state.collider_state.box_ppts2[i, j, i_b] < -s[j]:
+                            c1 = c1 + (global_state.collider_state.box_ppts2[i, j, i_b] + s[j]) ** 2
+                        elif global_state.collider_state.box_ppts2[i, j, i_b] > s[j]:
+                            c1 = c1 + (global_state.collider_state.box_ppts2[i, j, i_b] - s[j]) ** 2
 
-                    c1 = c1 + (collider_state.box_pu[i, i_b][2] * innorm) ** 2
+                    c1 = c1 + (global_state.collider_state.box_pu[i, i_b][2] * innorm) ** 2
 
-                    if collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
+                    if global_state.collider_state.box_pu[i, i_b][2] > 0 and c1 > margin2:
                         continue
 
                     tmp1 = qd.Vector(
                         [
-                            collider_state.box_ppts2[i, 0, i_b] * 0.5,
-                            collider_state.box_ppts2[i, 1, i_b] * 0.5,
+                            global_state.collider_state.box_ppts2[i, 0, i_b] * 0.5,
+                            global_state.collider_state.box_ppts2[i, 1, i_b] * 0.5,
                             0,
                         ],
                         dt=gs.qd_float,
                     )
 
                     for j in qd.static(range(2)):
-                        if collider_state.box_ppts2[i, j, i_b] < -s[j]:
+                        if global_state.collider_state.box_ppts2[i, j, i_b] < -s[j]:
                             tmp1[j] = -s[j] * 0.5
-                        elif collider_state.box_ppts2[i, j, i_b] > s[j]:
+                        elif global_state.collider_state.box_ppts2[i, j, i_b] > s[j]:
                             tmp1[j] = s[j] * 0.5
 
-                    tmp1 = tmp1 + collider_state.box_pu[i, i_b] * 0.5
-                    collider_state.box_points[n, i_b] = tmp1
+                    tmp1 = tmp1 + global_state.collider_state.box_pu[i, i_b] * 0.5
+                    global_state.collider_state.box_points[n, i_b] = tmp1
 
-                    collider_state.box_depth[n, i_b] = qd.sqrt(c1) * (-1 if collider_state.box_pu[i, i_b][2] < 0 else 1)
+                    global_state.collider_state.box_depth[n, i_b] = qd.sqrt(c1) * (
+                        -1 if global_state.collider_state.box_pu[i, i_b][2] < 0 else 1
+                    )
                     n = n + 1
 
                 r = mat1 @ rotmore.transpose()
@@ -753,33 +759,24 @@ def func_box_box_contact(
                 normal_0 = (-1 if in_ else 1) * (r @ rnorm)
 
                 n_added = 0
-                n_start = collider_state.n_contacts[i_b]
+                n_start = global_state.collider_state.n_contacts[i_b]
                 for i in range(n):
                     if n_added < qd.static(collider_static_config.n_contacts_per_pair):
-                        dist = collider_state.box_depth[i, i_b]
-                        collider_state.box_points[i, i_b][2] = collider_state.box_points[i, i_b][2] + hz
-                        contact_pos = pos1 + (r @ collider_state.box_points[i, i_b])
+                        dist = global_state.collider_state.box_depth[i, i_b]
+                        global_state.collider_state.box_points[i, i_b][2] = (
+                            global_state.collider_state.box_points[i, i_b][2] + hz
+                        )
+                        contact_pos = pos1 + (r @ global_state.collider_state.box_points[i, i_b])
 
                         # Filter out redundant contact points
                         is_valid = True
                         for j_ in range(n_added):
                             j = n_start + j_
-                            if (qd.abs(contact_pos - collider_state.contact_data.pos[j, i_b]) < EPS).all():
+                            if (qd.abs(contact_pos - global_state.collider_state.contact_data.pos[j, i_b]) < EPS).all():
                                 is_valid = False
 
                         if is_valid:
                             func_add_contact(
-                                i_ga,
-                                i_gb,
-                                -normal_0,
-                                contact_pos,
-                                -dist,
-                                i_b,
-                                i_pair,
-                                geoms_state,
-                                geoms_info,
-                                collider_state,
-                                collider_info,
-                                errno,
+                                i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, global_state, errno
                             )
                             n_added = n_added + 1
