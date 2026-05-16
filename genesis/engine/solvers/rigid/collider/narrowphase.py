@@ -829,8 +829,10 @@ def func_convex_convex_contact(
                                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
                                                 contact_pos = gjk_state.contact_pos[i_b, i_c]
                                                 normal = gjk_state.normal[i_b, i_c]
-                                                if qd.static(static_rigid_sim_config.requires_grad):
-                                                    penetration = gjk_state.diff_penetration[i_b, i_c]
+                                                # NOTE: no diff_penetration read here -- this block is the
+                                                # `else` branch of `if qd.static(requires_grad)` above, so
+                                                # we are statically in the non-diff path; the per-batch
+                                                # `penetration` from the GJK call is used as-is.
                                                 func_add_contact(
                                                     i_ga,
                                                     i_gb,
