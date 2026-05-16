@@ -1,6 +1,5 @@
-import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Generic, NamedTuple, Type, TypeVar
+from typing import TYPE_CHECKING, Callable, NamedTuple, TypeVar
 
 import numpy as np
 import quadrants as qd
@@ -9,17 +8,30 @@ import torch
 import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
-from genesis.engine.solvers.rigid.abd.forward_kinematics import func_update_all_verts
+import genesis.utils.sdf as sdf
 from genesis.engine.solvers.rigid.collider.utils import func_point_in_geom_aabb
-from genesis.options.sensors import ElastomerDisplacement as ElastomerDisplacementSensorOptions
-from genesis.options.sensors import KinematicContactProbe as KinematicContactProbeOptions
+from genesis.options.sensors import ContactDepthProbe as ContactDepthProbeOptions
+from genesis.options.sensors import ContactProbe as ContactProbeOptions
+from genesis.options.sensors import ElastomerTaxel as ElastomerTaxelSensorOptions
+from genesis.options.sensors import KinematicTaxel as KinematicTaxelOptions
+from genesis.options.sensors import ProximityTaxel as ProximityTaxelOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
-from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
+from genesis.utils.point_cloud import sample_mesh_point_cloud
 
-from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensorMetadata
+from .base_sensor import (
+    ProbeSensorMetadataMixin,
+    ProbeSensorMixin,
+    ProbesWithNormalSensorMetadataMixin,
+    ProbesWithNormalSensorMixin,
+    ProbesWithNormalSensorSharedMetadataT,
+    RigidSensorMetadataMixin,
+    RigidSensorMixin,
+    SimpleSensor,
+    SimpleSensorMetadata,
+    func_noised_probe_radius,
+)
 
 if TYPE_CHECKING:
-    from genesis.ext.pyrender.mesh import Mesh
     from genesis.options.sensors import SensorOptions
     from genesis.utils.ring_buffer import TensorRingBuffer
     from genesis.vis.rasterizer_context import RasterizerContext
@@ -28,131 +40,61 @@ if TYPE_CHECKING:
 
 
 @qd.func
-def _func_probe_geom_penetration(
+def _func_query_contact_depth_penetration(
     i_b: int,
-    i_g: int,
     probe_pos: gs.qd_vec3,
-    probe_normal: gs.qd_vec3,
     probe_radius: float,
-    max_range: float,
+    sensor_link_idx: int,
     geoms_info: array_class.GeomsInfo,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    eps: float,
+    geoms_state: array_class.GeomsState,
+    collider_state: array_class.ColliderState,
+    sdf_info: array_class.SDFInfo,
 ):
-    best = gs.qd_float(0.0)
-    neg_normal = -probe_normal
-    face_start = geoms_info.face_start[i_g]
-    face_end = geoms_info.face_end[i_g]
-    radius_sq = probe_radius * probe_radius
-
-    for i_f in range(face_start, face_end):
-        tri_verts = get_triangle_vertices(i_f, i_b, faces_info, verts_info, fixed_verts_state, free_verts_state)
-        v0 = tri_verts[:, 0]
-        v1 = tri_verts[:, 1]
-        v2 = tri_verts[:, 2]
-
-        if probe_radius > eps:
-            # Sphere-triangle test (closest point)
-            closest_point = _func_closest_point_on_triangle(probe_pos, v0, v1, v2)
-            diff = closest_point - probe_pos
-            dist_sq = diff.dot(diff)
-            if dist_sq <= radius_sq:
-                penetration = diff.dot(neg_normal)
-                if penetration > best:
-                    best = penetration
-
-        # Raycast test (ray along -normal)
-        result = ray_triangle_intersection(probe_pos, neg_normal, v0, v1, v2, eps)
-        if result[3] > 0.5 and result[0] <= max_range:
-            t = result[0]
-            if best == 0.0 or t < best:
-                best = t
-
-    return best
-
-
-@qd.func
-def _func_closest_point_on_triangle(point: gs.qd_vec3, v0: gs.qd_vec3, v1: gs.qd_vec3, v2: gs.qd_vec3) -> gs.qd_vec3:
     """
-    Find the point on the surface of a triangle closest to a given point.
-
-    Reference: Christer Ericson, *Real-Time Collision Detection*, §5.1.5.
+    Max probe penetration from SDF for contacts involving the sensor link.
+    Used by boolean contact-depth probes; omits SDF normal (smaller LLVM graph than full query).
     """
-    ab = v1 - v0
-    ac = v2 - v0
-    ap = point - v0
+    max_penetration = gs.qd_float(0.0)
 
-    d1 = ab.dot(ap)
-    d2 = ac.dot(ap)
+    n_contacts = collider_state.n_contacts[i_b]
+    for i_c in range(n_contacts):
+        c_link_a = collider_state.contact_data.link_a[i_c, i_b]
+        c_link_b = collider_state.contact_data.link_b[i_c, i_b]
+        c_geom_a = collider_state.contact_data.geom_a[i_c, i_b]
+        c_geom_b = collider_state.contact_data.geom_b[i_c, i_b]
 
-    # Region A (vertex v0)
-    closest = v0
-    if not (d1 <= 0.0 and d2 <= 0.0):
-        bp = point - v1
-        d3 = ab.dot(bp)
-        d4 = ac.dot(bp)
+        for side in qd.static(range(2)):
+            c_link = c_link_a if side == 0 else c_link_b
+            i_g = c_geom_b if side == 0 else c_geom_a
 
-        # Region B (vertex v1)
-        if d3 >= 0.0 and d4 <= d3:
-            closest = v1
-        else:
-            cp = point - v2
-            d5 = ab.dot(cp)
-            d6 = ac.dot(cp)
+            if c_link == sensor_link_idx:
+                g_pos = geoms_state.pos[i_g, i_b]
+                g_quat = geoms_state.quat[i_g, i_b]
+                sd = sdf.sdf_func_world_local(geoms_info, sdf_info, probe_pos, i_g, g_pos, g_quat)
+                penetration = probe_radius - sd
+                if penetration > max_penetration:
+                    max_penetration = penetration
 
-            # Region C (vertex v2)
-            if d6 >= 0.0 and d5 <= d6:
-                closest = v2
-            else:
-                vc = d1 * d4 - d3 * d2
-                # Region AB (edge v0-v1)
-                if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
-                    w = d1 / (d1 - d3)
-                    closest = v0 + w * ab
-                else:
-                    vb = d5 * d2 - d1 * d6
-                    # Region AC (edge v0-v2)
-                    if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
-                        w = d2 / (d2 - d6)
-                        closest = v0 + w * ac
-                    else:
-                        va = d3 * d6 - d5 * d4
-                        # Region BC (edge v1-v2)
-                        if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
-                            w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
-                            closest = v1 + w * (v2 - v1)
-                        else:
-                            # Inside the triangle face
-                            denom = 1.0 / (va + vb + vc)
-                            v = vb * denom
-                            w = vc * denom
-                            closest = v0 + v * ab + w * ac
-
-    return closest
+    return max_penetration
 
 
 @qd.func
 def _func_query_contact_depth(
     i_b: int,
     probe_pos: gs.qd_vec3,
-    probe_normal: gs.qd_vec3,
     probe_radius: float,
-    probe_max_raycast_range: float,
     sensor_link_idx: int,
     geoms_info: array_class.GeomsInfo,
     geoms_state: array_class.GeomsState,
-    faces_info: array_class.FacesInfo,
-    verts_info: array_class.VertsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    collider_static_config: qd.template(),
     collider_state: array_class.ColliderState,
+    sdf_info: array_class.SDFInfo,
     eps: float,
 ):
     max_penetration = gs.qd_float(0.0)
     contact_link = gs.qd_int(-1)
+    contact_normal = qd.Vector.zero(gs.qd_float, 3)
 
     # Iterate over contacts directly from collider state
     n_contacts = collider_state.n_contacts[i_b]
@@ -169,139 +111,61 @@ def _func_query_contact_depth(
 
             # Is this contact relevant to this sensor?
             if c_link == sensor_link_idx and func_point_in_geom_aabb(geoms_state, i_g, i_b, probe_pos, probe_radius):
-                # Raycast + sphere penetration test per geom
-                penetration = _func_probe_geom_penetration(
-                    i_b,
-                    i_g,
-                    probe_pos,
-                    probe_normal,
-                    probe_radius,
-                    probe_max_raycast_range,
-                    geoms_info,
-                    faces_info,
-                    verts_info,
-                    fixed_verts_state,
-                    free_verts_state,
-                    eps,
-                )
-                if penetration > max_penetration:
+                g_pos = geoms_state.pos[i_g, i_b]
+                g_quat = geoms_state.quat[i_g, i_b]
+                sd = sdf.sdf_func_world_local(geoms_info, sdf_info, probe_pos, i_g, g_pos, g_quat)
+                penetration = probe_radius - sd
+                if penetration > max_penetration and penetration > eps:
                     max_penetration = penetration
                     contact_link = c_link_b if side == 0 else c_link_a
+                    contact_normal = sdf.sdf_func_normal_world_local(
+                        geoms_info,
+                        rigid_global_info,
+                        collider_static_config,
+                        sdf_info,
+                        probe_pos,
+                        i_g,
+                        g_pos,
+                        g_quat,
+                    )
 
-    return max_penetration, contact_link
-
-
-@qd.func
-def _func_shear_twist_displacement(
-    i_b: int,
-    probe_pos: gs.qd_vec3,
-    link_pos: gs.qd_vec3,
-    link_quat: gs.qd_vec4,
-    contact_link: int,
-    links_state: array_class.LinksState,
-    sensor_link_idx: int,
-    sensor_normal_local: gs.qd_vec3,
-    shear_coeff: float,
-    twist_coeff: float,
-    shear_max_delta: float,
-    twist_max_delta: float,
-    dt: float,
-    eps: float,
-) -> gs.qd_vec3:
-    displacement_world = qd.Vector.zero(gs.qd_float, 3)
-
-    contact_pos = links_state.pos[contact_link, i_b]
-    contact_vel = links_state.cd_vel[contact_link, i_b] + links_state.cd_ang[contact_link, i_b].cross(
-        contact_pos - links_state.root_COM[contact_link, i_b]
-    )
-    sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
-        link_pos - links_state.root_COM[sensor_link_idx, i_b]
-    )
-    sensor_normal_world = gu.qd_transform_by_quat(sensor_normal_local, link_quat)
-    rel_vel = contact_vel - sensor_vel
-
-    rel_pos = gu.qd_inv_transform_by_trans_quat(contact_pos, link_pos, link_quat)
-    G_local = qd.Vector([rel_pos[0], rel_pos[1], 0.0], dt=gs.qd_float)
-    G = link_pos + gu.qd_transform_by_quat(G_local, link_quat)
-    M_minus_G = probe_pos - G
-    mg_dist_sq = M_minus_G[0] * M_minus_G[0] + M_minus_G[1] * M_minus_G[1] + M_minus_G[2] * M_minus_G[2]
-
-    # shear_displacement = min(shear_max_delta, shear_velocity * dt) * exp(-λs ||M - G||²)
-    if shear_max_delta > 0.0:
-        delta_s_world = rel_vel * dt
-        delta_s_local = gu.qd_inv_transform_by_quat(delta_s_world, link_quat)
-
-        shear_decay = qd.exp(-shear_coeff * mg_dist_sq)
-        delta_s_mag = qd.sqrt(delta_s_local[0] * delta_s_local[0] + delta_s_local[1] * delta_s_local[1] + eps * eps)
-        shear_scale = qd.min(delta_s_mag, shear_max_delta) * shear_decay / (delta_s_mag + eps)
-        shear_local = qd.Vector([shear_scale * delta_s_local[0], shear_scale * delta_s_local[1], 0.0], dt=gs.qd_float)
-        displacement_world += gu.qd_transform_by_quat(shear_local, link_quat)
-
-    # twist_displacement = min(twist_max_delta, twist_angle) * (M - G) * exp(-λt ||M - G||²)
-    if twist_max_delta > 0.0:
-        rel_ang = links_state.cd_ang[contact_link, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
-        delta_theta = (
-            rel_ang[0] * sensor_normal_world[0]
-            + rel_ang[1] * sensor_normal_world[1]
-            + rel_ang[2] * sensor_normal_world[2]
-        ) * dt
-        theta_cap = qd.min(qd.abs(delta_theta), twist_max_delta) * qd.select(delta_theta >= 0.0, 1.0, -1.0)
-        cos_theta = qd.cos(theta_cap)
-        sin_theta = qd.sin(theta_cap)
-        twist_decay = qd.exp(-twist_coeff * mg_dist_sq)
-        M_minus_G_local = gu.qd_inv_transform_by_quat(M_minus_G, link_quat)
-        twist_local = qd.Vector(
-            [
-                twist_decay * (cos_theta - 1.0) * M_minus_G_local[0] - sin_theta * M_minus_G_local[1],
-                twist_decay * (sin_theta * M_minus_G_local[0] + (cos_theta - 1.0) * M_minus_G_local[1]),
-                0.0,
-            ],
-            dt=gs.qd_float,
-        )
-        displacement_world += gu.qd_transform_by_quat(twist_local, link_quat)
-
-    return displacement_world
+    return max_penetration, contact_link, contact_normal
 
 
-@qd.func
-def _func_kinematic_contact_probe(
+@qd.kernel
+def _kernel_kinematic_taxel(
     probe_positions_local: qd.types.ndarray(),
-    probe_normals_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radius: qd.types.ndarray(),
-    probe_max_raycast_range: float,
-    stiffness: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    normal_stiffness: qd.types.ndarray(),
+    normal_damping: qd.types.ndarray(),
+    normal_exponent: qd.types.ndarray(),
+    shear_scalar: qd.types.ndarray(),
+    twist_scalar: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
     n_probes_per_sensor: qd.types.ndarray(),
-    static_rigid_sim_config: qd.template(),
-    links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
+    collider_static_config: qd.template(),
+    links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    sdf_info: array_class.SDFInfo,
     eps: float,
-    output: qd.types.ndarray(),
+    output_gt: qd.types.ndarray(),
+    output_measured: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = output.shape[-1]
-
-    func_update_all_verts(
-        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
-    )
+    n_batches = output_gt.shape[-1]
 
     for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
 
         probe_pos_local = qd.Vector(
-            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
-        )
-        probe_normal_local = qd.Vector(
-            [probe_normals_local[i_p, 0], probe_normals_local[i_p, 1], probe_normals_local[i_p, 2]]
+            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]],
         )
 
         sensor_link_idx = links_idx[i_s]
@@ -309,184 +173,1065 @@ def _func_kinematic_contact_probe(
         link_quat = links_state.quat[sensor_link_idx, i_b]
 
         probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
-        probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
 
-        max_penetration, _ = _func_query_contact_depth(
+        probe_radius = probe_radii[i_p]
+        probe_radius_noise = probe_radii_noise[i_p]
+        use_noised_radius = probe_radius_noise > eps
+
+        max_penetration_gt, contact_link_gt, contact_normal_gt = _func_query_contact_depth(
             i_b,
             probe_pos,
-            probe_normal,
-            probe_radius[i_p],
-            probe_max_raycast_range,
+            probe_radius,
             sensor_link_idx,
             geoms_info,
             geoms_state,
-            faces_info,
-            verts_info,
-            fixed_verts_state,
-            free_verts_state,
+            rigid_global_info,
+            collider_static_config,
             collider_state,
+            sdf_info,
             eps,
         )
 
-        force_local = qd.Vector.zero(gs.qd_float, 3)
-        if max_penetration > 0:
-            force_local = stiffness[i_s] * max_penetration * -probe_normal_local
+        max_penetration_m = max_penetration_gt
+        contact_link_m = contact_link_gt
+        contact_normal_m = contact_normal_gt
+        if use_noised_radius:
+            max_penetration_m, contact_link_m, contact_normal_m = _func_query_contact_depth(
+                i_b,
+                probe_pos,
+                func_noised_probe_radius(probe_radius, probe_radius_noise),
+                sensor_link_idx,
+                geoms_info,
+                geoms_state,
+                rigid_global_info,
+                collider_static_config,
+                collider_state,
+                sdf_info,
+                eps,
+            )
+
+        force_local_gt = qd.Vector.zero(gs.qd_float, 3)
+        torque_local_gt = qd.Vector.zero(gs.qd_float, 3)
+        if max_penetration_gt > 0:
+            contact_normal_local = gu.qd_inv_transform_by_quat(contact_normal_gt, link_quat)
+            s = qd.pow(max_penetration_gt, normal_exponent[i_s])
+            force_local_gt = contact_normal_local * (normal_stiffness[i_s] * s)
+
+            if contact_link_gt >= 0:
+                contact_vel = links_state.cd_vel[contact_link_gt, i_b] + links_state.cd_ang[contact_link_gt, i_b].cross(
+                    probe_pos - links_state.root_COM[contact_link_gt, i_b]
+                )
+                sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
+                    probe_pos - links_state.root_COM[sensor_link_idx, i_b]
+                )
+                rel_vel_world = contact_vel - sensor_vel
+                rel_vel_local = gu.qd_inv_transform_by_quat(rel_vel_world, link_quat)
+
+                vn_dot = rel_vel_local.dot(contact_normal_local)
+                v_t_local = rel_vel_local - contact_normal_local * vn_dot
+                force_local_gt += (
+                    contact_normal_local * (normal_damping[i_s] * s * vn_dot) - shear_scalar[i_s] * v_t_local
+                )
+
+                rel_ang_world = links_state.cd_ang[contact_link_gt, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
+                omega_n = rel_ang_world.dot(contact_normal_gt)
+                torque_local_gt = probe_pos_local.cross(force_local_gt) - contact_normal_local * (
+                    twist_scalar[i_s] * omega_n
+                )
+            else:
+                torque_local_gt = probe_pos_local.cross(force_local_gt)
+
+        force_local_m = qd.Vector.zero(gs.qd_float, 3)
+        torque_local_m = qd.Vector.zero(gs.qd_float, 3)
+        if not use_noised_radius:
+            for j in qd.static(range(3)):
+                force_local_m[j] = force_local_gt[j]
+                torque_local_m[j] = torque_local_gt[j]
+        elif max_penetration_m > 0:
+            contact_normal_local = gu.qd_inv_transform_by_quat(contact_normal_m, link_quat)
+            s = qd.pow(max_penetration_m, normal_exponent[i_s])
+            force_local_m = contact_normal_local * (normal_stiffness[i_s] * s)
+
+            if contact_link_m >= 0:
+                contact_vel = links_state.cd_vel[contact_link_m, i_b] + links_state.cd_ang[contact_link_m, i_b].cross(
+                    probe_pos - links_state.root_COM[contact_link_m, i_b]
+                )
+                sensor_vel = links_state.cd_vel[sensor_link_idx, i_b] + links_state.cd_ang[sensor_link_idx, i_b].cross(
+                    probe_pos - links_state.root_COM[sensor_link_idx, i_b]
+                )
+                rel_vel_world = contact_vel - sensor_vel
+                rel_vel_local = gu.qd_inv_transform_by_quat(rel_vel_world, link_quat)
+
+                vn_dot = rel_vel_local.dot(contact_normal_local)
+                v_t_local = rel_vel_local - contact_normal_local * vn_dot
+                force_local_m += (
+                    contact_normal_local * (normal_damping[i_s] * s * vn_dot) - shear_scalar[i_s] * v_t_local
+                )
+
+                rel_ang_world = links_state.cd_ang[contact_link_m, i_b] - links_state.cd_ang[sensor_link_idx, i_b]
+                omega_n = rel_ang_world.dot(contact_normal_m)
+                torque_local_m = probe_pos_local.cross(force_local_m) - contact_normal_local * (
+                    twist_scalar[i_s] * omega_n
+                )
+            else:
+                torque_local_m = probe_pos_local.cross(force_local_m)
 
         probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
         cache_start = sensor_cache_start[i_s]
         n_probes = n_probes_per_sensor[i_s]
-        output[cache_start + probe_idx_in_sensor, i_b] = max_penetration
-        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 0, i_b] = force_local[0]
-        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 1, i_b] = force_local[1]
-        output[cache_start + n_probes + probe_idx_in_sensor * 3 + 2, i_b] = force_local[2]
+        force_start = cache_start + probe_idx_in_sensor * 3
+        torque_start = cache_start + n_probes * 3 + probe_idx_in_sensor * 3
+        for j in qd.static(range(3)):
+            output_gt[force_start + j, i_b] = force_local_gt[j]
+            output_gt[torque_start + j, i_b] = torque_local_gt[j]
+            output_measured[force_start + j, i_b] = force_local_m[j]
+            output_measured[torque_start + j, i_b] = torque_local_m[j]
 
 
 @qd.kernel
-def _kernel_kinematic_contact_probe(
+def _kernel_contact_depth_probe(
     probe_positions_local: qd.types.ndarray(),
-    probe_normals_local: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radius: qd.types.ndarray(),
-    probe_max_raycast_range: float,
-    stiffness: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
     links_idx: qd.types.ndarray(),
     sensor_cache_start: qd.types.ndarray(),
     sensor_probe_start: qd.types.ndarray(),
-    n_probes_per_sensor: qd.types.ndarray(),
-    static_rigid_sim_config: qd.template(),
-    links_state: array_class.LinksState,
     collider_state: array_class.ColliderState,
+    links_state: array_class.LinksState,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    eps: float,
-    output: qd.types.ndarray(),
+    sdf_info: array_class.SDFInfo,
+    output_gt: qd.types.ndarray(),
+    output_measured: qd.types.ndarray(),
 ):
-    _func_kinematic_contact_probe(
-        probe_positions_local,
-        probe_normals_local,
-        probe_sensor_idx,
-        probe_radius,
-        probe_max_raycast_range,
-        stiffness,
-        links_idx,
-        sensor_cache_start,
-        sensor_probe_start,
-        n_probes_per_sensor,
-        static_rigid_sim_config,
-        links_state,
-        collider_state,
-        geoms_state,
-        geoms_info,
-        fixed_verts_state,
-        free_verts_state,
-        verts_info,
-        faces_info,
-        eps,
-        output,
-    )
-
-
-@qd.kernel
-def _kernel_elastomer_displacement(
-    skip_sensor: qd.types.ndarray(),
-    probe_positions_local: qd.types.ndarray(),
-    probe_normals_local: qd.types.ndarray(),
-    probe_sensor_idx: qd.types.ndarray(),
-    probe_radius: qd.types.ndarray(),
-    probe_max_raycast_range: float,
-    dilate_coefficients: qd.types.ndarray(),
-    dilate_max_delta: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    n_probes_per_sensor: qd.types.ndarray(),
-    static_rigid_sim_config: qd.template(),
-    links_state: array_class.LinksState,
-    collider_state: array_class.ColliderState,
-    geoms_state: array_class.GeomsState,
-    geoms_info: array_class.GeomsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    contact_buf: qd.types.ndarray(),
-    contact_link_buf: qd.types.ndarray(),
-    eps: float,
-    output: qd.types.ndarray(),
-):
-    _func_query_contact_probes(
-        probe_positions_local,
-        probe_normals_local,
-        probe_sensor_idx,
-        probe_radius,
-        probe_max_raycast_range,
-        links_idx,
-        static_rigid_sim_config,
-        links_state,
-        collider_state,
-        geoms_state,
-        geoms_info,
-        fixed_verts_state,
-        free_verts_state,
-        verts_info,
-        faces_info,
-        contact_buf,
-        contact_link_buf,
-        eps,
-    )
-
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = output.shape[-1]
+    n_batches = output_gt.shape[-1]
 
-    # Phase 2: for each marker M (probe), dilate = Σ over all contacts in same sensor; shear/twist from own contact.
     for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
         i_s = probe_sensor_idx[i_p]
 
-        if not skip_sensor[i_s]:
-            dilate_max_delta_s = dilate_max_delta[i_s]
-            displacement = qd.Vector.zero(gs.qd_float, 3)
+        probe_pos_local = qd.Vector(
+            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]],
+        )
 
-            probe_pos_local = qd.Vector(
-                [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
+        sensor_link_idx = links_idx[i_s]
+        link_pos = links_state.pos[sensor_link_idx, i_b]
+        link_quat = links_state.quat[sensor_link_idx, i_b]
+
+        probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
+
+        probe_radius = probe_radii[i_p]
+        probe_radius_noise = probe_radii_noise[i_p]
+
+        max_penetration_gt = _func_query_contact_depth_penetration(
+            i_b,
+            probe_pos,
+            probe_radius,
+            sensor_link_idx,
+            geoms_info,
+            geoms_state,
+            collider_state,
+            sdf_info,
+        )
+        max_penetration_m = max_penetration_gt
+        if probe_radius_noise > gs.EPS:
+            max_penetration_m = _func_query_contact_depth_penetration(
+                i_b,
+                probe_pos,
+                func_noised_probe_radius(probe_radius, probe_radius_noise),
+                sensor_link_idx,
+                geoms_info,
+                geoms_state,
+                collider_state,
+                sdf_info,
             )
-            sensor_link_idx = links_idx[i_s]
-            link_pos = links_state.pos[sensor_link_idx, i_b]
-            link_quat = links_state.quat[sensor_link_idx, i_b]
-            probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
+        cache_idx = sensor_cache_start[i_s] + i_p - sensor_probe_start[i_s]
+        output_gt[cache_idx, i_b] = max_penetration_gt
+        output_measured[cache_idx, i_b] = max_penetration_m
 
-            probe_start = sensor_probe_start[i_s]
-            n_probes = n_probes_per_sensor[i_s]
 
-            if dilate_max_delta_s > 0.0:
-                # dilate_displacement = Σ_i min(dilate_max_delta, Δh_i) * (M - C_i) * exp(-λd ||M - C_i||²)
-                for j in range(n_probes):
-                    j_p = probe_start + j
-                    delta_h = qd.min(dilate_max_delta_s, contact_buf[i_b, j_p, 3])
-                    if delta_h > gs.qd_float(0.0):
-                        C_j = qd.Vector(
-                            [contact_buf[i_b, j_p, 0], contact_buf[i_b, j_p, 1], -contact_buf[i_b, j_p, 2]],
-                            dt=gs.qd_float,
-                        )
-                        M_minus_C = probe_pos - C_j
-                        dist_sq = (
-                            M_minus_C[0] * M_minus_C[0] + M_minus_C[1] * M_minus_C[1] + M_minus_C[2] * M_minus_C[2]
-                        )
-                        displacement += M_minus_C * delta_h * qd.exp(-dilate_coefficients[i_s] * dist_sq)
+class KinematicTactileSensorMixin(ProbeSensorMixin[ProbesWithNormalSensorSharedMetadataT]):
+    def build(self):
+        super().build()
+        self._shared_metadata.solver.collider._sdf.activate()
 
-            displacement_local = gu.qd_inv_transform_by_quat(displacement, link_quat)
+    def _draw_debug_probes(self, context: "RasterizerContext", get_is_contact: Callable[[object], object]):
+        for obj in self._debug_objects:
+            context.clear_debug_object(obj)
+        self._debug_objects.clear()
 
-            probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
-            cache_start = sensor_cache_start[i_s]
+        if self._manager._sim.n_envs > 0:
+            envs_idx = list(context.rendered_envs_idx)
+            n_debug_envs = len(envs_idx)
+            env_offsets = context.scene.envs_offset[np.asarray(envs_idx, dtype=gs.np_int)]
 
-            output[cache_start + probe_idx_in_sensor * 3 + 0, i_b] = displacement_local[0]
-            output[cache_start + probe_idx_in_sensor * 3 + 1, i_b] = displacement_local[1]
-            output[cache_start + probe_idx_in_sensor * 3 + 2, i_b] = qd.min(
-                dilate_max_delta_s, contact_buf[i_b, i_p, 3]
+            link_pos = self._link.get_pos(envs_idx)[:, None, :]
+            link_quat = self._link.get_quat(envs_idx)[:, None, :]
+            probe_world = gu.transform_by_trans_quat(
+                self._probe_local_pos.reshape(-1, 3)[None, :, :], link_pos, link_quat
             )
+            probe_world = tensor_to_array(probe_world) + env_offsets[:, None, :]
+        else:
+            envs_idx = None
+            n_debug_envs = 1
+
+            link_pos = self._link.get_pos(envs_idx).reshape(3)
+            link_quat = self._link.get_quat(envs_idx).reshape(4)
+            probe_world = tensor_to_array(
+                gu.transform_by_trans_quat(self._probe_local_pos.reshape(-1, 3), link_pos, link_quat)
+            )
+
+        data = self.read_ground_truth(envs_idx)
+        is_contact = np.asarray(tensor_to_array(get_is_contact(data)), dtype=bool).reshape(n_debug_envs, self._n_probes)
+
+        probe_world = probe_world.reshape(-1, 3)
+        is_contact = is_contact.reshape(-1)
+        probe_global_idx = int(self._shared_metadata.sensor_probe_start[self._idx])
+        probe_radius = float(self._shared_metadata.probe_radii[probe_global_idx])
+        for is_contact_state in (False, True):
+            (probes_idx,) = np.nonzero(is_contact == is_contact_state)
+            if probes_idx.size > 0:
+                spheres_obj = context.draw_debug_spheres(
+                    poss=probe_world[probes_idx],
+                    radius=probe_radius,
+                    color=self._options.debug_contact_color if is_contact_state else self._options.debug_probe_color,
+                )
+                self._debug_objects.append(spheres_obj)
+
+
+@dataclass
+class ContactProbeMetadata(ProbeSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
+    contact_threshold: torch.Tensor = make_tensor_field((0,))
+
+
+class ContactProbeSensor(
+    KinematicTactileSensorMixin[ContactProbeMetadata],
+    RigidSensorMixin[ContactProbeMetadata],
+    SimpleSensor[ContactProbeOptions, ContactProbeMetadata, tuple],
+):
+    """
+    Returns boolean contact per probe based on the contact depth threshold.
+    """
+
+    def build(self):
+        super().build()
+        self._shared_metadata.contact_threshold = concat_with_tensor(
+            self._shared_metadata.contact_threshold, self._options.contact_threshold, expand=(1,)
+        )
+
+    def _get_return_format(self) -> tuple[int, ...]:
+        return (self._n_probes,)
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_bool
+
+    @classmethod
+    def _get_intermediate_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @staticmethod
+    def _threshold_row(shared_metadata: ContactProbeMetadata, n_rows: int, dtype: torch.dtype) -> torch.Tensor:
+        i_p = torch.arange(shared_metadata.total_n_probes, device=gs.device, dtype=gs.tc_int)
+        i_s = shared_metadata.probe_sensor_idx
+        cache_idx = shared_metadata.sensor_cache_start[i_s] + i_p - shared_metadata.sensor_probe_start[i_s]
+        thresholds = torch.zeros((n_rows,), dtype=dtype, device=gs.device)
+        thresholds.scatter_(0, cache_idx.to(dtype=torch.int64), shared_metadata.contact_threshold[i_s].to(dtype=dtype))
+        return thresholds
+
+    @classmethod
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: ContactProbeMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
+        solver = shared_metadata.solver
+
+        current_ground_truth_data_T.zero_()
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.zero_()
+
+        depth_gt_T = torch.zeros(
+            current_ground_truth_data_T.shape, dtype=gs.tc_float, device=current_ground_truth_data_T.device
+        )
+        depth_m_T = torch.empty_like(depth_gt_T)
+        _kernel_contact_depth_probe(
+            shared_metadata.probe_positions,
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
+            shared_metadata.links_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            solver.collider._collider_state,
+            solver.links_state,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver.collider._sdf._sdf_info,
+            depth_gt_T,
+            depth_m_T,
+        )
+        current_ground_truth_data_T.copy_(depth_gt_T)
+        measured.copy_(depth_m_T.T)
+
+    @classmethod
+    def _post_process(cls, shared_metadata: ContactProbeMetadata, tensor: torch.Tensor) -> torch.Tensor:
+        threshold = cls._threshold_row(shared_metadata, tensor.shape[1], tensor.dtype)
+        return tensor > threshold.unsqueeze(0)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        self._draw_debug_probes(context, lambda data: data)
+
+
+@dataclass
+class ContactDepthProbeMetadata(ProbeSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
+    pass
+
+
+class ContactDepthProbeSensor(
+    KinematicTactileSensorMixin[ContactDepthProbeMetadata],
+    RigidSensorMixin[ContactDepthProbeMetadata],
+    SimpleSensor[ContactDepthProbeOptions, ContactDepthProbeMetadata, tuple],
+):
+    """
+    Returns contact depth in meters per probe.
+    """
+
+    def __init__(self, sensor_options: ContactDepthProbeOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+
+    def _get_return_format(self) -> tuple[int, ...]:
+        return (self._n_probes,)
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: ContactDepthProbeMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
+        solver = shared_metadata.solver
+
+        current_ground_truth_data_T.zero_()
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.zero_()
+        measured_cols_b = torch.empty_like(current_ground_truth_data_T)
+
+        _kernel_contact_depth_probe(
+            shared_metadata.probe_positions,
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
+            shared_metadata.links_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            solver.collider._collider_state,
+            solver.links_state,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver.collider._sdf._sdf_info,
+            current_ground_truth_data_T,
+            measured_cols_b,
+        )
+        measured.copy_(measured_cols_b.T)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        self._draw_debug_probes(context, lambda depth: depth >= gs.EPS)
+
+
+class KinematicTaxelData(NamedTuple):
+    """
+    Parameters
+    ----------
+    force: torch.Tensor, shape ([n_envs,] n_probes, 3)
+        Estimated contact force in the link frame from the kinematic spring-damper model.
+    torque: torch.Tensor, shape ([n_envs,] n_probes, 3)
+    """
+
+    force: torch.Tensor
+    torque: torch.Tensor
+
+
+@dataclass
+class KinematicTaxelMetadata(ProbesWithNormalSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
+    normal_stiffness: torch.Tensor = make_tensor_field((0,))
+    normal_damping: torch.Tensor = make_tensor_field((0,))
+    normal_exponent: torch.Tensor = make_tensor_field((0,))
+    shear_scalar: torch.Tensor = make_tensor_field((0,))
+    twist_scalar: torch.Tensor = make_tensor_field((0,))
+
+
+class KinematicTaxelSensor(
+    KinematicTactileSensorMixin[KinematicTaxelMetadata],
+    ProbesWithNormalSensorMixin[KinematicTaxelMetadata],
+    RigidSensorMixin[KinematicTaxelMetadata],
+    SimpleSensor[KinematicTaxelOptions, KinematicTaxelMetadata, KinematicTaxelData],
+):
+    """Kinematic taxels: spring-damper force and torque per probe from contact geometry and relative motion."""
+
+    def __init__(self, sensor_options: KinematicTaxelOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+
+    def build(self):
+        super().build()
+
+        self._shared_metadata.normal_stiffness = concat_with_tensor(
+            self._shared_metadata.normal_stiffness, float(self._options.normal_stiffness), expand=(1,)
+        )
+        self._shared_metadata.normal_damping = concat_with_tensor(
+            self._shared_metadata.normal_damping, float(self._options.normal_damping), expand=(1,)
+        )
+        self._shared_metadata.normal_exponent = concat_with_tensor(
+            self._shared_metadata.normal_exponent, float(self._options.normal_exponent), expand=(1,)
+        )
+        self._shared_metadata.shear_scalar = concat_with_tensor(
+            self._shared_metadata.shear_scalar, float(self._options.shear_scalar), expand=(1,)
+        )
+        self._shared_metadata.twist_scalar = concat_with_tensor(
+            self._shared_metadata.twist_scalar, float(self._options.twist_scalar), expand=(1,)
+        )
+
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        return (self._n_probes, 3), (self._n_probes, 3)
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: KinematicTaxelMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
+        solver = shared_metadata.solver
+
+        current_ground_truth_data_T.zero_()
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.zero_()
+        measured_cols_b = torch.empty_like(current_ground_truth_data_T)
+
+        _kernel_kinematic_taxel(
+            shared_metadata.probe_positions,
+            shared_metadata.probe_sensor_idx,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
+            shared_metadata.normal_stiffness,
+            shared_metadata.normal_damping,
+            shared_metadata.normal_exponent,
+            shared_metadata.shear_scalar,
+            shared_metadata.twist_scalar,
+            shared_metadata.links_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            shared_metadata.n_probes_per_sensor,
+            solver.collider._collider_state,
+            solver.collider._collider_static_config,
+            solver.links_state,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver._rigid_global_info,
+            solver.collider._sdf._sdf_info,
+            gs.EPS,
+            current_ground_truth_data_T,
+            measured_cols_b,
+        )
+        measured.copy_(measured_cols_b.T)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        self._draw_debug_probes(context, lambda data: torch.linalg.norm(data.force, dim=-1) >= gs.EPS)
+
+
+# =============================================================================
+# Point-cloud tactile
+# =============================================================================
+
+
+def _get_mesh_geom_chunks(link, prefer_visual: bool) -> list[tuple[object, np.ndarray, np.ndarray]]:
+    """Return per-geom mesh chunks in link-local frame."""
+    if prefer_visual:
+        geoms = list(link.vgeoms) if link.vgeoms else list(link.geoms)
+        use_vverts = bool(link.vgeoms)
+    else:
+        geoms = list(link.geoms) if link.geoms else list(link.vgeoms)
+        use_vverts = not bool(link.geoms) and bool(link.vgeoms)
+
+    chunks: list[tuple[object, np.ndarray, np.ndarray]] = []
+    for geom in geoms:
+        if use_vverts:
+            verts = np.asarray(geom.init_vverts, dtype=np.float32)
+            faces = np.asarray(geom.init_vfaces, dtype=np.int32)
+        else:
+            verts = np.asarray(geom.init_verts, dtype=np.float32)
+            faces = np.asarray(geom.init_faces, dtype=np.int32)
+        if verts.size == 0 or faces.size == 0:
+            continue
+        verts_link = gu.transform_by_trans_quat(verts, geom.init_pos, geom.init_quat)
+        chunks.append((geom, verts_link.astype(np.float32, copy=False), np.asarray(faces, dtype=np.int32)))
+    return chunks
+
+
+def _n_sample_points_per_link(n_sample_points: int | list | tuple, n_links: int) -> list[int]:
+    if n_links <= 0:
+        return []
+    if isinstance(n_sample_points, (list, tuple)):
+        counts = [int(x) for x in n_sample_points]
+        if len(counts) != n_links:
+            gs.raise_exception(
+                f"Point cloud tactile n_sample_points length must match track_link_idx ({n_links}), got {len(counts)}."
+            )
+        if any(c < 0 for c in counts):
+            gs.raise_exception("n_sample_points entries must be non-negative.")
+        return counts
+    n_total = int(n_sample_points)
+    if n_total < 0:
+        gs.raise_exception("n_sample_points must be non-negative.")
+    base, rem = divmod(n_total, n_links)
+    return [base + (1 if i < rem else 0) for i in range(n_links)]
+
+
+def _mesh_area(verts: np.ndarray, faces: np.ndarray) -> float:
+    tris = verts[faces]
+    cross = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    return float(0.5 * np.linalg.norm(cross, axis=1).sum())
+
+
+def _split_count_by_area(n_total: int, geom_chunks: list[tuple[object, np.ndarray, np.ndarray]]) -> list[int]:
+    n_chunks = len(geom_chunks)
+    if n_chunks <= 0:
+        return []
+    if n_total <= 0:
+        return [0] * n_chunks
+
+    areas = np.asarray([_mesh_area(verts, faces) for _, verts, faces in geom_chunks], dtype=np.float64)
+    if float(areas.sum()) <= gs.EPS:
+        areas.fill(1.0)
+
+    if n_total < n_chunks:
+        counts = np.zeros(n_chunks, dtype=np.int64)
+        counts[np.argsort(-areas)[:n_total]] = 1
+        return counts.tolist()
+
+    raw_extra = (n_total - n_chunks) * areas / float(areas.sum())
+    extra = np.floor(raw_extra).astype(np.int64)
+    remainder = n_total - n_chunks - int(extra.sum())
+    if remainder > 0:
+        extra[np.argsort(-(raw_extra - extra))[:remainder]] += 1
+    return (extra + 1).tolist()
+
+
+def _active_envs_mask_tensor(geom, batch_size: int) -> torch.Tensor:
+    active_mask = getattr(geom, "active_envs_mask", None)
+    if active_mask is None:
+        return torch.ones((batch_size,), dtype=gs.tc_bool, device=gs.device)
+    return active_mask.to(device=gs.device, dtype=gs.tc_bool)
+
+
+def _sample_track_links_point_cloud_tensors(
+    solver,
+    track_link_idx: np.ndarray,
+    n_sample_points: int | list | tuple,
+    prefer_visual: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    FPS-sample meshes on ``track_link_idx`` into concatenated link-local positions and normals.
+
+    Returns
+    -------
+    idx_cat, pos_cat, nrm_cat, active_cat
+        Global link index per row, positions (N, 3), normals (N, 3), and active env mask (N, B), all on ``gs.device``.
+    """
+    n_per_link = _n_sample_points_per_link(n_sample_points, int(track_link_idx.shape[0]))
+    if sum(n_per_link) == 0:
+        gs.raise_exception("n_sample_points must allocate at least one sample in total.")
+
+    link_idx_chunks: list[torch.Tensor] = []
+    pos_chunks: list[torch.Tensor] = []
+    nrm_chunks: list[torch.Tensor] = []
+    active_chunks: list[torch.Tensor] = []
+
+    for i_l in range(int(track_link_idx.shape[0])):
+        n_pts = n_per_link[i_l]
+        link_idx = int(track_link_idx[i_l])
+        link = solver.links[link_idx]
+        geom_chunks = _get_mesh_geom_chunks(link, prefer_visual)
+        if not geom_chunks:
+            gs.raise_exception(f"No mesh geometry on tracked link index {link_idx}.")
+        for n_geom_pts, (geom, verts, faces) in zip(_split_count_by_area(n_pts, geom_chunks), geom_chunks):
+            if n_geom_pts <= 0:
+                continue
+            pts_np, nrm_np = sample_mesh_point_cloud(verts, faces, n_geom_pts, use_cache=True, return_normals=True)
+
+            li = torch.full((pts_np.shape[0],), link_idx, dtype=gs.tc_int, device=gs.device)
+            link_idx_chunks.append(li)
+            pos_chunks.append(torch.tensor(pts_np, dtype=gs.tc_float, device=gs.device))
+            nrm_chunks.append(torch.tensor(nrm_np, dtype=gs.tc_float, device=gs.device))
+            active_chunks.append(_active_envs_mask_tensor(geom, solver._B).expand(pts_np.shape[0], solver._B))
+
+    if not pos_chunks:
+        gs.raise_exception("PointCloudTactile sensor produced an empty object point cloud.")
+
+    return (
+        torch.cat(link_idx_chunks, dim=0),
+        torch.cat(pos_chunks, dim=0),
+        torch.cat(nrm_chunks, dim=0),
+        torch.cat(active_chunks, dim=0),
+    )
+
+
+# =============================================================================
+# Quadrants kernels
+# =============================================================================
+
+
+@qd.kernel
+def _kernel_point_cloud_proximity_taxel(
+    probe_positions_local: qd.types.ndarray(),
+    probe_local_normal: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    n_probes_per_sensor: qd.types.ndarray(),
+    sensor_pc_start: qd.types.ndarray(),
+    sensor_pc_n: qd.types.ndarray(),
+    pc_link_idx: qd.types.ndarray(),
+    pc_pos_link: qd.types.ndarray(),
+    pc_active_envs_mask: qd.types.ndarray(),
+    probe_radii: qd.types.ndarray(),
+    probe_radii_noise: qd.types.ndarray(),
+    stiffness: qd.types.ndarray(),
+    shear_coupling: qd.types.ndarray(),
+    proximity_density_scale: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    eps: float,
+    output_gt: qd.types.ndarray(),
+    output_measured: qd.types.ndarray(),
+    taxel_signal_buf: qd.types.ndarray(),
+):
+    for i_b, i_s in qd.ndrange(output_gt.shape[-1], sensor_pc_start.shape[0]):
+        sensor_link_idx = links_idx[i_s]
+        s_pos = links_state.pos[sensor_link_idx, i_b]
+        s_quat = links_state.quat[sensor_link_idx, i_b]
+
+        k_stiff = stiffness[i_s]
+        k_shear = shear_coupling[i_s]
+        dens = proximity_density_scale[i_s, i_b]
+        n_probes = n_probes_per_sensor[i_s]
+        cache_start = sensor_cache_start[i_s]
+
+        pc_start = sensor_pc_start[i_s]
+        pc_end = pc_start + sensor_pc_n[i_s]
+
+        s_vel = links_state.cd_vel[sensor_link_idx, i_b]
+        s_ang = links_state.cd_ang[sensor_link_idx, i_b]
+        s_com = links_state.root_COM[sensor_link_idx, i_b]
+
+        for _i_p in range(n_probes_per_sensor[i_s]):
+            i_p = sensor_probe_start[i_s] + _i_p
+            probe_local = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                probe_local[j] = probe_positions_local[i_p, j]
+            probe_world = s_pos + gu.qd_transform_by_quat(probe_local, s_quat)
+
+            a_loc = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                a_loc[j] = probe_local_normal[i_p, j]
+            a_w = gu.qd_transform_by_quat(a_loc, s_quat)
+            a_norm = qd.sqrt(a_w.dot(a_w)) + eps
+            for j in qd.static(range(3)):
+                a_w[j] = a_w[j] / a_norm
+
+            R_gt = probe_radii[i_p]
+            R_gt_sq = R_gt * R_gt
+            probe_radius_noise = probe_radii_noise[i_p]
+            use_noised_radius = probe_radius_noise > eps
+            R_m = R_gt
+            if use_noised_radius:
+                R_m = func_noised_probe_radius(R_gt, probe_radius_noise)
+            R_m_sq = R_m * R_m
+
+            v_tax = s_vel + s_ang.cross(probe_world - s_com)
+
+            sum_p_gt = gs.qd_float(0.0)
+            fv_gt = qd.Vector.zero(gs.qd_float, 3)
+            tau_w_gt = qd.Vector.zero(gs.qd_float, 3)
+            sum_p_m = gs.qd_float(0.0)
+            fv_m = qd.Vector.zero(gs.qd_float, 3)
+            tau_w_m = qd.Vector.zero(gs.qd_float, 3)
+
+            for i_o in range(pc_start, pc_end):
+                if not pc_active_envs_mask[i_o, i_b]:
+                    continue
+                i_l = pc_link_idx[i_o]
+                lp = links_state.pos[i_l, i_b]
+                lq = links_state.quat[i_l, i_b]
+                pos_l = qd.Vector.zero(gs.qd_float, 3)
+                for j in qd.static(range(3)):
+                    pos_l[j] = pc_pos_link[i_o, j]
+                pw = lp + gu.qd_transform_by_quat(pos_l, lq)
+
+                dvec = pw - probe_world
+                dsq = dvec.dot(dvec)
+                dist = qd.sqrt(dsq)
+
+                if dsq <= R_gt_sq and dist > eps:
+                    P_i_gt = R_gt - dist
+                    if P_i_gt > 0.0:
+                        rcom_o = links_state.root_COM[i_l, i_b]
+                        cdv_o = links_state.cd_vel[i_l, i_b]
+                        cda_o = links_state.cd_ang[i_l, i_b]
+                        v_pc = cdv_o + cda_o.cross(pw - rcom_o)
+                        v_rel = v_pc - v_tax
+                        vdota = v_rel.dot(a_w)
+                        v_t = qd.Vector.zero(gs.qd_float, 3)
+                        for j in qd.static(range(3)):
+                            v_t[j] = v_rel[j] - a_w[j] * vdota
+
+                        sum_p_gt = sum_p_gt + P_i_gt
+                        for j in qd.static(range(3)):
+                            fv_gt[j] = fv_gt[j] + P_i_gt * v_t[j]
+
+                        ctmp = dvec.cross(a_w)
+                        for j in qd.static(range(3)):
+                            tau_w_gt[j] = tau_w_gt[j] + P_i_gt * ctmp[j]
+
+                if use_noised_radius and dsq <= R_m_sq and dist > eps:
+                    P_i_m = R_m - dist
+                    if P_i_m > 0.0:
+                        rcom_o = links_state.root_COM[i_l, i_b]
+                        cdv_o = links_state.cd_vel[i_l, i_b]
+                        cda_o = links_state.cd_ang[i_l, i_b]
+                        v_pc = cdv_o + cda_o.cross(pw - rcom_o)
+                        v_rel = v_pc - v_tax
+                        vdota = v_rel.dot(a_w)
+                        v_t = qd.Vector.zero(gs.qd_float, 3)
+                        for j in qd.static(range(3)):
+                            v_t[j] = v_rel[j] - a_w[j] * vdota
+
+                        sum_p_m = sum_p_m + P_i_m
+                        for j in qd.static(range(3)):
+                            fv_m[j] = fv_m[j] + P_i_m * v_t[j]
+
+                        ctmp = dvec.cross(a_w)
+                        for j in qd.static(range(3)):
+                            tau_w_m[j] = tau_w_m[j] + P_i_m * ctmp[j]
+
+            if not use_noised_radius:
+                sum_p_m = sum_p_gt
+                for j in qd.static(range(3)):
+                    fv_m[j] = fv_gt[j]
+                    tau_w_m[j] = tau_w_gt[j]
+
+            taxel_signal_buf[i_p, i_b] = sum_p_m
+
+            f_w_gt = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                f_w_gt[j] = k_stiff * dens * sum_p_gt * a_w[j]
+            if k_shear > eps:
+                for j in qd.static(range(3)):
+                    f_w_gt[j] = f_w_gt[j] + k_shear * dens * fv_gt[j]
+
+            tau_scaled_gt = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                tau_scaled_gt[j] = k_stiff * dens * tau_w_gt[j]
+
+            f_l_gt = gu.qd_inv_transform_by_quat(f_w_gt, s_quat)
+            t_l_gt = gu.qd_inv_transform_by_quat(tau_scaled_gt, s_quat)
+
+            f_w_m = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                f_w_m[j] = k_stiff * dens * sum_p_m * a_w[j]
+            if k_shear > eps:
+                for j in qd.static(range(3)):
+                    f_w_m[j] = f_w_m[j] + k_shear * dens * fv_m[j]
+
+            tau_scaled_m = qd.Vector.zero(gs.qd_float, 3)
+            for j in qd.static(range(3)):
+                tau_scaled_m[j] = k_stiff * dens * tau_w_m[j]
+
+            f_l_m = gu.qd_inv_transform_by_quat(f_w_m, s_quat)
+            t_l_m = gu.qd_inv_transform_by_quat(tau_scaled_m, s_quat)
+
+            force_start = cache_start + _i_p * 3
+            torque_start = cache_start + n_probes * 3 + _i_p * 3
+            for j in qd.static(range(3)):
+                output_gt[force_start + j, i_b] = f_l_gt[j]
+            for j in qd.static(range(3)):
+                output_gt[torque_start + j, i_b] = t_l_gt[j]
+            for j in qd.static(range(3)):
+                output_measured[force_start + j, i_b] = f_l_m[j]
+            for j in qd.static(range(3)):
+                output_measured[torque_start + j, i_b] = t_l_m[j]
+
+
+# =========================== PointCloudTactile ==============================
+
+
+@dataclass
+class PointCloudTactileSharedMetadata(ProbeSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata):
+    """Shared sensor-manager state for point-cloud–tracked tactile sensors (probes + merged track PC)."""
+
+    pc_link_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    pc_pos_link: torch.Tensor = make_tensor_field((0, 3))
+    pc_normal_link: torch.Tensor = make_tensor_field((0, 3))
+    pc_active_envs_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    sensor_pc_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_pc_n: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+
+
+PointCloudTactileSensorMetadataMixinT = TypeVar(
+    "PointCloudTactileSensorMetadataMixinT", bound=PointCloudTactileSharedMetadata
+)
+
+
+class PointCloudTactileSensorMixin(ProbeSensorMixin[PointCloudTactileSensorMetadataMixinT]):
+    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+        self._probe_start_idx = -1
+        self._debug_pc_chunks: list[tuple[int, torch.Tensor, torch.Tensor]] | None = None
+
+    def build(self):
+        super().build()
+        self._probe_start_idx = int(self._shared_metadata.sensor_probe_start[self._idx].item())
+
+        pc_start_row = self._shared_metadata.pc_pos_link.shape[0]
+        idx_cat, pos_cat, nrm_cat, active_cat = _sample_track_links_point_cloud_tensors(
+            self._shared_metadata.solver,
+            np.asarray(self._options.track_link_idx, dtype=gs.np_int),
+            self._options.n_sample_points,
+            self._options.use_visual_mesh,
+        )
+        if self._options.draw_debug:
+            self._debug_pc_chunks = []
+            for lid in torch.unique(idx_cat):
+                mask = idx_cat == lid
+                self._debug_pc_chunks.append((int(lid.item()), pos_cat[mask].clone(), active_cat[mask].clone()))
+        else:
+            self._debug_pc_chunks = None
+
+        self._shared_metadata.pc_link_idx = concat_with_tensor(
+            self._shared_metadata.pc_link_idx, idx_cat, expand=(idx_cat.shape[0],)
+        )
+        self._shared_metadata.pc_pos_link = concat_with_tensor(
+            self._shared_metadata.pc_pos_link, pos_cat, expand=(pos_cat.shape[0], 3)
+        )
+        self._shared_metadata.pc_normal_link = concat_with_tensor(
+            self._shared_metadata.pc_normal_link, nrm_cat, expand=(nrm_cat.shape[0], 3)
+        )
+        self._shared_metadata.pc_active_envs_mask = concat_with_tensor(
+            self._shared_metadata.pc_active_envs_mask, active_cat
+        )
+        self._shared_metadata.sensor_pc_start = concat_with_tensor(
+            self._shared_metadata.sensor_pc_start, pc_start_row, expand=(1,)
+        )
+        self._shared_metadata.sensor_pc_n = concat_with_tensor(
+            self._shared_metadata.sensor_pc_n, self._shared_metadata.pc_pos_link.shape[0] - pc_start_row, expand=(1,)
+        )
+
+    def _draw_debug_probes(
+        self,
+        context: "RasterizerContext",
+        get_magnitude_1d: Callable[[list[int] | None], np.ndarray],
+    ) -> None:
+        for obj in self._debug_objects:
+            context.clear_debug_object(obj)
+        self._debug_objects.clear()
+
+        if self._manager._sim.n_envs > 0:
+            envs_idx = list(context.rendered_envs_idx)
+            n_debug_envs = len(envs_idx)
+            env_offsets = context.scene.envs_offset[np.asarray(envs_idx, dtype=gs.np_int)]
+
+            link_pos = self._link.get_pos(envs_idx)[:, None, :]
+            link_quat = self._link.get_quat(envs_idx)[:, None, :]
+            probe_world = gu.transform_by_trans_quat(
+                self._probe_local_pos.reshape(-1, 3)[None, :, :], link_pos, link_quat
+            )
+            probe_world = tensor_to_array(probe_world) + env_offsets[:, None, :]
+        else:
+            envs_idx = None
+            n_debug_envs = 1
+            env_offsets = None
+
+            link_pos = self._link.get_pos(envs_idx).reshape(3)
+            link_quat = self._link.get_quat(envs_idx).reshape(4)
+            probe_world = tensor_to_array(
+                gu.transform_by_trans_quat(self._probe_local_pos.reshape(-1, 3), link_pos, link_quat)
+            )
+
+        magnitude = np.asarray(get_magnitude_1d(envs_idx)).reshape(n_debug_envs, self._n_probes).reshape(-1)
+        probe_world = probe_world.reshape(-1, 3)
+        for is_contact in (False, True):
+            (probes_idx,) = np.nonzero(magnitude >= gs.EPS if is_contact else magnitude < gs.EPS)
+            if probes_idx.size == 0:
+                continue
+            spheres_obj = context.draw_debug_spheres(
+                poss=probe_world[probes_idx],
+                radius=self._shared_metadata.probe_radii[self._probe_start_idx].item(),
+                color=self._options.debug_contact_color if is_contact else self._options.debug_probe_color,
+            )
+            self._debug_objects.append(spheres_obj)
+
+        if self._debug_pc_chunks is None:
+            return
+        world_chunks: list[np.ndarray] = []
+        for link_idx, pos_local, active_envs_mask in self._debug_pc_chunks:
+            trk_link = self._shared_metadata.solver.links[link_idx]
+            if envs_idx is not None:
+                active_mask = tensor_to_array(active_envs_mask[:, envs_idx].T).astype(bool)
+                if not active_mask.any():
+                    continue
+                trk_pos = trk_link.get_pos(envs_idx)[:, None, :]
+                trk_quat = trk_link.get_quat(envs_idx)[:, None, :]
+                pc_world = gu.transform_by_trans_quat(pos_local[None, :, :], trk_pos, trk_quat)
+                pc_world = tensor_to_array(pc_world) + env_offsets[:, None, :]
+                world_chunks.append(pc_world[active_mask])
+            else:
+                active_mask = active_envs_mask[:, 0]
+                pos_active = pos_local[active_mask]
+                if pos_active.numel() == 0:
+                    continue
+                trk_pos = trk_link.get_pos(envs_idx).reshape(3)
+                trk_quat = trk_link.get_quat(envs_idx).reshape(4)
+                world_chunks.append(tensor_to_array(gu.transform_by_trans_quat(pos_active, trk_pos, trk_quat)))
+        if not world_chunks:
+            return
+        pc_world = np.concatenate(world_chunks, axis=0)
+        pc_obj = context.draw_debug_spheres(
+            poss=pc_world,
+            radius=float(self._options.debug_point_cloud_radius),
+            color=self._options.debug_point_cloud_color,
+        )
+        self._debug_objects.append(pc_obj)
+
+    def _debug_probe_buffer_magnitudes(self, buffer: torch.Tensor, envs_idx: list[int] | None) -> np.ndarray:
+        values = buffer[self._probe_start_idx : self._probe_start_idx + self._n_probes]
+        if envs_idx is None:
+            return tensor_to_array(values[:, 0])
+        return tensor_to_array(values[:, envs_idx].T)
+
+
+# =========================== ProximityTaxel ================================
+
+
+class ProximityTaxelData(NamedTuple):
+    """Per-taxel estimates in link-local frame."""
+
+    force: torch.Tensor
+    torque: torch.Tensor
+
+
+@dataclass
+class ProximityTaxelMetadata(PointCloudTactileSharedMetadata, ProbesWithNormalSensorMetadataMixin):
+    stiffness: torch.Tensor = make_tensor_field((0,))
+    shear_coupling: torch.Tensor = make_tensor_field((0,))
+    proximity_density_scale: torch.Tensor = make_tensor_field((0, 0))
+    taxel_signal_buf: torch.Tensor = make_tensor_field((0, 0))
+
+
+class ProximityTaxelSensor(
+    PointCloudTactileSensorMixin[ProximityTaxelMetadata],
+    ProbesWithNormalSensorMixin[ProximityTaxelMetadata],
+    RigidSensorMixin[ProximityTaxelMetadata],
+    SimpleSensor[ProximityTaxelOptions, ProximityTaxelMetadata, ProximityTaxelData],
+):
+    """Spherical point-cloud taxels: per-taxel force and torque in link-local frame vs tracked meshes."""
+
+    def __init__(self, sensor_options: ProximityTaxelOptions, sensor_idx: int, sensor_manager: "SensorManager"):
+        super().__init__(sensor_options, sensor_idx, sensor_manager)
+        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
+        if self._probe_local_normal.ndim == 1:
+            self._probe_local_normal = self._probe_local_normal.expand(self._n_probes, 3).contiguous()
+
+    def build(self):
+        super().build()
+        self._shared_metadata.stiffness = concat_with_tensor(
+            self._shared_metadata.stiffness, float(self._options.stiffness), expand=(1,)
+        )
+        self._shared_metadata.shear_coupling = concat_with_tensor(
+            self._shared_metadata.shear_coupling, float(self._options.shear_coupling), expand=(1,)
+        )
+        pc_start = self._shared_metadata.sensor_pc_start[-1].item()
+        pc_end = pc_start + self._shared_metadata.sensor_pc_n[-1].item()
+        active_count = (
+            self._shared_metadata.pc_active_envs_mask[pc_start:pc_end].sum(dim=0).clamp_min(1).to(dtype=gs.tc_float)
+        )
+        self._shared_metadata.proximity_density_scale = concat_with_tensor(
+            self._shared_metadata.proximity_density_scale,
+            self._options.density_scalar / active_count,
+            expand=(1, self._manager._sim._B),
+        )
+        self._shared_metadata.taxel_signal_buf = torch.zeros(
+            (self._shared_metadata.total_n_probes, self._manager._sim._B), dtype=gs.tc_float, device=gs.device
+        )
+
+    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
+        return ((self._n_probes, 3), (self._n_probes, 3))
+
+    @classmethod
+    def _get_cache_dtype(cls) -> torch.dtype:
+        return gs.tc_float
+
+    @classmethod
+    def reset(cls, shared_metadata: ProximityTaxelMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+        shared_metadata.taxel_signal_buf[:, envs_idx] = 0.0
+
+    @classmethod
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: ProximityTaxelMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
+        solver = shared_metadata.solver
+        current_ground_truth_data_T.zero_()
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.zero_()
+        measured_cols_b = torch.empty_like(current_ground_truth_data_T)
+
+        _kernel_point_cloud_proximity_taxel(
+            shared_metadata.probe_positions,
+            shared_metadata.probe_local_normal,
+            shared_metadata.links_idx,
+            shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
+            shared_metadata.n_probes_per_sensor,
+            shared_metadata.sensor_pc_start,
+            shared_metadata.sensor_pc_n,
+            shared_metadata.pc_link_idx,
+            shared_metadata.pc_pos_link,
+            shared_metadata.pc_active_envs_mask,
+            shared_metadata.probe_radii,
+            shared_metadata.probe_radii_noise,
+            shared_metadata.stiffness,
+            shared_metadata.shear_coupling,
+            shared_metadata.proximity_density_scale,
+            solver.links_state,
+            gs.EPS,
+            current_ground_truth_data_T,
+            measured_cols_b,
+            shared_metadata.taxel_signal_buf,
+        )
+        measured.copy_(measured_cols_b.T)
+
+    def _draw_debug(self, context: "RasterizerContext"):
+        self._draw_debug_probes(
+            context,
+            lambda envs_idx: self._debug_probe_buffer_magnitudes(self._shared_metadata.taxel_signal_buf, envs_idx),
+        )
+
+
+# =========================== ElastomerTaxel ===============================
+
+_GRID_TOL = 1.0e-5
 
 
 def _next_pow2(n: int) -> int:
@@ -499,488 +1244,706 @@ def _next_pow2(n: int) -> int:
     return p
 
 
+def _expand_probe_normals(normals: np.ndarray, n_probes: int, probe_shape: tuple[int, ...]) -> np.ndarray:
+    normals = np.asarray(normals, dtype=gs.np_float)
+    if normals.ndim == 1:
+        return np.broadcast_to(normals, (n_probes, 3)).copy()
+    if normals.shape == (*probe_shape, 3):
+        return normals.reshape(n_probes, 3).copy()
+    if normals.shape == (n_probes, 3):
+        return normals.copy()
+    gs.raise_exception(
+        "ElastomerTaxel probe_local_normal must be one normal or match probe_local_pos shape. "
+        f"Got normal shape {normals.shape} for probe shape {probe_shape}."
+    )
+
+
+def _normalize_elastomer_probe_layout(
+    probe_pos: np.ndarray,
+    probe_normals: np.ndarray,
+    is_grid: bool,
+) -> tuple[np.ndarray, np.ndarray, bool, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    probe_shape = probe_pos.shape[:-1]
+    flat = probe_pos.reshape(-1, 3)
+    normals = _expand_probe_normals(probe_normals, flat.shape[0], probe_shape)
+
+    normal_norms = np.linalg.norm(normals, axis=1)
+    if np.any(normal_norms < gs.EPS):
+        gs.raise_exception("ElastomerTaxel probe_local_normal entries must be non-zero.")
+    normals = normals / normal_norms[:, None]
+
+    use_grid_fft = False
+    grid_normal = np.zeros(3, dtype=gs.np_float)
+    tangent_u = np.zeros(3, dtype=gs.np_float)
+    tangent_v = np.zeros(3, dtype=gs.np_float)
+    grid_spacing = np.zeros(2, dtype=gs.np_float)
+
+    if is_grid:
+        if len(probe_shape) != 2:
+            gs.raise_exception("ElastomerTaxel grid probe_local_pos must have shape (ny, nx, 3).")
+        ny, nx = int(probe_shape[0]), int(probe_shape[1])
+        if nx >= 2 and ny >= 2:
+            grid = probe_pos.reshape(ny, nx, 3)
+            step_u = grid[0, 1] - grid[0, 0]
+            step_v = grid[1, 0] - grid[0, 0]
+            spacing_u = float(np.linalg.norm(step_u))
+            spacing_v = float(np.linalg.norm(step_v))
+            if spacing_u >= gs.EPS and spacing_v >= gs.EPS:
+                tangent_u_candidate = (step_u / spacing_u).astype(gs.np_float)
+                tangent_v_candidate = (step_v / spacing_v).astype(gs.np_float)
+                normal_candidate = normals[0].astype(gs.np_float, copy=False)
+                normals_are_uniform = bool(np.all(normals @ normal_candidate >= 1.0 - _GRID_TOL))
+                axes_are_orthogonal = abs(float(tangent_u_candidate @ tangent_v_candidate)) <= _GRID_TOL
+                axes_in_plane = (
+                    abs(float(tangent_u_candidate @ normal_candidate)) <= _GRID_TOL
+                    and abs(float(tangent_v_candidate @ normal_candidate)) <= _GRID_TOL
+                )
+                expected = (
+                    grid[0, 0]
+                    + np.arange(nx, dtype=gs.np_float)[None, :, None] * step_u[None, None, :]
+                    + np.arange(ny, dtype=gs.np_float)[:, None, None] * step_v[None, None, :]
+                )
+                is_regular = bool(np.max(np.linalg.norm(grid - expected, axis=-1)) <= _GRID_TOL)
+                use_grid_fft = normals_are_uniform and axes_are_orthogonal and axes_in_plane and is_regular
+                if use_grid_fft:
+                    grid_normal = normal_candidate
+                    tangent_u = tangent_u_candidate
+                    tangent_v = tangent_v_candidate
+                    grid_spacing = np.array((spacing_u, spacing_v), dtype=gs.np_float)
+
+    return (
+        flat.astype(gs.np_float, copy=False),
+        normals.astype(gs.np_float, copy=False),
+        use_grid_fft,
+        grid_normal.astype(gs.np_float, copy=False),
+        tangent_u.astype(gs.np_float, copy=False),
+        tangent_v.astype(gs.np_float, copy=False),
+        grid_spacing.astype(gs.np_float, copy=False),
+    )
+
+
+@qd.func
+def _func_elastomer_vec3(values: qd.types.ndarray(), i: int) -> gs.qd_vec3:
+    return qd.Vector([values[i, 0], values[i, 1], values[i, 2]], dt=gs.qd_float)
+
+
+@qd.func
+def _func_elastomer_min_sdf_over_active_geoms(
+    i_b: int,
+    point_world: gs.qd_vec3,
+    geom_start: int,
+    geom_n: int,
+    geom_idx: qd.types.ndarray(),
+    geom_active_envs_mask: qd.types.ndarray(),
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+) -> gs.qd_float:
+    min_sdf = gs.qd_float(1.0e6)
+    geom_end = geom_start + geom_n
+    for i_gm in range(geom_start, geom_end):
+        if not geom_active_envs_mask[i_gm, i_b]:
+            continue
+        i_g = geom_idx[i_gm]
+        sd = sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, point_world, i_g, i_b)
+        if sd < min_sdf:
+            min_sdf = sd
+    return min_sdf
+
+
+@qd.func
+def _func_elastomer_tangent(vec: gs.qd_vec3, normal: gs.qd_vec3) -> gs.qd_vec3:
+    return vec - normal * vec.dot(normal)
+
+
+@qd.func
+def _func_elastomer_clear_surface_state(
+    i_b: int,
+    i_o: int,
+    surface_pos_sensor_buf: qd.types.ndarray(),
+    surface_entry_pos_sensor_buf: qd.types.ndarray(),
+    surface_depth_buf: qd.types.ndarray(),
+    surface_initialized_buf: qd.types.ndarray(),
+):
+    surface_depth_buf[i_b, i_o] = 0.0
+    surface_initialized_buf[i_b, i_o] = False
+    for k in qd.static(range(3)):
+        surface_pos_sensor_buf[i_b, i_o, k] = 0.0
+        surface_entry_pos_sensor_buf[i_b, i_o, k] = 0.0
+
+
+@qd.func
+def _func_elastomer_update_surface_anchor(
+    i_b: int,
+    i_o: int,
+    sdf_value: gs.qd_float,
+    point_sensor: gs.qd_vec3,
+    sdf_enter: gs.qd_float,
+    sdf_exit: gs.qd_float,
+    surface_entry_pos_sensor_buf: qd.types.ndarray(),
+    surface_initialized_buf: qd.types.ndarray(),
+):
+    if sdf_value > sdf_exit:
+        surface_initialized_buf[i_b, i_o] = False
+        for k in qd.static(range(3)):
+            surface_entry_pos_sensor_buf[i_b, i_o, k] = 0.0
+    elif (not surface_initialized_buf[i_b, i_o]) and sdf_value < -sdf_enter:
+        surface_initialized_buf[i_b, i_o] = True
+        for k in qd.static(range(3)):
+            surface_entry_pos_sensor_buf[i_b, i_o, k] = point_sensor[k]
+
+
+@qd.func
+def _func_elastomer_direct_dilate_contribution(
+    source_pos: gs.qd_vec3,
+    source_normal: gs.qd_vec3,
+    target_pos: gs.qd_vec3,
+    target_normal: gs.qd_vec3,
+    depth: gs.qd_float,
+    lam: gs.qd_float,
+    scale: gs.qd_float,
+) -> gs.qd_vec3:
+    source_contact_pos = source_pos - source_normal * depth
+    diff = target_pos - source_contact_pos
+    planar_diff = _func_elastomer_tangent(diff, target_normal)
+    return diff * depth * qd.exp(-lam * planar_diff.dot(planar_diff)) * scale
+
+
+@qd.func
+def _func_elastomer_direct_shear_contribution(
+    point_sensor: gs.qd_vec3,
+    entry_sensor: gs.qd_vec3,
+    probe_pos: gs.qd_vec3,
+    probe_normal: gs.qd_vec3,
+    depth: gs.qd_float,
+    lam: gs.qd_float,
+    scale: gs.qd_float,
+    eps: float,
+) -> gs.qd_vec3:
+    shear_disp = point_sensor - entry_sensor
+    shear_tangent = _func_elastomer_tangent(shear_disp, probe_normal)
+    contribution = qd.Vector.zero(gs.qd_float, 3)
+    if shear_tangent.dot(shear_tangent) > eps * eps:
+        diff = probe_pos - point_sensor
+        planar_diff = _func_elastomer_tangent(diff, probe_normal)
+        contribution = shear_tangent * (depth * qd.exp(-lam * planar_diff.dot(planar_diff)) * scale)
+    return contribution
+
+
+def _collect_collision_geom_idx(solver, track_link_idx: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+    geom_idx: list[int] = []
+    active_masks: list[torch.Tensor] = []
+    for link_idx in track_link_idx:
+        link_i = int(link_idx)
+        if link_i < 0 or link_i >= len(solver.links):
+            gs.raise_exception(f"ElastomerTaxel track_link_idx contains invalid global link index {link_i}.")
+        link = solver.links[link_i]
+        for geom in link.geoms:
+            geom_idx.append(int(geom.idx))
+            active_masks.append(_active_envs_mask_tensor(geom, solver._B))
+    if not geom_idx:
+        gs.raise_exception("ElastomerTaxel tracked links must have collision geometry for SDF queries.")
+    return torch.tensor(geom_idx, dtype=gs.tc_int, device=gs.device), torch.stack(active_masks, dim=0)
+
+
 @torch.jit.script
-def _precompute_dilate_kernel_fft(
-    dilate_coeff: float,
+def _precompute_hydroshear_dilate_kernel_fft(
+    lambda_d: float,
     grid_spacing: tuple[float, float],
     fft_n: tuple[int, int],
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    """
-    Build 2D convolution kernels Kx, Ky for the dilate sum (see _elastomer_displacement_grid_fft_dilate).
-    K_x(Δx, Δy) = Δx*exp(-λ*r²), K_y = Δy*exp(-λ*r²) with r² = Δx²+Δy².
-
-    Parameters
-    ----------
-    dilate_coeff: float
-        Dilate coefficient λ
-    grid_spacing: tuple[float, float]
-        Grid spacing in x and y direction
-    fft_n: tuple[int, int]
-        FFT size in x and y direction
-    device: torch.device
-        Target device for the output tensor
-    dtype: torch.dtype
-        Data type for intermediate computation
-
-    Returns
-    -------
-    kernel_fft: torch.Tensor, shape (4, fft_nx * fft_ny)
-        FFT kernels [Kx, Ky] as complex tensors
-    """
     i = torch.arange(fft_n[0], dtype=dtype, device=device)
     j = torch.arange(fft_n[1], dtype=dtype, device=device)
-    xx, yy = torch.meshgrid((i - fft_n[0] // 2) * grid_spacing[0], (j - fft_n[1] // 2) * grid_spacing[1], indexing="ij")
-    g = torch.exp(torch.tensor(-dilate_coeff, dtype=dtype, device=device) * (xx * xx + yy * yy))
-    k = torch.stack((xx * g, yy * g), dim=0)
+    xx, yy = torch.meshgrid(
+        (i - fft_n[0] // 2) * grid_spacing[0],
+        (j - fft_n[1] // 2) * grid_spacing[1],
+        indexing="ij",
+    )
+    g = torch.exp(torch.tensor(-lambda_d, dtype=dtype, device=device) * (xx * xx + yy * yy))
+    k = torch.stack((xx * g, yy * g, g), dim=0)
     k = torch.fft.ifftshift(k, dim=(-2, -1))
     return torch.fft.fft2(k)
 
 
-@qd.func
-def _func_query_contact_probes(
+@qd.kernel(fastcache=True)
+def _kernel_elastomer_probe_depth_and_direct_dilate(
+    use_grid_fft: qd.types.ndarray(),
     probe_positions_local: qd.types.ndarray(),
-    probe_normals_local: qd.types.ndarray(),
+    probe_local_normal: qd.types.ndarray(),
     probe_sensor_idx: qd.types.ndarray(),
-    probe_radius: qd.types.ndarray(),
-    probe_max_raycast_range: float,
     links_idx: qd.types.ndarray(),
-    static_rigid_sim_config: qd.template(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    n_probes_per_sensor: qd.types.ndarray(),
+    sensor_track_geom_start: qd.types.ndarray(),
+    sensor_track_geom_n: qd.types.ndarray(),
+    track_geom_idx: qd.types.ndarray(),
+    track_geom_active_envs_mask: qd.types.ndarray(),
+    lambda_d: qd.types.ndarray(),
+    dilate_scale: qd.types.ndarray(),
     links_state: array_class.LinksState,
-    collider_state: array_class.ColliderState,
     geoms_state: array_class.GeomsState,
     geoms_info: array_class.GeomsInfo,
-    fixed_verts_state: array_class.VertsState,
-    free_verts_state: array_class.VertsState,
-    verts_info: array_class.VertsInfo,
-    faces_info: array_class.FacesInfo,
-    contact_buf: qd.types.ndarray(),
-    contact_link_buf: qd.types.ndarray(),
-    eps: float,
+    sdf_info: array_class.SDFInfo,
+    probe_depth_buf: qd.types.ndarray(),
+    output: qd.types.ndarray(),
 ):
     total_n_probes = probe_positions_local.shape[0]
-    n_batches = contact_buf.shape[0]
-
-    func_update_all_verts(
-        geoms_state, geoms_info, verts_info, free_verts_state, fixed_verts_state, static_rigid_sim_config
-    )
+    n_batches = probe_depth_buf.shape[0]
 
     for i_b, i_p in qd.ndrange(n_batches, total_n_probes):
         i_s = probe_sensor_idx[i_p]
         sensor_link_idx = links_idx[i_s]
-
-        probe_pos_local = qd.Vector(
-            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
-        )
-        probe_normal_local = qd.Vector(
-            [probe_normals_local[i_p, 0], probe_normals_local[i_p, 1], probe_normals_local[i_p, 2]]
-        )
-
         link_pos = links_state.pos[sensor_link_idx, i_b]
         link_quat = links_state.quat[sensor_link_idx, i_b]
+        probe_local = _func_elastomer_vec3(probe_positions_local, i_p)
+        probe_world = link_pos + gu.qd_transform_by_quat(probe_local, link_quat)
 
-        probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
-        probe_normal = gu.qd_transform_by_quat(probe_normal_local, link_quat)
-
-        contact_depth, contact_link = _func_query_contact_depth(
+        min_sdf = _func_elastomer_min_sdf_over_active_geoms(
             i_b,
-            probe_pos,
-            probe_normal,
-            probe_radius[i_p],
-            probe_max_raycast_range,
-            sensor_link_idx,
-            geoms_info,
+            probe_world,
+            sensor_track_geom_start[i_s],
+            sensor_track_geom_n[i_s],
+            track_geom_idx,
+            track_geom_active_envs_mask,
             geoms_state,
-            faces_info,
-            verts_info,
-            fixed_verts_state,
-            free_verts_state,
-            collider_state,
-            eps,
+            geoms_info,
+            sdf_info,
         )
 
-        if contact_depth > 0:
-            contact_point = probe_pos - probe_normal * contact_depth
-            contact_buf[i_b, i_p, 0] = contact_point[0]
-            contact_buf[i_b, i_p, 1] = contact_point[1]
-            contact_buf[i_b, i_p, 2] = contact_point[2]
-            contact_buf[i_b, i_p, 3] = contact_depth
-        else:
-            contact_buf[i_b, i_p, 3] = gs.qd_float(0.0)
-        contact_link_buf[i_b, i_p] = contact_link
+        depth = qd.max(gs.qd_float(0.0), -min_sdf)
+        probe_depth_buf[i_b, i_p] = depth
+
+        if use_grid_fft[i_s] or depth <= gs.qd_float(0.0):
+            continue
+
+        probe_start = sensor_probe_start[i_s]
+        n_probes = n_probes_per_sensor[i_s]
+        lam = lambda_d[i_s]
+        scale = dilate_scale[i_s]
+        cache_start = sensor_cache_start[i_s]
+        source_normal = _func_elastomer_vec3(probe_local_normal, i_p)
+        for j in range(n_probes):
+            j_p = probe_start + j
+            contribution = _func_elastomer_direct_dilate_contribution(
+                probe_local,
+                source_normal,
+                _func_elastomer_vec3(probe_positions_local, j_p),
+                _func_elastomer_vec3(probe_local_normal, j_p),
+                depth,
+                lam,
+                scale,
+            )
+            for k in qd.static(range(3)):
+                qd.atomic_add(output[cache_start + j * 3 + k, i_b], contribution[k])
 
 
-def _elastomer_displacement_grid_fft_dilate(
-    is_grid: torch.Tensor,
-    contact_buf: torch.Tensor,
+@qd.kernel(fastcache=True)
+def _kernel_elastomer_surface_state_and_direct_shear(
+    probe_positions_local: qd.types.ndarray(),
+    probe_local_normal: qd.types.ndarray(),
+    sensor_cache_start: qd.types.ndarray(),
+    sensor_probe_start: qd.types.ndarray(),
+    n_probes_per_sensor: qd.types.ndarray(),
+    links_idx: qd.types.ndarray(),
+    sensor_elastomer_geom_start: qd.types.ndarray(),
+    sensor_elastomer_geom_n: qd.types.ndarray(),
+    elastomer_geom_idx: qd.types.ndarray(),
+    elastomer_geom_active_envs_mask: qd.types.ndarray(),
+    sensor_pc_start: qd.types.ndarray(),
+    sensor_pc_n: qd.types.ndarray(),
+    pc_link_idx: qd.types.ndarray(),
+    pc_pos_link: qd.types.ndarray(),
+    pc_active_envs_mask: qd.types.ndarray(),
+    lambda_s: qd.types.ndarray(),
+    shear_scale: qd.types.ndarray(),
+    links_state: array_class.LinksState,
+    geoms_state: array_class.GeomsState,
+    geoms_info: array_class.GeomsInfo,
+    sdf_info: array_class.SDFInfo,
+    eps: float,
+    sdf_enter: qd.types.ndarray(),
+    sdf_exit: qd.types.ndarray(),
+    surface_pos_sensor_buf: qd.types.ndarray(),
+    surface_entry_pos_sensor_buf: qd.types.ndarray(),
+    surface_depth_buf: qd.types.ndarray(),
+    surface_initialized_buf: qd.types.ndarray(),
+    output: qd.types.ndarray(),
+):
+    """
+    HydroShear-style shear: while an indenter surface sample is inside the elastomer SDF (with hysteresis),
+    anchor its sensor-frame position at first penetration and spread tangential (current - anchor) to probes.
+    """
+    n_batches = surface_pos_sensor_buf.shape[0]
+    n_sensors = sensor_pc_start.shape[0]
+
+    for i_b, i_s in qd.ndrange(n_batches, n_sensors):
+        pc_start = sensor_pc_start[i_s]
+        pc_end = pc_start + sensor_pc_n[i_s]
+        for i_o in range(pc_start, pc_end):
+            if not pc_active_envs_mask[i_o, i_b]:
+                _func_elastomer_clear_surface_state(
+                    i_b,
+                    i_o,
+                    surface_pos_sensor_buf,
+                    surface_entry_pos_sensor_buf,
+                    surface_depth_buf,
+                    surface_initialized_buf,
+                )
+                continue
+
+            sensor_link_idx = links_idx[i_s]
+            track_link_idx = pc_link_idx[i_o]
+
+            track_pos = links_state.pos[track_link_idx, i_b]
+            track_quat = links_state.quat[track_link_idx, i_b]
+            point_link = _func_elastomer_vec3(pc_pos_link, i_o)
+            point_world = track_pos + gu.qd_transform_by_quat(point_link, track_quat)
+
+            sensor_pos = links_state.pos[sensor_link_idx, i_b]
+            sensor_quat = links_state.quat[sensor_link_idx, i_b]
+            point_sensor = gu.qd_inv_transform_by_trans_quat(point_world, sensor_pos, sensor_quat)
+            for k in qd.static(range(3)):
+                surface_pos_sensor_buf[i_b, i_o, k] = point_sensor[k]
+
+            min_sdf = _func_elastomer_min_sdf_over_active_geoms(
+                i_b,
+                point_world,
+                sensor_elastomer_geom_start[i_s],
+                sensor_elastomer_geom_n[i_s],
+                elastomer_geom_idx,
+                elastomer_geom_active_envs_mask,
+                geoms_state,
+                geoms_info,
+                sdf_info,
+            )
+
+            sdf_value = min_sdf
+            depth = qd.max(gs.qd_float(0.0), -sdf_value)
+            surface_depth_buf[i_b, i_o] = depth
+
+            _func_elastomer_update_surface_anchor(
+                i_b,
+                i_o,
+                sdf_value,
+                point_sensor,
+                sdf_enter[i_s],
+                sdf_exit[i_s],
+                surface_entry_pos_sensor_buf,
+                surface_initialized_buf,
+            )
+
+            if not surface_initialized_buf[i_b, i_o] or shear_scale[i_s] <= gs.qd_float(0.0) or depth <= eps:
+                continue
+
+            entry = qd.Vector(
+                [
+                    surface_entry_pos_sensor_buf[i_b, i_o, 0],
+                    surface_entry_pos_sensor_buf[i_b, i_o, 1],
+                    surface_entry_pos_sensor_buf[i_b, i_o, 2],
+                ],
+                dt=gs.qd_float,
+            )
+
+            probe_start = sensor_probe_start[i_s]
+            n_probes = n_probes_per_sensor[i_s]
+            cache_start = sensor_cache_start[i_s]
+            lam = lambda_s[i_s]
+            scale = shear_scale[i_s]
+            for j in range(n_probes):
+                probe_idx = probe_start + j
+                contribution = _func_elastomer_direct_shear_contribution(
+                    point_sensor,
+                    entry,
+                    _func_elastomer_vec3(probe_positions_local, probe_idx),
+                    _func_elastomer_vec3(probe_local_normal, probe_idx),
+                    depth,
+                    lam,
+                    scale,
+                    eps,
+                )
+                for k in qd.static(range(3)):
+                    qd.atomic_add(output[cache_start + j * 3 + k, i_b], contribution[k])
+
+
+def _elastomer_taxel_grid_fft_dilate(
+    use_grid_fft: torch.Tensor,
+    probe_depth_buf: torch.Tensor,
     sensor_probe_start: torch.Tensor,
     sensor_cache_start: torch.Tensor,
     grid_n: torch.Tensor,
     fft_depth_buffer: torch.Tensor,
     fft_kernel_list: list[torch.Tensor],
-    dilate_coefficient: torch.Tensor,
-    dilate_max_delta: torch.Tensor,
+    lambda_d: torch.Tensor,
+    dilate_scale: torch.Tensor,
+    grid_normal: torch.Tensor,
+    grid_tangent_u: torch.Tensor,
+    grid_tangent_v: torch.Tensor,
     grid_dilate_out_buffer: torch.Tensor,
     output: torch.Tensor,
 ) -> None:
     """
-    Grid dilate via 2D FFT. Uses in-plane distance only in the kernel; scale by exp(-λ*H²) so magnitude matches non-grid
-    formulation which uses full 3D distance (r²_2D + Δz²).
+    HydroShear-style marker dilation via 2D FFT in the validated probe tangent basis.
     """
-    n_batches = contact_buf.shape[0]
+    n_batches = probe_depth_buf.shape[0]
     n_sensors = grid_n.shape[0]
 
     for i_s in range(n_sensors):
-        if not is_grid[i_s]:
+        if not use_grid_fft[i_s]:
             continue
 
         g_nx = grid_n[i_s, 0].item()
         g_ny = grid_n[i_s, 1].item()
-
         probe_start = sensor_probe_start[i_s].item()
         cache_start = sensor_cache_start[i_s].item()
-        lam = dilate_coefficient[i_s].item()
-        max_h = dilate_max_delta[i_s].item()
 
         Kx = fft_kernel_list[i_s][0]
         Ky = fft_kernel_list[i_s][1]
+        Kn = fft_kernel_list[i_s][2]
         fft_nx, fft_ny = Kx.shape[0], Kx.shape[1]
 
-        # H = contact depth grid (ix, iy); zero-pad to fft size for linear convolution. Probes from
-        # generate_grid_points_on_plane flat as iy*nx+ix; view (g_ny, g_nx) then transpose -> (g_nx, g_ny).
-        contact_slice = contact_buf[:, probe_start : probe_start + g_nx * g_ny, 3]
+        depth_slice = probe_depth_buf[:, probe_start : probe_start + g_nx * g_ny]
         H_buf = fft_depth_buffer[:, i_s, :fft_nx, :fft_ny]
         H_buf.zero_()
-        H_buf[:, :g_nx, :g_ny].copy_(contact_slice.view(n_batches, g_ny, g_nx).transpose(1, 2))
-        H_buf[:, :g_nx, :g_ny].clamp_(max=max_h)
+        H_buf[:, :g_nx, :g_ny].copy_(depth_slice.view(n_batches, g_ny, g_nx).transpose(1, 2))
 
-        # D_x = real(ifft(fft(H) * fft(K_x))), D_y = real(ifft(fft(H) * fft(K_y)))
         H_fft = torch.fft.fft2(H_buf)
-        disp_x = torch.fft.ifft2(H_fft * Kx).real[:, :g_nx, :g_ny]
-        disp_y = torch.fft.ifft2(H_fft * Ky).real[:, :g_nx, :g_ny]
+        disp_u = torch.fft.ifft2(H_fft * Kx).real[:, :g_nx, :g_ny]
+        disp_v = torch.fft.ifft2(H_fft * Ky).real[:, :g_nx, :g_ny]
+        disp_n = torch.fft.ifft2(torch.fft.fft2(H_buf * H_buf) * Kn).real[:, :g_nx, :g_ny]
 
-        # Match non-grid magnitude: non-grid uses exp(-λ*(r²_2D + Δz²)); 2D kernel only has r²_2D.
-        H_cell = H_buf[:, :g_nx, :g_ny]
-        scale = torch.exp(-lam * H_cell * H_cell)
-        disp_x = disp_x * scale
-        disp_y = disp_y * scale
+        disp_u = disp_u * dilate_scale[i_s]
+        disp_v = disp_v * dilate_scale[i_s]
+        disp_n = disp_n * dilate_scale[i_s]
 
-        # Cache order is probe flat index iy*nx+ix; (g_nx, g_ny) transpose(1,2).reshape gives (g_ny, g_nx) -> iy*nx+ix.
-        # Write to pre-allocated contiguous block then copy back to avoid illegal memory access on GPU.
+        disp_u_flat = disp_u.transpose(1, 2).reshape(n_batches, -1)
+        disp_v_flat = disp_v.transpose(1, 2).reshape(n_batches, -1)
+        disp_n_flat = disp_n.transpose(1, 2).reshape(n_batches, -1)
+
         grid_size = g_nx * g_ny * 3
         out_block = grid_dilate_out_buffer[:, :grid_size]
-        out_block[:, 0:grid_size:3] = disp_x.transpose(1, 2).reshape(n_batches, -1)
-        out_block[:, 1:grid_size:3] = disp_y.transpose(1, 2).reshape(n_batches, -1)
-        out_block[:, 2:grid_size:3] = torch.clamp(contact_slice, max=max_h)
+        tangent_u = grid_tangent_u[i_s]
+        tangent_v = grid_tangent_v[i_s]
+        normal = grid_normal[i_s]
+        for k in range(3):
+            out_block[:, k:grid_size:3] = (
+                disp_u_flat * tangent_u[k] + disp_v_flat * tangent_v[k] + disp_n_flat * normal[k]
+            )
         output[cache_start : cache_start + grid_size].copy_(out_block.T)
 
 
-@qd.kernel
-def _kernel_elastomer_displacement_grid_shear_twist(
-    probe_positions_local: qd.types.ndarray(),
-    probe_sensor_idx: qd.types.ndarray(),
-    links_idx: qd.types.ndarray(),
-    sensor_cache_start: qd.types.ndarray(),
-    sensor_probe_start: qd.types.ndarray(),
-    sensor_normals: qd.types.ndarray(),
-    shear_coefficients: qd.types.ndarray(),
-    twist_coefficients: qd.types.ndarray(),
-    shear_max_delta: qd.types.ndarray(),
-    twist_max_delta: qd.types.ndarray(),
-    contact_buf: qd.types.ndarray(),
-    contact_link_buf: qd.types.ndarray(),
-    links_state: array_class.LinksState,
-    dt: float,
-    eps: float,
-    output: qd.types.ndarray(),
-):
-    """Phase 3: add shear/twist displacement to grid elastomer output."""
-    total_n_probes = probe_positions_local.shape[0]
-    n_batches = contact_buf.shape[0]
-
-    for i_p, i_b in qd.ndrange(total_n_probes, n_batches):
-        i_s = probe_sensor_idx[i_p]
-        sensor_link_idx = links_idx[i_s]
-        link_pos = links_state.pos[sensor_link_idx, i_b]
-        link_quat = links_state.quat[sensor_link_idx, i_b]
-
-        probe_pos_local = qd.Vector(
-            [probe_positions_local[i_p, 0], probe_positions_local[i_p, 1], probe_positions_local[i_p, 2]]
-        )
-        probe_pos = link_pos + gu.qd_transform_by_quat(probe_pos_local, link_quat)
-
-        contact_link = contact_link_buf[i_b, i_p]
-        contact_depth = contact_buf[i_b, i_p, 3]
-        sensor_normal_local = qd.Vector(
-            [sensor_normals[i_s, 0], sensor_normals[i_s, 1], sensor_normals[i_s, 2]], dt=gs.qd_float
-        )
-
-        if (
-            contact_depth > gs.qd_float(0.0)
-            and contact_link >= 0
-            and (shear_max_delta[i_s] > 0.0 or twist_max_delta[i_s] > 0.0)
-        ):
-            shear_twist = _func_shear_twist_displacement(
-                i_b,
-                probe_pos,
-                link_pos,
-                link_quat,
-                contact_link,
-                links_state,
-                sensor_link_idx,
-                sensor_normal_local,
-                shear_coefficients[i_s],
-                twist_coefficients[i_s],
-                shear_max_delta[i_s],
-                twist_max_delta[i_s],
-                dt,
-                eps,
-            )
-            shear_twist_local = gu.qd_inv_transform_by_quat(shear_twist, link_quat)
-            probe_idx_in_sensor = i_p - sensor_probe_start[i_s]
-            cache_start = sensor_cache_start[i_s]
-            output[cache_start + probe_idx_in_sensor * 3 + 0, i_b] += shear_twist_local[0]
-            output[cache_start + probe_idx_in_sensor * 3 + 1, i_b] += shear_twist_local[1]
-            output[cache_start + probe_idx_in_sensor * 3 + 2, i_b] += shear_twist_local[2]
-
-
 @dataclass
-class KinematicTactileSensorMetadataMixin:
-    probe_positions: torch.Tensor = make_tensor_field((0, 3))
-    probe_normals: torch.Tensor = make_tensor_field((0, 3))
-    probe_radius: torch.Tensor = make_tensor_field((0,))
-    probe_max_raycast_range: float = 0.0
-    n_probes_per_sensor: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    probe_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_cache_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    sensor_probe_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
-    total_n_probes: int = 0
+class ElastomerTaxelSensorMetadata(PointCloudTactileSharedMetadata, ProbesWithNormalSensorMetadataMixin):
+    track_geom_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    track_geom_active_envs_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    sensor_track_geom_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_track_geom_n: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
+    elastomer_geom_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    elastomer_geom_active_envs_mask: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
+    sensor_elastomer_geom_start: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
+    sensor_elastomer_geom_n: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
 
-KinematicTactileSensorMetadataMixinT = TypeVar(
-    "KinematicTactileSensorMetadataMixinT", bound=KinematicTactileSensorMetadataMixin
-)
+    lambda_d: torch.Tensor = make_tensor_field((0,))
+    lambda_s: torch.Tensor = make_tensor_field((0,))
+    dilate_scale: torch.Tensor = make_tensor_field((0,))
+    shear_scale: torch.Tensor = make_tensor_field((0,))
+    elastomer_contact_sdf_enter: torch.Tensor = make_tensor_field((0,))
+    elastomer_contact_sdf_exit: torch.Tensor = make_tensor_field((0,))
 
+    probe_depth_buf: torch.Tensor = make_tensor_field((0, 0))
+    surface_pos_sensor_buf: torch.Tensor = make_tensor_field((0, 0, 3))
+    surface_entry_pos_sensor_buf: torch.Tensor = make_tensor_field((0, 0, 3))
+    surface_depth_buf: torch.Tensor = make_tensor_field((0, 0))
+    surface_initialized_buf: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_bool)
 
-class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT]):
-    def __init__(self, sensor_options: "SensorOptions", sensor_idx: int, sensor_manager: "SensorManager"):
-        # Store n_probes before super().__init__() since `_get_return_format` is read there
-        self._probe_local_pos = torch.tensor(sensor_options.probe_local_pos, dtype=gs.tc_float, device=gs.device)
-        self._n_probes = int(np.prod(self._probe_local_pos.shape[:-1]))
-
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
-
-        self._debug_objects: list["Mesh | None"] = []
-        self._probe_local_normal = torch.tensor(self._options.probe_local_normal, dtype=gs.tc_float, device=gs.device)
-        if self._probe_local_normal.ndim == 1:
-            self._probe_local_normal = self._probe_local_normal.expand(self._n_probes, 3).contiguous()
-
-    def build(self):
-        super().build()
-
-        self._shared_metadata.probe_positions = concat_with_tensor(
-            self._shared_metadata.probe_positions, self._probe_local_pos, expand=(self._n_probes, 3)
-        )
-
-        self._shared_metadata.probe_normals = concat_with_tensor(
-            self._shared_metadata.probe_normals, self._probe_local_normal, expand=(self._n_probes, 3)
-        )
-
-        self._shared_metadata.n_probes_per_sensor = concat_with_tensor(
-            self._shared_metadata.n_probes_per_sensor, self._n_probes, expand=(1,)
-        )
-        self._shared_metadata.sensor_cache_start = concat_with_tensor(
-            self._shared_metadata.sensor_cache_start,
-            sum(self._shared_metadata.cache_sizes[:-1]) if self._shared_metadata.cache_sizes else 0,
-            expand=(1,),
-        )
-        self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start, self._shared_metadata.total_n_probes, expand=(1,)
-        )
-        self._shared_metadata.probe_sensor_idx = concat_with_tensor(
-            self._shared_metadata.probe_sensor_idx,
-            torch.full((self._n_probes,), self._idx, dtype=gs.tc_int, device=gs.device),
-            expand=(self._n_probes,),
-        )
-
-        if self._shared_metadata.probe_max_raycast_range < gs.EPS:
-            aabb = self._link.get_vAABB()
-            extents = aabb[..., 1, :] - aabb[..., 0, :]
-            self._shared_metadata.probe_max_raycast_range = torch.linalg.norm(extents, dim=-1).max().item()
-
-        self._shared_metadata.total_n_probes += self._n_probes
-
-        if isinstance(self._options.probe_radius, float):
-            probe_radius_tensor = torch.full(
-                (self._n_probes,), self._options.probe_radius, dtype=gs.tc_float, device=gs.device
-            )
-        else:
-            probe_radius_tensor = torch.tensor(self._options.probe_radius, dtype=gs.tc_float, device=gs.device)
-
-        self._shared_metadata.probe_radius = concat_with_tensor(
-            self._shared_metadata.probe_radius, probe_radius_tensor, expand=(self._n_probes,)
-        )
-
-    def _draw_debug_probes(self, context: "RasterizerContext", get_magnitude: Callable[[int], float]):
-        env_idx = context.rendered_envs_idx[0] if self._manager._sim.n_envs > 0 else None
-
-        for obj in self._debug_objects:
-            context.clear_debug_object(obj)
-        self._debug_objects.clear()
-
-        link_pos = self._link.get_pos(env_idx).squeeze()
-        link_quat = self._link.get_quat(env_idx).squeeze()
-
-        data = self.read_ground_truth(env_idx)
-        magnitudes = tensor_to_array(get_magnitude(data).squeeze(0))
-
-        probe_world = tensor_to_array(gu.transform_by_trans_quat(self._probe_local_pos, link_pos, link_quat))
-        probe_global_idx = int(self._shared_metadata.sensor_probe_start[self._idx])
-        probe_radius = float(self._shared_metadata.probe_radius[probe_global_idx])
-        for is_contact in (False, True):
-            (probes_idx,) = np.nonzero(magnitudes >= gs.EPS if is_contact else magnitudes < gs.EPS)
-            if probes_idx.size > 0:
-                spheres_obj = context.draw_debug_spheres(
-                    poss=probe_world[probes_idx],
-                    radius=probe_radius,
-                    color=self._options.debug_contact_color if is_contact else self._options.debug_sphere_color,
-                )
-                self._debug_objects.append(spheres_obj)
-
-    @property
-    def probe_local_pos(self) -> torch.Tensor:
-        return self._probe_local_pos
-
-    @property
-    def probe_local_normal(self) -> torch.Tensor:
-        return self._probe_local_normal
-
-    @property
-    def n_probes(self) -> int:
-        return self._n_probes
-
-
-class KinematicContactProbeData(NamedTuple):
-    """
-    Data returned by the kinematic contact probe.
-
-    Parameters
-    ----------
-    penetration: torch.Tensor, shape ([n_envs,] n_probes)
-        Depth of penetration in meters (0 if no contact).
-    force: torch.Tensor, shape ([n_envs,] n_probes, 3)
-        Estimated contact force based on penetration and stiffness (non-physical) in the link frame.
-    """
-
-    penetration: torch.Tensor
-    force: torch.Tensor
-
-
-@dataclass
-class KinematicContactProbeMetadata(
-    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata
-):
-    stiffness: torch.Tensor = make_tensor_field((0,))
-
-
-class KinematicContactProbe(
-    KinematicTactileSensorMixin[KinematicContactProbeMetadata],
-    RigidSensorMixin[KinematicContactProbeMetadata],
-    SimpleSensor[KinematicContactProbeOptions, KinematicContactProbeMetadata, KinematicContactProbeData],
-):
-    """Kinematic contact probe measuring penetration depth along the probe normal on collisions."""
-
-    def __init__(self, sensor_options: KinematicContactProbeOptions, sensor_idx: int, sensor_manager: "SensorManager"):
-        super().__init__(sensor_options, sensor_idx, sensor_manager)
-
-    def _get_return_format(self) -> tuple[tuple[int, ...], ...]:
-        return ((self._n_probes,), (self._n_probes, 3))
-
-    @classmethod
-    def _get_cache_dtype(cls) -> torch.dtype:
-        return gs.tc_float
-
-    def build(self):
-        super().build()
-
-        self._shared_metadata.stiffness = concat_with_tensor(
-            self._shared_metadata.stiffness, self._options.stiffness, expand=(1,)
-        )
-
-    @classmethod
-    def _update_raw_data(cls, shared_metadata: KinematicContactProbeMetadata, raw_data_T: torch.Tensor):
-        solver = shared_metadata.solver
-        collider_state = solver.collider._collider_state
-
-        raw_data_T.zero_()
-        _kernel_kinematic_contact_probe(
-            shared_metadata.probe_positions,
-            shared_metadata.probe_normals,
-            shared_metadata.probe_sensor_idx,
-            shared_metadata.probe_radius,
-            shared_metadata.probe_max_raycast_range,
-            shared_metadata.stiffness,
-            shared_metadata.links_idx,
-            shared_metadata.sensor_cache_start,
-            shared_metadata.sensor_probe_start,
-            shared_metadata.n_probes_per_sensor,
-            solver._static_rigid_sim_config,
-            solver.links_state,
-            collider_state,
-            solver.geoms_state,
-            solver.geoms_info,
-            solver.fixed_verts_state,
-            solver.free_verts_state,
-            solver.verts_info,
-            solver.faces_info,
-            gs.EPS,
-            raw_data_T,
-        )
-
-    def _draw_debug(self, context: "RasterizerContext"):
-        self._draw_debug_probes(context, lambda data: data.penetration)
-
-
-@dataclass
-class ElastomerDisplacementSensorMetadata(
-    KinematicTactileSensorMetadataMixin, RigidSensorMetadataMixin, SimpleSensorMetadata
-):
-    contact_buf: torch.Tensor = make_tensor_field((0, 0, 4))
-    contact_link_buf: torch.Tensor = make_tensor_field((0, 0))
-
-    dilate_coefficient: torch.Tensor = make_tensor_field((0,))
-    shear_coefficient: torch.Tensor = make_tensor_field((0,))
-    twist_coefficient: torch.Tensor = make_tensor_field((0,))
-
-    dilate_max_delta: torch.Tensor = make_tensor_field((0,))
-    shear_max_delta: torch.Tensor = make_tensor_field((0,))
-    twist_max_delta: torch.Tensor = make_tensor_field((0,))
-
-    sensor_normal: torch.Tensor = make_tensor_field((0, 3))
-
-    # grid fft for dilation displacement
     is_grid: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
-    grid_n: torch.Tensor = make_tensor_field((0, 2), dtype_factory=lambda: gs.tc_int)  # (nx, ny) per sensor
-    grid_spacing: torch.Tensor = make_tensor_field((0, 2))  # (dx, dy) per sensor
-    fft_kernel_list: list[torch.Tensor] = field(default_factory=list)  # each entry shape (4, fft_size)
-    fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0, 0))  # used as H buffer in torch.fft dilate step
-    grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))  # buffer (B, max_grid_size) for FFT dilate copy
+    use_grid_fft: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_bool)
+    grid_n: torch.Tensor = make_tensor_field((0, 2), dtype_factory=lambda: gs.tc_int)
+    grid_spacing: torch.Tensor = make_tensor_field((0, 2))
+    grid_normal: torch.Tensor = make_tensor_field((0, 3))
+    grid_tangent_u: torch.Tensor = make_tensor_field((0, 3))
+    grid_tangent_v: torch.Tensor = make_tensor_field((0, 3))
+    fft_kernel_list: list[torch.Tensor] = field(default_factory=list)
+    fft_depth_buffer: torch.Tensor = make_tensor_field((0, 0, 0, 0))
+    grid_dilate_out_buffer: torch.Tensor = make_tensor_field((0, 0))
 
 
-class ElastomerDisplacementSensor(
-    KinematicTactileSensorMixin[ElastomerDisplacementSensorMetadata],
-    RigidSensorMixin[ElastomerDisplacementSensorMetadata],
-    SimpleSensor[ElastomerDisplacementSensorOptions, ElastomerDisplacementSensorMetadata],
+class ElastomerTaxelSensor(
+    PointCloudTactileSensorMixin[ElastomerTaxelSensorMetadata],
+    ProbesWithNormalSensorMixin[ElastomerTaxelSensorMetadata],
+    RigidSensorMixin[ElastomerTaxelSensorMetadata],
+    SimpleSensor[ElastomerTaxelSensorOptions, ElastomerTaxelSensorMetadata],
 ):
     def __init__(
-        self, sensor_options: ElastomerDisplacementSensorOptions, sensor_idx: int, sensor_manager: "SensorManager"
+        self,
+        sensor_options: ElastomerTaxelSensorOptions,
+        sensor_idx: int,
+        sensor_manager: "SensorManager",
     ):
         super().__init__(sensor_options, sensor_idx, sensor_manager)
 
         self._is_grid = self._probe_local_pos.ndim > 2
         self._shape = self._probe_local_pos.shape[:-1]
-        self._probe_local_pos = self._probe_local_pos.reshape(-1, 3)
+
+        (
+            probe_pos,
+            probe_normals,
+            use_grid_fft,
+            grid_normal,
+            grid_tangent_u,
+            grid_tangent_v,
+            grid_spacing,
+        ) = _normalize_elastomer_probe_layout(
+            np.asarray(sensor_options.probe_local_pos, dtype=gs.np_float),
+            np.asarray(sensor_options.probe_local_normal, dtype=gs.np_float),
+            self._is_grid,
+        )
+        self._probe_local_pos = torch.tensor(probe_pos, dtype=gs.tc_float, device=gs.device)
+        self._probe_local_normal = torch.tensor(probe_normals, dtype=gs.tc_float, device=gs.device)
+        self._use_grid_fft = use_grid_fft
+        self._grid_normal = torch.tensor(grid_normal, dtype=gs.tc_float, device=gs.device)
+        self._grid_tangent_u = torch.tensor(grid_tangent_u, dtype=gs.tc_float, device=gs.device)
+        self._grid_tangent_v = torch.tensor(grid_tangent_v, dtype=gs.tc_float, device=gs.device)
+        self._grid_spacing = torch.tensor(grid_spacing, dtype=gs.tc_float, device=gs.device)
+
+    def build(self):
+        super().build()
+
+        solver = self._shared_metadata.solver
+        solver.collider._sdf.activate()
+        B = self._manager._sim._B
+        if self._link is None:
+            gs.raise_exception("ElastomerTaxel must be attached to a rigid link with collision geometry.")
+
+        elastomer_geom_start_row = self._shared_metadata.elastomer_geom_idx.shape[0]
+        elastomer_geom_idx, elastomer_geom_active_envs_mask = _collect_collision_geom_idx(
+            solver, np.asarray((self._link.idx,), dtype=gs.np_int)
+        )
+        self._shared_metadata.elastomer_geom_idx = concat_with_tensor(
+            self._shared_metadata.elastomer_geom_idx, elastomer_geom_idx, expand=(elastomer_geom_idx.shape[0],)
+        )
+        self._shared_metadata.elastomer_geom_active_envs_mask = concat_with_tensor(
+            self._shared_metadata.elastomer_geom_active_envs_mask, elastomer_geom_active_envs_mask
+        )
+        self._shared_metadata.sensor_elastomer_geom_start = concat_with_tensor(
+            self._shared_metadata.sensor_elastomer_geom_start, elastomer_geom_start_row, expand=(1,)
+        )
+        self._shared_metadata.sensor_elastomer_geom_n = concat_with_tensor(
+            self._shared_metadata.sensor_elastomer_geom_n,
+            self._shared_metadata.elastomer_geom_idx.shape[0] - elastomer_geom_start_row,
+            expand=(1,),
+        )
+
+        track_link_idx = np.asarray(self._options.track_link_idx, dtype=gs.np_int)
+        geom_start_row = self._shared_metadata.track_geom_idx.shape[0]
+        geom_idx, geom_active_envs_mask = _collect_collision_geom_idx(solver, track_link_idx)
+        self._shared_metadata.track_geom_idx = concat_with_tensor(
+            self._shared_metadata.track_geom_idx, geom_idx, expand=(geom_idx.shape[0],)
+        )
+        self._shared_metadata.track_geom_active_envs_mask = concat_with_tensor(
+            self._shared_metadata.track_geom_active_envs_mask, geom_active_envs_mask
+        )
+        self._shared_metadata.sensor_track_geom_start = concat_with_tensor(
+            self._shared_metadata.sensor_track_geom_start, geom_start_row, expand=(1,)
+        )
+        self._shared_metadata.sensor_track_geom_n = concat_with_tensor(
+            self._shared_metadata.sensor_track_geom_n,
+            self._shared_metadata.track_geom_idx.shape[0] - geom_start_row,
+            expand=(1,),
+        )
+
+        self._shared_metadata.lambda_d = concat_with_tensor(
+            self._shared_metadata.lambda_d, float(self._options.lambda_d), expand=(1,)
+        )
+        self._shared_metadata.lambda_s = concat_with_tensor(
+            self._shared_metadata.lambda_s, float(self._options.lambda_s), expand=(1,)
+        )
+        self._shared_metadata.dilate_scale = concat_with_tensor(
+            self._shared_metadata.dilate_scale, float(self._options.dilate_scale), expand=(1,)
+        )
+        self._shared_metadata.shear_scale = concat_with_tensor(
+            self._shared_metadata.shear_scale, float(self._options.shear_scale), expand=(1,)
+        )
+        self._shared_metadata.elastomer_contact_sdf_enter = concat_with_tensor(
+            self._shared_metadata.elastomer_contact_sdf_enter,
+            float(self._options.elastomer_contact_sdf_enter),
+            expand=(1,),
+        )
+        self._shared_metadata.elastomer_contact_sdf_exit = concat_with_tensor(
+            self._shared_metadata.elastomer_contact_sdf_exit,
+            float(self._options.elastomer_contact_sdf_exit),
+            expand=(1,),
+        )
+
+        self._shared_metadata.probe_depth_buf = torch.zeros(
+            (B, self._shared_metadata.total_n_probes), dtype=gs.tc_float, device=gs.device
+        )
+        total_n_surface = self._shared_metadata.pc_pos_link.shape[0]
+        self._shared_metadata.surface_pos_sensor_buf = torch.zeros(
+            (B, total_n_surface, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._shared_metadata.surface_entry_pos_sensor_buf = torch.zeros(
+            (B, total_n_surface, 3), dtype=gs.tc_float, device=gs.device
+        )
+        self._shared_metadata.surface_depth_buf = torch.zeros((B, total_n_surface), dtype=gs.tc_float, device=gs.device)
+        self._shared_metadata.surface_initialized_buf = torch.zeros(
+            (B, total_n_surface), dtype=gs.tc_bool, device=gs.device
+        )
+
+        self._shared_metadata.is_grid = concat_with_tensor(self._shared_metadata.is_grid, self._is_grid, expand=(1,))
+        self._shared_metadata.use_grid_fft = concat_with_tensor(
+            self._shared_metadata.use_grid_fft, self._use_grid_fft, expand=(1,)
+        )
+
+        grid_n = torch.tensor((0, 0), dtype=gs.tc_int, device=gs.device)
+        grid_spacing = torch.tensor((0.0, 0.0), dtype=gs.tc_float, device=gs.device)
+        grid_normal = torch.zeros(3, dtype=gs.tc_float, device=gs.device)
+        grid_tangent_u = torch.zeros(3, dtype=gs.tc_float, device=gs.device)
+        grid_tangent_v = torch.zeros(3, dtype=gs.tc_float, device=gs.device)
+        kernel_fft = torch.tensor(0.0, dtype=gs.tc_float, device=gs.device)
+        if self._use_grid_fft:
+            nx, ny = int(self._shape[1]), int(self._shape[0])
+            grid_n = torch.tensor((nx, ny), dtype=gs.tc_int, device=gs.device)
+            grid_spacing = self._grid_spacing
+            grid_normal = self._grid_normal
+            grid_tangent_u = self._grid_tangent_u
+            grid_tangent_v = self._grid_tangent_v
+            fft_n = tuple(_next_pow2(2 * n - 1) for n in (nx, ny))
+            kernel_fft = _precompute_hydroshear_dilate_kernel_fft(
+                self._options.lambda_d, grid_spacing.tolist(), fft_n, gs.device, gs.tc_float
+            )
+            n_sensors = len(self._shared_metadata.lambda_d)
+            prev = self._shared_metadata.fft_depth_buffer.shape
+            max_fft_n = (max(fft_n[0], prev[2]), max(fft_n[1], prev[3]))
+            self._shared_metadata.fft_depth_buffer = torch.zeros(
+                (B, n_sensors, max_fft_n[0], max_fft_n[1]), dtype=gs.tc_float, device=gs.device
+            )
+            grid_size = nx * ny * 3
+            out_buf = self._shared_metadata.grid_dilate_out_buffer
+            if out_buf.numel() == 0 or out_buf.shape[1] < grid_size:
+                self._shared_metadata.grid_dilate_out_buffer = torch.empty(
+                    (B, max(out_buf.shape[1] if out_buf.numel() > 0 else 0, grid_size)),
+                    dtype=gs.tc_float,
+                    device=gs.device,
+                )
+
+        self._shared_metadata.grid_n = concat_with_tensor(self._shared_metadata.grid_n, grid_n, expand=(1, 2))
+        self._shared_metadata.grid_spacing = concat_with_tensor(
+            self._shared_metadata.grid_spacing, grid_spacing, expand=(1, 2)
+        )
+        self._shared_metadata.grid_normal = concat_with_tensor(
+            self._shared_metadata.grid_normal, grid_normal, expand=(1, 3)
+        )
+        self._shared_metadata.grid_tangent_u = concat_with_tensor(
+            self._shared_metadata.grid_tangent_u, grid_tangent_u, expand=(1, 3)
+        )
+        self._shared_metadata.grid_tangent_v = concat_with_tensor(
+            self._shared_metadata.grid_tangent_v, grid_tangent_v, expand=(1, 3)
+        )
+        self._shared_metadata.fft_kernel_list.append(kernel_fft)
 
     def _get_return_format(self) -> tuple[int, ...]:
         return (self._n_probes, 3)
@@ -989,142 +1952,104 @@ class ElastomerDisplacementSensor(
     def _get_cache_dtype(cls) -> torch.dtype:
         return gs.tc_float
 
-    def build(self):
-        super().build()
-
-        B = self._manager._sim._B
-        total_n_probes = self._shared_metadata.total_n_probes
-        self._shared_metadata.contact_buf = torch.empty((B, total_n_probes, 4), dtype=gs.tc_float, device=gs.device)
-        self._shared_metadata.contact_link_buf = torch.empty((B, total_n_probes), dtype=gs.tc_int, device=gs.device)
-
-        self._shared_metadata.dilate_coefficient = concat_with_tensor(
-            self._shared_metadata.dilate_coefficient, self._options.dilate_coefficient
-        )
-        self._shared_metadata.shear_coefficient = concat_with_tensor(
-            self._shared_metadata.shear_coefficient, self._options.shear_coefficient
-        )
-        self._shared_metadata.twist_coefficient = concat_with_tensor(
-            self._shared_metadata.twist_coefficient, self._options.twist_coefficient
-        )
-        self._shared_metadata.dilate_max_delta = concat_with_tensor(
-            self._shared_metadata.dilate_max_delta, self._options.dilate_max_delta
-        )
-        self._shared_metadata.shear_max_delta = concat_with_tensor(
-            self._shared_metadata.shear_max_delta, self._options.shear_max_delta
-        )
-        self._shared_metadata.twist_max_delta = concat_with_tensor(
-            self._shared_metadata.twist_max_delta, math.radians(self._options.twist_max_delta)
-        )
-        self._shared_metadata.sensor_normal = concat_with_tensor(
-            self._shared_metadata.sensor_normal,
-            self._probe_local_normal.mean(dim=0) / self._probe_local_normal.norm(),
-            expand=(1, 3),
-        )
-        self._shared_metadata.is_grid = concat_with_tensor(self._shared_metadata.is_grid, self._is_grid)
-
-        grid_n = torch.tensor((0, 0), dtype=gs.tc_int, device=gs.device)
-        grid_spacing = torch.tensor((0, 0), dtype=gs.tc_float, device=gs.device)
-        kernel_fft = torch.tensor(0, dtype=gs.tc_float, device=gs.device)
-        if self._is_grid:
-            nx, ny = int(self._shape[1]), int(self._shape[0])
-            grid_n = torch.tensor((nx, ny), dtype=gs.tc_int, device=gs.device)
-            pos_xy = self._probe_local_pos[:, :2]
-            extent = pos_xy.amax(dim=0) - pos_xy.amin(dim=0)
-            grid_spacing = extent.to(gs.tc_float) / torch.tensor(
-                [max(nx - 1, 1), max(ny - 1, 1)], dtype=gs.tc_float, device=gs.device
-            )
-            # Use linear-convolution padding (>= 2*g - 1) to avoid circular wrap across sensor borders.
-            fft_n = tuple(_next_pow2(2 * n - 1) for n in (nx, ny))
-            kernel_fft = _precompute_dilate_kernel_fft(
-                self._options.dilate_coefficient, grid_spacing.tolist(), fft_n, gs.device, gs.tc_float
-            )
-            n_sensors = len(self._shared_metadata.dilate_coefficient)
-            prev = self._shared_metadata.fft_depth_buffer.shape
-            max_fft_n = (max(fft_n[0], prev[2]), max(fft_n[1], prev[3]))
-            self._shared_metadata.fft_depth_buffer = torch.zeros(
-                (self._manager._sim._B, n_sensors, max_fft_n[0], max_fft_n[1]), dtype=gs.tc_float, device=gs.device
-            )
-            grid_size = nx * ny * 3
-            out_buf = self._shared_metadata.grid_dilate_out_buffer
-            if out_buf.numel() == 0 or out_buf.shape[1] < grid_size:
-                new_size = max(out_buf.shape[1] if out_buf.numel() > 0 else 0, grid_size)
-                self._shared_metadata.grid_dilate_out_buffer = torch.empty(
-                    (B, new_size), dtype=gs.tc_float, device=gs.device
-                )
-
-        self._shared_metadata.grid_n = concat_with_tensor(self._shared_metadata.grid_n, grid_n, expand=(1, 2))
-        self._shared_metadata.grid_spacing = concat_with_tensor(
-            self._shared_metadata.grid_spacing, grid_spacing, expand=(1, 2)
-        )
-        self._shared_metadata.fft_kernel_list.append(kernel_fft)
+    @classmethod
+    def reset(cls, shared_metadata: ElastomerTaxelSensorMetadata, shared_ground_truth_cache: torch.Tensor, envs_idx):
+        super().reset(shared_metadata, shared_ground_truth_cache, envs_idx)
+        shared_metadata.probe_depth_buf[envs_idx, :] = 0.0
+        shared_metadata.surface_pos_sensor_buf[envs_idx, :, :] = 0.0
+        shared_metadata.surface_entry_pos_sensor_buf[envs_idx, :, :] = 0.0
+        shared_metadata.surface_depth_buf[envs_idx, :] = 0.0
+        shared_metadata.surface_initialized_buf[envs_idx, :] = False
 
     @classmethod
-    def _update_raw_data(cls, shared_metadata: ElastomerDisplacementSensorMetadata, raw_data_T: torch.Tensor):
+    def _update_current_timestep_data(
+        cls,
+        shared_metadata: ElastomerTaxelSensorMetadata,
+        current_ground_truth_data_T: torch.Tensor,
+        measured_data_timeline: "TensorRingBuffer",
+    ):
         solver = shared_metadata.solver
+        current_ground_truth_data_T.zero_()
+        shared_metadata.probe_depth_buf.zero_()
+        shared_metadata.surface_depth_buf.zero_()
 
-        # Zero buffers allocated with torch.empty to avoid stale data if the kernel fails to write some entries (e.g.
-        # after a backend switch within the same process).
-        shared_metadata.contact_buf.zero_()
-        shared_metadata.contact_link_buf.fill_(-1)
+        measured = measured_data_timeline.at(0, copy=False)
+        measured.zero_()
 
-        _kernel_elastomer_displacement(
-            shared_metadata.is_grid,
+        _kernel_elastomer_probe_depth_and_direct_dilate(
+            shared_metadata.use_grid_fft,
             shared_metadata.probe_positions,
-            shared_metadata.probe_normals,
+            shared_metadata.probe_local_normal,
             shared_metadata.probe_sensor_idx,
-            shared_metadata.probe_radius,
-            shared_metadata.probe_max_raycast_range,
-            shared_metadata.dilate_coefficient,
-            shared_metadata.dilate_max_delta,
             shared_metadata.links_idx,
-            shared_metadata.sensor_probe_start,
             shared_metadata.sensor_cache_start,
+            shared_metadata.sensor_probe_start,
             shared_metadata.n_probes_per_sensor,
-            solver._static_rigid_sim_config,
+            shared_metadata.sensor_track_geom_start,
+            shared_metadata.sensor_track_geom_n,
+            shared_metadata.track_geom_idx,
+            shared_metadata.track_geom_active_envs_mask,
+            shared_metadata.lambda_d,
+            shared_metadata.dilate_scale,
             solver.links_state,
-            solver.collider._collider_state,
             solver.geoms_state,
             solver.geoms_info,
-            solver.fixed_verts_state,
-            solver.free_verts_state,
-            solver.verts_info,
-            solver.faces_info,
-            shared_metadata.contact_buf,
-            shared_metadata.contact_link_buf,
-            gs.EPS,
-            raw_data_T,
+            solver.collider._sdf._sdf_info,
+            shared_metadata.probe_depth_buf,
+            current_ground_truth_data_T,
         )
-        _elastomer_displacement_grid_fft_dilate(
-            shared_metadata.is_grid,
-            shared_metadata.contact_buf,
+        _elastomer_taxel_grid_fft_dilate(
+            shared_metadata.use_grid_fft,
+            shared_metadata.probe_depth_buf,
             shared_metadata.sensor_probe_start,
             shared_metadata.sensor_cache_start,
             shared_metadata.grid_n,
             shared_metadata.fft_depth_buffer,
             shared_metadata.fft_kernel_list,
-            shared_metadata.dilate_coefficient,
-            shared_metadata.dilate_max_delta,
+            shared_metadata.lambda_d,
+            shared_metadata.dilate_scale,
+            shared_metadata.grid_normal,
+            shared_metadata.grid_tangent_u,
+            shared_metadata.grid_tangent_v,
             shared_metadata.grid_dilate_out_buffer,
-            raw_data_T,
+            current_ground_truth_data_T,
         )
-        _kernel_elastomer_displacement_grid_shear_twist(
+        _kernel_elastomer_surface_state_and_direct_shear(
             shared_metadata.probe_positions,
-            shared_metadata.probe_sensor_idx,
-            shared_metadata.links_idx,
+            shared_metadata.probe_local_normal,
             shared_metadata.sensor_cache_start,
             shared_metadata.sensor_probe_start,
-            shared_metadata.sensor_normal,
-            shared_metadata.shear_coefficient,
-            shared_metadata.twist_coefficient,
-            shared_metadata.shear_max_delta,
-            shared_metadata.twist_max_delta,
-            shared_metadata.contact_buf,
-            shared_metadata.contact_link_buf,
+            shared_metadata.n_probes_per_sensor,
+            shared_metadata.links_idx,
+            shared_metadata.sensor_elastomer_geom_start,
+            shared_metadata.sensor_elastomer_geom_n,
+            shared_metadata.elastomer_geom_idx,
+            shared_metadata.elastomer_geom_active_envs_mask,
+            shared_metadata.sensor_pc_start,
+            shared_metadata.sensor_pc_n,
+            shared_metadata.pc_link_idx,
+            shared_metadata.pc_pos_link,
+            shared_metadata.pc_active_envs_mask,
+            shared_metadata.lambda_s,
+            shared_metadata.shear_scale,
             solver.links_state,
-            solver._sim.dt,
+            solver.geoms_state,
+            solver.geoms_info,
+            solver.collider._sdf._sdf_info,
             gs.EPS,
-            raw_data_T,
+            shared_metadata.elastomer_contact_sdf_enter,
+            shared_metadata.elastomer_contact_sdf_exit,
+            shared_metadata.surface_pos_sensor_buf,
+            shared_metadata.surface_entry_pos_sensor_buf,
+            shared_metadata.surface_depth_buf,
+            shared_metadata.surface_initialized_buf,
+            current_ground_truth_data_T,
         )
 
+        measured.copy_(current_ground_truth_data_T.T)
+
     def _draw_debug(self, context: "RasterizerContext"):
-        self._draw_debug_probes(context, lambda data: torch.linalg.norm(data, dim=-1))
+        self._draw_debug_probes(
+            context,
+            lambda envs_idx: tensor_to_array(torch.linalg.norm(self.read_ground_truth(envs_idx), dim=-1)),
+        )

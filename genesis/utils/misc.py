@@ -248,6 +248,10 @@ def get_ptc_cache_dir():
     return os.path.join(get_cache_dir(), "ptc")
 
 
+def get_fps_pc_cache_dir():
+    return os.path.join(get_cache_dir(), "fps_pc")
+
+
 def get_tet_cache_dir():
     return os.path.join(get_cache_dir(), "tet")
 

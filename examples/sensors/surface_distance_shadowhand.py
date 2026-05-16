@@ -1,7 +1,7 @@
 """
-Interactive Proximity sensor with Shadow Hand and keyboard teleop.
+Interactive SurfaceDistanceProbe demo with Shadow Hand and keyboard teleop.
 
-Proximity sensors on the hand measure distance to a rubber duck (mesh) and a box.
+Surface distance probes on the hand measure distance to a rubber duck (mesh) and a box.
 Use keyboard controls to move the hand via IK; the hand tracks target positions
 for the wrist and fingertips.
 """
@@ -19,7 +19,7 @@ from genesis.vis.keybindings import Key, KeyAction, Keybind
 KEY_DPOS = 0.015
 FORCE_SCALE = 10.0
 
-# Proximity sensor
+# Surface distance probe
 MAX_RANGE = 0.5
 
 # Objects
@@ -30,7 +30,7 @@ BOX_QUAT = (1, 0, 0, 0)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Interactive Proximity sensor with Shadow Hand")
+    parser = argparse.ArgumentParser(description="Interactive SurfaceDistanceProbe with Shadow Hand")
     parser.add_argument("--vis", "-v", action="store_true", default=False, help="Show visualization GUI")
     parser.add_argument("--gpu", action="store_true", default=False, help="Run on GPU instead of CPU")
     parser.add_argument("--seconds", "-t", type=float, default=3.0, help="Seconds to simulate (headless mode)")
@@ -95,12 +95,12 @@ def main():
         "thumb_distal",
     ):
         sensor = scene.add_sensor(
-            gs.sensors.Proximity(
+            gs.sensors.SurfaceDistanceProbe(
                 entity_idx=robot.idx,
                 link_idx_local=robot.get_link(link_name).idx_local,
                 probe_local_pos=((0.0, 0.0, 0.0),),
+                probe_radius=MAX_RANGE,
                 track_link_idx=(duck.base_link_idx, box.base_link_idx),
-                max_range=MAX_RANGE,
                 draw_debug=args.vis,
             )
         )
@@ -146,8 +146,8 @@ def main():
             Keybind("quit", Key.ESCAPE, KeyAction.RELEASE, callback=stop),
         )
 
-    print("\n=== Proximity sensor with Shadow Hand ===")
-    print("Proximity sensors on hand palm and fingertips, tracking duck and box links")
+    print("\n=== SurfaceDistanceProbe with Shadow Hand ===")
+    print("Surface distance probes on hand palm and fingertips, tracking duck and box links")
     if args.vis:
         print("Keyboard: [↑/↓/←/→] move hand XY, [n/m] up/down, [\\] reset, [ESC] quit")
     else:
@@ -163,7 +163,7 @@ def main():
                 distances = []
                 for sensor in sensors:
                     distances.append(sensor.read())
-                print(f"Proximity distances: {distances}")
+                print(f"Surface distances: {distances}")
 
             scene.step()
 

@@ -5,7 +5,7 @@ from . import (
     depth_camera,
     imu,
     kinematic_tactile,
-    proximity,
+    surface_distance_probe,
     raycaster,
     temperature,
 )
