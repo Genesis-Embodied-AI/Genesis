@@ -551,8 +551,7 @@ class Collider:
             rc = np.array(entity.terrain_hf.shape, dtype=gs.np_int)
             hf = entity.terrain_hf.astype(gs.np_float) * scale[1]
             xyz_maxmin = np.array(
-                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0],
-                dtype=gs.np_float,
+                [rc[0] * scale[0], rc[1] * scale[0], hf.max(), 0, 0, hf.min() - 1.0], dtype=gs.np_float
             )
 
             self._collider_info.terrain_hf.from_numpy(hf)
@@ -655,9 +654,7 @@ class Collider:
         )
 
     def _build_global_state(
-        self,
-        mpr_state: array_class.MPRState,
-        gjk_state: array_class.GJKState,
+        self, mpr_state: array_class.MPRState, gjk_state: array_class.GJKState
     ) -> array_class.GlobalState:
         """Bundle every dataclass narrowphase wants into a single GlobalState.
 
@@ -695,10 +692,7 @@ class Collider:
 
     def _call_multicontact(self):
         narrowphase._func_narrowphase_multicontact_mixed(
-            self._build_global_state(
-                mpr_state=self._multicontact_mpr_state,
-                gjk_state=self._multicontact_gjk_state,
-            ),
+            self._build_global_state(mpr_state=self._multicontact_mpr_state, gjk_state=self._multicontact_gjk_state),
             self._solver._static_rigid_sim_config,
             self._collider_static_config,
             self._gjk._gjk_static_config,
@@ -710,9 +704,7 @@ class Collider:
 
     def detection(self) -> None:
         rigid_solver.kernel_update_geom_aabbs(
-            self._solver.geoms_state,
-            self._solver.geoms_init_AABB,
-            self._solver._static_rigid_sim_config,
+            self._solver.geoms_state, self._solver.geoms_init_AABB, self._solver._static_rigid_sim_config
         )
 
         if self._n_possible_pairs == 0:
@@ -734,13 +726,10 @@ class Collider:
         )
         if self._use_split_narrowphase:
             narrowphase._func_reset_narrowphase_work_queues(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state)
             )
             narrowphase._func_narrowphase_contact0(
-                self._build_global_state(
-                    mpr_state=self._contact0_mpr_state,
-                    gjk_state=self._contact0_gjk_state,
-                ),
+                self._build_global_state(mpr_state=self._contact0_mpr_state, gjk_state=self._contact0_gjk_state),
                 self._solver._static_rigid_sim_config,
                 self._collider_static_config,
                 self._solver._errno,
@@ -749,7 +738,7 @@ class Collider:
             )
             self._call_multicontact()
             narrowphase._func_prepare_gjk_rerun(
-                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state),
+                self._build_global_state(mpr_state=self._mpr._mpr_state, gjk_state=self._gjk._gjk_state)
             )
             self._call_multicontact()
         elif self._collider_static_config.has_non_box_plane_convex_convex:
@@ -784,9 +773,7 @@ class Collider:
 
         if self._use_split_narrowphase:
             func_clamp_and_sort_contacts(
-                self._collider_state,
-                self._collider_info,
-                self._solver._static_rigid_sim_config,
+                self._collider_state, self._collider_info, self._solver._static_rigid_sim_config
             )
 
     def get_contacts(self, as_tensor: bool = True, to_torch: bool = True, keep_batch_dim: bool = False):

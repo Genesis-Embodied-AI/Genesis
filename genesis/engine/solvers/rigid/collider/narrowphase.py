@@ -16,10 +16,7 @@ import genesis.utils.geom as gu
 import genesis.utils.sdf as sdf
 
 from . import capsule_contact, diff_gjk, gjk, mpr
-from .box_contact import (
-    func_box_box_contact,
-    func_plane_box_contact,
-)
+from .box_contact import func_box_box_contact, func_plane_box_contact
 from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
@@ -47,11 +44,7 @@ class CCD_ALGORITHM_CODE(IntEnum):
 
 @qd.func
 def func_contact_sphere_sdf(
-    i_ga,
-    i_gb,
-    i_b,
-    global_state: array_class.GlobalState,
-    collider_static_config: qd.template(),
+    i_ga, i_gb, i_b, global_state: array_class.GlobalState, collider_static_config: qd.template()
 ):
     is_col = False
     penetration = gs.qd_float(0.0)
@@ -458,10 +451,7 @@ def func_contact_mpr_terrain(
     if not is_return:
         # Transform to terrain's frame (using local variables, not modifying global state)
         ga_pos_terrain_frame, ga_quat_terrain_frame = gu.qd_transform_pos_quat_by_trans_quat(
-            ga_pos - gb_pos,
-            ga_quat,
-            qd.Vector.zero(gs.qd_float, 3),
-            gu.qd_inv_quat(gb_quat),
+            ga_pos - gb_pos, ga_quat, qd.Vector.zero(gs.qd_float, 3), gu.qd_inv_quat(gb_quat)
         )
         gb_pos_terrain_frame = qd.Vector.zero(gs.qd_float, 3)
         gb_quat_terrain_frame = gu.qd_identity_quat()
@@ -612,13 +602,7 @@ def func_contact_mpr_terrain(
 
 
 @qd.func
-def func_add_prism_vert(
-    x,
-    y,
-    z,
-    i_b,
-    global_state: array_class.GlobalState,
-):
+def func_add_prism_vert(x, y, z, i_b, global_state: array_class.GlobalState):
     global_state.collider_state.prism[0, i_b] = global_state.collider_state.prism[1, i_b]
     global_state.collider_state.prism[1, i_b] = global_state.collider_state.prism[2, i_b]
     global_state.collider_state.prism[3, i_b] = global_state.collider_state.prism[4, i_b]
@@ -1031,16 +1015,12 @@ def func_convex_convex_contact(
                 ):
                     contact_point_a = (
                         gu.qd_transform_by_quat(
-                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0,
-                            gu.qd_inv_quat(qrot),
+                            (contact_pos - 0.5 * penetration * normal) - contact_pos_0, gu.qd_inv_quat(qrot)
                         )
                         + contact_pos_0
                     )
                     contact_point_b = (
-                        gu.qd_transform_by_quat(
-                            (contact_pos + 0.5 * penetration * normal) - contact_pos_0,
-                            qrot,
-                        )
+                        gu.qd_transform_by_quat((contact_pos + 0.5 * penetration * normal) - contact_pos_0, qrot)
                         + contact_pos_0
                     )
                     contact_pos = 0.5 * (contact_point_a + contact_point_b)
@@ -1139,14 +1119,7 @@ def _func_multicontact_run_detection(
         and global_state.geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
     ):
         is_col, normal, contact_pos, penetration = capsule_contact.func_capsule_capsule_contact(
-            i_ga,
-            i_gb,
-            ga_pos,
-            ga_quat,
-            gb_pos,
-            gb_quat,
-            global_state.geoms_info,
-            global_state.rigid_global_info,
+            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, global_state.geoms_info, global_state.rigid_global_info
         )
     elif (
         global_state.geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE
@@ -1156,14 +1129,7 @@ def _func_multicontact_run_detection(
         and global_state.geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
     ):
         is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
-            i_ga,
-            i_gb,
-            ga_pos,
-            ga_quat,
-            gb_pos,
-            gb_quat,
-            global_state.geoms_info,
-            global_state.rigid_global_info,
+            i_ga, i_gb, ga_pos, ga_quat, gb_pos, gb_quat, global_state.geoms_info, global_state.rigid_global_info
         )
     elif global_state.geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE:
         plane_dir = qd.Vector(
@@ -1771,9 +1737,7 @@ def _func_narrowphase_multicontact_mixed(
 
 
 @qd.kernel
-def _func_reset_narrowphase_work_queues(
-    global_state: array_class.GlobalState,
-):
+def _func_reset_narrowphase_work_queues(global_state: array_class.GlobalState):
     for _i in range(1):
         global_state.collider_state.narrowphase_work_queues.mpr_queue_size[0] = 0
         global_state.collider_state.narrowphase_work_queues.gjk_queue_size[0] = 0
@@ -1783,9 +1747,7 @@ def _func_reset_narrowphase_work_queues(
 
 
 @qd.kernel
-def _func_prepare_gjk_rerun(
-    global_state: array_class.GlobalState,
-):
+def _func_prepare_gjk_rerun(global_state: array_class.GlobalState):
     for _i in range(1):
         k1_size = global_state.collider_state.narrowphase_work_queues.gjk_queue_size[0]
         k2_count = global_state.collider_state.narrowphase_work_queues.gjk_queue_size_k2[0]
@@ -2044,29 +2006,13 @@ def _func_narrowphase_contact0(
                     # runs full GJK detection regardless of multi_contact.
                     if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         _func_enqueue_for_multicontact(
-                            global_state,
-                            i_b,
-                            i_ga,
-                            i_gb,
-                            i_pair,
-                            contact_pos,
-                            normal,
-                            penetration,
-                            prefer_gjk=True,
+                            global_state, i_b, i_ga, i_gb, i_pair, contact_pos, normal, penetration, prefer_gjk=True
                         )
                 elif multi_contact:
                     # Enqueue for multicontact — multicontact will write all contacts
                     # (including contact 0) contiguously via a single atomic reservation.
                     _func_enqueue_for_multicontact(
-                        global_state,
-                        i_b,
-                        i_ga,
-                        i_gb,
-                        i_pair,
-                        contact_pos,
-                        normal,
-                        penetration,
-                        prefer_gjk=False,
+                        global_state, i_b, i_ga, i_gb, i_pair, contact_pos, normal, penetration, prefer_gjk=False
                     )
                 else:
                     func_add_contact(
@@ -2135,8 +2081,7 @@ def func_narrow_phase_convex_vs_convex(
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_diff_convex_vs_convex(
-    global_state: array_class.GlobalState,
-    static_rigid_sim_config: qd.template(),
+    global_state: array_class.GlobalState, static_rigid_sim_config: qd.template()
 ):
     # Compute reference contacts
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL)
@@ -2300,13 +2245,7 @@ def func_narrow_phase_any_vs_terrain(
 
                 if global_state.geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
                     func_contact_mpr_terrain(
-                        i_ga,
-                        i_gb,
-                        i_b,
-                        global_state,
-                        static_rigid_sim_config,
-                        collider_static_config,
-                        errno,
+                        i_ga, i_gb, i_b, global_state, static_rigid_sim_config, collider_static_config, errno
                     )
 
 
@@ -2360,15 +2299,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_pos = global_state.geoms_state.pos[i_gb, i_b]
                             gb_quat = global_state.geoms_state.quat[i_gb, i_b]
                             is_col_i, normal_i, penetration_i, contact_pos_i = func_contact_vertex_sdf(
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                ga_pos,
-                                ga_quat,
-                                gb_pos,
-                                gb_quat,
-                                global_state,
-                                collider_static_config,
+                                i_ga, i_gb, i_b, ga_pos, ga_quat, gb_pos, gb_quat, global_state, collider_static_config
                             )
                             if is_col_i:
                                 func_add_contact(
@@ -2454,8 +2385,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                             )
                                             contact_point_b = (
                                                 gu.qd_transform_by_quat(
-                                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_i,
-                                                    qrot,
+                                                    (contact_pos + 0.5 * penetration * normal) - contact_pos_i, qrot
                                                 )
                                                 + contact_pos_i
                                             )
@@ -2510,15 +2440,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                             gb_quat = global_state.geoms_state.quat[i_gb, i_b]
 
                             is_col, normal, penetration, contact_pos = func_contact_edge_sdf(
-                                i_ga,
-                                i_gb,
-                                i_b,
-                                ga_pos,
-                                ga_quat,
-                                gb_pos,
-                                gb_quat,
-                                global_state,
-                                collider_static_config,
+                                i_ga, i_gb, i_b, ga_pos, ga_quat, gb_pos, gb_quat, global_state, collider_static_config
                             )
                             if is_col:
                                 func_add_contact(

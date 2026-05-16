@@ -514,9 +514,7 @@ class ContactCache:
 
 def get_contact_cache(solver, n_possible_pairs):
     _B = solver._B
-    return ContactCache(
-        normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)),
-    )
+    return ContactCache(normal=V_VEC(3, dtype=gs.qd_float, shape=(n_possible_pairs, _B)))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -823,10 +821,7 @@ class MPRState:
 
 
 def get_mpr_state(B_):
-    return MPRState(
-        simplex_support=get_mpr_simplex_support(B_),
-        simplex_size=V(dtype=gs.qd_int, shape=(B_,)),
-    )
+    return MPRState(simplex_support=get_mpr_simplex_support(B_), simplex_size=V(dtype=gs.qd_int, shape=(B_,)))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -894,10 +889,7 @@ class GJKSimplex:
 
 def get_gjk_simplex(_B, is_active):
     shape = maybe_shape((_B,), is_active)
-    return GJKSimplex(
-        nverts=V(dtype=gs.qd_int, shape=shape),
-        dist=V(dtype=gs.qd_float, shape=shape),
-    )
+    return GJKSimplex(nverts=V(dtype=gs.qd_int, shape=shape), dist=V(dtype=gs.qd_float, shape=shape))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -908,10 +900,7 @@ class GJKSimplexBuffer:
 
 def get_gjk_simplex_buffer(_B, is_active):
     shape = maybe_shape((_B, 4), is_active)
-    return GJKSimplexBuffer(
-        normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
-        sdist=V(dtype=gs.qd_float, shape=shape),
-    )
+    return GJKSimplexBuffer(normal=V_VEC(3, dtype=gs.qd_float, shape=shape), sdist=V(dtype=gs.qd_float, shape=shape))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -964,10 +953,7 @@ class EPAPolytopeHorizonData:
 
 def get_epa_polytope_horizon_data(_B, polytope_max_horizons, is_active):
     shape = maybe_shape((_B, polytope_max_horizons), is_active)
-    return EPAPolytopeHorizonData(
-        face_idx=V(dtype=gs.qd_int, shape=shape),
-        edge_idx=V(dtype=gs.qd_int, shape=shape),
-    )
+    return EPAPolytopeHorizonData(face_idx=V(dtype=gs.qd_int, shape=shape), edge_idx=V(dtype=gs.qd_int, shape=shape))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -1018,10 +1004,7 @@ class ContactHalfspace:
 
 def get_contact_halfspace(_B, max_contact_polygon_verts, is_active):
     shape = maybe_shape((_B, max_contact_polygon_verts), is_active)
-    return ContactHalfspace(
-        normal=V_VEC(3, dtype=gs.qd_float, shape=shape),
-        dist=V(dtype=gs.qd_float, shape=shape),
-    )
+    return ContactHalfspace(normal=V_VEC(3, dtype=gs.qd_float, shape=shape), dist=V(dtype=gs.qd_float, shape=shape))
 
 
 @dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
@@ -1033,8 +1016,7 @@ class Witness:
 def get_witness(_B, max_contacts_per_pair, is_active):
     shape = maybe_shape((_B, max_contacts_per_pair), is_active)
     return Witness(
-        point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape),
-        point_obj2=V_VEC(3, dtype=gs.qd_float, shape=shape),
+        point_obj1=V_VEC(3, dtype=gs.qd_float, shape=shape), point_obj2=V_VEC(3, dtype=gs.qd_float, shape=shape)
     )
 
 
@@ -1783,10 +1765,7 @@ class FacesInfo:
 def get_faces_info(solver):
     shape = (solver.n_faces_,)
 
-    return FacesInfo(
-        verts_idx=V(dtype=gs.qd_ivec3, shape=shape),
-        geom_idx=V(dtype=gs.qd_int, shape=shape),
-    )
+    return FacesInfo(verts_idx=V(dtype=gs.qd_ivec3, shape=shape), geom_idx=V(dtype=gs.qd_int, shape=shape))
 
 
 # =========================================== EdgesInfo ===========================================
@@ -1803,9 +1782,7 @@ def get_edges_info(solver):
     shape = (solver.n_edges_,)
 
     return EdgesInfo(
-        v0=V(dtype=gs.qd_int, shape=shape),
-        v1=V(dtype=gs.qd_int, shape=shape),
-        length=V(dtype=gs.qd_float, shape=shape),
+        v0=V(dtype=gs.qd_int, shape=shape), v1=V(dtype=gs.qd_int, shape=shape), length=V(dtype=gs.qd_float, shape=shape)
     )
 
 
@@ -1818,15 +1795,11 @@ class VertsState:
 
 
 def get_free_verts_state(solver):
-    return VertsState(
-        pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B)),
-    )
+    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_free_verts_, solver._B)))
 
 
 def get_fixed_verts_state(solver):
-    return VertsState(
-        pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,)),
-    )
+    return VertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_fixed_verts_,)))
 
 
 # =========================================== VvertsInfo ===========================================
@@ -1865,9 +1838,7 @@ def get_vverts_state(solver):
             f"Custom-vverts state shape (n_custom_vverts={solver.n_custom_vverts_}, B={solver._B}, 3) is too large. "
             "Consider opting fewer kinematic entities into 'enable_custom_vverts=True', or reducing 'n_envs'."
         )
-    return VVertsState(
-        pos=V(dtype=gs.qd_vec3, shape=(solver.n_custom_vverts_, solver._B)),
-    )
+    return VVertsState(pos=V(dtype=gs.qd_vec3, shape=(solver.n_custom_vverts_, solver._B)))
 
 
 # =========================================== VfacesInfo ===========================================
@@ -1882,10 +1853,7 @@ class VFacesInfo:
 def get_vfaces_info(solver):
     shape = (solver.n_vfaces_,)
 
-    return VFacesInfo(
-        vverts_idx=V(dtype=gs.qd_ivec3, shape=shape),
-        vgeom_idx=V(dtype=gs.qd_int, shape=shape),
-    )
+    return VFacesInfo(vverts_idx=V(dtype=gs.qd_ivec3, shape=shape), vgeom_idx=V(dtype=gs.qd_int, shape=shape))
 
 
 # =========================================== VgeomsInfo ===========================================
@@ -1934,10 +1902,7 @@ class VGeomsState:
 def get_vgeoms_state(solver):
     shape = (solver.n_vgeoms_, solver._B)
 
-    return VGeomsState(
-        pos=V(dtype=gs.qd_vec3, shape=shape),
-        quat=V(dtype=gs.qd_vec4, shape=shape),
-    )
+    return VGeomsState(pos=V(dtype=gs.qd_vec3, shape=shape), quat=V(dtype=gs.qd_vec4, shape=shape))
 
 
 # =========================================== EqualitiesInfo ===========================================
@@ -2009,9 +1974,7 @@ class EntitiesState:
 
 
 def get_entities_state(solver):
-    return EntitiesState(
-        hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)),
-    )
+    return EntitiesState(hibernated=V(dtype=gs.qd_int, shape=(solver.n_entities_, solver._B)))
 
 
 # =========================================== RigidAdjointCache ===========================================
