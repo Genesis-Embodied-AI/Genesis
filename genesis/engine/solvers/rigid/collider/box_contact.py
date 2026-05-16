@@ -25,7 +25,6 @@ def func_plane_box_contact(
     gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     ga_pos, ga_quat = gst.geoms_state.pos[i_ga, i_b], gst.geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = gst.geoms_state.pos[i_gb, i_b], gst.geoms_state.quat[i_gb, i_b]
@@ -41,7 +40,7 @@ def func_plane_box_contact(
 
     if penetration > 0.0:
         contact_pos = v1 - 0.5 * penetration * normal
-        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno)
+        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst)
 
         if qd.static(static_rigid_sim_config.enable_multi_contact):
             n_con = 1
@@ -54,14 +53,12 @@ def func_plane_box_contact(
                     if penetration > 0.0:
                         contact_pos = pos_corner - 0.5 * penetration * normal
                         if (contact_pos - contact_pos_0).norm() > tolerance:
-                            func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno)
+                            func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst)
                             n_con = n_con + 1
 
 
 @qd.func
-def func_box_box_contact(
-    i_ga, i_gb, i_b, i_pair, gst: array_class.GlobalState, collider_static_config: qd.template(), errno: qd.Tensor
-):
+def func_box_box_contact(i_ga, i_gb, i_b, i_pair, gst: array_class.GlobalState, collider_static_config: qd.template()):
     """
     Use Mujoco's box-box contact detection algorithm for more stable collision detection.
 
@@ -397,7 +394,7 @@ def func_box_box_contact(
                             is_valid = False
 
                     if is_valid:
-                        func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, gst, errno)
+                        func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, gst)
                         n_added = n_added + 1
         else:
             code = code - 12
@@ -722,5 +719,5 @@ def func_box_box_contact(
                                 is_valid = False
 
                         if is_valid:
-                            func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, gst, errno)
+                            func_add_contact(i_ga, i_gb, -normal_0, contact_pos, -dist, i_b, i_pair, gst)
                             n_added = n_added + 1

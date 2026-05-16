@@ -173,7 +173,6 @@ def func_add_contact(
     i_b,
     i_pair,
     gst: array_class.GlobalState,
-    errno: qd.Tensor,
     use_atomic: qd.template() = False,
 ):
     i_c = 0
@@ -202,7 +201,7 @@ def func_add_contact(
         if not qd.static(use_atomic):
             gst.collider_state.n_contacts[i_b] = i_c + 1
     else:
-        errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+        gst.errno[i_b] = gst.errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
 
 
 @qd.func

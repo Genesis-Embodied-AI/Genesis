@@ -691,6 +691,7 @@ class Collider:
             equalities_info=s.equalities_info,
             entities_state=s.entities_state,
             entities_info=s.entities_info,
+            errno=s._errno,
         )
 
     def _call_multicontact(self):

@@ -388,7 +388,6 @@ def func_contact_mpr_terrain(
     gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     ga_pos, ga_quat = gst.geoms_state.pos[i_ga, i_b], gst.geoms_state.quat[i_ga, i_b]
     gb_pos, gb_quat = gst.geoms_state.pos[i_gb, i_b], gst.geoms_state.quat[i_gb, i_b]
@@ -504,9 +503,7 @@ def func_contact_mpr_terrain(
                                         i_pair = gst.collider_info.collision_pair_idx[
                                             (i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)
                                         ]
-                                        func_add_contact(
-                                            i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno
-                                        )
+                                        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst)
                                         n_con = n_con + 1
 
 
@@ -533,7 +530,6 @@ def func_convex_convex_contact(
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     if not (gst.geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX):
         EPS = gst.rigid_global_info.EPS[None]
@@ -749,7 +745,6 @@ def func_convex_convex_contact(
                                             i_b,
                                             i_pair,
                                             gst,
-                                            errno,
                                         )
                                     break
                                 else:
@@ -764,15 +759,7 @@ def func_convex_convex_contact(
                                                 if qd.static(static_rigid_sim_config.requires_grad):
                                                     penetration = gst.gjk_state.diff_penetration[i_b, i_c]
                                                 func_add_contact(
-                                                    i_ga,
-                                                    i_gb,
-                                                    normal,
-                                                    contact_pos,
-                                                    penetration,
-                                                    i_b,
-                                                    i_pair,
-                                                    gst,
-                                                    errno,
+                                                    i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst
                                                 )
 
                                         break
@@ -783,7 +770,7 @@ def func_convex_convex_contact(
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
-                    func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b, i_pair, gst, errno)
+                    func_add_contact(i_ga, i_gb, normal_0, contact_pos_0, penetration_0, i_b, i_pair, gst)
                     if multi_contact:
                         # Perturb geom_a around two orthogonal axes to find multiple contacts
                         axis_0, axis_1 = func_contact_orthogonals(i_ga, i_gb, normal, i_b, gst, static_rigid_sim_config)
@@ -856,7 +843,7 @@ def func_convex_convex_contact(
                 if not repeated:
                     if penetration > -tolerance:
                         penetration = qd.max(penetration, 0.0)
-                        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno)
+                        func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst)
                         n_con = n_con + 1
 
 
@@ -977,7 +964,6 @@ def _func_multicontact_mpr(
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     """Compute all contacts (0 through 4) for a pair and write them contiguously
     via a single atomic reservation, ensuring deterministic per-pair ordering.
@@ -1104,15 +1090,15 @@ def _func_multicontact_mpr(
         gst.collider_state.narrowphase_work_queues.gjk_i_pair[idx] = i_pair
     else:
         # Non-atomic pre-check to avoid reserving slots we cannot fill. A rare race between the read and the
-        # atomic_add below may still overshoot; in that case we write only the contacts that fit and set errno.
+        # atomic_add below may still overshoot; in that case we write only the contacts that fit and set gst.errno.
         max_contact_pairs = gst.collider_info.max_contact_pairs[None]
         if gst.collider_state.n_contacts[i_b] + n_con > max_contact_pairs:
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+            gst.errno[i_b] = gst.errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
         else:
             start_idx = qd.atomic_add(gst.collider_state.n_contacts[i_b], n_con)
             n_con = qd.math.clamp(max_contact_pairs - start_idx, 0, n_con)
             if n_con == 0:
-                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+                gst.errno[i_b] = gst.errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
             for i in range(n_con):
                 i_c = start_idx + i
                 pos_i = qd.Vector(
@@ -1133,7 +1119,6 @@ def _func_multicontact_gjk_full(
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     """Run full contact detection (contacts 0-4) using GJK+EPA for pairs that MPR couldn't handle.
     All contacts are collected locally and written contiguously via a single atomic reservation."""
@@ -1297,12 +1282,12 @@ def _func_multicontact_gjk_full(
         # Non-atomic pre-check (see comment in _func_multicontact_mpr).
         max_contact_pairs = gst.collider_info.max_contact_pairs[None]
         if gst.collider_state.n_contacts[i_b] + n_con > max_contact_pairs:
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+            gst.errno[i_b] = gst.errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
         else:
             start_idx = qd.atomic_add(gst.collider_state.n_contacts[i_b], n_con)
             n_con = qd.math.clamp(max_contact_pairs - start_idx, 0, n_con)
             if n_con == 0:
-                errno[i_b] = errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
+                gst.errno[i_b] = gst.errno[i_b] | array_class.ErrorCode.OVERFLOW_COLLISION_PAIRS
             for i in range(n_con):
                 i_c = start_idx + i
                 pos_i = qd.Vector(
@@ -1318,7 +1303,6 @@ def _func_narrowphase_multicontact_mixed(
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
-    errno: qd.Tensor,
     n_gjk_threads: qd.template(),
     n_total_threads: qd.template(),
     max_items_per_thread: qd.template(),
@@ -1345,7 +1329,6 @@ def _func_narrowphase_multicontact_mixed(
                     static_rigid_sim_config,
                     collider_static_config,
                     gjk_static_config,
-                    errno,
                 )
         else:
             # MPR partition: pull from mpr_queue
@@ -1374,7 +1357,6 @@ def _func_narrowphase_multicontact_mixed(
                     static_rigid_sim_config,
                     collider_static_config,
                     gjk_static_config,
-                    errno,
                 )
 
 
@@ -1436,7 +1418,6 @@ def _func_narrowphase_contact0(
     gst: array_class.GlobalState,
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
-    errno: qd.Tensor,
     n_envs: qd.template(),
     n_chunks: qd.template(),
 ):
@@ -1603,9 +1584,7 @@ def _func_narrowphase_contact0(
                         gst, i_b, i_ga, i_gb, i_pair, contact_pos, normal, penetration, prefer_gjk=False
                     )
                 else:
-                    func_add_contact(
-                        i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno, use_atomic=True
-                    )
+                    func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, use_atomic=True)
             elif not is_col:
                 gst.collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
 
@@ -1616,7 +1595,6 @@ def func_narrow_phase_convex_vs_convex(
     static_rigid_sim_config: qd.template(),
     collider_static_config: qd.template(),
     gjk_static_config: qd.template(),
-    errno: qd.Tensor,
 ):
     _B = gst.collider_state.active_buffer.shape[1]
 
@@ -1650,7 +1628,6 @@ def func_narrow_phase_convex_vs_convex(
                         static_rigid_sim_config=static_rigid_sim_config,
                         collider_static_config=collider_static_config,
                         gjk_static_config=gjk_static_config,
-                        errno=errno,
                     )
 
 
@@ -1713,10 +1690,7 @@ def func_narrow_phase_diff_convex_vs_convex(gst: array_class.GlobalState, static
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_convex_specializations(
-    gst: array_class.GlobalState,
-    static_rigid_sim_config: qd.template(),
-    collider_static_config: qd.template(),
-    errno: qd.Tensor,
+    gst: array_class.GlobalState, static_rigid_sim_config: qd.template(), collider_static_config: qd.template()
 ):
     _B = gst.collider_state.active_buffer.shape[1]
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
@@ -1729,21 +1703,16 @@ def func_narrow_phase_convex_specializations(
                 i_ga, i_gb = i_gb, i_ga
 
             if gst.geoms_info.type[i_ga] == gs.GEOM_TYPE.PLANE and gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
-                func_plane_box_contact(
-                    i_ga, i_gb, i_b, i_pair, gst, static_rigid_sim_config, collider_static_config, errno
-                )
+                func_plane_box_contact(i_ga, i_gb, i_b, i_pair, gst, static_rigid_sim_config, collider_static_config)
 
             if qd.static(static_rigid_sim_config.box_box_detection):
                 if gst.geoms_info.type[i_ga] == gs.GEOM_TYPE.BOX and gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
-                    func_box_box_contact(i_ga, i_gb, i_b, i_pair, gst, collider_static_config, errno)
+                    func_box_box_contact(i_ga, i_gb, i_b, i_pair, gst, collider_static_config)
 
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_any_vs_terrain(
-    gst: array_class.GlobalState,
-    static_rigid_sim_config: qd.template(),
-    collider_static_config: qd.template(),
-    errno: qd.Tensor,
+    gst: array_class.GlobalState, static_rigid_sim_config: qd.template(), collider_static_config: qd.template()
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1763,17 +1732,12 @@ def func_narrow_phase_any_vs_terrain(
                     i_ga, i_gb = i_gb, i_ga
 
                 if gst.geoms_info.type[i_gb] == gs.GEOM_TYPE.TERRAIN:
-                    func_contact_mpr_terrain(
-                        i_ga, i_gb, i_b, gst, static_rigid_sim_config, collider_static_config, errno
-                    )
+                    func_contact_mpr_terrain(i_ga, i_gb, i_b, gst, static_rigid_sim_config, collider_static_config)
 
 
 @qd.kernel(fastcache=True)
 def func_narrow_phase_nonconvex_vs_nonterrain(
-    gst: array_class.GlobalState,
-    static_rigid_sim_config: qd.template(),
-    collider_static_config: qd.template(),
-    errno: qd.Tensor,
+    gst: array_class.GlobalState, static_rigid_sim_config: qd.template(), collider_static_config: qd.template()
 ):
     """
     NOTE: for a single non-batched scene with a lot of collisioin pairs, it will be faster if we also parallelize over `self.n_collision_pairs`. However, parallelize over both B and collisioin_pairs (instead of only over B) leads to significantly slow performance for batched scene. We can treat B=0 and B>0 separately, but we will end up with messier code.
@@ -1814,9 +1778,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 i_ga, i_gb, i_b, ga_pos, ga_quat, gb_pos, gb_quat, gst, collider_static_config
                             )
                             if is_col_i:
-                                func_add_contact(
-                                    i_ga, i_gb, normal_i, contact_pos_i, penetration_i, i_b, i_pair, gst, errno
-                                )
+                                func_add_contact(i_ga, i_gb, normal_i, contact_pos_i, penetration_i, i_b, i_pair, gst)
 
                         if qd.static(static_rigid_sim_config.enable_multi_contact):
                             if not is_col and is_col_i:
@@ -1904,15 +1866,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                             if penetration > -tolerance:
                                                 penetration = qd.max(penetration, 0.0)
                                                 func_add_contact(
-                                                    i_ga,
-                                                    i_gb,
-                                                    normal,
-                                                    contact_pos,
-                                                    penetration,
-                                                    i_b,
-                                                    i_pair,
-                                                    gst,
-                                                    errno,
+                                                    i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst
                                                 )
                                                 n_con = n_con + 1
 
@@ -1927,4 +1881,4 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 i_ga, i_gb, i_b, ga_pos, ga_quat, gb_pos, gb_quat, gst, collider_static_config
                             )
                             if is_col:
-                                func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst, errno)
+                                func_add_contact(i_ga, i_gb, normal, contact_pos, penetration, i_b, i_pair, gst)

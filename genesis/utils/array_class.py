@@ -2042,6 +2042,8 @@ class GlobalState:
     equalities_info: EqualitiesInfo
     entities_state: EntitiesState
     entities_info: EntitiesInfo
+    # Solver-wide error-flag tensor (per-env bitmask of runtime warnings).
+    errno: qd.Tensor
 
 
 # =================================== RigidSimStaticConfig ===================================
