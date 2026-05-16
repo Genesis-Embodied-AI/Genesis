@@ -13,13 +13,7 @@ from genesis.options.sensors import Proximity as ProximityOptions
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices
 
-from .base_sensor import (
-    SimpleSensor,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SimpleSensorMetadata,
-)
+from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensorMetadata
 from .kinematic_tactile import _func_closest_point_on_triangle
 
 if TYPE_CHECKING:
@@ -134,10 +128,7 @@ class ProximityMetadata(ProximitySensorMetadataMixin, RigidSensorMetadataMixin, 
     """Shared metadata for the Proximity sensor class."""
 
 
-class ProximitySensor(
-    RigidSensorMixin[ProximityMetadata],
-    SimpleSensor[ProximityOptions, ProximityMetadata, tuple],
-):
+class ProximitySensor(RigidSensorMixin[ProximityMetadata], SimpleSensor[ProximityOptions, ProximityMetadata, tuple]):
     """Proximity sensor: distance and nearest point from probe positions to tracked mesh surfaces."""
 
     def __init__(self, sensor_options: ProximityOptions, sensor_idx: int, sensor_manager: "SensorManager"):
@@ -169,9 +160,7 @@ class ProximitySensor(
             expand=(1,),
         )
         self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start,
-            self._shared_metadata.total_n_probes,
-            expand=(1,),
+            self._shared_metadata.sensor_probe_start, self._shared_metadata.total_n_probes, expand=(1,)
         )
         self._shared_metadata.probe_sensor_idx = concat_with_tensor(
             self._shared_metadata.probe_sensor_idx,

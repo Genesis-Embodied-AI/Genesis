@@ -8,20 +8,10 @@ import torch
 import genesis as gs
 from genesis.options.sensors import IMU as IMUOptions
 from genesis.options.sensors import CrossCouplingAxisType
-from genesis.utils.geom import (
-    inv_transform_by_quat,
-    transform_by_quat,
-    transform_quat_by_quat,
-)
+from genesis.utils.geom import inv_transform_by_quat, transform_by_quat, transform_quat_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 
-from .base_sensor import (
-    SimpleSensor,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SimpleSensorMetadata,
-)
+from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
@@ -80,10 +70,7 @@ class IMUData(NamedTuple):
     mag: torch.Tensor  # added magnetometer to complete 9-axis IMU
 
 
-class IMUSensor(
-    RigidSensorMixin[IMUSharedMetadata],
-    SimpleSensor[IMUOptions, IMUSharedMetadata, IMUData],
-):
+class IMUSensor(RigidSensorMixin[IMUSharedMetadata], SimpleSensor[IMUOptions, IMUSharedMetadata, IMUData]):
     def __init__(self, options: IMUOptions, shared_metadata: IMUSharedMetadata, manager: "SensorManager"):
         # FIXME: Resolution should be made private in mixin, so that it cannot be set by the user directly.
         options.resolution = options.acc_resolution + options.gyro_resolution + options.mag_resolution
@@ -130,7 +117,7 @@ class IMUSensor(
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.acc_cross_axis_coupling),
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.gyro_cross_axis_coupling),
                     _get_cross_axis_coupling_to_alignment_matrix(self._options.mag_cross_axis_coupling),
-                ],
+                ]
             ),
             expand=(self._manager._sim._B, 3, 3, 3),  # 3 sub-matrices after adding mag
             dim=1,
@@ -142,10 +129,7 @@ class IMUSensor(
             default_field = torch.tensor(default_field, device=gs.device, dtype=gs.tc_float)
 
         self._shared_metadata.magnetic_field_vector = concat_with_tensor(
-            self._shared_metadata.magnetic_field_vector,
-            default_field,
-            expand=(self._manager._sim._B, 1, 3),
-            dim=1,
+            self._shared_metadata.magnetic_field_vector, default_field, expand=(self._manager._sim._B, 1, 3), dim=1
         )
 
         if self._options.draw_debug:
@@ -184,8 +168,8 @@ class IMUSensor(
             centripetal_acc = torch.cross(ang, torch.cross(ang, offset_pos_world, dim=-1), dim=-1)
             acc += tangential_acc + centripetal_acc
 
-        # Subtract gravity then move to local frame. acc/ang shape: (B, n_imus, 3); local_mag is already
-        # (B, n_imus, 3) after the inverse transform, no reshape needed.
+        # Subtract gravity then move to local frame. acc/ang shape: (B, n_imus, 3); local_mag is already (B, n_imus, 3)
+        # after the inverse transform, no reshape needed.
         local_acc = inv_transform_by_quat(acc - gravity[..., None, :], offset_quats)
         local_ang = inv_transform_by_quat(ang, offset_quats)
         local_mag = inv_transform_by_quat(shared_metadata.magnetic_field_vector, offset_quats)
@@ -198,15 +182,10 @@ class IMUSensor(
         strided_raw[:, 2].copy_(local_mag.permute(1, 2, 0))
 
     @classmethod
-    def _apply_transform(
-        cls,
-        shared_metadata: IMUSharedMetadata,
-        data: torch.Tensor,
-        *,
-        timeline=None,
-    ):
+    def _apply_transform(cls, shared_metadata: IMUSharedMetadata, data: torch.Tensor, timeline, *, is_measured: bool):
         # Apply alignment rotation to the (lin_acc, ang_vel, mag) triplet. View the flat cache as a stack of 3-vectors
-        # and rotate them in place with the per-sensor `alignment_rot_matrix`.
+        # and rotate them in place with the per-sensor `alignment_rot_matrix`. Branch-symmetric stateless transform:
+        # `timeline` and `is_measured` are received for API uniformity but not read.
         data_xyz = data.view(data.shape[0], -1, 3)
         data_xyz.copy_(torch.matmul(shared_metadata.alignment_rot_matrix, data_xyz.unsqueeze(-1)).squeeze(-1))
 

@@ -62,7 +62,6 @@ def main():
             gyro_random_walk=(0.001, 0.001, 0.001),
             delay=0.01,
             jitter=0.01,
-            interpolate=True,
             # visualize
             draw_debug=True,
         )

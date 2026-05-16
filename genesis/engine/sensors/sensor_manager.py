@@ -24,24 +24,26 @@ class SensorManager:
         self._sim = sim
         self._sensors_by_type: dict[type["Sensor"], list["Sensor"]] = {}
         self._sensors_metadata: dict[type["Sensor"], SharedSensorMetadata | None] = {}
-        # Per-dtype intermediate caches: pre-`_post_process` storage in intermediate space. The transposed GT cache
-        # is `(cols, B)` for C-contiguous per-class row slices required by kernel writes.
+        # Per-dtype intermediate caches: pre-`_post_process` storage in intermediate space. The transposed GT cache is
+        # `(cols, B)` for C-contiguous per-class row slices required by kernel writes.
         self._ground_truth_intermediate_cache: dict[type[torch.dtype], torch.Tensor] = {}
         self._intermediate_cache: dict[type[torch.dtype], torch.Tensor] = {}
-        # Per-class return caches: post-`_post_process` storage in return space. When `_post_process` is identity,
-        # alias-views into the per-dtype intermediate cache; when overridden, separate buffers in return shape/dtype.
+        # Per-class return caches in return space - what `read()` and `read_ground_truth()` slice into. Separate buffers
+        # when a per-class return-space ring is allocated (the orchestrator delay-samples the ring into the cache);
+        # alias-views into the per-dtype intermediate cache otherwise (identity `_post_process`, no delay, no history -
+        # the per-step write inside `_update_shared_cache` is then directly visible to `read()`).
         self._return_cache: dict[type["Sensor"], torch.Tensor] = {}
         self._ground_truth_return_cache: dict[type["Sensor"], torch.Tensor] = {}
+        # Paired GT and measured timeline rings (post-transform, PRE-hardware-imperfections data). Allocated together
+        # per dtype when any sensor in the dtype declares `uses_ring_pipeline = True`. They share the same rotation idx
+        # so a single `rotate()` per step advances both.
         self._ground_truth_timeline_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
-        # Measured timeline: post-imperfection, pre-delay snapshots. Shares ring idx with _ground_truth_timeline_ring
-        # per dtype. No separate measured-history ring - history reads are served from this ring's slots or from the
-        # per-class linearized history buffer.
         self._measured_timeline_ring: dict[type[torch.dtype], TensorRingBuffer] = {}
-        # Per-class return-space rings, only allocated when `_post_process` is overridden AND any sensor of the class
-        # has `history_length > 0`. Each step the eager `_post_process` result is written to slot 0; history reads
-        # gather from here so the projection is computed once at write time (correct for stateful `_post_process`)
-        # and history reads avoid re-projecting older slots. For identity `_post_process` the intermediate ring is
-        # already in return space, so no extra ring is needed.
+        # Per-class return-space rings (post-everything: post-hardware-imperfections, post-`_post_process`,
+        # pre-delay-sample). Allocated together when any sensor in the class has `delay > 0`, OR `history_length > 0`,
+        # OR the class overrides `_post_process`. Each step the post-everything snapshot is written to slot 0; the
+        # source for delay sampling (into the per-class return cache) and for history reads. GT and measured rings share
+        # their rotation idx so a single `rotate()` per step advances both.
         self._ground_truth_return_timeline_ring: dict[type["Sensor"], TensorRingBuffer] = {}
         self._measured_return_timeline_ring: dict[type["Sensor"], TensorRingBuffer] = {}
         # Per-class precomputed history index tensor [0, 1, ..., max_history-1]. Used to fancy-index the rings on
@@ -69,8 +71,8 @@ class SensorManager:
         if sensor_cls is not None:
             return sensor_cls
 
-        # Not registered yet — check that the options class specifies its sensor type, then try to discover it.
-        # The sensor class name is extracted from the generic metadata on the options class bases.
+        # Not registered yet — check that the options class specifies its sensor type, then try to discover it. The
+        # sensor class name is extracted from the generic metadata on the options class bases.
         is_parameterized = False
         for base in options_cls.__bases__:
             meta = base.__pydantic_generic_metadata__
@@ -115,23 +117,24 @@ class SensorManager:
         )
 
     def build(self):
-        # Sort each class by entity_idx so sensors attached to the same entity occupy a contiguous slice of the
-        # class cache. Static sensors have entity_idx=-1 and group together. Python's sort is stable, so
-        # registration order is preserved within each entity bucket.
+        # Sort each class by entity_idx so sensors attached to the same entity occupy a contiguous slice of the class
+        # cache. Static sensors have entity_idx=-1 and group together. Python's sort is stable, so registration order is
+        # preserved within each entity bucket.
         for sensors in self._sensors_by_type.values():
             sensors.sort(key=lambda s: s._options.entity_idx)
             for new_idx, sensor in enumerate(sensors):
                 sensor._idx = new_idx
 
         # Per-class intermediate / return dtypes come from `_get_intermediate_dtype` / `_get_cache_dtype`. Dtype is
-        # class-uniform by design (the per-class slice into the per-dtype intermediate buffer must be contiguous, so
-        # all instances of a class share one dtype). Shape is per-instance via `_get_intermediate_format` /
+        # class-uniform by design (the per-class slice into the per-dtype intermediate buffer must be contiguous, so all
+        # instances of a class share one dtype). Shape is per-instance via `_get_intermediate_format` /
         # `_get_return_format` and contributes to the class slice size below.
         cache_size_per_dtype: dict[torch.dtype, int] = {}
-        delay_depth_per_dtype: dict[torch.dtype, int] = {}
         max_history_per_dtype: dict[torch.dtype, int] = {}
         intermediate_dtype_by_class: dict[type["Sensor"], torch.dtype] = {}
         return_dtype_by_class: dict[type["Sensor"], torch.dtype] = {}
+        # Per-class delay-depth (max sensor `_delay_ts + 1`) drives the return-space ring sizing for delay sampling.
+        delay_depth_by_class: dict[type["Sensor"], int] = {}
         for sensor_cls, sensors in self._sensors_by_type.items():
             intermediate_dtype = sensor_cls._get_intermediate_dtype()
             return_dtype = sensor_cls._get_cache_dtype()
@@ -143,12 +146,11 @@ class SensorManager:
             entity_offsets: dict[int, list[int]] = {}
             cls_offset = 0
             cls_max_history = 0
+            cls_delay_depth = 1
             for sensor in sensors:
                 sensor._cache_idx = cache_size_per_dtype[intermediate_dtype]
                 cache_size_per_dtype[intermediate_dtype] += sensor._cache_size
-                delay_depth_per_dtype[intermediate_dtype] = max(
-                    delay_depth_per_dtype.get(intermediate_dtype, 0), sensor._delay_ts + 1
-                )
+                cls_delay_depth = max(cls_delay_depth, sensor._delay_ts + 1)
                 hist = sensor._options.history_length
                 if hist > 0:
                     max_history_per_dtype[intermediate_dtype] = max(
@@ -168,6 +170,7 @@ class SensorManager:
                 eid: slice(start, stop) for eid, (start, stop) in entity_offsets.items()
             }
             self._max_history_by_class[sensor_cls] = cls_max_history
+            delay_depth_by_class[sensor_cls] = cls_delay_depth
 
         self._ground_truth_timeline_ring.clear()
         self._measured_timeline_ring.clear()
@@ -177,38 +180,55 @@ class SensorManager:
         self._measured_return_timeline_ring.clear()
         self._hist_idx_by_class.clear()
 
-        dtype_uses_measured: dict[torch.dtype, bool] = {}
-        for sensor_cls, sensors in self._sensors_by_type.items():
+        # Per-dtype flag: at least one class in this dtype uses the ring-based per-step pipeline. Drives allocation of
+        # the paired GT + measured timeline rings.
+        dtype_uses_rings: dict[torch.dtype, bool] = {}
+        for sensor_cls in self._sensors_by_type:
             dtype = intermediate_dtype_by_class[sensor_cls]
-            cur = dtype_uses_measured.get(dtype, False)
-            dtype_uses_measured[dtype] = cur or sensor_cls.uses_measured_pipeline
+            dtype_uses_rings[dtype] = dtype_uses_rings.get(dtype, False) or sensor_cls.uses_ring_pipeline
 
         for dtype, total_cols in cache_size_per_dtype.items():
             cache_shape = (self._sim._B, total_cols)
-            # Ground truth cache is stored transposed (cols, B) so that per-class row slices are C-contiguous,
-            # which is required for kernel writes. The cache and ring buffer stay (B, cols) since they only
-            # receive data via .copy_() / torch.lerp which handle non-contiguous targets.
+            # Ground truth cache is stored transposed (cols, B) so that per-class row slices are C-contiguous, which is
+            # required for kernel writes. The cache and ring buffer stay (B, cols) since they only receive data via
+            # .copy_() / torch.lerp which handle non-contiguous targets.
             gt_cache_shape = (total_cols, self._sim._B)
             self._ground_truth_intermediate_cache[dtype] = torch.zeros(gt_cache_shape, dtype=dtype, device=gs.device)
             self._intermediate_cache[dtype] = torch.zeros(cache_shape, dtype=dtype, device=gs.device)
-            delay_n = max(delay_depth_per_dtype.get(dtype, 1), 1)
-            hist_n = max_history_per_dtype.get(dtype, 0)
-            ring_n = max(delay_n, hist_n)
-            self._ground_truth_timeline_ring[dtype] = TensorRingBuffer(ring_n, cache_shape, dtype=dtype)
-            if dtype_uses_measured[dtype]:
-                self._measured_timeline_ring[dtype] = TensorRingBuffer(
-                    ring_n, cache_shape, dtype=dtype, idx=self._ground_truth_timeline_ring[dtype]._idx
+            if dtype_uses_rings[dtype]:
+                # Timeline rings serve `_apply_transform` recurrence. Two slots cover the canonical one-step recurrence;
+                # the ring is grown to `max_history` when any sensor in the dtype requests history, so a multi-tap
+                # stateful filter inside `_apply_transform` can read deeper without keeping its own state.
+                ring_n = max(2, max_history_per_dtype.get(dtype, 0))
+                self._measured_timeline_ring[dtype] = TensorRingBuffer(ring_n, cache_shape, dtype=dtype)
+                self._ground_truth_timeline_ring[dtype] = TensorRingBuffer(
+                    ring_n, cache_shape, dtype=dtype, idx=self._measured_timeline_ring[dtype]._idx
                 )
 
-        # Per-class return caches. View alias into intermediate when `_post_process` is identity; separate buffer
-        # when overridden.
+        # Per-class return-space caches + rings. The return-space ring is the single per-class buffer that records each
+        # step's post-`_post_process` snapshot; it is the source for delay sampling and history reads, and provides the
+        # `timeline` argument that stateful `_post_process` overrides see. Allocated whenever any sensor in the class
+        # has delay > 0, OR history > 0, OR the class overrides `_post_process`. Sized to fit the deepest demand. When
+        # no return-space ring is needed (no delay, no history, identity `_post_process`), the return cache is a
+        # zero-copy alias-view of the intermediate cache so per-step writes propagate without extra work.
         for sensor_cls, sensors in self._sensors_by_type.items():
             intermediate_dtype = intermediate_dtype_by_class[sensor_cls]
             return_dtype = return_dtype_by_class[sensor_cls]
             cls_slice = self._cache_slices_by_type[sensor_cls]
-            if sensor_cls._post_process.__func__ is not Sensor._post_process.__func__:
-                # Separate return buffer in return dtype.
-                cls_size = cls_slice.stop - cls_slice.start
+            cls_size = cls_slice.stop - cls_slice.start
+            cls_max_history = self._max_history_by_class[sensor_cls]
+            cls_delay_depth = delay_depth_by_class[sensor_cls]
+            pp_overridden = sensor_cls._post_process.__func__ is not Sensor._post_process.__func__
+            needs_ring = cls_delay_depth > 1 or cls_max_history > 0 or pp_overridden
+            if needs_ring:
+                ring_n = max(cls_delay_depth, cls_max_history, 2 if pp_overridden else 1)
+                ring_shape = (self._sim._B, cls_size)
+                self._ground_truth_return_timeline_ring[sensor_cls] = TensorRingBuffer(
+                    ring_n, ring_shape, dtype=return_dtype
+                )
+                self._measured_return_timeline_ring[sensor_cls] = TensorRingBuffer(
+                    ring_n, ring_shape, dtype=return_dtype, idx=self._ground_truth_return_timeline_ring[sensor_cls]._idx
+                )
                 self._return_cache[sensor_cls] = torch.zeros(
                     (self._sim._B, cls_size), dtype=return_dtype, device=gs.device
                 )
@@ -216,34 +236,12 @@ class SensorManager:
                     (self._sim._B, cls_size), dtype=return_dtype, device=gs.device
                 )
             else:
-                # Alias view of the intermediate cache's class slice. Same dtype/shape; no extra allocation.
                 self._return_cache[sensor_cls] = self._intermediate_cache[intermediate_dtype][:, cls_slice]
                 self._ground_truth_return_cache[sensor_cls] = self._ground_truth_intermediate_cache[intermediate_dtype][
                     cls_slice, :
                 ].T
-
-        # Per-class precomputed history index + (overridden `_post_process` only) per-class return-space rings. The
-        # return rings record each step's eager `_post_process` snapshot so history reads gather post-processed
-        # values directly, instead of re-projecting older slots from the intermediate ring (which would be wrong for
-        # stateful `_post_process`).
-        for sensor_cls, cls_max_history in self._max_history_by_class.items():
-            if cls_max_history == 0:
-                continue
-            intermediate_dtype = intermediate_dtype_by_class[sensor_cls]
-            self._hist_idx_by_class[sensor_cls] = torch.arange(cls_max_history, device=gs.device, dtype=torch.int32)
-            if sensor_cls._post_process.__func__ is not Sensor._post_process.__func__:
-                cache_slice = self._cache_slices_by_type[sensor_cls]
-                cls_size = cache_slice.stop - cache_slice.start
-                return_dtype = return_dtype_by_class[sensor_cls]
-                ring_n = max(delay_depth_per_dtype.get(intermediate_dtype, 1), cls_max_history)
-                ring_shape = (self._sim._B, cls_size)
-                shared_idx = self._ground_truth_timeline_ring[intermediate_dtype]._idx
-                self._ground_truth_return_timeline_ring[sensor_cls] = TensorRingBuffer(
-                    ring_n, ring_shape, dtype=return_dtype, idx=shared_idx
-                )
-                self._measured_return_timeline_ring[sensor_cls] = TensorRingBuffer(
-                    ring_n, ring_shape, dtype=return_dtype, idx=shared_idx
-                )
+            if cls_max_history > 0:
+                self._hist_idx_by_class[sensor_cls] = torch.arange(cls_max_history, device=gs.device, dtype=torch.int32)
 
         for sensor_cls, sensors in self._sensors_by_type.items():
             for sensor in sensors:
@@ -266,16 +264,17 @@ class SensorManager:
         for dtype in self._ground_truth_intermediate_cache.keys():
             self._ground_truth_intermediate_cache[dtype][:, envs_idx] = 0.0
             self._intermediate_cache[dtype][envs_idx] = 0.0
-            self._ground_truth_timeline_ring[dtype].buffer[:, envs_idx] = 0.0
+            if dtype in self._ground_truth_timeline_ring:
+                self._ground_truth_timeline_ring[dtype].buffer[:, envs_idx] = 0.0
             if dtype in self._measured_timeline_ring:
                 self._measured_timeline_ring[dtype].buffer[:, envs_idx] = 0.0
 
-        # Reset per-class return caches that are distinct buffers (overridden `_post_process`); alias views are
-        # already cleared via the intermediate-cache zero above. Same logic for the per-class return-space rings.
-        for sensor_cls, return_cache in self._return_cache.items():
-            if sensor_cls._post_process.__func__ is not Sensor._post_process.__func__:
-                return_cache[envs_idx] = 0
-                self._ground_truth_return_cache[sensor_cls][envs_idx] = 0
+        # Reset per-class return caches. When the return cache is an alias-view of the intermediate cache the clear is
+        # redundant (the intermediate clear above already wrote zeros to the same memory) but harmless. Per-class
+        # return-space rings are always distinct buffers.
+        for sensor_cls in self._return_cache:
+            self._return_cache[sensor_cls][envs_idx] = 0
+            self._ground_truth_return_cache[sensor_cls][envs_idx] = 0
         for ring in self._ground_truth_return_timeline_ring.values():
             ring.buffer[:, envs_idx] = 0
         for ring in self._measured_return_timeline_ring.values():
@@ -285,44 +284,64 @@ class SensorManager:
             dtype = sensor_cls._get_intermediate_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             sensor_cls.reset(
-                self._sensors_metadata[sensor_cls],
-                self._ground_truth_intermediate_cache[dtype][cache_slice],
-                envs_idx,
+                self._sensors_metadata[sensor_cls], self._ground_truth_intermediate_cache[dtype][cache_slice], envs_idx
             )
 
     def step(self):
-        for ring in self._ground_truth_timeline_ring.values():
+        # Timeline rings must rotate before `_update_shared_cache` because `_apply_transform` mutates `at(0)` of the
+        # timeline ring and needs a fresh write slot. Return-space rings, by contrast, are read during `_post_process`
+        # (past post-output values) and written afterward; their rotation is deferred to inside the per-class loop so
+        # `at(0)` during `_post_process` is the previous step's post-output (a meaningful "previous value") rather than
+        # stale data from the slot about to be overwritten.
+        for ring in self._measured_timeline_ring.values():
             ring.rotate()
 
         for sensor_cls, sensors in self._sensors_by_type.items():
             dtype = sensor_cls._get_intermediate_dtype()
             cache_slice = self._cache_slices_by_type[sensor_cls]
             ground_truth_slice = self._ground_truth_intermediate_cache[dtype][cache_slice]
-            if dtype in self._measured_timeline_ring:
-                measured_data_timeline = self._measured_timeline_ring[dtype][:, cache_slice]
-            else:
-                measured_data_timeline = None
-            sensor_cls._update_shared_cache(
-                self._sensors_metadata[sensor_cls],
-                ground_truth_slice,
-                measured_data_timeline,
-                self._intermediate_cache[dtype][:, cache_slice],
-                self._return_cache[sensor_cls],
+            intermediate = self._intermediate_cache[dtype][:, cache_slice]
+            ground_truth_data_timeline = (
+                self._ground_truth_timeline_ring[dtype][:, cache_slice]
+                if dtype in self._ground_truth_timeline_ring
+                else None
             )
-            # GT timeline ring write is required: history reads access older slots even at delay=0, so the slot for
-            # the current step must be populated independent of the delay sampling done inside `_update_shared_cache`.
-            self._ground_truth_timeline_ring[dtype][:, cache_slice].set(ground_truth_slice.T)
-            # Mirror eager `_post_process` for the GT path. The orchestrator handles the measured path; here we
-            # populate the GT return cache from the GT intermediate slice. No-op when buffers alias.
-            if sensor_cls._post_process.__func__ is not Sensor._post_process.__func__:
-                gt_return = self._ground_truth_return_cache[sensor_cls]
-                gt_return.copy_(sensor_cls._post_process(self._sensors_metadata[sensor_cls], ground_truth_slice.T))
-                # Record both eager projections in the per-class return-space rings so history reads pull
-                # post-processed snapshots directly (correct for stateful `_post_process`). Identity-projection
-                # classes don't allocate these rings; their history reads gather from the intermediate ring instead.
-                if sensor_cls in self._ground_truth_return_timeline_ring:
-                    self._ground_truth_return_timeline_ring[sensor_cls].set(gt_return)
-                    self._measured_return_timeline_ring[sensor_cls].set(self._return_cache[sensor_cls])
+            measured_data_timeline = (
+                self._measured_timeline_ring[dtype][:, cache_slice] if dtype in self._measured_timeline_ring else None
+            )
+            metadata = self._sensors_metadata[sensor_cls]
+            sensor_cls._update_shared_cache(
+                metadata, ground_truth_slice, ground_truth_data_timeline, measured_data_timeline, intermediate
+            )
+
+            gt_return_ring = self._ground_truth_return_timeline_ring.get(sensor_cls)
+            if gt_return_ring is None:
+                # No return-space ring: identity `_post_process`, no delay, no history. Return cache aliases
+                # intermediate (the per-step write inside `_update_shared_cache` is already visible to `read()`).
+                continue
+            measured_return_ring = self._measured_return_timeline_ring[sensor_cls]
+
+            # Project both branches into the return-space ring slot 0. `_post_process` returns the post-cast tensor. The
+            # ring has not yet been rotated this step, so during the override `timeline.at(0)` is the previous step's
+            # post-output (the most recent valid value) and `timeline.at(1)`, `at(2)`, etc. are older. `is_measured`
+            # lets the override apply readout-stage contributions on only one branch.
+            measured_projected = sensor_cls._post_process(
+                metadata, intermediate, measured_return_ring, is_measured=True
+            )
+            gt_projected = sensor_cls._post_process(metadata, ground_truth_slice.T, gt_return_ring, is_measured=False)
+
+            # Rotate now, after `_post_process` reads finished and before writing this step's projections into slot 0.
+            # Only one rotate per pair since GT and measured return rings share idx.
+            gt_return_ring.rotate()
+            measured_return_ring.set(measured_projected)
+            gt_return_ring.set(gt_projected)
+
+            # GT has no readout delay (delay is a measured-only effect), so the GT read is just the current ring slot.
+            self._ground_truth_return_cache[sensor_cls].copy_(gt_return_ring.at(0, copy=False))
+            # Measured: per-sensor delay + jitter sampling from the return-space ring into the per-class return cache.
+            # `_apply_delay` is an overrideable classmethod on `Sensor` whose default ZOH implementation is dtype-safe
+            # for any return space (bool, uint8, quantized float, ...).
+            sensor_cls._apply_delay(metadata, measured_return_ring, self._return_cache[sensor_cls])
 
     def draw_debug(self, context: "RasterizerContext"):
         for sensor in self.sensors:
@@ -351,28 +370,20 @@ class SensorManager:
         return return_cache[:, rel_start : rel_start + sensor._cache_size]
 
     def _gather_history(self, sensor_cls: type["Sensor"], history_length: int, is_ground_truth: bool) -> torch.Tensor:
-        # Gather the last `history_length` snapshots for the whole class into a fresh `(B, H, cls_size)` tensor.
-        # For overridden `_post_process` we read from the per-class return-space ring (snapshots are already
-        # post-processed at write time). For identity `_post_process` we read from the per-dtype intermediate ring,
-        # since intermediate == return there.
+        # Gather the last `history_length` snapshots for the whole class into a fresh `(B, H, cls_size)` tensor. Always
+        # reads from the per-class return-space ring: it records the post-everything snapshot at each step, so history
+        # reads return the final measured (or GT) values observed in the past. The intermediate ring is in
+        # pre-hardware-imperfection space and would yield wrong history.
         hist_idx = self._hist_idx_by_class[sensor_cls][:history_length]
-        if sensor_cls in self._ground_truth_return_timeline_ring:
-            ring = (
-                self._ground_truth_return_timeline_ring[sensor_cls]
-                if is_ground_truth
-                else self._measured_return_timeline_ring[sensor_cls]
-            )
-            return ring.at(hist_idx).transpose(0, 1)
-        dtype = sensor_cls._get_intermediate_dtype()
-        cache_slice = self._cache_slices_by_type[sensor_cls]
-        ring = self._ground_truth_timeline_ring[dtype] if is_ground_truth else self._measured_timeline_ring[dtype]
-        return ring.at(hist_idx, slice(None), cache_slice).transpose(0, 1)
+        ring = (
+            self._ground_truth_return_timeline_ring[sensor_cls]
+            if is_ground_truth
+            else self._measured_return_timeline_ring[sensor_cls]
+        )
+        return ring.at(hist_idx).transpose(0, 1)
 
     def read_sensors(
-        self,
-        entity_idx: int | None = None,
-        envs_idx=None,
-        is_ground_truth: bool = False,
+        self, entity_idx: int | None = None, envs_idx=None, is_ground_truth: bool = False
     ) -> dict[int, torch.Tensor]:
         """
         Read the latest data of every sensor class in scope as a single tensor per class.
@@ -398,8 +409,8 @@ class SensorManager:
             (B, [history,] class_or_entity_cache_size). For sensors without history, the history
             dimension is omitted.
         """
-        # Sanitize envs_idx to a 1D tensor so fancy-indexing the batch axis always allocates a fresh tensor; this
-        # is what gives the function its mutation-safe contract.
+        # Sanitize envs_idx to a 1D tensor so fancy-indexing the batch axis always allocates a fresh tensor; this is
+        # what gives the function its mutation-safe contract.
         env_index = self._sim._scene._sanitize_envs_idx(envs_idx)
 
         result: dict[int, torch.Tensor] = {}

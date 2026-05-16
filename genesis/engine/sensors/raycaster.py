@@ -8,12 +8,8 @@ import torch
 import genesis as gs
 from genesis.engine.bvh import AABB, LBVH
 from genesis.engine.solvers.rigid.rigid_solver import RigidSolver
-from genesis.options.sensors import (
-    Raycaster as RaycasterOptions,
-)
-from genesis.options.sensors import (
-    RaycastPattern,
-)
+from genesis.options.sensors import Raycaster as RaycasterOptions
+from genesis.options.sensors import RaycastPattern
 from genesis.utils.geom import transform_by_quat, transform_by_trans_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_numpy
 from genesis.utils.raycast_qd import (
@@ -24,13 +20,7 @@ from genesis.utils.raycast_qd import (
 )
 from genesis.vis.rasterizer_context import RasterizerContext
 
-from .base_sensor import (
-    KinematicSensorMetadataMixin,
-    KinematicSensorMixin,
-    Sensor,
-    SimpleSensorMetadata,
-    SimpleSensor,
-)
+from .base_sensor import KinematicSensorMetadataMixin, KinematicSensorMixin, Sensor, SimpleSensorMetadata, SimpleSensor
 
 if TYPE_CHECKING:
     from genesis.engine.solvers.kinematic_solver import KinematicSolver
@@ -44,8 +34,8 @@ class _SolverBVH(NamedTuple):
     """
     One BVH built against a solver's mesh.
 
-    ``raycast_mask`` is ``None`` for a collision BVH (``faces_info`` / ``verts_info``, no per-face mask),
-    otherwise an int8 array of shape ``(n_vfaces,)`` selecting which visual faces contribute.
+    ``raycast_mask`` is ``None`` for a collision BVH (``faces_info`` / ``verts_info``, no per-face mask), otherwise an
+    int8 array of shape ``(n_vfaces,)`` selecting which visual faces contribute.
     """
 
     solver: "KinematicSolver"
@@ -56,9 +46,9 @@ class _SolverBVH(NamedTuple):
 
 @dataclass
 class RaycasterSharedMetadata(KinematicSensorMetadataMixin, SimpleSensorMetadata):
-    # All BVHs (one per active solver per mesh type) cast against each frame. The first is written into the output
-    # cache with is_merge=False (initializes hits or no_hit_value), the rest merge in closer hits. Per-sensor link
-    # poses are gathered via KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
+    # All BVHs (one per active solver per mesh type) cast against each frame. The first is written into the output cache
+    # with is_merge=False (initializes hits or no_hit_value), the rest merge in closer hits. Per-sensor link poses are
+    # gathered via KinematicSensorMetadataMixin.solver_groups, independent of which BVH is being cast.
     solver_bvhs: list[_SolverBVH] = field(default_factory=list)
 
     # Per-step scratch tensors for sensor link poses, lazily allocated on the first cast (B and n_sensors known).
@@ -99,9 +89,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
     @staticmethod
     def _compute_visual_raycast_mask(solver: "KinematicSolver") -> np.ndarray:
         """Build a per-vface mask (int8, shape (n_vfaces,)) selecting vfaces opted into visual raycasting.
-
-        A vface is opted in iff its owning vgeom belongs to an entity whose material has
-        use_visual_raycasting=True.
+        A vface is opted in iff its owning vgeom belongs to an entity whose material has use_visual_raycasting=True.
         """
         n_vfaces = solver.vfaces_info.vgeom_idx.shape[0]
         if n_vfaces == 0:
@@ -132,11 +120,10 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 )
                 entry.bvh.build()
             else:
-                # Reads vverts_state.pos as the source of vvert positions. The buffer is seeded by FK at
-                # scene.build() and refreshed for each user-driven entity via set_vverts; entries set via
-                # set_vverts survive across calls until set_vverts(None) re-runs FK over the entity's vgeoms.
-                # raycast_mask gates which vfaces contribute to the BVH; masked-out vfaces keep an inverted
-                # AABB and are skipped by ray queries.
+                # Reads vverts_state.pos as the source of vvert positions. The buffer is seeded by FK at scene.build()
+                # and refreshed for each user-driven entity via set_vverts; entries set via set_vverts survive across
+                # calls until set_vverts(None) re-runs FK over the entity's vgeoms. raycast_mask gates which vfaces
+                # contribute to the BVH; masked-out vfaces keep an inverted AABB and are skipped by ray queries.
                 entry.solver.update_forward_pos()
                 entry.solver.update_vgeoms()
                 kernel_update_visual_aabbs(
@@ -152,10 +139,10 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
     def build(self):
         super().build()
 
-        # First raycast sensor: build the per-(solver, mesh-type) BVHs once. Rigid solvers get a collision BVH
-        # covering all collision faces; any solver with entities opting in via material.use_visual_raycasting gets
-        # a visual BVH masked to those entities' vfaces. Collision and visual entries coexist transparently because
-        # the cast kernels merge in place via is_merge.
+        # First raycast sensor: build the per-(solver, mesh-type) BVHs once. Rigid solvers get a collision BVH covering
+        # all collision faces; any solver with entities opting in via material.use_visual_raycasting gets a visual BVH
+        # masked to those entities' vfaces. Collision and visual entries coexist transparently because the cast kernels
+        # merge in place via is_merge.
         if not self._shared_metadata.solver_bvhs:
             self._shared_metadata.sensor_cache_offsets = concat_with_tensor(
                 self._shared_metadata.sensor_cache_offsets, 0
@@ -226,8 +213,8 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
             self._shared_metadata.no_hit_values, self._options.no_hit_value
         )
 
-        # Multi-BVH merge passes use raw distance comparison to pick the closer hit; this only works if
-        # no_hit_value >= max_range. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
+        # Multi-BVH merge passes use raw distance comparison to pick the closer hit; this only works if no_hit_value >=
+        # max_range. The negated form also rejects NaN (every IEEE 754 comparison with NaN is False).
         if len(self._shared_metadata.solver_bvhs) > 1 and not (self._options.no_hit_value >= self._options.max_range):
             gs.raise_exception(
                 f"no_hit_value ({self._options.no_hit_value}) must be >= max_range ({self._options.max_range}) "
@@ -251,9 +238,9 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
     def _update_raw_data(cls, shared_metadata: RaycasterSharedMetadata, raw_data_T: torch.Tensor):
         cls._update_bvh(shared_metadata)
 
-        # Allocate the link-pose scratch buffers on first cast (B and n_sensors are known here). Identity quat is
-        # baked into the initial allocation so static sensors (entity_idx<0) leave their rows at identity, letting
-        # the cast kernel apply pos_offset / euler_offset in world frame.
+        # Allocate the link-pose scratch buffers on first cast (B and n_sensors are known here). Identity quat is baked
+        # into the initial allocation so static sensors (entity_idx<0) leave their rows at identity, letting the cast
+        # kernel apply pos_offset / euler_offset in world frame.
         if shared_metadata.links_pos is None:
             B = shared_metadata.solver_bvhs[0].solver._B
             shared_metadata.links_pos = torch.zeros(
@@ -309,11 +296,7 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
                 )
             else:
                 kernel_cast_rays_visual(
-                    solver.vverts_info,
-                    solver.vverts_state,
-                    solver.vfaces_info,
-                    solver.vgeoms_state,
-                    *args_common,
+                    solver.vverts_info, solver.vverts_state, solver.vfaces_info, solver.vgeoms_state, *args_common
                 )
 
     def _draw_debug(self, context: "RasterizerContext"):
@@ -343,13 +326,9 @@ class RaycasterSensor(KinematicSensorMixin, SimpleSensor[RaycasterOptions, Rayca
 
         self.debug_objects += [
             context.draw_debug_spheres(
-                ray_starts,
-                radius=self._options.debug_sphere_radius,
-                color=self._options.debug_ray_start_color,
+                ray_starts, radius=self._options.debug_sphere_radius, color=self._options.debug_ray_start_color
             ),
             context.draw_debug_spheres(
-                points,
-                radius=self._options.debug_sphere_radius,
-                color=self._options.debug_ray_hit_color,
+                points, radius=self._options.debug_sphere_radius, color=self._options.debug_ray_hit_color
             ),
         ]

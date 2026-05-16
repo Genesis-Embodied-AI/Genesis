@@ -78,7 +78,9 @@ def test_lazy_sensor_discovery(show_viewer, tmp_path):
                 return gs.tc_float
 
             @classmethod
-            def _update_shared_cache(cls, metadata, gt_cache, measured_data_timeline, intermediate_cache, return_cache):
+            def _update_shared_cache(
+                cls, metadata, gt_cache, ground_truth_data_timeline, measured_data_timeline, intermediate_cache,
+            ):
                 pass
 
             @classmethod
@@ -147,6 +149,276 @@ def test_post_process_requires_intermediate_override():
             @classmethod
             def _post_process(cls, shared_metadata, tensor):
                 return tensor * 2
+
+
+@pytest.mark.required
+def test_pipeline_contract(tol):
+    # Two synthetic sensor families share a single scene/build:
+    #   * `FakePipelineSensor` is a vector sensor whose components each take a different
+    #     (physics_imp, measured_only_imp, transform_alpha, hardware_imp) path, so GT-cleanliness, physics
+    #     propagation through transform recurrence, the `is_measured` gate on `_apply_transform`, and HW non-
+    #     compounding are all verified in one batched pass.
+    #   * `FakeSimpleSensor` instances cover the three return-space ring allocation paths: no-ring (delay=0,
+    #     history=0), history-only ring, and delay+history ring. All four instances of `FakeSimpleSensor` share
+    #     the same per-class step counter, so they all see the same raw value at each step and the expected
+    #     outputs are simple shifts / windows of that sequence.
+    from dataclasses import dataclass
+
+    from genesis.engine.sensors.base_sensor import SimpleSensor, SimpleSensorMetadata
+    from genesis.options.sensors.options import SimpleSensorOptions
+
+    @dataclass
+    class FakeMetadata(SimpleSensorMetadata):
+        # Per-component knob vectors, shape `(1, vec_size)` so they broadcast over the batch dim of slot 0.
+        step_counter: int = 0
+        physics_imp: torch.Tensor = None
+        measured_only_imp: torch.Tensor = None
+        transform_alpha: torch.Tensor = None
+        hardware_imp: torch.Tensor = None
+
+    class FakeOptions(SimpleSensorOptions["FakePipelineSensor"]):
+        physics_imp: tuple[float, ...] = (0.0,)
+        measured_only_imp: tuple[float, ...] = (0.0,)
+        transform_alpha: tuple[float, ...] = (0.0,)
+        hardware_imp: tuple[float, ...] = (0.0,)
+
+    class FakePipelineSensor(SimpleSensor[FakeOptions, FakeMetadata]):
+        def _get_return_format(self):
+            return (len(self._options.physics_imp),)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return gs.tc_float
+
+        def build(self):
+            super().build()
+            self._shared_metadata.physics_imp = torch.tensor(
+                [self._options.physics_imp], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.measured_only_imp = torch.tensor(
+                [self._options.measured_only_imp], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.transform_alpha = torch.tensor(
+                [self._options.transform_alpha], device=gs.device, dtype=gs.tc_float
+            )
+            self._shared_metadata.hardware_imp = torch.tensor(
+                [self._options.hardware_imp], device=gs.device, dtype=gs.tc_float
+            )
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            # Same scalar raw value across all components and envs; per-component divergence is introduced by the
+            # downstream hook vectors. 1-indexed step.
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+        @classmethod
+        def _apply_physics_imperfections(cls, metadata, slot_0, timeline):
+            slot_0.add_(metadata.physics_imp)
+
+        @classmethod
+        def _apply_transform(cls, metadata, data, timeline, *, is_measured):
+            # Measured-only pre-acquisition contribution: exercises the `is_measured` gate.
+            if is_measured:
+                data.add_(metadata.measured_only_imp)
+            # Stateful linear recurrence per component, branch-symmetric. `timeline.at(1)` is the previous step's
+            # post-transform value on this branch (clean of hardware noise - the load-bearing invariant under test).
+            data.add_(timeline.at(1) * metadata.transform_alpha)
+
+        @classmethod
+        def _apply_hardware_imperfections(cls, metadata, working_buf):
+            working_buf.add_(metadata.hardware_imp)
+
+    # Each row is one (physics_imp, measured_only_imp, transform_alpha, hardware_imp) tuple. Components are
+    # independent.
+    paths = [
+        (0.0, 0.0, 0.0, 0.0),  # identity pipeline
+        (0.0, 0.0, 0.0, 100.0),  # hardware only: GT must stay clean, measured = raw + H
+        (0.0, 0.0, 1.0, 0.0),  # stateful transform on both branches
+        (0.0, 0.0, 1.0, 100.0),  # stateful transform + large H: HW must NOT compound through recurrence
+        (5.0, 0.0, 0.0, 0.0),  # physics imperfection measured-only, no transform
+        (0.0, 5.0, 0.0, 0.0),  # measured-only pre-acquisition (transform with is_measured)
+        (5.0, 0.0, 1.0, 0.0),  # physics imperfection compounds through transform recurrence
+        (5.0, 5.0, 1.0, 100.0),  # all four together
+    ]
+    P = np.array([row[0] for row in paths], dtype=np.float32)
+    M = np.array([row[1] for row in paths], dtype=np.float32)
+    A = np.array([row[2] for row in paths], dtype=np.float32)
+    H = np.array([row[3] for row in paths], dtype=np.float32)
+
+    # Companion simple sensor for the ring-allocation paths. No knobs, no overrides beyond raw write - the read
+    # just echoes the shared per-class step counter. Four instances cover (delay=0, history=0), history-only,
+    # delay-only, and (delay + history).
+    @dataclass
+    class FakeSimpleMetadata(SimpleSensorMetadata):
+        step_counter: int = 0
+
+    class FakeSimpleOptions(SimpleSensorOptions["FakeSimpleSensor"]):
+        pass
+
+    class FakeSimpleSensor(SimpleSensor[FakeSimpleOptions, FakeSimpleMetadata]):
+        def _get_return_format(self):
+            return (1,)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return gs.tc_float
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+    DT = 1e-2
+    DELAY_STEPS = 2
+    HISTORY_LEN = 3
+    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())  # minimum scene; the sensors do not depend on any physics.
+    sensor = scene.add_sensor(
+        FakeOptions(
+            physics_imp=tuple(P.tolist()),
+            measured_only_imp=tuple(M.tolist()),
+            transform_alpha=tuple(A.tolist()),
+            hardware_imp=tuple(H.tolist()),
+        )
+    )
+    s_baseline = scene.add_sensor(FakeSimpleOptions())
+    s_history = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN))
+    s_delay = scene.add_sensor(FakeSimpleOptions(delay=DELAY_STEPS * DT))
+    s_both = scene.add_sensor(FakeSimpleOptions(history_length=HISTORY_LEN, delay=DELAY_STEPS * DT))
+    scene.build()
+    scene.reset()  # zero the build-warmup counter increment so step 1 sees raw = 1.
+
+    n_steps = 8
+    gt_observed = np.zeros((n_steps, len(paths)), dtype=np.float32)
+    measured_observed = np.zeros((n_steps, len(paths)), dtype=np.float32)
+    baseline_observed = np.zeros(n_steps, dtype=np.float32)
+    history_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    delay_observed = np.zeros(n_steps, dtype=np.float32)
+    both_observed = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    for i in range(n_steps):
+        scene.step()
+        gt_observed[i] = tensor_to_array(sensor.read_ground_truth()).reshape(-1)
+        measured_observed[i] = tensor_to_array(sensor.read()).reshape(-1)
+        baseline_observed[i] = tensor_to_array(s_baseline.read()).item()
+        history_observed[i] = tensor_to_array(s_history.read()).reshape(-1)
+        delay_observed[i] = tensor_to_array(s_delay.read()).item()
+        both_observed[i] = tensor_to_array(s_both.read()).reshape(-1)
+
+    # Analytical expectation for the vector sensor, per component. Let raw[k] = k, and (P, M, A, H) be the per-
+    # component vectors.
+    # GT ring:    gt[k]  = k + A * gt[k-1]                       (raw -> transform with is_measured=False)
+    # Meas ring:  m[k]   = (k + P + M) + A * m[k-1]              (raw -> physics_imp -> transform is_measured=True)
+    # Measured:   meas[k] = m[k] + H                             (working buffer adds H; no compounding into m)
+    gt_expected = np.zeros_like(gt_observed)
+    measured_expected = np.zeros_like(measured_observed)
+    gt_prev = np.zeros(len(paths), dtype=np.float32)
+    m_prev = np.zeros(len(paths), dtype=np.float32)
+    for k in range(1, n_steps + 1):
+        gt_k = k + A * gt_prev
+        m_k = (k + P + M) + A * m_prev
+        gt_expected[k - 1] = gt_k
+        measured_expected[k - 1] = m_k + H
+        gt_prev, m_prev = gt_k, m_k
+
+    assert_allclose(gt_observed, gt_expected, tol=tol)
+    assert_allclose(measured_observed, measured_expected, tol=tol)
+
+    # Ring-allocation paths. raw[k] = k for every FakeSimpleSensor instance (shared step counter); delayed reads
+    # before slot D has been filled return zero (ring initialized to zero on reset). History reads source slots
+    # `at(0..H-1)` of the return-space ring directly - i.e. the last H post-`_post_process` snapshots - without
+    # additional delay shift. A sensor that configures both `delay > 0` and `history_length > 0` therefore sees
+    # undelayed history alongside a delayed non-history read; this matches the implementation and is what the
+    # combined test asserts.
+    raw = np.arange(1, n_steps + 1, dtype=np.float32)
+    expected_baseline = raw
+    expected_delay = np.where(raw - DELAY_STEPS >= 1, raw - DELAY_STEPS, 0.0)
+    expected_history = np.zeros((n_steps, HISTORY_LEN), dtype=np.float32)
+    for k in range(1, n_steps + 1):
+        for h in range(HISTORY_LEN):
+            past_step = k - h
+            expected_history[k - 1, h] = past_step if past_step >= 1 else 0.0
+
+    assert_allclose(baseline_observed, expected_baseline, tol=tol)
+    assert_allclose(delay_observed, expected_delay, tol=tol)
+    assert_allclose(history_observed, expected_history, tol=tol)
+    # The combined delay + history sensor returns the same history as the history-only sensor (delay is bypassed
+    # by the ring-gather history path); verify they match.
+    assert_allclose(both_observed, expected_history, tol=tol)
+
+
+@pytest.mark.required
+def test_pipeline_contract_uint8_delay(tol):
+    # ZOH delay sampling must work on non-float return dtypes. A sensor whose `_post_process` casts a float
+    # intermediate to a `uint8` return stores `uint8` snapshots in the per-class return-space ring; delay
+    # sampling reads those slots verbatim (the dtype-safe ZOH default). Verifies the slot is correctly typed
+    # and the delayed values match the cast of `raw[k - delay]`.
+    from dataclasses import dataclass
+
+    from genesis.engine.sensors.base_sensor import SimpleSensor, SimpleSensorMetadata
+    from genesis.options.sensors.options import SimpleSensorOptions
+
+    @dataclass
+    class FakeQuantizedMetadata(SimpleSensorMetadata):
+        step_counter: int = 0
+
+    class FakeQuantizedOptions(SimpleSensorOptions["FakeQuantizedSensor"]):
+        pass
+
+    class FakeQuantizedSensor(SimpleSensor[FakeQuantizedOptions, FakeQuantizedMetadata]):
+        def _get_return_format(self):
+            return (1,)
+
+        @classmethod
+        def _get_cache_dtype(cls):
+            return torch.uint8
+
+        @classmethod
+        def _get_intermediate_dtype(cls):
+            return gs.tc_float
+
+        @classmethod
+        def reset(cls, shared_metadata, ground_truth_cache, envs_idx):
+            super().reset(shared_metadata, ground_truth_cache, envs_idx)
+            shared_metadata.step_counter = 0
+
+        @classmethod
+        def _update_raw_data(cls, metadata, raw_data_T):
+            metadata.step_counter += 1
+            raw_data_T.fill_(float(metadata.step_counter))
+
+        @classmethod
+        def _post_process(cls, shared_metadata, tensor, timeline, *, is_measured):
+            return tensor.clamp(0, 255).to(torch.uint8)
+
+    DT = 1e-2
+    DELAY_STEPS = 2
+    scene = gs.Scene(sim_options=gs.options.SimOptions(dt=DT), show_viewer=False)
+    scene.add_entity(gs.morphs.Plane())
+    sensor = scene.add_sensor(FakeQuantizedOptions(delay=DELAY_STEPS * DT))
+    scene.build()
+    scene.reset()
+
+    n_steps = 8
+    observed = np.zeros(n_steps, dtype=np.uint8)
+    for i in range(n_steps):
+        scene.step()
+        observed[i] = tensor_to_array(sensor.read()).item()
+
+    raw = np.arange(1, n_steps + 1, dtype=np.float32)
+    expected = np.where(raw - DELAY_STEPS >= 1, raw - DELAY_STEPS, 0.0).astype(np.uint8)
+    assert observed.dtype == np.uint8
+    assert_equal(observed, expected)
 
 
 @pytest.mark.required
@@ -270,7 +542,6 @@ def test_imu_sensor(show_viewer, tol, n_envs):
             delay=DT,
             magnetic_field=MAG_FIELD,
             jitter=DT * 0.1,
-            interpolate=True,
         )
     )
 
@@ -558,7 +829,6 @@ def test_contact_sensors_gravity_force(n_envs, show_viewer, tol):
             random_walk=(NOISE * 0.01, NOISE * 0.02, NOISE * 0.03),
             delay=DT * DELAY_STEPS,
             jitter=0.01,
-            interpolate=True,
         )
     )
     # Adding extra sensor sharing same dtype to force discontinuous memory layout for ground truth when batched

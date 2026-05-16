@@ -65,11 +65,8 @@ class SensorOptions(Options, Generic[SensorT]):
     delay : float, optional
         The read delay time in seconds. Data read will be outdated by this amount. Defaults to 0.0 (no delay).
     jitter : float, optional
-        The jitter in seconds modeled as a random additive delay sampled from a normal distribution.
-        Jitter cannot be greater than delay. `interpolate` should be True when `jitter` is greater than 0.
-    interpolate : bool, optional
-        If True, the sensor data is interpolated between data points for delay + jitter.
-        Otherwise, the sensor data at the closest time step will be used. Default is False.
+        The jitter in seconds modeled as a random additive delay sampled uniformly in ``[0, jitter)`` each step.
+        Jitter cannot be greater than delay.
     draw_debug : bool
         If True and visualizer is active, the sensor will draw debug shapes in the scene. Defaults to False.
     """
@@ -77,7 +74,6 @@ class SensorOptions(Options, Generic[SensorT]):
     history_length: NonNegativeInt = 0
     delay: NonNegativeFloat = 0.0
     jitter: NonNegativeFloat = 0.0
-    interpolate: StrictBool = False
     draw_debug: StrictBool = False
     # -1 means not link-attached. None is accepted from users and normalized to -1 so SensorManager can sort uniformly.
     entity_idx: StrictInt = Field(default=-1, ge=-1)
@@ -88,8 +84,6 @@ class SensorOptions(Options, Generic[SensorT]):
         return -1 if value is None else value
 
     def model_post_init(self, context: Any) -> None:
-        if self.jitter > 0 and not self.interpolate:
-            gs.raise_exception(f"{type(self).__name__}: `interpolate` should be True when `jitter` is greater than 0.")
         if self.jitter > self.delay:
             gs.raise_exception(f"{type(self).__name__}: Jitter must be less than or equal to read delay.")
 

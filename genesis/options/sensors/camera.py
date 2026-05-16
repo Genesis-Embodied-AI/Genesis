@@ -20,11 +20,7 @@ from genesis.typing import (
 from .options import KinematicSensorOptionsMixin, SensorT
 
 if TYPE_CHECKING:
-    from genesis.engine.sensors.camera import (
-        BatchRendererCameraSensor,
-        RasterizerCameraSensor,
-        RaytracerCameraSensor,
-    )
+    from genesis.engine.sensors.camera import BatchRendererCameraSensor, RasterizerCameraSensor, RaytracerCameraSensor
 
 
 class BaseCameraOptions(KinematicSensorOptionsMixin[SensorT]):

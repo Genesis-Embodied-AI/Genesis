@@ -16,13 +16,7 @@ from genesis.options.sensors import KinematicContactProbe as KinematicContactPro
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.raycast_qd import get_triangle_vertices, ray_triangle_intersection
 
-from .base_sensor import (
-    SimpleSensor,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SimpleSensorMetadata,
-)
+from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.ext.pyrender.mesh import Mesh
@@ -81,12 +75,7 @@ def _func_probe_geom_penetration(
 
 
 @qd.func
-def _func_closest_point_on_triangle(
-    point: gs.qd_vec3,
-    v0: gs.qd_vec3,
-    v1: gs.qd_vec3,
-    v2: gs.qd_vec3,
-) -> gs.qd_vec3:
+def _func_closest_point_on_triangle(point: gs.qd_vec3, v0: gs.qd_vec3, v1: gs.qd_vec3, v2: gs.qd_vec3) -> gs.qd_vec3:
     """
     Find the point on the surface of a triangle closest to a given point.
 
@@ -245,14 +234,7 @@ def _func_shear_twist_displacement(
         shear_decay = qd.exp(-shear_coeff * mg_dist_sq)
         delta_s_mag = qd.sqrt(delta_s_local[0] * delta_s_local[0] + delta_s_local[1] * delta_s_local[1] + eps * eps)
         shear_scale = qd.min(delta_s_mag, shear_max_delta) * shear_decay / (delta_s_mag + eps)
-        shear_local = qd.Vector(
-            [
-                shear_scale * delta_s_local[0],
-                shear_scale * delta_s_local[1],
-                0.0,
-            ],
-            dt=gs.qd_float,
-        )
+        shear_local = qd.Vector([shear_scale * delta_s_local[0], shear_scale * delta_s_local[1], 0.0], dt=gs.qd_float)
         displacement_world += gu.qd_transform_by_quat(shear_local, link_quat)
 
     # twist_displacement = min(twist_max_delta, twist_angle) * (M - G) * exp(-λt ||M - G||²)
@@ -643,8 +625,8 @@ def _elastomer_displacement_grid_fft_dilate(
     output: torch.Tensor,
 ) -> None:
     """
-    Grid dilate via 2D FFT. Uses in-plane distance only in the kernel; scale by exp(-λ*H²)
-    so magnitude matches non-grid formulation which uses full 3D distance (r²_2D + Δz²).
+    Grid dilate via 2D FFT. Uses in-plane distance only in the kernel; scale by exp(-λ*H²) so magnitude matches non-grid
+    formulation which uses full 3D distance (r²_2D + Δz²).
     """
     n_batches = contact_buf.shape[0]
     n_sensors = grid_n.shape[0]
@@ -665,8 +647,8 @@ def _elastomer_displacement_grid_fft_dilate(
         Ky = fft_kernel_list[i_s][1]
         fft_nx, fft_ny = Kx.shape[0], Kx.shape[1]
 
-        # H = contact depth grid (ix, iy); zero-pad to fft size for linear convolution.
-        # Probes from generate_grid_points_on_plane flat as iy*nx+ix; view (g_ny, g_nx) then transpose -> (g_nx, g_ny).
+        # H = contact depth grid (ix, iy); zero-pad to fft size for linear convolution. Probes from
+        # generate_grid_points_on_plane flat as iy*nx+ix; view (g_ny, g_nx) then transpose -> (g_nx, g_ny).
         contact_slice = contact_buf[:, probe_start : probe_start + g_nx * g_ny, 3]
         H_buf = fft_depth_buffer[:, i_s, :fft_nx, :fft_ny]
         H_buf.zero_()
@@ -814,9 +796,7 @@ class KinematicTactileSensorMixin(Generic[KinematicTactileSensorMetadataMixinT])
             expand=(1,),
         )
         self._shared_metadata.sensor_probe_start = concat_with_tensor(
-            self._shared_metadata.sensor_probe_start,
-            self._shared_metadata.total_n_probes,
-            expand=(1,),
+            self._shared_metadata.sensor_probe_start, self._shared_metadata.total_n_probes, expand=(1,)
         )
         self._shared_metadata.probe_sensor_idx = concat_with_tensor(
             self._shared_metadata.probe_sensor_idx,
@@ -1062,9 +1042,7 @@ class ElastomerDisplacementSensor(
             prev = self._shared_metadata.fft_depth_buffer.shape
             max_fft_n = (max(fft_n[0], prev[2]), max(fft_n[1], prev[3]))
             self._shared_metadata.fft_depth_buffer = torch.zeros(
-                (self._manager._sim._B, n_sensors, max_fft_n[0], max_fft_n[1]),
-                dtype=gs.tc_float,
-                device=gs.device,
+                (self._manager._sim._B, n_sensors, max_fft_n[0], max_fft_n[1]), dtype=gs.tc_float, device=gs.device
             )
             grid_size = nx * ny * 3
             out_buf = self._shared_metadata.grid_dilate_out_buffer
@@ -1084,8 +1062,8 @@ class ElastomerDisplacementSensor(
     def _update_raw_data(cls, shared_metadata: ElastomerDisplacementSensorMetadata, raw_data_T: torch.Tensor):
         solver = shared_metadata.solver
 
-        # Zero buffers allocated with torch.empty to avoid stale data if the kernel
-        # fails to write some entries (e.g. after a backend switch within the same process).
+        # Zero buffers allocated with torch.empty to avoid stale data if the kernel fails to write some entries (e.g.
+        # after a backend switch within the same process).
         shared_metadata.contact_buf.zero_()
         shared_metadata.contact_link_buf.fill_(-1)
 

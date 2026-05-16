@@ -6,23 +6,13 @@ import quadrants as qd
 import torch
 
 import genesis as gs
-from genesis.options.sensors import (
-    Contact as ContactSensorOptions,
-)
-from genesis.options.sensors import (
-    ContactForce as ContactForceSensorOptions,
-)
+from genesis.options.sensors import Contact as ContactSensorOptions
+from genesis.options.sensors import ContactForce as ContactForceSensorOptions
 from genesis.utils.geom import inv_transform_by_quat, qd_inv_transform_by_quat, transform_by_quat
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, qd_to_torch, tensor_to_array
 from genesis.utils.ring_buffer import TensorRingBuffer
 
-from .base_sensor import (
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    Sensor,
-    SimpleSensor,
-    SimpleSensorMetadata,
-)
+from .base_sensor import RigidSensorMetadataMixin, RigidSensorMixin, Sensor, SimpleSensor, SimpleSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
@@ -79,8 +69,8 @@ class ContactSensorMetadata(SimpleSensorMetadata):
     expanded_links_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     # (num_contact_sensors, max_num_filter_links); unused slots are -1.
     filter_links_idx: torch.Tensor = make_tensor_field((0, 0), dtype_factory=lambda: gs.tc_int)
-    # Indices into expanded_links_idx of sensors that have at least one filter link. Lets the GT update skip the
-    # 4D contact-vs-filter comparison for the (typically larger) subset of sensors with no filter.
+    # Indices into expanded_links_idx of sensors that have at least one filter link. Lets the GT update skip the 4D
+    # contact-vs-filter comparison for the (typically larger) subset of sensors with no filter.
     filtered_sensor_idx: torch.Tensor = make_tensor_field((0,), dtype_factory=lambda: gs.tc_int)
     # Per-sensor bool threshold (broadcast over B); _post_process returns `tensor > thresholds`.
     thresholds: torch.Tensor = make_tensor_field((0,))
@@ -156,8 +146,8 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, ContactSensorMetadata]):
         is_contact_b = link_b[..., None, :] == shared_metadata.expanded_links_idx[..., None]
         # Float-valued contact count per sensor (intermediate cache is float; bool projection in `_post_process`).
         result = (is_contact_a | is_contact_b).sum(dim=-1).to(dtype=gs.tc_float)
-        # Apply the (more expensive) filter-aware update only on sensors that declared a filter; other sensors keep
-        # the cheap aggregate result above.
+        # Apply the (more expensive) filter-aware update only on sensors that declared a filter; other sensors keep the
+        # cheap aggregate result above.
         if shared_metadata.filtered_sensor_idx.numel() > 0:
             filt = shared_metadata.filtered_sensor_idx
             sub_filter = shared_metadata.filter_links_idx[filt][None, :, None, :]
@@ -169,7 +159,9 @@ class ContactSensor(SimpleSensor[ContactSensorOptions, ContactSensorMetadata]):
         raw_data_T[:] = result.T
 
     @classmethod
-    def _post_process(cls, shared_metadata: ContactSensorMetadata, tensor: torch.Tensor) -> torch.Tensor:
+    def _post_process(
+        cls, shared_metadata: ContactSensorMetadata, tensor: torch.Tensor, timeline, *, is_measured: bool
+    ) -> torch.Tensor:
         return tensor > shared_metadata.thresholds
 
     def _draw_debug(self, context: "RasterizerContext"):
@@ -207,8 +199,7 @@ class ContactForceSensorMetadata(RigidSensorMetadataMixin, SimpleSensorMetadata)
 
 
 class ContactForceSensor(
-    RigidSensorMixin[ContactForceSensorMetadata],
-    SimpleSensor[ContactForceSensorOptions, ContactForceSensorMetadata],
+    RigidSensorMixin[ContactForceSensorMetadata], SimpleSensor[ContactForceSensorOptions, ContactForceSensorMetadata]
 ):
     """
     Sensor that returns the total contact force being applied to the associated RigidLink in its local frame.
@@ -241,8 +232,8 @@ class ContactForceSensor(
 
     @classmethod
     def _get_intermediate_dtype(cls) -> torch.dtype:
-        # Required override because `_post_process` is overridden, even though shape and dtype coincide with return.
-        # The intermediate buffer must be a distinct buffer (the timeline ring is in intermediate space).
+        # Required override because `_post_process` is overridden, even though shape and dtype coincide with return. The
+        # intermediate buffer must be a distinct buffer (the timeline ring is in intermediate space).
         return cls._get_cache_dtype()
 
     @classmethod
@@ -286,7 +277,9 @@ class ContactForceSensor(
             )
 
     @classmethod
-    def _post_process(cls, shared_metadata: ContactForceSensorMetadata, tensor: torch.Tensor) -> torch.Tensor:
+    def _post_process(
+        cls, shared_metadata: ContactForceSensorMetadata, tensor: torch.Tensor, timeline, *, is_measured: bool
+    ) -> torch.Tensor:
         # Saturate at max_force and zero out values below the min_force dead band. Applied after quantization (which
         # happens upstream in `_apply_hardware_imperfections`); for max_force values that are not multiples of
         # resolution this produces a non-quantized saturation value, accepted as minor drift in that edge case.

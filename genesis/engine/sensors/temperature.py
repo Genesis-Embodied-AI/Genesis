@@ -15,12 +15,7 @@ from genesis.options.sensors import TemperatureProperties
 from genesis.utils.misc import concat_with_tensor, make_tensor_field, tensor_to_array
 from genesis.utils.ring_buffer import TensorRingBuffer
 
-from .base_sensor import (
-    SimpleSensor,
-    RigidSensorMetadataMixin,
-    RigidSensorMixin,
-    SimpleSensorMetadata,
-)
+from .base_sensor import SimpleSensor, RigidSensorMetadataMixin, RigidSensorMixin, SimpleSensorMetadata
 
 if TYPE_CHECKING:
     from genesis.engine.entities.rigid_entity.rigid_link import RigidLink
@@ -83,10 +78,7 @@ def _compute_K2_rfft3(
 def _compute_surface_mask(nx: int, ny: int, nz: int, device: torch.device) -> torch.Tensor:
     """Boolean mask of boundary voxels (at least one face on grid boundary). Shape (nx, ny, nz)."""
     ix, iy, iz = torch.meshgrid(
-        torch.arange(nx, device=device),
-        torch.arange(ny, device=device),
-        torch.arange(nz, device=device),
-        indexing="ij",
+        torch.arange(nx, device=device), torch.arange(ny, device=device), torch.arange(nz, device=device), indexing="ij"
     )
     return (ix == 0) | (ix == nx - 1) | (iy == 0) | (iy == ny - 1) | (iz == 0) | (iz == nz - 1)
 
@@ -139,12 +131,7 @@ def _apply_diffusion_and_heat_generation(
 
 
 @qd.func
-def _qd_polygon_area_from_points_3d(
-    n: int,
-    scratch: qd.types.ndarray(),
-    i_b: int,
-    eps: float,
-) -> float:
+def _qd_polygon_area_from_points_3d(n: int, scratch: qd.types.ndarray(), i_b: int, eps: float) -> float:
     """Area of polygon from scratch buffer."""
     area = gs.qd_float(0.0)
     if n >= 3:
@@ -336,11 +323,7 @@ def _kernel_contact_heat(
 
         k_sensor = link_conductivity[mat_idx_sensor]
         amin = qd.math.vec3(aabb_min[i_s, 0], aabb_min[i_s, 1], aabb_min[i_s, 2])
-        vs = qd.math.vec3(
-            voxel_size[i_s, 0] + eps,
-            voxel_size[i_s, 1] + eps,
-            voxel_size[i_s, 2] + eps,
-        )
+        vs = qd.math.vec3(voxel_size[i_s, 0] + eps, voxel_size[i_s, 1] + eps, voxel_size[i_s, 2] + eps)
         n_c = collider_state.n_contacts[i_b]
         for i_c in range(n_c):
             la = collider_state.contact_data.link_a[i_c, i_b]
@@ -439,9 +422,8 @@ def _apply_radiation_convection(
     output: torch.Tensor,
 ) -> None:
     """Radiation + convection on surface voxels and (when allocated) on link temperatures.
-
-    For link_temps, links with link_to_material_idx == -1 are treated as material index 0
-    (default properties) for emissivity/rho_cp; only links with valid material are updated.
+    For link_temps, links with link_to_material_idx == -1 are treated as material index 0 (default properties) for
+    emissivity/rho_cp; only links with valid material are updated.
     """
     for i_s in range(sensor_cache_start.shape[0]):
         start = sensor_cache_start[i_s].item()
@@ -780,24 +762,28 @@ class TemperatureGridSensor(
         cls,
         shared_metadata: TemperatureGridSensorMetadata,
         data: torch.Tensor,
+        timeline: "TensorRingBuffer",
         *,
-        timeline=None,
+        is_measured: bool,
     ):
-        if timeline is None:
+        # First-order RC filter modelling the sensor element's thermal response time. The thermal mass is a property of
+        # the sensor element only, so the filter is measured-only - ground truth exposes the raw simulated temperature
+        # unchanged so that `read_ground_truth()` returns the underlying physical phenomenon. `data IS timeline.at(0)`
+        # (the measured ring slot 0), pre-populated with the current raw temperature by `_update_current_timestep_data`;
+        # the previous filtered value lives in `timeline.at(1)`.
+        if not is_measured:
             return
-        # First-order RC filter: data <- prev_measured + (dt/tau) * (raw - prev_measured), where data initially
-        # holds the raw seed copied by the default `_update_current_timestep_data`.
         raw = data.clone()
-        filtered = timeline.at(1).clone()
+        previous = timeline.at(1).clone()
         _apply_T_measured_filter(
             shared_metadata.sensor_cache_start,
             shared_metadata.cache_sizes,
             shared_metadata.sensor_time_const,
             shared_metadata.solver._sim.dt,
             raw,
-            filtered,
+            previous,
         )
-        data.copy_(filtered)
+        data.copy_(previous)
 
     def _draw_debug(self, context: "RasterizerContext"):
         """
