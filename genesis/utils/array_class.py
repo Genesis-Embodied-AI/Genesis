@@ -2038,6 +2038,42 @@ def get_rigid_adjoint_cache(solver):
     )
 
 
+# =========================================== GlobalState ===========================================
+#
+# Container for the per-call set of rigid-solver dataclass state. Holding them in a single nested-dataclass argument
+# lets ``@qd.func`` and ``@qd.kernel`` signatures stay short and add new state without touching every callee. The
+# ``mpr_state``/``gjk_state`` fields are call-site specific (e.g. ``_call_multicontact`` uses different state objects
+# than ``detection``), so a ``GlobalState`` is constructed per call site rather than cached on the solver.
+
+
+@dataclasses.dataclass(eq=True, kw_only=False, frozen=True)
+class GlobalState:
+    rigid_global_info: RigidGlobalInfo
+    constraint_state: ConstraintState
+    collider_state: ColliderState
+    collider_info: ColliderInfo
+    mpr_state: MPRState
+    mpr_info: MPRInfo
+    gjk_state: GJKState
+    gjk_info: GJKInfo
+    sdf_info: SDFInfo
+    support_field_info: SupportFieldInfo
+    dofs_state: DofsState
+    dofs_info: DofsInfo
+    links_state: LinksState
+    links_info: LinksInfo
+    joints_state: JointsState
+    joints_info: JointsInfo
+    geoms_state: GeomsState
+    geoms_info: GeomsInfo
+    verts_info: VertsInfo
+    faces_info: FacesInfo
+    edges_info: EdgesInfo
+    equalities_info: EqualitiesInfo
+    entities_state: EntitiesState
+    entities_info: EntitiesInfo
+
+
 # =================================== RigidSimStaticConfig ===================================
 
 
