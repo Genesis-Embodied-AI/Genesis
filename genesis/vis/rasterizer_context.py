@@ -454,8 +454,8 @@ class RasterizerContext:
                     # For z-axis normal planes, render a single instance shared across all envs to avoid z-fighting,
                     # unless they do not overlap. Env-masked variants always take the per-env path.
                     env_shared = active_envs is None and not self.env_separate_rigid
-                    if not env_shared and active_envs is None and isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                    if not env_shared and active_envs is None and isinstance(entity.main_morph, gs.morphs.Plane):
+                        plane_normal, plane_size = entity.main_morph.normal, entity.main_morph.plane_size
                         if (
                             abs(plane_normal[0]) < gs.EPS
                             and abs(plane_normal[1]) < gs.EPS
@@ -578,8 +578,8 @@ class RasterizerContext:
                         geom_T = geoms_T[geom.idx][geom_envs_idx]
 
                     # Keep single-instance for z-axis normal planes (see on_rigid)
-                    if isinstance(entity.morph, gs.morphs.Plane):
-                        plane_normal, plane_size = entity.morph.normal, entity.morph.plane_size
+                    if isinstance(entity.main_morph, gs.morphs.Plane):
+                        plane_normal, plane_size = entity.main_morph.normal, entity.main_morph.plane_size
                         if (
                             abs(plane_normal[0]) < gs.EPS
                             and abs(plane_normal[1]) < gs.EPS

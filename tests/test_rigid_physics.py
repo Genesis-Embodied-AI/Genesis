@@ -6999,6 +6999,40 @@ def test_heterogeneous_invalid_material_raises():
 
 @pytest.mark.slow  # ~200s
 @pytest.mark.required
+def test_heterogeneous_morph_property_raises():
+    scene = gs.Scene(show_viewer=False)
+
+    single_morph = gs.morphs.Box(size=(0.1, 0.1, 0.1))
+    single_obj = scene.add_entity(morph=single_morph)
+
+    rigid_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.1, 0.1, 0.1)),
+        gs.morphs.Cylinder(radius=0.05, height=0.2),
+    )
+    rigid_obj = scene.add_entity(morph=rigid_morphs_heterogeneous)
+    kinematic_morphs_heterogeneous = (
+        gs.morphs.Box(size=(0.2, 0.2, 0.2)),
+        gs.morphs.Sphere(radius=0.1),
+    )
+    kinematic_obj = scene.add_entity(
+        morph=kinematic_morphs_heterogeneous,
+        material=gs.materials.Kinematic(),
+    )
+
+    assert single_obj.morph is single_morph
+    assert rigid_obj.main_morph is rigid_morphs_heterogeneous[0]
+    assert list(rigid_obj.morphs) == list(rigid_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs") as exc_info:
+        _ = rigid_obj.morph
+    assert ".main_morph" in str(exc_info.value)
+
+    assert kinematic_obj.main_morph is kinematic_morphs_heterogeneous[0]
+    assert list(kinematic_obj.morphs) == list(kinematic_morphs_heterogeneous)
+    with pytest.raises(gs.GenesisException, match=r"Heterogeneous.*\.morphs"):
+        _ = kinematic_obj.morph
+
+
+@pytest.mark.required
 def test_heterogeneous_fewer_envs_than_variants():
     """Test that having fewer environments than variants works correctly.
 

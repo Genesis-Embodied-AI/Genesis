@@ -1952,6 +1952,20 @@ class KinematicEntity(Entity):
         return len(self._links)
 
     @property
+    def morph(self):
+        """The morph of the entity.
+
+        Raises an exception for heterogeneous entities, which have multiple morph variants: use morphs for all
+        variants, or main_morph for the first one.
+        """
+        if self._enable_heterogeneous:
+            gs.raise_exception(
+                "Heterogeneous entities have multiple morph variants. Use `.morphs` for all variants, "
+                "or `.main_morph` only when explicitly using the first variant."
+            )
+        return self._morph
+
+    @property
     def main_morph(self):
         """The main morph of the entity (first morph for heterogeneous entities)."""
         return self._morph
