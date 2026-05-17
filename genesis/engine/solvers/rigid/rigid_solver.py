@@ -220,6 +220,7 @@ def _sanitize_sol_params(
     return sol_params
 
 
+@qd.data_oriented(stable_members=True)
 class RigidSolver(KinematicSolver):
     # override typing
     _entities: list[RigidEntity] = gs.List()
@@ -960,6 +961,150 @@ class RigidSolver(KinematicSolver):
             self.constraint_solver = ConstraintSolverIsland(self)
         else:
             self.constraint_solver = ConstraintSolver(self)
+        self._contact_island_state = self.constraint_solver.contact_island.contact_island_state
+        self._collider_state = self.collider._collider_state
+
+    @qd.kernel(fastcache=True)
+    def step_1(
+        self,
+        is_forward_pos_updated: qd.template(),
+        is_forward_vel_updated: qd.template(),
+        is_backward: qd.template(),
+    ):
+        if qd.static(not is_forward_pos_updated):
+            func_update_cartesian_space(
+                links_state=self.links_state,
+                links_info=self.links_info,
+                joints_state=self.joints_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                geoms_state=self.geoms_state,
+                geoms_info=self.geoms_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                force_update_fixed_geoms=False,
+                is_backward=is_backward,
+            )
+
+        if qd.static(not is_forward_vel_updated):
+            func_forward_velocity(
+                entities_info=self.entities_info,
+                links_info=self.links_info,
+                links_state=self.links_state,
+                joints_info=self.joints_info,
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=is_backward,
+            )
+
+        func_forward_dynamics(
+            links_state=self.links_state,
+            links_info=self.links_info,
+            dofs_state=self.dofs_state,
+            dofs_info=self.dofs_info,
+            joints_info=self.joints_info,
+            entities_state=self.entities_state,
+            entities_info=self.entities_info,
+            geoms_state=self.geoms_state,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            contact_island_state=self._contact_island_state,
+            is_backward=is_backward,
+        )
+
+    @qd.kernel(fastcache=True)
+    def step_2(
+        self,
+        is_backward: qd.template(),
+    ):
+        func_update_acc(
+            update_cacc=True,
+            dofs_state=self.dofs_state,
+            links_info=self.links_info,
+            links_state=self.links_state,
+            entities_info=self.entities_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+        if qd.static(self._static_rigid_sim_config.integrator != gs.integrator.approximate_implicitfast):
+            func_implicit_damping(
+                dofs_state=self.dofs_state,
+                dofs_info=self.dofs_info,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                is_backward=is_backward,
+            )
+
+        func_integrate(
+            dofs_state=self.dofs_state,
+            links_info=self.links_info,
+            joints_info=self.joints_info,
+            rigid_global_info=self._rigid_global_info,
+            static_rigid_sim_config=self._static_rigid_sim_config,
+            is_backward=is_backward,
+        )
+
+        if qd.static(self._static_rigid_sim_config.use_hibernation):
+            func_hibernate__for_all_awake_islands_either_hiberanate_or_update_aabb_sort_buffer(
+                dofs_state=self.dofs_state,
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                links_state=self.links_state,
+                geoms_state=self.geoms_state,
+                collider_state=self._collider_state,
+                unused__rigid_global_info=self._rigid_global_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                contact_island_state=self._contact_island_state,
+                errno=self._errno,
+            )
+            func_aggregate_awake_entities(
+                entities_state=self.entities_state,
+                entities_info=self.entities_info,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+            )
+
+        if qd.static(not is_backward):
+            func_copy_next_to_curr(
+                dofs_state=self.dofs_state,
+                rigid_global_info=self._rigid_global_info,
+                static_rigid_sim_config=self._static_rigid_sim_config,
+                errno=self._errno,
+            )
+
+            if qd.static(not self._static_rigid_sim_config.enable_mujoco_compatibility):
+                func_update_cartesian_space(
+                    links_state=self.links_state,
+                    links_info=self.links_info,
+                    joints_state=self.joints_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    dofs_info=self.dofs_info,
+                    geoms_state=self.geoms_state,
+                    geoms_info=self.geoms_info,
+                    entities_info=self.entities_info,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    force_update_fixed_geoms=False,
+                    is_backward=is_backward,
+                )
+                func_forward_velocity(
+                    entities_info=self.entities_info,
+                    links_info=self.links_info,
+                    links_state=self.links_state,
+                    joints_info=self.joints_info,
+                    dofs_state=self.dofs_state,
+                    rigid_global_info=self._rigid_global_info,
+                    static_rigid_sim_config=self._static_rigid_sim_config,
+                    is_backward=is_backward,
+                )
 
     def substep(self, f):
         # from genesis.utils.tools import create_timer
@@ -974,20 +1119,7 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
             )
 
-        kernel_step_1(
-            self.links_state,
-            self.links_info,
-            self.joints_state,
-            self.joints_info,
-            self.dofs_state,
-            self.dofs_info,
-            self.geoms_state,
-            self.geoms_info,
-            self.entities_state,
-            self.entities_info,
-            self._rigid_global_info,
-            self._static_rigid_sim_config,
-            self.constraint_solver.contact_island.contact_island_state,
+        self.step_1(
             self._is_forward_pos_updated,
             self._is_forward_vel_updated,
             self._is_backward,
@@ -1002,23 +1134,8 @@ class RigidSolver(KinematicSolver):
             )
         else:
             self._func_constraint_force()
-            kernel_step_2(
-                self.dofs_state,
-                self.dofs_info,
-                self.links_info,
-                self.links_state,
-                self.joints_info,
-                self.joints_state,
-                self.entities_state,
-                self.entities_info,
-                self.geoms_info,
-                self.geoms_state,
-                self.collider._collider_state,
-                self._rigid_global_info,
-                self._static_rigid_sim_config,
-                self.constraint_solver.contact_island.contact_island_state,
+            self.step_2(
                 self._is_backward,
-                self._errno,
             )
             self._is_forward_pos_updated = not self._enable_mujoco_compatibility
             self._is_forward_vel_updated = not self._enable_mujoco_compatibility
@@ -1454,23 +1571,8 @@ class RigidSolver(KinematicSolver):
                 static_rigid_sim_config=self._static_rigid_sim_config,
                 is_backward=self._is_backward,
             )
-            kernel_step_2(
-                dofs_state=self.dofs_state,
-                dofs_info=self.dofs_info,
-                links_info=self.links_info,
-                links_state=self.links_state,
-                joints_info=self.joints_info,
-                joints_state=self.joints_state,
-                entities_state=self.entities_state,
-                entities_info=self.entities_info,
-                geoms_info=self.geoms_info,
-                geoms_state=self.geoms_state,
-                collider_state=self.collider._collider_state,
-                rigid_global_info=self._rigid_global_info,
-                static_rigid_sim_config=self._static_rigid_sim_config,
-                contact_island_state=self.constraint_solver.contact_island.contact_island_state,
-                is_backward=self._is_backward,
-                errno=self._errno,
+            self.step_2(
+                self._is_backward,
             )
         elif isinstance(self.sim.coupler, IPCCoupler):
             # If any rigid entity is coupled to IPC, perform rigid simulation in post-coupling phase.
