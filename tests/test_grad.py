@@ -217,7 +217,6 @@ def test_diff_contact():
 @pytest.mark.parametrize("backend", [gs.cpu, gs.gpu])
 def test_diff_solver(monkeypatch):
     from genesis.engine.solvers.rigid.constraint.solver import func_solve_init, func_solve_body
-    from genesis.engine.solvers.rigid.rigid_solver import kernel_step_1
 
     RTOL = 1e-4
 
@@ -270,20 +269,7 @@ def test_diff_solver(monkeypatch):
 
     # Step once to compute constraint solver's inputs: [mass], [jac], [aref], [efc_D], [force]. We do not call the
     # entire scene.step() because it will overwrite the necessary information that we need to compute the gradients.
-    kernel_step_1(
-        links_state=rigid_solver.links_state,
-        links_info=rigid_solver.links_info,
-        joints_state=rigid_solver.joints_state,
-        joints_info=rigid_solver.joints_info,
-        dofs_state=rigid_solver.dofs_state,
-        dofs_info=rigid_solver.dofs_info,
-        geoms_state=rigid_solver.geoms_state,
-        geoms_info=rigid_solver.geoms_info,
-        entities_state=rigid_solver.entities_state,
-        entities_info=rigid_solver.entities_info,
-        rigid_global_info=rigid_solver._rigid_global_info,
-        static_rigid_sim_config=rigid_solver._static_rigid_sim_config,
-        contact_island_state=constraint_solver.contact_island.contact_island_state,
+    rigid_solver.step_1(
         is_forward_pos_updated=True,
         is_forward_vel_updated=True,
         is_backward=False,
