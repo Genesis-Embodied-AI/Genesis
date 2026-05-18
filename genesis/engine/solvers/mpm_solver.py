@@ -12,13 +12,9 @@ from genesis.engine.boundaries import CubeBoundary
 from genesis.engine.entities import MPMEntity
 from genesis.engine.states.solvers import MPMSolverState
 from genesis.options.solvers import MPMOptions
-from genesis.utils.misc import DeprecationError
+from genesis.utils.misc import DeprecationError, qd_to_torch
 
 from .base_solver import Solver
-
-# Cadence (in substeps) for syncing the MPM state-validity check back to the host.
-# Tuned to match simulator.RATE_CHECK_ERRNO so the GPU queue can stay ahead.
-_MPM_ERRNO_CHECK_EVERY = 10
 
 if TYPE_CHECKING:
     from genesis.engine.entities import MPMEntity
@@ -230,7 +226,7 @@ class MPMSolver(Solver):
         # Aggregate SVD requirement across registered materials. If no material reads U/V/S,
         # the solver can skip the SVD kernel entirely on the forward pass and derive J from
         # det(F_tmp) directly. Compile-time constant consumed by p2g via qd.static.
-        self._any_needs_svd = any(getattr(m, "needs_svd", True) for m in self._materials)
+        self._any_needs_svd = any(m.needs_svd for m in self._materials)
 
         # Sparse-reset is forward-only: it relies on atomic_add returning the prior mass to
         # detect first-touch and appending to a dirty list. Backward mode composes p2g through
@@ -250,6 +246,10 @@ class MPMSolver(Solver):
             self.init_grid_fields()
             self.init_vvert_fields()
             self.init_ckpt()
+
+            # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted
+            # once after init_grid_fields so we don't pay the qd-to-torch wrap on every step.
+            self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
 
             for entity in self._entities:
                 entity._add_to_solver()
@@ -583,9 +583,12 @@ class MPMSolver(Solver):
             # Per-slot sparse reset. On the very first pass through slot f the dirty count is
             # zero (fields zero-init) and the grid is already zero, so the kernel is a no-op.
             # On subsequent passes it zeros exactly the cells p2g wrote last time this slot
-            # ran, which is bounded by n_particles * 27 — typically 20-30x cheaper than the
+            # ran, which is bounded by n_particles * 27 - typically 20-30x cheaper than the
             # dense reset for a robot-vs-small-deformable scene.
             self.sparse_reset_grid(f)
+            # Zero the per-slot dirty-count via zero-copy torch view so p2g populates a fresh
+            # list. Cheaper than a one-thread-per-batch kernel launch.
+            self._grid_dirty_count_torch[f].zero_()
             if self._any_needs_svd:
                 self.compute_F_tmp_and_svd(f)
             else:
@@ -627,11 +630,15 @@ class MPMSolver(Solver):
         if self._constraints_initialized:
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
-        # Rate-limit the NaN check. `_is_state_valid` triggers a GPU->CPU sync on its return
+        # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return
         # value, so calling it every substep forces a sync every substep. Matching the cadence
-        # used by the rigid solver (see simulator.RATE_CHECK_ERRNO) keeps the safety net while
-        # letting the GPU stay ahead of the host queue.
-        if self._sim._cur_substep_global % _MPM_ERRNO_CHECK_EVERY == 0:
+        # used by the rigid solver keeps the safety net while letting the GPU stay ahead of
+        # the host queue.
+        # Local import: simulator.py imports MPMSolver via .solvers, so a top-level reverse
+        # import would be circular.
+        from genesis.engine.simulator import RATE_CHECK_ERRNO
+
+        if self._sim._cur_substep_global % RATE_CHECK_ERRNO == 0:
             if not self._is_state_valid(f):
                 gs.raise_exception(
                     "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
@@ -703,10 +710,6 @@ class MPMSolver(Solver):
                 self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
                 self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
-        # Reset the per-slot counter so p2g populates a fresh list below. Done in the same
-        # kernel to avoid an extra launch; only one thread per batch writes.
-        for i_b in range(self._B):
-            self.grid_dirty_count[f, i_b] = 0
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):

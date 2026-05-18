@@ -35,7 +35,7 @@ class Liquid(Base):
         self.update_stress = self._update_stress_liquid
         # Viscous liquid uses U @ V.T in the 2*mu*(F_tmp - U@V.T)@F_tmp.T term; when mu==0 that term
         # vanishes and SVD is pure waste.
-        self._needs_svd = self.viscous
+        self.needs_svd = self.viscous
 
     @qd.func
     def _update_F_S_Jp_liquid(self, J, F_tmp, U, S, V, Jp):
