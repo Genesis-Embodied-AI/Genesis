@@ -1015,7 +1015,7 @@ def func_convex_convex_contact(
 
                     # Make sure that the penetration is still positive before adding contact point.
                     # Note that adding some negative tolerance improves physical stability by encouraging persistent
-                    # contact points and thefore more continuous contact forces, without changing the mean-field
+                    # contact points and therefore more continuous contact forces, without changing the mean-field
                     # dynamics since zero-penetration contact points should not induce any force.
                     penetration = normal.dot(contact_point_b - contact_point_a)
 
