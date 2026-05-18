@@ -249,7 +249,12 @@ class MPMSolver(Solver):
 
             # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted
             # once after init_grid_fields so we don't pay the qd-to-torch wrap on every step.
-            self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
+            # Backends without zero-copy (e.g. older Metal builds without DLPack field support)
+            # leave this None and fall back to reset_grid_dirty_count.
+            if gs.use_zerocopy:
+                self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
+            else:
+                self._grid_dirty_count_torch = None
 
             for entity in self._entities:
                 entity._add_to_solver()
@@ -586,9 +591,13 @@ class MPMSolver(Solver):
             # ran, which is bounded by n_particles * 27 - typically 20-30x cheaper than the
             # dense reset for a robot-vs-small-deformable scene.
             self.sparse_reset_grid(f)
-            # Zero the per-slot dirty-count via zero-copy torch view so p2g populates a fresh
-            # list. Cheaper than a one-thread-per-batch kernel launch.
-            self._grid_dirty_count_torch[f].zero_()
+            # Zero the per-slot dirty-count so p2g populates a fresh list. Use the cached
+            # zero-copy torch view when available (cheaper than a kernel launch); fall back to
+            # a tiny per-batch kernel on backends without zero-copy.
+            if self._grid_dirty_count_torch is not None:
+                self._grid_dirty_count_torch[f].zero_()
+            else:
+                self.reset_grid_dirty_count(f)
             if self._any_needs_svd:
                 self.compute_F_tmp_and_svd(f)
             else:
@@ -710,6 +719,12 @@ class MPMSolver(Solver):
                 self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
                 self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+
+    @qd.kernel
+    def reset_grid_dirty_count(self, f: qd.i32):
+        # Fallback path for backends where zero-copy torch views are unavailable.
+        for i_b in range(self._B):
+            self.grid_dirty_count[f, i_b] = 0
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):
