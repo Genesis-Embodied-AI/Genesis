@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 @qd.func
 def _func_query_contact_depth_penetration(
     i_b: int,
-    probe_pos,  # : gs.qd_vec3,
+    probe_pos: qd.types.vector(3),
     probe_radius_gt: float,
     probe_radius_m: float,
     sensor_link_idx: int,
@@ -83,7 +83,7 @@ def _func_query_contact_depth_penetration(
 @qd.func
 def _func_query_contact_depth(
     i_b: int,
-    probe_pos,  # : gs.qd_vec3,
+    probe_pos: qd.types.vector(3),
     probe_radius_gt: float,
     probe_radius_m: float,
     sensor_link_idx: int,
