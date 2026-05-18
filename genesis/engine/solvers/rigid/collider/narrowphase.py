@@ -5,7 +5,6 @@ This module contains SDF-based contact detection, convex-convex contact,
 terrain detection, box-box contact, and multi-contact search algorithms.
 """
 
-import sys
 from enum import IntEnum
 
 import quadrants as qd
@@ -467,20 +466,20 @@ def func_contact_mpr_terrain(
                                     gb_quat_terrain_frame,
                                 )
                                 if is_col:
-                                    # Snap normal to the prism's top face normal. Cell boundaries in a heightfield are
-                                    # discretization artefacts of an underlying smooth surface, not physical edges, so
-                                    # MPR's polytope-edge radial normal at those boundaries is a position-dependent bias
-                                    # rather than a real surface feature. The top face spans 3 consecutive top vertices
-                                    # (prism[3..5]) and its normal is exact at the heightfield's sampling precision.
-                                    e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
-                                    e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
-                                    top_face_normal = e1.cross(e2).normalized()
-                                    if top_face_normal[2] < 0.0:
-                                        top_face_normal = -top_face_normal
-                                    # Only snap when MPR reported an upward-facing contact; preserve MPR for side-face
-                                    # contacts (rare but valid for spheres wedged inside heightfield discontinuities).
-                                    if normal[2] > 0.0:
-                                        normal = top_face_normal
+                                    if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+                                        # Snap normal to the prism's top face normal when MPR's reported normal is already
+                                        # close to it. Cell boundaries on a SMOOTH heightfield are discretization artefacts,
+                                        # not physical edges, and MPR's polytope-edge radial normal there picks up a small
+                                        # position-dependent bias relative to the exact face normal. Only snap when the bias
+                                        # is small (dot > 0.95) so that contacts on real cliff edges - where MPR's normal is
+                                        # genuinely far from any single cell's top face normal - keep MPR's result.
+                                        e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
+                                        e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
+                                        top_face_normal = e1.cross(e2).normalized()
+                                        if top_face_normal[2] < 0.0:
+                                            top_face_normal = -top_face_normal
+                                        if top_face_normal.dot(normal) > 0.95:
+                                            normal = top_face_normal
 
                                     normal = gu.qd_transform_by_quat(normal, gb_quat)
                                     contact_pos = gu.qd_transform_by_quat(contact_pos, gb_quat)
@@ -1339,6 +1338,20 @@ def _func_multicontact_mpr(
                         needs_gjk_upgrade = True
 
             if is_col and not needs_gjk_upgrade:
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    ga_pos_current,
+                    ga_quat_current,
+                    gb_pos_current,
+                    gb_quat_current,
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
+
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
@@ -1364,20 +1377,6 @@ def _func_multicontact_mpr(
                     penetration = normal.dot(contact_point_b - contact_point_a)
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         penetration = penetration_0
-
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    normal,
-                    penetration,
-                    contact_pos,
-                    geoms_state.pos[i_ga, i_b],
-                    geoms_state.quat[i_ga, i_b],
-                    geoms_state.pos[i_gb, i_b],
-                    geoms_state.quat[i_gb, i_b],
-                    geoms_info,
-                    static_rigid_sim_config,
-                )
 
                 repeated = False
                 for i_c in range(n_con):
@@ -1564,12 +1563,27 @@ def _func_multicontact_gjk_full(
                     if gjk_state.multi_contact_flag[i_scratch]:
                         for i_c in range(n_contacts_gjk):
                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
-                                local_contact_pos[n_con, 0] = gjk_state.contact_pos[i_scratch, i_c][0]
-                                local_contact_pos[n_con, 1] = gjk_state.contact_pos[i_scratch, i_c][1]
-                                local_contact_pos[n_con, 2] = gjk_state.contact_pos[i_scratch, i_c][2]
-                                local_normal[n_con, 0] = gjk_state.normal[i_scratch, i_c][0]
-                                local_normal[n_con, 1] = gjk_state.normal[i_scratch, i_c][1]
-                                local_normal[n_con, 2] = gjk_state.normal[i_scratch, i_c][2]
+                                gjk_contact_pos = gjk_state.contact_pos[i_scratch, i_c]
+                                gjk_normal = gjk_state.normal[i_scratch, i_c]
+                                gjk_contact_pos = func_apply_smooth_refinement(
+                                    i_ga,
+                                    i_gb,
+                                    gjk_normal,
+                                    penetration,
+                                    gjk_contact_pos,
+                                    ga_pos_current,
+                                    ga_quat_current,
+                                    gb_pos_current,
+                                    gb_quat_current,
+                                    geoms_info,
+                                    static_rigid_sim_config,
+                                )
+                                local_contact_pos[n_con, 0] = gjk_contact_pos[0]
+                                local_contact_pos[n_con, 1] = gjk_contact_pos[1]
+                                local_contact_pos[n_con, 2] = gjk_contact_pos[2]
+                                local_normal[n_con, 0] = gjk_normal[0]
+                                local_normal[n_con, 1] = gjk_normal[1]
+                                local_normal[n_con, 2] = gjk_normal[2]
                                 local_penetration[n_con, 0] = penetration
                                 n_con = n_con + 1
                         gjk_multi_done = True
@@ -1577,6 +1591,19 @@ def _func_multicontact_gjk_full(
             if i_detection == 0 and not gjk_multi_done:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
                 if is_col_0:
+                    contact_pos_0 = func_apply_smooth_refinement(
+                        i_ga,
+                        i_gb,
+                        normal_0,
+                        penetration_0,
+                        contact_pos_0,
+                        ga_pos_current,
+                        ga_quat_current,
+                        gb_pos_current,
+                        gb_quat_current,
+                        geoms_info,
+                        static_rigid_sim_config,
+                    )
                     local_contact_pos[0, 0] = contact_pos_0[0]
                     local_contact_pos[0, 1] = contact_pos_0[1]
                     local_contact_pos[0, 2] = contact_pos_0[2]
@@ -1607,6 +1634,20 @@ def _func_multicontact_gjk_full(
                 else:
                     collider_state.contact_cache.normal[i_pair, i_b] = qd.Vector.zero(gs.qd_float, 3)
             elif not gjk_multi_done and multi_contact and is_col:
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    ga_pos_current,
+                    ga_quat_current,
+                    gb_pos_current,
+                    gb_quat_current,
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
+
                 if qd.static(
                     collider_static_config.ccd_algorithm not in (CCD_ALGORITHM_CODE.MJ_MPR, CCD_ALGORITHM_CODE.MJ_GJK)
                 ):
@@ -1630,20 +1671,6 @@ def _func_multicontact_gjk_full(
                     penetration = normal.dot(contact_point_b - contact_point_a)
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         penetration = penetration_0
-
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    normal,
-                    penetration,
-                    contact_pos,
-                    geoms_state.pos[i_ga, i_b],
-                    geoms_state.quat[i_ga, i_b],
-                    geoms_state.pos[i_gb, i_b],
-                    geoms_state.quat[i_gb, i_b],
-                    geoms_info,
-                    static_rigid_sim_config,
-                )
 
                 repeated = False
                 for i_c in range(n_con):
@@ -2078,6 +2105,23 @@ def _func_narrowphase_contact0(
             if is_col:
                 if qd.static(collider_static_config.ccd_algorithm in (CCD_ALGORITHM_CODE.MPR, CCD_ALGORITHM_CODE.GJK)):
                     collider_state.contact_cache.normal[i_pair, i_b] = normal
+                # Refine the contact position before enqueueing or storing it. The downstream multicontact functions
+                # store this as the initial contact (index 0 of local_contact_pos) without re-refining, so refinement
+                # must happen here to stay consistent with the monolithic path's consolidated refinement at the start
+                # of each i_detection iteration.
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    geoms_state.pos[i_ga, i_b],
+                    geoms_state.quat[i_ga, i_b],
+                    geoms_state.pos[i_gb, i_b],
+                    geoms_state.quat[i_gb, i_b],
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
                 if prefer_gjk:
                     # GJK algorithm: always enqueue to GJK queue — multicontact
                     # runs full GJK detection regardless of multi_contact.
@@ -2108,19 +2152,6 @@ def _func_narrowphase_contact0(
                         prefer_gjk=False,
                     )
                 else:
-                    contact_pos = func_apply_smooth_refinement(
-                        i_ga,
-                        i_gb,
-                        normal,
-                        penetration,
-                        contact_pos,
-                        geoms_state.pos[i_ga, i_b],
-                        geoms_state.quat[i_ga, i_b],
-                        geoms_state.pos[i_gb, i_b],
-                        geoms_state.quat[i_gb, i_b],
-                        geoms_info,
-                        static_rigid_sim_config,
-                    )
                     func_add_contact(
                         i_ga,
                         i_gb,
