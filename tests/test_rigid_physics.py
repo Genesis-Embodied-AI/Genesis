@@ -5747,7 +5747,7 @@ def test_heterogeneous_articulated_structure_mismatch():
 
 
 @pytest.mark.required
-@pytest.mark.xfail(reason="autodiff: non-static range unsupported by Quadrants reverse-mode AD", strict=False)
+@pytest.mark.xfail(reason="QuadrantsSyntaxError caused by dataclass argument parsing.")
 @pytest.mark.parametrize("performance_mode", [True])
 def test_hibernation_and_contact_islands(show_viewer):
     """

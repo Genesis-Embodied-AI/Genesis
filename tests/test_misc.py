@@ -1,11 +1,18 @@
 """Tests for the entity naming system."""
 
+import os
+
+import numpy as np
 import pytest
+import trimesh
 from pydantic import BaseModel
 
 import genesis as gs
+import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.options.textures import ColorTexture
+
+from .utils import assert_allclose, assert_equal
 
 
 @pytest.mark.required
@@ -171,3 +178,82 @@ def test_surface_shortcut_resolution():
         gs.surfaces.Rough(color=(1.0, 0.0, 0.0), diffuse_texture=ColorTexture(color=(0.0, 1.0, 0.0)))
     with pytest.raises(Exception, match="'thickness' and 'thickness_texture' cannot both be set"):
         gs.surfaces.Glass(thickness=0.02, thickness_texture=ColorTexture(color=(0.05,)))
+
+
+@pytest.mark.required
+def test_fps_algorithm_core():
+    # Shape, dtype, determinism, anchor-on-no-seed, and invalid n_samples all in one test.
+    points = np.random.default_rng(1).random((50, 3))
+    out_a = pc.furthest_point_sample(points, 10, seed=42)
+    out_b = pc.furthest_point_sample(points, 10, seed=42)
+    assert out_a.shape == (10, 3)
+    assert out_a.dtype == gs.np_float
+    assert_equal(out_a, out_b)
+
+    # With seed=None the first sample is the first input point (deterministic anchor).
+    anchor = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64)
+    out_anchor = pc.furthest_point_sample(anchor, 3, seed=None)
+    assert_allclose(out_anchor[0], anchor[0], tol=1e-5)
+
+    with pytest.raises(gs.GenesisException):
+        pc.furthest_point_sample(np.zeros((5, 3)), 10, seed=None)
+
+
+@pytest.mark.required
+def test_fps_mesh_sampling_end_to_end():
+    # Shape/dtype/determinism, on-surface points, minimum separation, and box-aligned normals all in one scene.
+    mesh = trimesh.creation.box((1.0, 1.0, 1.0))
+    points_a = pc.sample_mesh_point_cloud(mesh.vertices, mesh.faces, 16, n_candidates=400, seed=7, use_cache=False)
+    points_b = pc.sample_mesh_point_cloud(mesh.vertices, mesh.faces, 16, n_candidates=400, seed=7, use_cache=False)
+    assert points_a.shape == (16, 3)
+    assert points_a.dtype == gs.np_float
+    assert_equal(points_a, points_b)
+
+    _, dist, _ = mesh.nearest.on_surface(points_a)
+    assert dist.max() < 1e-5
+
+    pairwise = np.linalg.norm(points_a[:, None, :] - points_a[None, :, :], axis=-1)
+    np.fill_diagonal(pairwise, np.inf)
+    assert pairwise.min() > 0.2
+
+    # Box face normals are axis-aligned unit vectors. Unit-length + `max(|n|) == 1` is sufficient: by Pythagoras the
+    # other two components must be ~0.
+    _, normals = pc.sample_mesh_point_cloud(
+        mesh.vertices, mesh.faces, 32, n_candidates=800, seed=0, use_cache=False, return_normals=True
+    )
+    assert_allclose(np.linalg.norm(normals, axis=1), 1.0, tol=1e-5)
+    assert_allclose(np.abs(normals).max(axis=1), 1.0, tol=1e-4)
+
+
+@pytest.mark.required
+def test_fps_cache_round_trip():
+    mesh = trimesh.creation.box((1.0, 1.0, 1.0))
+    # Run both `return_normals` paths: first call writes the cache; second call hits it; outputs identical.
+    for return_normals in (True, False):
+        kwargs = dict(
+            verts=mesh.vertices,
+            faces=mesh.faces,
+            n_points=5,
+            n_candidates=10,
+            return_normals=return_normals,
+            seed=7,
+        )
+        path = pc.get_fps_pc_path(**kwargs)
+        if os.path.exists(path):
+            os.remove(path)
+        first = pc.sample_mesh_point_cloud(**kwargs, use_cache=True)
+        assert os.path.exists(path)
+        cached = pc.sample_mesh_point_cloud(**kwargs, use_cache=True)
+        assert_equal(first, cached)
+
+
+@pytest.mark.required
+def test_gs_mesh_sample_point_cloud_wrapper():
+    mesh = trimesh.creation.box((0.2, 0.4, 0.6))
+    gmesh = gs.Mesh.from_trimesh(mesh)
+    points, normals = gmesh.sample_point_cloud(10, n_candidates=300, seed=67, use_cache=False, return_normals=True)
+    assert points.shape == (10, 3)
+    assert normals.shape == (10, 3)
+    _, dist, _ = mesh.nearest.on_surface(points)
+    assert dist.max() < 1e-5
+    assert_allclose(np.linalg.norm(normals, axis=1), 1.0, tol=1e-5)

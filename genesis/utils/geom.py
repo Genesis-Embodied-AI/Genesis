@@ -2062,6 +2062,76 @@ def generate_grid_points_on_plane(lo: Vec3FType, hi: Vec3FType, normal: Vec3FTyp
     return grid
 
 
+def generate_ring_points_on_sphere(
+    radius: float,
+    cap_axis: tuple[float, float, float],
+    n_rings: int,
+    arc_spacing: float,
+    return_normals: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    """
+    Build ``n_rings`` concentric latitude rings on the upper spherical cap (pole at ``cap_axis``).
+
+    Ring index 0 is the pole; ring ``n_rings - 1`` is the equatorial plane of the cap. The number of
+    samples on each ring is chosen from the ring circumference and ``arc_spacing``.
+
+    Parameters
+    ----------
+    radius : float
+        Radius of points on the sphere, used to determine the number of points on each ring.
+    cap_axis : (float, float, float)
+        Unit-ish axis from sphere center toward the dome pole (probes lie on the cap around this axis).
+    n_rings : int
+        Number of latitude rings, including the pole as a degenerate ring.
+    arc_spacing : float
+        Target arc length between neighboring probes along each ring.
+    return_normals : bool
+        Whether to return the normal vectors of the points.
+
+    Returns
+    -------
+    points : np.ndarray, shape (N, 3)
+        Points on the sphere surface.
+    normals : np.ndarray, shape (N, 3), optional
+        Normal vectors of the points. Only returned if ``return_normals`` is True.
+    """
+    if radius <= 0.0:
+        raise ValueError(f"radius must be positive, got {radius}")
+    if n_rings < 1:
+        raise ValueError(f"n_rings must be >= 1, got {n_rings}")
+    if arc_spacing <= 0.0:
+        raise ValueError(f"probe_arc_spacing must be positive, got {arc_spacing}")
+
+    pole = np.asarray(cap_axis, dtype=gs.np_float)
+    p_norm = float(np.linalg.norm(pole))
+    if p_norm < gs.EPS:
+        raise ValueError("cap_axis must be non-zero")
+    pole = pole / p_norm
+    t0, t1 = orthogonals(pole)
+
+    pts: list[np.ndarray] = []
+    denom = max(n_rings - 1, 1)
+    for i in range(n_rings):
+        theta = (i / denom) * (0.5 * np.pi)
+        sin_t, cos_t = np.sin(theta), np.cos(theta)
+        ring_r = radius * sin_t
+        circ = 2.0 * np.pi * ring_r
+        if ring_r <= radius * gs.EPS:
+            n_pts = 1
+        else:
+            n_pts = max(3, int(np.ceil(circ / arc_spacing)))
+        for j in range(n_pts):
+            psi = (j / n_pts) * (2.0 * np.pi)
+            direction = sin_t * (np.cos(psi) * t0 + np.sin(psi) * t1) + cos_t * pole
+            pts.append(radius * direction)
+
+    points = np.stack(pts, axis=0)
+    if not return_normals:
+        return points
+    normals = points / radius
+    return points, normals
+
+
 # ------------------------------------------------------------------------------------
 # ------------------------------------- misc ----------------------------------------
 # ------------------------------------------------------------------------------------

@@ -248,6 +248,10 @@ def get_ptc_cache_dir():
     return os.path.join(get_cache_dir(), "ptc")
 
 
+def get_fps_pc_cache_dir():
+    return os.path.join(get_cache_dir(), "fps_pc")
+
+
 def get_tet_cache_dir():
     return os.path.join(get_cache_dir(), "tet")
 
@@ -564,14 +568,8 @@ def qd_to_torch(
                 tensor = value._T_tc if transpose else value._tc
                 is_copy = False
 
-    if not is_copy:
-        # FIXME: DLPack may return old values on Apple Metal if sync is not systematically called manually
-        if gs.backend == gs.metal:
-            qd.sync()
-        if copy:
-            tensor = tensor.clone()
-            if gs.backend == gs.metal:
-                torch.mps.synchronize()
+    if copy and not is_copy:
+        tensor = tensor.clone()
 
     return _apply_masks(tensor, value, row_mask, col_mask, keepdim, copy, to_torch=True)
 

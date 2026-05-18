@@ -39,6 +39,10 @@ Y_UP_TRANSFORM = np.asarray(  # translation on the bottom row
 DEFAULT_PLANE_TEXTURE_PATH = "textures/checker.png"  # use checkerboard texture by default
 
 
+def discretize_array_for_hashing(arr: np.ndarray) -> np.ndarray:
+    return np.round(arr / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
+
+
 def color_f32_to_u8(color) -> np.ndarray:
     return np.round(np.asarray(color, dtype=np.float32) * 255.0).astype(np.uint8)
 
@@ -247,8 +251,7 @@ def convex_decompose(mesh, coacd_options):
     # rescale mesh vertices to remove scale factor, and quantize to int to prevent cache miss due to rounding errors
     mesh_scale = float(np.linalg.norm(mesh.extents))
     assert not (np.isinf(mesh_scale) or np.isnan(mesh_scale) or mesh_scale <= 0.0)
-    normalized_vertices = mesh.vertices / mesh_scale
-    discretized_vertices = np.round(normalized_vertices / CVX_PATH_QUANTIZE_FACTOR).astype(np.int64)
+    discretized_vertices = discretize_array_for_hashing(mesh.vertices / mesh_scale)
 
     # compute file name via hashing for caching
     cvx_path = get_cvx_path(discretized_vertices, mesh.faces, coacd_options)

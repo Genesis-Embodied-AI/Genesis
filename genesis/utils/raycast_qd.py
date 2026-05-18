@@ -46,17 +46,17 @@ def get_triangle_vertices(
 
 @qd.func
 def bvh_ray_cast(
-    ray_start,
-    ray_dir,
-    max_range,
-    i_b,
+    ray_start,  # : gs.qd_vec3,
+    ray_dir,  # : gs.qd_vec3,
+    max_range: float,
+    i_b: int,
     bvh_nodes: qd.template(),
     bvh_morton_codes: qd.template(),
     faces_info: array_class.FacesInfo,
     verts_info: array_class.VertsInfo,
     fixed_verts_state: array_class.VertsState,
     free_verts_state: array_class.VertsState,
-    eps,
+    eps: float,
 ):
     """
     Cast a ray through a BVH and find the closest intersection.
@@ -124,11 +124,11 @@ def bvh_ray_cast(
 
 @qd.func
 def ray_triangle_intersection(
-    ray_start: gs.qd_vec3,
-    ray_dir: gs.qd_vec3,
-    v0: gs.qd_vec3,
-    v1: gs.qd_vec3,
-    v2: gs.qd_vec3,
+    ray_start,  # : gs.qd_vec3,
+    ray_dir,  # : gs.qd_vec3,
+    v0,  # : gs.qd_vec3,
+    v1,  # : gs.qd_vec3,
+    v2,  # : gs.qd_vec3,
     eps: float,
 ):
     """
@@ -193,10 +193,10 @@ def ray_triangle_intersection(
 
 @qd.func
 def ray_aabb_intersection(
-    ray_start: gs.qd_vec3,
-    ray_dir: gs.qd_vec3,
-    aabb_min: gs.qd_vec3,
-    aabb_max: gs.qd_vec3,
+    ray_start,  # : gs.qd_vec3,
+    ray_dir,  # : gs.qd_vec3,
+    aabb_min,  # : gs.qd_vec3,
+    aabb_max,  # : gs.qd_vec3,
     eps: float,
 ):
     """

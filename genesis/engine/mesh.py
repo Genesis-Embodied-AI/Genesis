@@ -7,9 +7,10 @@ import numpy as np
 import trimesh
 
 import genesis as gs
-import genesis.utils.mesh as mu
 import genesis.utils.gltf as gltf_utils
+import genesis.utils.mesh as mu
 import genesis.utils.particle as pu
+import genesis.utils.point_cloud as pc
 from genesis.options.surfaces import Surface
 from genesis.repr_base import RBC
 from genesis.utils.misc import redirect_libc_stderr
@@ -182,6 +183,30 @@ class Mesh(RBC):
         if "pbs" in sampler:
             return pu.trimesh_to_particles_pbs(self._mesh, p_size, sampler)
         return pu.trimesh_to_particles_simple(self._mesh, p_size, sampler)
+
+    def sample_point_cloud(
+        self,
+        n_points: int,
+        *,
+        n_candidates: int | None = None,
+        seed: int | None = None,
+        use_cache: bool = True,
+        return_normals: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """
+        Sample `n_points` from mesh in local coordinates using Furthest Point Sampling.
+
+        If ``return_normals`` is True, returns ``(positions, normals)`` with face normals aligned to each sample.
+        """
+        return pc.sample_mesh_point_cloud(
+            self.verts,
+            self.faces,
+            n_points,
+            n_candidates=n_candidates,
+            seed=seed,
+            use_cache=use_cache,
+            return_normals=return_normals,
+        )
 
     def clear_visuals(self):
         """
