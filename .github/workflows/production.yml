@@ -149,7 +149,7 @@ jobs:
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
+          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/genesis-world' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
 
