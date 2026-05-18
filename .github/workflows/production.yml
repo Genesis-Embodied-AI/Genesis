@@ -48,23 +48,21 @@ jobs:
   #     - name: Checkout code
   #       uses: actions/checkout@v4
 
-  #     - name: Spawn Slurm job
-  #       if: github.event_name == 'pull_request'
-  #       run: |
-  #         SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
-  #         CONTAINER_NAME="${SLURM_JOB_NAME}"
-  #         SRUN_CONTAINER_OPTS="\
-  #              --container-name=${CONTAINER_NAME} \
-  #              --container-mounts=\
-  #         ${{ github.workspace }}:/root/workspace,\
-  #         ${HOME}/.cache/uv:/root/.cache/uv,\
-  #         ${HOME}/.cache/genesis:/root/.cache/genesis,\
-  #         ${HOME}/.cache/huggingface:/root/.cache/huggingface \
-  #              --no-container-mount-home \
-  #              --container-workdir=/root/workspace"
-  #         SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-
-  #         mkdir -p ${HOME}/.cache/uv ${HOME}/.cache/genesis ${HOME}/.cache/huggingface
+      # - name: Spawn Slurm job
+      #   if: github.event_name == 'pull_request'
+      #   run: |
+      #     SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
+      #     CONTAINER_NAME="${SLURM_JOB_NAME}"
+      #     SRUN_CONTAINER_OPTS="\
+      #          --container-name=${CONTAINER_NAME} \
+      #          --container-mounts=\
+      #     ${{ github.workspace }}:/root/workspace,\
+      #     ${HOME}/.cache/uv:/root/.cache/uv,\
+      #     ${HOME}/.cache/genesis:/root/.cache/genesis,\
+      #     ${HOME}/.cache/huggingface:/root/.cache/huggingface \
+      #          --no-container-mount-home \
+      #          --container-workdir=/root/workspace"
+      #     SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
 
   #         JOBID_FIFO="${{ github.workspace }}/.slurm_job_id_fifo"
   #         [[ -e "$JOBID_FIFO" ]] && rm -f "$JOBID_FIFO"
@@ -94,11 +92,17 @@ jobs:
   #           set -ex
   #           source /venv/bin/activate
 
-  #           # sudo apt update
-  #           # sudo apt install -y tmate
-  #           # tmate -S /tmp/tmate.sock new-session -d
-  #           # tmate -S /tmp/tmate.sock wait tmate-ready
-  #           # tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}'
+      #     echo "SLURM_JOB_NAME=${SLURM_JOB_NAME}" >> $GITHUB_ENV
+      #     echo "SRUN_COMMON=${SRUN_COMMON}" >> "$GITHUB_ENV"
+      # - name: Initialize Python virtual env
+      #   if: github.event_name == 'pull_request'
+      #   run: srun ${SRUN_COMMON} bash .github/workflows/scripts/production_build.sh
+      # - name: Run unit tests
+      #   if: github.event_name == 'pull_request'
+      #   run: |
+      #     srun ${SRUN_COMMON} bash -s <<'EOF'
+      #       set -ex
+      #       source /venv/bin/activate
 
   #           pytest -v -ra --backend gpu --dev --forked ./tests
 
