@@ -228,11 +228,6 @@ class MPMSolver(Solver):
         # det(F_tmp) directly. Compile-time constant consumed by p2g via qd.static.
         self._any_needs_svd = any(m.needs_svd for m in self._materials)
 
-        # Sparse-reset is forward-only: it relies on atomic_add returning the prior mass to
-        # detect first-touch and appending to a dirty list. Backward mode composes p2g through
-        # autodiff where those bookkeeping atomics are meaningless, so gate by requires_grad.
-        self._sparse_reset_enabled = not self._sim.requires_grad
-
         if self.is_active:
             if self._enable_CPIC and self._sim.requires_grad:
                 gs.raise_exception(
@@ -485,10 +480,11 @@ class MPMSolver(Solver):
                         )
                         mass_contrib = weight * self.particles_info[i_p].mass
                         prev_mass = qd.atomic_add(self.grid[f, cell_ijk, i_b].mass, mass_contrib)
-                        if qd.static(self._sparse_reset_enabled):
-                            # First writer into this cell (prev mass exactly zero) records it for
-                            # the next time slot f is scheduled. Subsequent writers see a positive
-                            # mass and fall through.
+                        # Sparse-reset bookkeeping runs forward-only: backward mode composes p2g
+                        # through autodiff where these atomics are meaningless. First writer into
+                        # this cell (prev mass exactly zero) records it for the next time slot f
+                        # is scheduled. Subsequent writers see a positive mass and fall through.
+                        if qd.static(not self._sim.requires_grad):
                             if prev_mass == gs.qd_float(0.0) and mass_contrib > gs.qd_float(0.0):
                                 slot_idx = qd.atomic_add(self.grid_dirty_count[f, i_b], 1)
                                 flat = (cell_ijk[0] * self._grid_res[1] + cell_ijk[1]) * self._grid_res[2] + cell_ijk[2]
@@ -639,6 +635,7 @@ class MPMSolver(Solver):
         if self._constraints_initialized:
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
+        # FIXME: Use existing errno mechanism for this.
         # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return
         # value, so calling it every substep forces a sync every substep. Matching the cadence
         # used by the rigid solver keeps the safety net while letting the GPU stay ahead of

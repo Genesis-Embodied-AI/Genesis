@@ -335,7 +335,6 @@ def test_mpm_perf_dispatch(variant, show_viewer):
 
     # Aggregate SVD flag must match the variant for the dispatch path under test to actually run.
     assert scene.sim.mpm_solver._any_needs_svd == (variant == "svd")
-    assert scene.sim.mpm_solver._sparse_reset_enabled is True
 
     init_elastic_pos = elastic.get_particles_pos().clone()
     init_liquid_pos = liquid.get_particles_pos().clone()
