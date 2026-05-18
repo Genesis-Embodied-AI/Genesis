@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+import quadrants as qd
 import torch
 
 import genesis as gs
@@ -220,6 +221,7 @@ class KinematicSolver(Solver):
         # Static config with all physics disabled
         self._static_rigid_sim_config = array_class.RigidSimStaticConfig(
             backend=gs.backend,
+            is_qd_float_f32=(gs.qd_float == qd.f32),
             para_level=self.sim._para_level,
             requires_grad=False,
             use_hibernation=False,

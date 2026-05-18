@@ -2051,6 +2051,10 @@ def get_rigid_adjoint_cache(solver):
 @qd.data_oriented
 class RigidSimStaticConfig(metaclass=AutoInitMeta):
     backend: int
+    # Whether ``gs.qd_float == qd.f32`` (i.e. single-precision floats). Declared on the static config
+    # so kernels can read it via ``qd.static(static_rigid_sim_config.is_qd_float_f32)`` instead of
+    # the module-level ``gs.qd_float``, keeping the fastcache key sensitive to precision.
+    is_qd_float_f32: bool
     para_level: int
     enable_collision: bool
     use_hibernation: bool

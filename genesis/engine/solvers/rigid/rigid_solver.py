@@ -426,6 +426,7 @@ class RigidSolver(KinematicSolver):
     def _build_static_config(self):
         static_rigid_sim_config = dict(
             backend=gs.backend,
+            is_qd_float_f32=(gs.qd_float == qd.f32),
             para_level=self.sim._para_level,
             requires_grad=self.sim.options.requires_grad,
             use_hibernation=self._use_hibernation,

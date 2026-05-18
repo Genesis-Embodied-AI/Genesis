@@ -1294,7 +1294,9 @@ def add_frictionloss_constraints(
     # if `serialize=True`...
     qd.loop_config(
         name="add_frictionloss_constraints",
-        serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and gs.backend != gs.metal),
+        serialize=qd.static(
+            static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL and static_rigid_sim_config.backend != gs.metal
+        ),
     )
     for i_b in range(_B):
         constraint_state.n_constraints_frictionloss[i_b] = 0
@@ -2115,7 +2117,9 @@ def func_cholesky_solve_tiled(
     # Performance is optimal for BLOCK_DIM = 64
     BLOCK_DIM = qd.static(64)
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
-    ENABLE_WARP_REDUCTION = qd.static(static_rigid_sim_config.backend == gs.cuda and gs.qd_float == qd.f32)
+    ENABLE_WARP_REDUCTION = qd.static(
+        static_rigid_sim_config.backend == gs.cuda and static_rigid_sim_config.is_qd_float_f32
+    )
     WARP_SIZE = qd.static(32)
     NUM_WARPS = qd.static(BLOCK_DIM // WARP_SIZE)
 
