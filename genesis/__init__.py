@@ -456,12 +456,19 @@ sys.excepthook = _custom_excepthook
 from .ext import _trimesh_patch
 from .utils.misc import get_src_dir as _get_src_dir
 
+# Eagerly load native extensions under redirected stderr to silence dlopen-time noise (e.g. macOS
+# objc duplicate-class warnings when several libraries ship their own copy of GLFW).
 with open(os.devnull, "w") as stderr, redirect_libc_stderr(stderr):
     try:
         from pygel3d import graph, hmesh
     except OSError as e:
         # Import may fail because of missing system dependencies (libGLU.so.1).
         # This is not blocking because it is only an issue for hybrid entities.
+        pass
+
+    try:
+        import imgui_bundle  # noqa: F401
+    except ImportError:
         pass
 
     try:
