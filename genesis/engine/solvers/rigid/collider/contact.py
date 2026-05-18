@@ -13,6 +13,105 @@ import genesis.utils.geom as gu
 
 
 @qd.func
+def func_refine_smooth_contact_pos(
+    geom_type,
+    geom_data,
+    geom_pos: qd.types.vector(3),
+    geom_quat: qd.types.vector(4),
+    normal: qd.types.vector(3),
+    penetration,
+    ccd_contact_pos: qd.types.vector(3),
+):
+    """
+    Reconstruct the contact position analytically from the smooth side of the contact.
+
+    MPR/GJK leave a position-dependent bias in the reported contact position that, on static contacts against
+    rotationally-symmetric geometry, becomes torque on the smooth body and drives a persistent tangential drift (the
+    lever arm becomes non-zero on what should be a face-aligned contact). For smooth primitives we have a closed-form
+    surface point given the CCD-reported normal, so we can replace the biased contact position with the exact midpoint
+    between that surface point and the inferred polytope-side surface. The result has the lever arm parallel to the
+    contact normal, so the constraint force creates no spurious torque.
+
+    Conventions: normal points from geom B to geom A (geom A is the one being refined). The refined contact position
+    is the midpoint between A's surface (in the -normal direction from A's center) and the implicit B surface (offset
+    by penetration along normal). Idempotent on the analytical paths (sphere-box, sphere-capsule, capsule-capsule)
+    since those use the same closed-form expression.
+    """
+    refined = ccd_contact_pos
+    if geom_type == gs.GEOM_TYPE.SPHERE:
+        radius = geom_data[0]
+        refined = geom_pos - (radius - 0.5 * penetration) * normal
+    elif geom_type == gs.GEOM_TYPE.ELLIPSOID:
+        # Surface point on ellipsoid in direction -normal, in local frame, is at p = -(a^2 n_x, b^2 n_y, c^2 n_z) /
+        # sqrt(a^2 n_x^2 + b^2 n_y^2 + c^2 n_z^2). This comes from the Lagrangian "closest point in direction d" with
+        # f(p) = (px/a)^2 + ... - 1 = 0.
+        a = geom_data[0]
+        b = geom_data[1]
+        c = geom_data[2]
+        n_local = gu.qd_inv_transform_by_quat(normal, geom_quat)
+        denom = qd.sqrt(
+            a * a * n_local[0] * n_local[0] + b * b * n_local[1] * n_local[1] + c * c * n_local[2] * n_local[2]
+        )
+        p_local = qd.Vector(
+            [-a * a * n_local[0] / denom, -b * b * n_local[1] / denom, -c * c * n_local[2] / denom], dt=gs.qd_float
+        )
+        surface_pt = gu.qd_transform_by_trans_quat(p_local, geom_pos, geom_quat)
+        refined = surface_pt + 0.5 * penetration * normal
+    elif geom_type == gs.GEOM_TYPE.CAPSULE:
+        # Capsule axis is along local +z. Project ccd_contact_pos onto the axis (clamped to the segment), then offset by
+        # radius along -normal. The clamp lets cap contacts degenerate to the sphere case automatically. Barrel contacts
+        # inherit the axial coordinate from ccd_contact_pos, which is only as good as the CCD's axial estimate.
+        radius = geom_data[0]
+        half_length = 0.5 * geom_data[1]
+        axis_dir = gu.qd_transform_by_quat_fast(qd.Vector([0.0, 0.0, 1.0], dt=gs.qd_float), geom_quat)
+        t_axial = (ccd_contact_pos - geom_pos).dot(axis_dir)
+        t_clamped = qd.math.clamp(t_axial, -half_length, half_length)
+        axis_point = geom_pos + t_clamped * axis_dir
+        refined = axis_point - (radius - 0.5 * penetration) * normal
+    return refined
+
+
+@qd.func
+def func_apply_smooth_refinement(
+    i_ga,
+    i_gb,
+    normal: qd.types.vector(3),
+    penetration,
+    contact_pos: qd.types.vector(3),
+    ga_pos: qd.types.vector(3),
+    ga_quat: qd.types.vector(4),
+    gb_pos: qd.types.vector(3),
+    gb_quat: qd.types.vector(4),
+    geoms_info: array_class.GeomsInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """
+    Reconstruct the contact position analytically from the smooth side when one of the geoms is a smooth primitive.
+
+    Idempotent on analytical contact paths; on MPR/GJK paths it removes the position-dependent bias that drives
+    spurious torque and drift on static smooth-vs-polytope contacts. Must be invoked right after collision detection
+    and before any post-processing (deduplication, perturbation reversal, etc.), so downstream stages see contact
+    positions in the same canonical frame the constraint solver will store. The pose inputs must match the pose CCD
+    or the analytical formula actually saw - the perturbed pose under multi-contact, not the unperturbed state.
+    """
+    if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
+        # Geom pairs are sorted by ascending type, so smooth primitives (SPHERE/ELLIPSOID/CAPSULE) always sit on the
+        # A side when paired with a polytope (BOX/MESH/TERRAIN/PLANE). Smooth-vs-smooth pairs go through analytical
+        # fast paths and never reach this helper, so at most one side ever needs refinement.
+        type_a = geoms_info.type[i_ga]
+        type_b = geoms_info.type[i_gb]
+        if type_a == gs.GEOM_TYPE.SPHERE or type_a == gs.GEOM_TYPE.ELLIPSOID or type_a == gs.GEOM_TYPE.CAPSULE:
+            contact_pos = func_refine_smooth_contact_pos(
+                type_a, geoms_info.data[i_ga], ga_pos, ga_quat, normal, penetration, contact_pos
+            )
+        elif type_b == gs.GEOM_TYPE.SPHERE or type_b == gs.GEOM_TYPE.ELLIPSOID or type_b == gs.GEOM_TYPE.CAPSULE:
+            contact_pos = func_refine_smooth_contact_pos(
+                type_b, geoms_info.data[i_gb], gb_pos, gb_quat, -normal, penetration, contact_pos
+            )
+    return contact_pos
+
+
+@qd.func
 def rotaxis(vecin, i0, i1, i2, f0, f1, f2):
     vecres = qd.Vector([0.0, 0.0, 0.0], dt=gs.qd_float)
     vecres[0] = vecin[i0] * f0
@@ -239,7 +338,7 @@ def func_set_contact(
 ):
     """
     Set the contact data for the contact [i_c]. This is used for the backward pass, which parallelizes over the entire
-    contact data.
+    contact data, and for the split narrowphase multi-contact writes.
     """
     friction_a = geoms_info.friction[i_ga] * geoms_state.friction_ratio[i_ga, i_b]
     friction_b = geoms_info.friction[i_gb] * geoms_state.friction_ratio[i_gb, i_b]

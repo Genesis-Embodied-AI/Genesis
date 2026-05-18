@@ -19,10 +19,12 @@ from . import capsule_contact, diff_gjk, gjk, mpr
 from .box_contact import (
     func_box_box_contact,
     func_plane_box_contact,
+    func_sphere_box_contact,
 )
 from .contact import (
     func_add_contact,
     func_add_diff_contact_input,
+    func_apply_smooth_refinement,
     func_compute_mj_tolerance,
     func_compute_tolerance,
     func_contact_orthogonals,
@@ -107,7 +109,8 @@ def func_contact_vertex_sdf(
                 penetration = new_penetration
 
     if is_col:
-        # Compute contact normal only once, and only in case of contact
+        # Compute contact normal only once, and only in case of contact, then shift contact_pos to the midpoint
+        # between A's surface (the iterated vertex) and B's surface.
         normal = sdf.sdf_func_normal_world_local(
             geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, gb_pos, gb_quat
         )
@@ -274,7 +277,7 @@ def func_contact_convex_convex_sdf(
             geoms_state, geoms_info, rigid_global_info, collider_static_config, sdf_info, pos_a, i_gb, i_b
         )
         penetration = -sd_v_closest
-        contact_pos = pos_a + 0.5 * penetration * normal
+        contact_pos = pos_a
     elif enable_edge_detection_fallback:  # check edge surrounding it
         for i_neighbor_ in range(
             collider_info.vert_neighbor_start[i_va],
@@ -328,7 +331,6 @@ def func_contact_convex_convex_sdf(
                         cur_length = 0.5 * cur_length
 
                     p = 0.5 * (p_0 + p_1)
-
                     new_penetration = -sdf.sdf_func_world(geoms_state, geoms_info, sdf_info, p, i_gb, i_b)
 
                     if new_penetration > 0.0:
@@ -339,6 +341,9 @@ def func_contact_convex_convex_sdf(
                         contact_pos = p
                         penetration = new_penetration
                         break
+
+    # The contact point must be offsetted by half the penetration depth, for consistency with MPR
+    contact_pos = contact_pos + 0.5 * penetration * normal
 
     return is_col, normal, penetration, contact_pos, i_va
 
@@ -462,9 +467,38 @@ def func_contact_mpr_terrain(
                                     gb_quat_terrain_frame,
                                 )
                                 if is_col:
+                                    # Snap normal to the prism's top face normal. Cell boundaries in a heightfield are
+                                    # discretization artefacts of an underlying smooth surface, not physical edges, so
+                                    # MPR's polytope-edge radial normal at those boundaries is a position-dependent bias
+                                    # rather than a real surface feature. The top face spans 3 consecutive top vertices
+                                    # (prism[3..5]) and its normal is exact at the heightfield's sampling precision.
+                                    e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
+                                    e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
+                                    top_face_normal = e1.cross(e2).normalized()
+                                    if top_face_normal[2] < 0.0:
+                                        top_face_normal = -top_face_normal
+                                    # Only snap when MPR reported an upward-facing contact; preserve MPR for side-face
+                                    # contacts (rare but valid for spheres wedged inside heightfield discontinuities).
+                                    if normal[2] > 0.0:
+                                        normal = top_face_normal
+
                                     normal = gu.qd_transform_by_quat(normal, gb_quat)
                                     contact_pos = gu.qd_transform_by_quat(contact_pos, gb_quat)
                                     contact_pos = contact_pos + gb_pos
+
+                                    contact_pos = func_apply_smooth_refinement(
+                                        i_ga,
+                                        i_gb,
+                                        normal,
+                                        penetration,
+                                        contact_pos,
+                                        geoms_state.pos[i_ga, i_b],
+                                        geoms_state.quat[i_ga, i_b],
+                                        geoms_state.pos[i_gb, i_b],
+                                        geoms_state.quat[i_gb, i_b],
+                                        geoms_info,
+                                        static_rigid_sim_config,
+                                    )
 
                                     valid = True
                                     i_c = collider_state.n_contacts[i_b]
@@ -645,10 +679,19 @@ def func_convex_convex_contact(
                         geoms_info,
                         rigid_global_info,
                     )
-                elif (
-                    geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE
-                ) or (geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE):
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                     is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+                        i_ga,
+                        i_gb,
+                        ga_pos_current,
+                        ga_quat_current,
+                        gb_pos_current,
+                        gb_quat_current,
+                        geoms_info,
+                        rigid_global_info,
+                    )
+                elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+                    is_col, normal, contact_pos, penetration = func_sphere_box_contact(
                         i_ga,
                         i_gb,
                         ga_pos_current,
@@ -802,11 +845,25 @@ def func_convex_convex_contact(
                                             collider_state,
                                             collider_info,
                                         )
+                                        # FIXME: Is it the correct way to apply refinement for auto-diff?
+                                        contact_pos = func_apply_smooth_refinement(
+                                            i_ga,
+                                            i_gb,
+                                            gjk_state.normal[i_b, i_c],
+                                            gjk_state.diff_penetration[i_b, i_c],
+                                            gjk_state.contact_pos[i_b, i_c],
+                                            ga_pos_current,
+                                            ga_quat_current,
+                                            gb_pos_current,
+                                            gb_quat_current,
+                                            geoms_info,
+                                            static_rigid_sim_config,
+                                        )
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
                                             gjk_state.normal[i_b, i_c],
-                                            gjk_state.contact_pos[i_b, i_c],
+                                            contact_pos,
                                             gjk_state.diff_penetration[i_b, i_c],
                                             i_b,
                                             i_pair,
@@ -828,6 +885,19 @@ def func_convex_convex_contact(
                                                 normal = gjk_state.normal[i_b, i_c]
                                                 if qd.static(static_rigid_sim_config.requires_grad):
                                                     penetration = gjk_state.diff_penetration[i_b, i_c]
+                                                contact_pos = func_apply_smooth_refinement(
+                                                    i_ga,
+                                                    i_gb,
+                                                    normal,
+                                                    penetration,
+                                                    contact_pos,
+                                                    ga_pos_current,
+                                                    ga_quat_current,
+                                                    gb_pos_current,
+                                                    gb_quat_current,
+                                                    geoms_info,
+                                                    static_rigid_sim_config,
+                                                )
                                                 func_add_contact(
                                                     i_ga,
                                                     i_gb,
@@ -847,6 +917,21 @@ def func_convex_convex_contact(
                                     else:
                                         contact_pos = gjk_state.contact_pos[i_b, 0]
                                         normal = gjk_state.normal[i_b, 0]
+
+            if is_col:
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    ga_pos_current,
+                    ga_quat_current,
+                    gb_pos_current,
+                    gb_quat_current,
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
 
             if i_detection == 0:
                 is_col_0, normal_0, penetration_0, contact_pos_0 = is_col, normal, penetration, contact_pos
@@ -1020,10 +1105,19 @@ def _func_multicontact_run_detection(
             geoms_info,
             rigid_global_info,
         )
-    elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
-        geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
-    ):
+    elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
         is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+            i_ga,
+            i_gb,
+            ga_pos,
+            ga_quat,
+            gb_pos,
+            gb_quat,
+            geoms_info,
+            rigid_global_info,
+        )
+    elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+        is_col, normal, contact_pos, penetration = func_sphere_box_contact(
             i_ga,
             i_gb,
             ga_pos,
@@ -1270,6 +1364,20 @@ def _func_multicontact_mpr(
                     penetration = normal.dot(contact_point_b - contact_point_a)
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         penetration = penetration_0
+
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    geoms_state.pos[i_ga, i_b],
+                    geoms_state.quat[i_ga, i_b],
+                    geoms_state.pos[i_gb, i_b],
+                    geoms_state.quat[i_gb, i_b],
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
 
                 repeated = False
                 for i_c in range(n_con):
@@ -1522,6 +1630,20 @@ def _func_multicontact_gjk_full(
                     penetration = normal.dot(contact_point_b - contact_point_a)
                     if qd.static(collider_static_config.ccd_algorithm == CCD_ALGORITHM_CODE.MJ_GJK):
                         penetration = penetration_0
+
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    normal,
+                    penetration,
+                    contact_pos,
+                    geoms_state.pos[i_ga, i_b],
+                    geoms_state.quat[i_ga, i_b],
+                    geoms_state.pos[i_gb, i_b],
+                    geoms_state.quat[i_gb, i_b],
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
 
                 repeated = False
                 for i_c in range(n_con):
@@ -1840,10 +1962,19 @@ def _func_narrowphase_contact0(
                     geoms_info,
                     rigid_global_info,
                 )
-            elif (geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE) or (
-                geoms_info.type[i_ga] == gs.GEOM_TYPE.CAPSULE and geoms_info.type[i_gb] == gs.GEOM_TYPE.SPHERE
-            ):
+            elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.CAPSULE:
                 is_col, normal, contact_pos, penetration = capsule_contact.func_sphere_capsule_contact(
+                    i_ga,
+                    i_gb,
+                    ga_pos,
+                    ga_quat,
+                    gb_pos,
+                    gb_quat,
+                    geoms_info,
+                    rigid_global_info,
+                )
+            elif geoms_info.type[i_ga] == gs.GEOM_TYPE.SPHERE and geoms_info.type[i_gb] == gs.GEOM_TYPE.BOX:
+                is_col, normal, contact_pos, penetration = func_sphere_box_contact(
                     i_ga,
                     i_gb,
                     ga_pos,
@@ -1977,6 +2108,19 @@ def _func_narrowphase_contact0(
                         prefer_gjk=False,
                     )
                 else:
+                    contact_pos = func_apply_smooth_refinement(
+                        i_ga,
+                        i_gb,
+                        normal,
+                        penetration,
+                        contact_pos,
+                        geoms_state.pos[i_ga, i_b],
+                        geoms_state.quat[i_ga, i_b],
+                        geoms_state.pos[i_gb, i_b],
+                        geoms_state.quat[i_gb, i_b],
+                        geoms_info,
+                        static_rigid_sim_config,
+                    )
                     func_add_contact(
                         i_ga,
                         i_gb,
@@ -2098,6 +2242,20 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    contact_normal,
+                    penetration,
+                    contact_pos,
+                    geoms_state.pos[i_ga, i_b],
+                    geoms_state.quat[i_ga, i_b],
+                    geoms_state.pos[i_gb, i_b],
+                    geoms_state.quat[i_gb, i_b],
+                    geoms_info,
+                    static_rigid_sim_config,
+                )
+
                 func_set_contact(
                     i_ga,
                     i_gb,
@@ -2125,6 +2283,20 @@ def func_narrow_phase_diff_convex_vs_convex(
                 ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
                     geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
+                )
+
+                contact_pos = func_apply_smooth_refinement(
+                    i_ga,
+                    i_gb,
+                    contact_normal,
+                    penetration,
+                    contact_pos,
+                    geoms_state.pos[i_ga, i_b],
+                    geoms_state.quat[i_ga, i_b],
+                    geoms_state.pos[i_gb, i_b],
+                    geoms_state.quat[i_gb, i_b],
+                    geoms_info,
+                    static_rigid_sim_config,
                 )
 
                 func_set_contact(
@@ -2320,6 +2492,19 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col_i:
+                                contact_pos_i = func_apply_smooth_refinement(
+                                    i_ga,
+                                    i_gb,
+                                    normal_i,
+                                    penetration_i,
+                                    contact_pos_i,
+                                    geoms_state.pos[i_ga, i_b],
+                                    geoms_state.quat[i_ga, i_b],
+                                    geoms_state.pos[i_gb, i_b],
+                                    geoms_state.quat[i_gb, i_b],
+                                    geoms_info,
+                                    static_rigid_sim_config,
+                                )
                                 func_add_contact(
                                     i_ga,
                                     i_gb,
@@ -2392,6 +2577,20 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     )
 
                                     if is_col:
+                                        contact_pos = func_apply_smooth_refinement(
+                                            i_ga,
+                                            i_gb,
+                                            normal,
+                                            penetration,
+                                            contact_pos,
+                                            ga_pos_perturbed,
+                                            ga_quat_perturbed,
+                                            gb_pos_perturbed,
+                                            gb_quat_perturbed,
+                                            geoms_info,
+                                            static_rigid_sim_config,
+                                        )
+
                                         if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
                                             # 1. Project the contact point on both geometries
                                             # 2. Revert the effect of small rotation
@@ -2475,6 +2674,19 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                 sdf_info,
                             )
                             if is_col:
+                                contact_pos = func_apply_smooth_refinement(
+                                    i_ga,
+                                    i_gb,
+                                    normal,
+                                    penetration,
+                                    contact_pos,
+                                    geoms_state.pos[i_ga, i_b],
+                                    geoms_state.quat[i_ga, i_b],
+                                    geoms_state.pos[i_gb, i_b],
+                                    geoms_state.quat[i_gb, i_b],
+                                    geoms_info,
+                                    static_rigid_sim_config,
+                                )
                                 func_add_contact(
                                     i_ga,
                                     i_gb,

@@ -3,6 +3,7 @@ Box collision contact detection functions.
 
 This module contains specialized contact detection algorithms for box geometries:
 - Plane-box contact detection
+- Sphere-box contact detection
 - Box-box contact detection (MuJoCo algorithm)
 """
 
@@ -19,6 +20,97 @@ from .contact import (
     rotaxis,
     rotmatx,
 )
+
+
+@qd.func
+def func_sphere_box_contact(
+    i_ga,
+    i_gb,
+    ga_pos,
+    ga_quat,
+    gb_pos,
+    gb_quat,
+    geoms_info: array_class.GeomsInfo,
+    rigid_global_info: array_class.RigidGlobalInfo,
+):
+    """
+    Analytical sphere-box collision detection.
+
+    Reduces to finding the closest point on the box (in the box's local frame) to the sphere center,
+    then comparing the distance to the sphere radius. Produces an exact normal aligned with one of the
+    box's face axes, avoiding the small tilt that MPR/GJK introduces for shallow contacts.
+
+    Parameters
+    ----------
+    ga_pos, ga_quat : Position and orientation of geom A (may be perturbed for multi-contact).
+    gb_pos, gb_quat : Position and orientation of geom B (may be perturbed for multi-contact).
+    """
+    EPS = rigid_global_info.EPS[None]
+
+    # Caller guarantees sphere is i_ga and box is i_gb (geoms are sorted by ascending type).
+    sphere_center = ga_pos
+    box_center = gb_pos
+    box_quat = gb_quat
+    sphere_radius = geoms_info.data[i_ga][0]
+    box_half_size = qd.Vector(
+        [
+            0.5 * geoms_info.data[i_gb][0],
+            0.5 * geoms_info.data[i_gb][1],
+            0.5 * geoms_info.data[i_gb][2],
+        ],
+        dt=gs.qd_float,
+    )
+
+    # Express the sphere center in the box's local frame
+    p_local = gu.qd_inv_transform_by_trans_quat(sphere_center, box_center, box_quat)
+
+    # Closest point on the box to the sphere center, in the box's local frame
+    closest_local = qd.Vector(
+        [
+            qd.math.clamp(p_local[0], -box_half_size[0], box_half_size[0]),
+            qd.math.clamp(p_local[1], -box_half_size[1], box_half_size[1]),
+            qd.math.clamp(p_local[2], -box_half_size[2], box_half_size[2]),
+        ],
+        dt=gs.qd_float,
+    )
+    diff_local = p_local - closest_local
+    dist_sq = diff_local.dot(diff_local)
+
+    is_col = False
+    normal_unit = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+    contact_pos = qd.Vector.zero(gs.qd_float, 3)
+    penetration = gs.qd_float(0.0)
+
+    if dist_sq < sphere_radius * sphere_radius:
+        is_col = True
+        normal_local = qd.Vector([1.0, 0.0, 0.0], dt=gs.qd_float)
+        if dist_sq > EPS:
+            # Sphere center outside the box, normal points from box surface to sphere center
+            dist = qd.sqrt(dist_sq)
+            normal_local = diff_local / dist
+            penetration = sphere_radius - dist
+        else:
+            # Sphere center inside the box. The gap to the nearest face along each axis is half_size[i] - |p_local[i]|;
+            # the smallest of those three gaps picks the contact axis, with the normal sign determined by which side
+            # the sphere center is on.
+            gaps = box_half_size - qd.abs(p_local)
+            sign_x = gs.qd_float(1.0) if p_local[0] >= 0.0 else gs.qd_float(-1.0)
+            sign_y = gs.qd_float(1.0) if p_local[1] >= 0.0 else gs.qd_float(-1.0)
+            sign_z = gs.qd_float(1.0) if p_local[2] >= 0.0 else gs.qd_float(-1.0)
+            normal_local = qd.Vector([sign_x, 0.0, 0.0], dt=gs.qd_float)
+            min_gap = gaps[0]
+            if gaps[1] < min_gap:
+                min_gap = gaps[1]
+                normal_local = qd.Vector([0.0, sign_y, 0.0], dt=gs.qd_float)
+            if gaps[2] < min_gap:
+                min_gap = gaps[2]
+                normal_local = qd.Vector([0.0, 0.0, sign_z], dt=gs.qd_float)
+            penetration = sphere_radius + min_gap
+
+        normal_unit = gu.qd_transform_by_quat(normal_local, box_quat)
+        contact_pos = sphere_center - (sphere_radius - 0.5 * penetration) * normal_unit
+
+    return is_col, normal_unit, contact_pos, penetration
 
 
 @qd.func
