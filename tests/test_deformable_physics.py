@@ -278,15 +278,8 @@ def test_mpm_particle_constraints(show_viewer):
     assert mpm_diff > pos_diff[0] * 0.3, f"MPM should follow rigid link. Got {mpm_diff:.3f}"
 
 
-# Two variants cover both forward-mode dispatch paths introduced by the MPM perf pass:
-#   "svd"     -> any(material.needs_svd) is True  -> compute_F_tmp_and_svd
-#   "no_svd"  -> any(material.needs_svd) is False -> compute_F_tmp_only (SVD kernel skipped)
-# Sparse grid reset and the torch zero-copy dirty-count clear run in both variants.
 @pytest.mark.required
-@pytest.mark.parametrize(
-    "variant",
-    ["svd", "no_svd"],
-)
+@pytest.mark.parametrize("variant", ["svd", "no_svd"])
 def test_mpm_perf_dispatch(variant, show_viewer):
     if variant == "svd":
         elastic_model = "corotation"
