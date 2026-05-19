@@ -3090,6 +3090,162 @@ def func_update_constraint_batch(
 
 
 @qd.func
+def _func_update_constraint_iter_forces_body(
+    i_c,
+    i_b,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Per-(i_c, i_b) forces body: compute ``active`` / ``prev_active`` and write ``efc_force``.
+
+    Same semantics as the per-constraint loop in ``func_update_constraint_batch`` (lines computing
+    ``active``, ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here;
+    it's recomputed in the coop cost kernel together with the quadratic term to avoid an extra atomic
+    or shared-memory exchange between the two coop kernels."""
+    ne = constraint_state.n_constraints_equality[i_b]
+    nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+
+    if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.Newton):
+        constraint_state.prev_active[i_c, i_b] = constraint_state.active[i_c, i_b]
+    constraint_state.active[i_c, i_b] = True
+
+    floss_force = gs.qd_float(0.0)
+    if ne <= i_c and i_c < nef:
+        f = constraint_state.efc_frictionloss[i_c, i_b]
+        r = constraint_state.diag[i_c, i_b]
+        rf = r * f
+        linear_neg = constraint_state.Jaref[i_c, i_b] <= -rf
+        linear_pos = constraint_state.Jaref[i_c, i_b] >= rf
+        constraint_state.active[i_c, i_b] = not (linear_neg or linear_pos)
+        floss_force = linear_neg * f + linear_pos * -f
+    elif nef <= i_c:
+        constraint_state.active[i_c, i_b] = constraint_state.Jaref[i_c, i_b] < 0
+
+    constraint_state.efc_force[i_c, i_b] = floss_force + (
+        -constraint_state.Jaref[i_c, i_b] * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+    )
+
+
+@qd.func
+def _func_update_constraint_iter_forces(
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Phase 1: compute ``active`` and ``efc_force`` for every (i_c, i_b). Iteration order picks the
+    coalesced ndrange under each layout: under transposed jac/Jaref/efc_force, lanes vary i_c so
+    adjacent reads of the flipped per-constraint tensors stride 1; under canonical, lanes vary i_b."""
+    len_constraints = constraint_state.active.shape[0]
+    _B = constraint_state.grad.shape[1]
+
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b, i_c in qd.ndrange(_B, len_constraints):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+    else:
+        qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_c, i_b in qd.ndrange(len_constraints, _B):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+
+
+@qd.func
+def _func_update_constraint_iter_qfrc_coop(
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Phase 2 (coop): qfrc_constraint = J^T @ efc_force, warp-per-env. 32 lanes stride i_c so adjacent
+    reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped jac and Tier-1
+    flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce."""
+    n_dofs = constraint_state.qfrc_constraint.shape[0]
+    _B = constraint_state.grad.shape[1]
+    _K = qd.static(32)
+
+    qd.loop_config(name="update_constraint_qfrc", block_dim=_K)
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
+        if constraint_state.n_constraints[i_b] > 0:
+            n_con = constraint_state.n_constraints[i_b]
+            for i_d in range(n_dofs):
+                qfrc_lane = gs.qd_float(0.0)
+                i_c = tid
+                while i_c < n_con:
+                    qfrc_lane = (
+                        qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                    )
+                    i_c = i_c + _K
+                qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
+                if tid == 0:
+                    constraint_state.qfrc_constraint[i_d, i_b] = qfrc_total
+
+
+@qd.func
+def _func_update_constraint_iter_cost_coop(
+    qacc: qd.template(),
+    Ma: qd.template(),
+    cost: qd.template(),
+    dofs_state: array_class.DofsState,
+    constraint_state: array_class.ConstraintState,
+    static_rigid_sim_config: qd.template(),
+):
+    """Phase 3+4 (coop): gauss + cost reduction, warp-per-env. Phase 3 lanes stride i_d (DOF-vec
+    family is canonical (n_dofs, _B) so reads here are *not* coalesced under the flipped layout, but
+    the working set is small enough to live in cache). Phase 4 lanes stride i_c → coalesced under
+    flipped Jaref/efc_D/active. One reduce_all_add_tiled per scalar at the end."""
+    _B = constraint_state.grad.shape[1]
+    _K = qd.static(32)
+
+    qd.loop_config(name="update_constraint_cost", block_dim=_K)
+    for i_flat in range(_B * _K):
+        tid = i_flat % _K
+        i_b = i_flat // _K
+        n_dofs = constraint_state.qfrc_constraint.shape[0]
+        ne = constraint_state.n_constraints_equality[i_b]
+        nef = ne + constraint_state.n_constraints_frictionloss[i_b]
+        n_con = constraint_state.n_constraints[i_b]
+
+        if tid == 0:
+            constraint_state.prev_cost[i_b] = cost[i_b]
+
+        cost_i = gs.qd_float(0.0)
+        gauss_i = gs.qd_float(0.0)
+
+        i_d = tid
+        while i_d < n_dofs:
+            v = (
+                0.5
+                * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
+                * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
+            )
+            gauss_i = gauss_i + v
+            cost_i = cost_i + v
+            i_d = i_d + _K
+
+        i_c = tid
+        while i_c < n_con:
+            Jaref_c = constraint_state.Jaref[i_c, i_b]
+            cost_i = cost_i + 0.5 * (
+                Jaref_c * Jaref_c * constraint_state.efc_D[i_c, i_b] * constraint_state.active[i_c, i_b]
+            )
+            if ne <= i_c and i_c < nef:
+                f = constraint_state.efc_frictionloss[i_c, i_b]
+                r = constraint_state.diag[i_c, i_b]
+                rf = r * f
+                linear_neg = Jaref_c <= -rf
+                linear_pos = Jaref_c >= rf
+                cost_i = cost_i + linear_neg * f * (-0.5 * rf - Jaref_c) + linear_pos * f * (-0.5 * rf + Jaref_c)
+            i_c = i_c + _K
+
+        cost_i = qd.simt.subgroup.reduce_all_add_tiled(cost_i, 5)
+        gauss_i = qd.simt.subgroup.reduce_all_add_tiled(gauss_i, 5)
+
+        if tid == 0:
+            constraint_state.gauss[i_b] = gauss_i
+            cost[i_b] = cost_i
+
+
+@qd.func
 def func_update_constraint(
     qacc: qd.Tensor,
     Ma: qd.Tensor,
@@ -3098,12 +3254,15 @@ def func_update_constraint(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    _B = constraint_state.jac.shape[2]
+    """Compute active / efc_force / qfrc_constraint / gauss / cost.
 
-    qd.loop_config(name="update_constraint", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_b in range(_B):
-        func_update_constraint_batch(
-            i_b,
+    Under ``constraint_layout_transposed=True`` we run three coop kernels (forces, qfrc, cost) so per-
+    constraint reads/writes coalesce against the flipped jac and Tier-1 constraint-state tensors. Under
+    canonical we keep the original 1-thread-per-env loop (bit-identical to the previous code path)."""
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        _func_update_constraint_iter_forces(constraint_state, static_rigid_sim_config)
+        _func_update_constraint_iter_qfrc_coop(constraint_state, static_rigid_sim_config)
+        _func_update_constraint_iter_cost_coop(
             qacc=qacc,
             Ma=Ma,
             cost=cost,
@@ -3111,6 +3270,19 @@ def func_update_constraint(
             constraint_state=constraint_state,
             static_rigid_sim_config=static_rigid_sim_config,
         )
+    else:
+        _B = constraint_state.jac.shape[2]
+        qd.loop_config(name="update_constraint", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b in range(_B):
+            func_update_constraint_batch(
+                i_b,
+                qacc=qacc,
+                Ma=Ma,
+                cost=cost,
+                dofs_state=dofs_state,
+                constraint_state=constraint_state,
+                static_rigid_sim_config=static_rigid_sim_config,
+            )
 
 
 @qd.func
