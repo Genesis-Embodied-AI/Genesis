@@ -149,14 +149,20 @@ class MPMSolver(Solver):
             layout=qd.Layout.SOA,
         )
 
-        # Sparse-reset bookkeeping: p2g at substep slot f appends flat cell indices into a per-slot dirty list, detected
-        # via atomic_add on mass returning 0. The next time that same slot is scheduled (substeps_local iterations
-        # later), sparse_reset_grid zeroes exactly those cells. Fields are zero-initialized, so the very first pass
-        # through each slot is a no-op (grid starts zero). Upper bound: n_particles * 27 unique cells per batch (each
-        # particle scatters to a 3^3 neighbourhood).
-        self._max_dirty_cells = int(min(np.prod(self._grid_res), max(self._n_particles, 1) * 27))
-        self.grid_dirty_list = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._max_dirty_cells, self._B))
-        self.grid_dirty_count = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._B))
+        # Sparse-reset bookkeeping for forward-only mode. A single global dirty list captures unique cells touched by
+        # p2g across all envs in the current substep; reset_dirty_cells zeroes those cells across all envs immediately
+        # after g2p, so the grid is always zero at the start of each substep and no per-substep state has to outlive a
+        # substep. grid_dirty_flag is a per-cell tristate (env-shared) that deduplicates appends: only the first env to
+        # touch a cell records it. List size is bounded by the total grid cell count because dedup ensures no more than
+        # that many unique entries.
+        # TODO: support sparse reset under requires_grad. Quadrants' differentiable framework needs the grid state at
+        # every intermediate substep for the backward pass, so we cannot eagerly wipe cells; revisit if checkpointing
+        # or selective grad masking becomes available.
+        if not self._sim.requires_grad:
+            self._grid_total = int(np.prod(self._grid_res))
+            self.grid_dirty_flag = qd.field(gs.qd_int, shape=self._grid_res)
+            self.grid_dirty_list = qd.field(gs.qd_int, shape=(self._grid_total,))
+            self.grid_dirty_count = qd.field(gs.qd_int, shape=(1,))
 
     def init_vvert_fields(self):
         struct_vvert_info = qd.types.struct(
@@ -223,8 +229,9 @@ class MPMSolver(Solver):
 
         # Aggregate SVD requirement across registered materials. If no material reads U/V/S, the solver can skip the SVD
         # kernel entirely on the forward pass and derive J from det(F_tmp) directly. Compile-time constant consumed by
-        # p2g via qd.static.
-        self.needs_svd = any(m.needs_svd for m in self._materials)
+        # p2g via qd.static. Forced True under requires_grad so the backward path stays exactly as upstream.
+        # TODO: validate the J = det(F_tmp) shortcut composes with quadrants autograd before enabling it there.
+        self.needs_svd = self._sim.requires_grad or any(m.needs_svd for m in self._materials)
 
         if self.is_active:
             if self._enable_CPIC and self._sim.requires_grad:
@@ -241,9 +248,9 @@ class MPMSolver(Solver):
             self.init_ckpt()
 
             # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted once after
-            # init_grid_fields so we don't pay the qd-to-torch wrap on every step. Backends without zero-copy (e.g.
-            # older Metal builds without DLPack field support) leave this None and fall back to reset_grid_dirty_count.
-            if gs.use_zerocopy:
+            # init_grid_fields so we don't pay the qd-to-torch wrap on every step; falls back to a kernel when
+            # zero-copy is unavailable. Skipped under requires_grad along with the rest of the sparse-reset path.
+            if not self._sim.requires_grad and gs.use_zerocopy:
                 self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
             else:
                 self._grid_dirty_count_torch = None
@@ -477,14 +484,19 @@ class MPMSolver(Solver):
                         mass_contrib = weight * self.particles_info[i_p].mass
                         prev_mass = qd.atomic_add(self.grid[f, cell_ijk, i_b].mass, mass_contrib)
                         # Sparse-reset bookkeeping runs forward-only: backward mode composes p2g through autodiff where
-                        # these atomics are meaningless. The first writer into this cell (prev mass exactly zero)
-                        # records it for the next time slot f is scheduled; subsequent writers see positive mass and
-                        # skip the append.
+                        # these atomics are meaningless. Per-env first-writer (prev_mass == 0) tries to claim the cell
+                        # in the env-shared dirty flag via atomic_or; only the very first env to touch this cell across
+                        # the whole batch then appends to the global list. List size is bounded by grid_total because
+                        # dedup ensures uniqueness.
                         if qd.static(not self._sim.requires_grad):
                             if prev_mass == gs.qd_float(0.0) and mass_contrib > gs.qd_float(0.0):
-                                slot_idx = qd.atomic_add(self.grid_dirty_count[f, i_b], 1)
-                                flat = (cell_ijk[0] * self._grid_res[1] + cell_ijk[1]) * self._grid_res[2] + cell_ijk[2]
-                                self.grid_dirty_list[f, slot_idx, i_b] = flat
+                                was_dirty = qd.atomic_or(self.grid_dirty_flag[cell_ijk], gs.qd_int(1))
+                                if was_dirty == gs.qd_int(0):
+                                    slot_idx = qd.atomic_add(self.grid_dirty_count[0], 1)
+                                    flat = (cell_ijk[0] * self._grid_res[1] + cell_ijk[1]) * self._grid_res[2] + (
+                                        cell_ijk[2]
+                                    )
+                                    self.grid_dirty_list[slot_idx] = flat
 
                     if not self.particles_info[i_p].free:  # non-free particles behave as boundary conditions
                         self.grid[f, base - self._grid_offset + offset, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
@@ -577,18 +589,8 @@ class MPMSolver(Solver):
             self.compute_F_tmp(f)
             self.svd(f)
         else:
-            # Per-slot sparse reset. On the very first pass through slot f the dirty count is zero (fields zero-init)
-            # and the grid is already zero, so the kernel is a no-op. On subsequent passes it zeros exactly the cells
-            # p2g wrote last time this slot ran, which is bounded by n_particles * 27 - typically 20-30x cheaper than
-            # the dense reset for a robot-vs-small-deformable scene.
-            self.sparse_reset_grid(f)
-            # Zero the per-slot dirty-count so p2g populates a fresh list. Use the cached zero-copy torch view when
-            # available (cheaper than a kernel launch); fall back to a tiny per-batch kernel on backends without
-            # zero-copy.
-            if self._grid_dirty_count_torch is not None:
-                self._grid_dirty_count_torch[f].zero_()
-            else:
-                self.reset_grid_dirty_count(f)
+            # Forward-only path: the grid is left zeroed by reset_dirty_cells at the end of the previous substep (and
+            # is zero-init on the first call), so no reset kernel is needed here.
             if self.needs_svd:
                 self.compute_F_tmp_and_svd(f)
             else:
@@ -630,14 +632,21 @@ class MPMSolver(Solver):
         if self._constraints_initialized:
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
+        # Eager sparse reset: zero only the cells p2g touched this substep, across all envs, then clear the global
+        # dirty count so the next substep starts fresh. The grid is no longer read after g2p / constraints, so it is
+        # safe to wipe here. Forward-only; backward composes p2g/g2p through autodiff and uses reset_grid_and_grad.
+        if not self._sim.requires_grad:
+            self.reset_dirty_cells(f)
+            if self._grid_dirty_count_torch is not None:
+                self._grid_dirty_count_torch.zero_()
+            else:
+                self.reset_dirty_count()
+
         # FIXME: Use existing errno mechanism for this.
         # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return value, so calling it every
         # substep forces a sync every substep. Matching the cadence used by the rigid solver keeps the safety net while
         # letting the GPU stay ahead of the host queue.
-        # Local import: simulator.py imports MPMSolver via .solvers, so a top-level reverse import would be circular.
-        from genesis.engine.simulator import RATE_CHECK_ERRNO
-
-        if self._sim._cur_substep_global % RATE_CHECK_ERRNO == 0:
+        if self._sim._cur_substep_global % gs.engine.simulator.RATE_CHECK_ERRNO == 0:
             if not self._is_state_valid(f):
                 gs.raise_exception(
                     "NaN detected in MPM states. Try reducing the time step size or adjusting simulation parameters."
@@ -685,22 +694,13 @@ class MPMSolver(Solver):
             self.grid.grad[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
 
     @qd.kernel
-    def reset_grid(self, f: qd.i32):
-        # Non-differentiable forward path: skip the grad-buffer writes. Halves the DRAM write traffic per substep on
-        # scenes where the grid reset is bandwidth-bound.
-        for i, j, k, i_b in qd.ndrange(*self._grid_res, self._B):
-            self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
-            self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
-            self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
-
-    @qd.kernel
-    def sparse_reset_grid(self, f: qd.i32):
-        # Zero only the cells that p2g touched the last time slot f was scheduled (tracked in grid_dirty_list[f, :, :]
-        # up to grid_dirty_count[f, :]). Typical robot-vs-deformable scenes touch well under 5% of the grid, so this is
-        # ~20-30x less work than the dense reset. Threads whose linear slot exceeds grid_dirty_count idle.
-        for i_linear, i_b in qd.ndrange(self._max_dirty_cells, self._B):
-            if i_linear < self.grid_dirty_count[f, i_b]:
-                flat = self.grid_dirty_list[f, i_linear, i_b]
+    def reset_dirty_cells(self, f: qd.i32):
+        # Zero the cells p2g touched this substep, across all envs, plus their dirty flags. The dirty list is shared
+        # across envs (deduplicated via grid_dirty_flag), so threads with slot >= grid_dirty_count idle. Only one thread
+        # per slot (i_b == 0) writes the flag back to zero so it can be reused next substep.
+        for slot, i_b in qd.ndrange(self._grid_total, self._B):
+            if slot < self.grid_dirty_count[0]:
+                flat = self.grid_dirty_list[slot]
                 k = flat % self._grid_res[2]
                 rem = flat // self._grid_res[2]
                 j = rem % self._grid_res[1]
@@ -708,12 +708,13 @@ class MPMSolver(Solver):
                 self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
                 self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
                 self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
+                if i_b == 0:
+                    self.grid_dirty_flag[i, j, k] = gs.qd_int(0)
 
     @qd.kernel
-    def reset_grid_dirty_count(self, f: qd.i32):
-        # Fallback path for backends where zero-copy torch views are unavailable.
-        for i_b in range(self._B):
-            self.grid_dirty_count[f, i_b] = 0
+    def reset_dirty_count(self):
+        # Fallback path for backends where the zero-copy torch view onto grid_dirty_count is unavailable.
+        self.grid_dirty_count[0] = gs.qd_int(0)
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):
