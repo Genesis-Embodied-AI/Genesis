@@ -695,9 +695,7 @@ def _add_collision_constraint_single(
     if qd.static(static_rigid_sim_config.sparse_solve):
         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
         _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
-    imp, aref = gu.imp_aref(
-        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
-    )
+    imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
     diag = invweight + contact_data_friction * contact_data_friction * invweight
     diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
@@ -3216,12 +3214,16 @@ def _func_update_constraint_iter_forces(
     _B = constraint_state.grad.shape[1]
 
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(
+            name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
+        )
         for i_b, i_c in qd.ndrange(_B, len_constraints):
             if i_c < constraint_state.n_constraints[i_b]:
                 _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
     else:
-        qd.loop_config(name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        qd.loop_config(
+            name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
+        )
         for i_c, i_b in qd.ndrange(len_constraints, _B):
             if i_c < constraint_state.n_constraints[i_b]:
                 _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
@@ -3249,9 +3251,7 @@ def _func_update_constraint_iter_qfrc_coop(
                 qfrc_lane = gs.qd_float(0.0)
                 i_c = tid
                 while i_c < n_con:
-                    qfrc_lane = (
-                        qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                    )
+                    qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
                     i_c = i_c + _K
                 qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
                 if tid == 0:
@@ -3291,11 +3291,7 @@ def _func_update_constraint_iter_cost_coop(
 
         i_d = tid
         while i_d < n_dofs:
-            v = (
-                0.5
-                * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b])
-                * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
-            )
+            v = 0.5 * (Ma[i_d, i_b] - dofs_state.force[i_d, i_b]) * (qacc[i_d, i_b] - dofs_state.acc_smooth[i_d, i_b])
             gauss_i = gauss_i + v
             cost_i = cost_i + v
             i_d = i_d + _K
