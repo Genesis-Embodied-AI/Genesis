@@ -2843,4 +2843,3 @@ class RigidSolver(KinematicSolver):
         if self.is_built:
             return self._equalities
         return gs.List(equality for entity in self._entities for equality in entity.equalities)
-
