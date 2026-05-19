@@ -247,14 +247,6 @@ class MPMSolver(Solver):
             self.init_vvert_fields()
             self.init_ckpt()
 
-            # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted once after
-            # init_grid_fields so we don't pay the qd-to-torch wrap on every step; falls back to a kernel when
-            # zero-copy is unavailable. Skipped under requires_grad along with the rest of the sparse-reset path.
-            if not self._sim.requires_grad and gs.use_zerocopy:
-                self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
-            else:
-                self._grid_dirty_count_torch = None
-
             for entity in self._entities:
                 entity._add_to_solver()
 
@@ -637,8 +629,8 @@ class MPMSolver(Solver):
         # safe to wipe here. Forward-only; backward composes p2g/g2p through autodiff and uses reset_grid_and_grad.
         if not self._sim.requires_grad:
             self.reset_dirty_cells(f)
-            if self._grid_dirty_count_torch is not None:
-                self._grid_dirty_count_torch.zero_()
+            if gs.use_zerocopy:
+                qd_to_torch(self.grid_dirty_count, copy=False).zero_()
             else:
                 self.reset_dirty_count()
 
