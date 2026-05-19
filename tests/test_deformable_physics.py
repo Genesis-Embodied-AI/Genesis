@@ -334,7 +334,7 @@ def test_mpm_perf_dispatch(variant, show_viewer):
     scene.build(n_envs=2)
 
     # Aggregate SVD flag must match the variant for the dispatch path under test to actually run.
-    assert scene.sim.mpm_solver._any_needs_svd == (variant == "svd")
+    assert scene.sim.mpm_solver.needs_svd == (variant == "svd")
 
     init_elastic_pos = elastic.get_particles_pos().clone()
     init_liquid_pos = liquid.get_particles_pos().clone()
@@ -349,13 +349,13 @@ def test_mpm_perf_dispatch(variant, show_viewer):
     assert init_elastic_pos[..., 2].mean() - final_elastic_pos[..., 2].mean() > 0.05
     assert init_liquid_pos[..., 2].mean() - final_liquid_pos[..., 2].mean() > 0.05
 
-    # No ground penetration (plane is at z=0). Non-viscous liquid spreads thin enough that
-    # a sub-grid-cell penetration is normal for the MPM coupling, so allow up to 2mm.
+    # No ground penetration (plane is at z=0). Non-viscous liquid spreads thin enough that a sub-grid-cell penetration
+    # is normal for the MPM coupling, so allow up to 2mm.
     assert final_elastic_pos[..., 2].min() > -1e-3
     assert final_liquid_pos[..., 2].min() > -2e-3
 
-    # No NaNs reached the host through _is_state_valid (rate-limited but should still trigger
-    # if anything went wrong over 600 substeps).
+    # No NaNs reached the host through _is_state_valid (rate-limited but should still trigger if anything went wrong
+    # over 600 substeps).
     assert torch.isfinite(final_elastic_pos).all()
     assert torch.isfinite(final_liquid_pos).all()
 

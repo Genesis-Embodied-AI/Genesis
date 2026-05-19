@@ -141,21 +141,19 @@ class MPMSolver(Solver):
             vel_in=gs.qd_vec3,  # input momentum/velocity
             vel_out=gs.qd_vec3,  # output momentum/velocity
         )
-        # Grid is only ever indexed at [f] (never [f+1]) in p2g/g2p/reset/coupler, so
-        # `substeps_local` frames are enough. Particles still need `substeps_local + 1`
-        # because g2p writes the next-frame state at [f+1].
+        # Grid is only ever indexed at [f] (never [f+1]) in p2g/g2p/reset/coupler, so substeps_local frames are enough.
+        # Particles still need substeps_local + 1 because g2p writes the next-frame state at [f+1].
         self.grid = grid_cell_state.field(
             shape=(self._sim.substeps_local, *self._grid_res, self._B),
             needs_grad=True,
             layout=qd.Layout.SOA,
         )
 
-        # Sparse-reset bookkeeping: p2g at substep slot f appends flat cell indices into a
-        # PER-SLOT dirty list, detected via atomic_add on mass returning 0. The next time
-        # that same slot is scheduled (substeps_local iterations later), sparse_reset_grid
-        # zeroes exactly those cells. Fields are zero-initialized, so the very first pass
-        # through each slot is a no-op (grid starts zero). Upper bound: n_particles * 27
-        # unique cells per batch (each particle scatters to a 3^3 neighbourhood).
+        # Sparse-reset bookkeeping: p2g at substep slot f appends flat cell indices into a per-slot dirty list, detected
+        # via atomic_add on mass returning 0. The next time that same slot is scheduled (substeps_local iterations
+        # later), sparse_reset_grid zeroes exactly those cells. Fields are zero-initialized, so the very first pass
+        # through each slot is a no-op (grid starts zero). Upper bound: n_particles * 27 unique cells per batch (each
+        # particle scatters to a 3^3 neighbourhood).
         self._max_dirty_cells = int(min(np.prod(self._grid_res), max(self._n_particles, 1) * 27))
         self.grid_dirty_list = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._max_dirty_cells, self._B))
         self.grid_dirty_count = qd.field(gs.qd_int, shape=(self._sim.substeps_local, self._B))
@@ -223,10 +221,10 @@ class MPMSolver(Solver):
 
         self._coupler = self.sim._coupler
 
-        # Aggregate SVD requirement across registered materials. If no material reads U/V/S,
-        # the solver can skip the SVD kernel entirely on the forward pass and derive J from
-        # det(F_tmp) directly. Compile-time constant consumed by p2g via qd.static.
-        self._any_needs_svd = any(m.needs_svd for m in self._materials)
+        # Aggregate SVD requirement across registered materials. If no material reads U/V/S, the solver can skip the SVD
+        # kernel entirely on the forward pass and derive J from det(F_tmp) directly. Compile-time constant consumed by
+        # p2g via qd.static.
+        self.needs_svd = any(m.needs_svd for m in self._materials)
 
         if self.is_active:
             if self._enable_CPIC and self._sim.requires_grad:
@@ -242,10 +240,9 @@ class MPMSolver(Solver):
             self.init_vvert_fields()
             self.init_ckpt()
 
-            # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted
-            # once after init_grid_fields so we don't pay the qd-to-torch wrap on every step.
-            # Backends without zero-copy (e.g. older Metal builds without DLPack field support)
-            # leave this None and fall back to reset_grid_dirty_count.
+            # Zero-copy torch view onto grid_dirty_count for per-substep counter reset. Hoisted once after
+            # init_grid_fields so we don't pay the qd-to-torch wrap on every step. Backends without zero-copy (e.g.
+            # older Metal builds without DLPack field support) leave this None and fall back to reset_grid_dirty_count.
             if gs.use_zerocopy:
                 self._grid_dirty_count_torch = qd_to_torch(self.grid_dirty_count, copy=False)
             else:
@@ -339,10 +336,9 @@ class MPMSolver(Solver):
 
     @qd.kernel
     def compute_F_tmp_and_svd(self, f: qd.i32):
-        # Fused F_tmp + SVD: keeps F_tmp in register/local-memory for the SVD instead of
-        # round-tripping through global memory. Only used on the forward pass; the backward
-        # path continues to call compute_F_tmp / svd separately so their autodiff remains
-        # composed unchanged.
+        # Fused F_tmp + SVD: keeps F_tmp in register/local-memory for the SVD instead of round-tripping through global
+        # memory. Only used on the forward pass; the backward path continues to call compute_F_tmp / svd separately so
+        # their autodiff remains composed unchanged.
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 F_tmp = (
@@ -355,8 +351,8 @@ class MPMSolver(Solver):
 
     @qd.kernel
     def compute_F_tmp_only(self, f: qd.i32):
-        # Fast path when no registered material needs U/V/S: compute F_tmp without SVD.
-        # p2g then derives J from det(F_tmp) directly. Only used on the forward pass.
+        # Fast path when no registered material needs U/V/S: compute F_tmp without SVD. p2g then derives J from
+        # det(F_tmp) directly. Only used on the forward pass.
         for i_p, i_b in qd.ndrange(self._n_particles, self._B):
             if self.particles_ng[f, i_p, i_b].active:
                 self.particles[f, i_p, i_b].F_tmp = (
@@ -391,11 +387,11 @@ class MPMSolver(Solver):
             if self.particles_ng[f, i_p, i_b].active:
                 # A. update F (deformation gradient), S (Sigma from SVD(F), essentially represents volume) and Jp
                 # (volume compression ratio) based on material type.
-                # det(F_tmp) == det(U S V^T) == det(S) for qd.svd (U, V are proper rotations), so when no
-                # material needs U/V/S we can read J directly from F_tmp and skip the SVD kernel. Predeclared
-                # outside the qd.static branch because quadrants scopes qd.static branches locally.
+                # det(F_tmp) == det(U S V^T) == det(S) for qd.svd (U, V are proper rotations), so when no material
+                # needs U/V/S we can read J directly from F_tmp and skip the SVD kernel. Predeclared outside the
+                # qd.static branch because quadrants scopes qd.static branches locally.
                 J = gs.qd_float(0.0)
-                if qd.static(self._any_needs_svd):
+                if qd.static(self.needs_svd):
                     J = self.particles[f, i_p, i_b].S.determinant()
                 else:
                     J = self.particles[f, i_p, i_b].F_tmp.determinant()
@@ -480,10 +476,10 @@ class MPMSolver(Solver):
                         )
                         mass_contrib = weight * self.particles_info[i_p].mass
                         prev_mass = qd.atomic_add(self.grid[f, cell_ijk, i_b].mass, mass_contrib)
-                        # Sparse-reset bookkeeping runs forward-only: backward mode composes p2g
-                        # through autodiff where these atomics are meaningless. First writer into
-                        # this cell (prev mass exactly zero) records it for the next time slot f
-                        # is scheduled. Subsequent writers see a positive mass and fall through.
+                        # Sparse-reset bookkeeping runs forward-only: backward mode composes p2g through autodiff where
+                        # these atomics are meaningless. The first writer into this cell (prev mass exactly zero)
+                        # records it for the next time slot f is scheduled; subsequent writers see positive mass and
+                        # skip the append.
                         if qd.static(not self._sim.requires_grad):
                             if prev_mass == gs.qd_float(0.0) and mass_contrib > gs.qd_float(0.0):
                                 slot_idx = qd.atomic_add(self.grid_dirty_count[f, i_b], 1)
@@ -576,29 +572,28 @@ class MPMSolver(Solver):
     def substep_pre_coupling(self, f):
         if self._sim.requires_grad:
             self.reset_grid_and_grad(f)
-            # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad
-            # and svd_grad) remain correct.
+            # Keep F_tmp and svd as separate kernels so their backward passes (compute_F_tmp.grad and svd_grad) remain
+            # correct.
             self.compute_F_tmp(f)
             self.svd(f)
         else:
-            # Per-slot sparse reset. On the very first pass through slot f the dirty count is
-            # zero (fields zero-init) and the grid is already zero, so the kernel is a no-op.
-            # On subsequent passes it zeros exactly the cells p2g wrote last time this slot
-            # ran, which is bounded by n_particles * 27 - typically 20-30x cheaper than the
-            # dense reset for a robot-vs-small-deformable scene.
+            # Per-slot sparse reset. On the very first pass through slot f the dirty count is zero (fields zero-init)
+            # and the grid is already zero, so the kernel is a no-op. On subsequent passes it zeros exactly the cells
+            # p2g wrote last time this slot ran, which is bounded by n_particles * 27 - typically 20-30x cheaper than
+            # the dense reset for a robot-vs-small-deformable scene.
             self.sparse_reset_grid(f)
-            # Zero the per-slot dirty-count so p2g populates a fresh list. Use the cached
-            # zero-copy torch view when available (cheaper than a kernel launch); fall back to
-            # a tiny per-batch kernel on backends without zero-copy.
+            # Zero the per-slot dirty-count so p2g populates a fresh list. Use the cached zero-copy torch view when
+            # available (cheaper than a kernel launch); fall back to a tiny per-batch kernel on backends without
+            # zero-copy.
             if self._grid_dirty_count_torch is not None:
                 self._grid_dirty_count_torch[f].zero_()
             else:
                 self.reset_grid_dirty_count(f)
-            if self._any_needs_svd:
+            if self.needs_svd:
                 self.compute_F_tmp_and_svd(f)
             else:
-                # All registered materials ignore U/V/S; skip SVD entirely (e.g. scenes of only
-                # non-viscous Liquid and/or neohooken Elastic).
+                # All registered materials ignore U/V/S; skip SVD entirely (e.g. scenes of only non-viscous Liquid
+                # and/or neohooken Elastic).
                 self.compute_F_tmp_only(f)
         self.p2g(
             f,
@@ -636,12 +631,10 @@ class MPMSolver(Solver):
             self.apply_particle_constraints(f, self.sim.coupler.rigid_solver.links_state)
 
         # FIXME: Use existing errno mechanism for this.
-        # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return
-        # value, so calling it every substep forces a sync every substep. Matching the cadence
-        # used by the rigid solver keeps the safety net while letting the GPU stay ahead of
-        # the host queue.
-        # Local import: simulator.py imports MPMSolver via .solvers, so a top-level reverse
-        # import would be circular.
+        # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return value, so calling it every
+        # substep forces a sync every substep. Matching the cadence used by the rigid solver keeps the safety net while
+        # letting the GPU stay ahead of the host queue.
+        # Local import: simulator.py imports MPMSolver via .solvers, so a top-level reverse import would be circular.
         from genesis.engine.simulator import RATE_CHECK_ERRNO
 
         if self._sim._cur_substep_global % RATE_CHECK_ERRNO == 0:
@@ -693,8 +686,8 @@ class MPMSolver(Solver):
 
     @qd.kernel
     def reset_grid(self, f: qd.i32):
-        # Non-differentiable forward path: skip the grad-buffer writes. Halves the DRAM write
-        # traffic per substep on scenes where the grid reset is bandwidth-bound.
+        # Non-differentiable forward path: skip the grad-buffer writes. Halves the DRAM write traffic per substep on
+        # scenes where the grid reset is bandwidth-bound.
         for i, j, k, i_b in qd.ndrange(*self._grid_res, self._B):
             self.grid[f, i, j, k, i_b].vel_in = qd.Vector.zero(gs.qd_float, 3)
             self.grid[f, i, j, k, i_b].mass = gs.qd_float(0.0)
@@ -702,10 +695,9 @@ class MPMSolver(Solver):
 
     @qd.kernel
     def sparse_reset_grid(self, f: qd.i32):
-        # Zero only the cells that p2g touched the last time slot f was scheduled (tracked in
-        # grid_dirty_list[f, :, :] up to grid_dirty_count[f, :]). Typical robot-vs-deformable
-        # scenes touch well under 5% of the grid, so this is ~20-30x less work than the dense
-        # reset. Threads whose linear slot exceeds grid_dirty_count idle.
+        # Zero only the cells that p2g touched the last time slot f was scheduled (tracked in grid_dirty_list[f, :, :]
+        # up to grid_dirty_count[f, :]). Typical robot-vs-deformable scenes touch well under 5% of the grid, so this is
+        # ~20-30x less work than the dense reset. Threads whose linear slot exceeds grid_dirty_count idle.
         for i_linear, i_b in qd.ndrange(self._max_dirty_cells, self._B):
             if i_linear < self.grid_dirty_count[f, i_b]:
                 flat = self.grid_dirty_list[f, i_linear, i_b]
