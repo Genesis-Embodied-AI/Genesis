@@ -3101,6 +3101,67 @@ def test_box_on_terrain_no_spurious_spin(show_viewer):
     assert_allclose(gu.quat_to_rotvec(quat_delta), 0.0, tol=0.02)
 
 
+@pytest.mark.required
+def test_multicontact_sphere_vs_terrain(show_viewer, tol):
+    GRID_N = 13
+    APEX_IDX = GRID_N // 2
+    VERTICAL_SCALE = 0.04
+    HORIZONTAL_SCALE = 0.05
+    SPHERE_RADIUS = 0.1
+
+    ii, jj = np.meshgrid(np.arange(GRID_N), np.arange(GRID_N), indexing="ij")
+    hf = (np.abs(ii - APEX_IDX) + np.abs(jj - APEX_IDX)).astype(np.int16)
+    terrain_pos = (-APEX_IDX * HORIZONTAL_SCALE, -APEX_IDX * HORIZONTAL_SCALE, 0.0)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.0, 0.8),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=30,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Terrain(
+            pos=terrain_pos,
+            height_field=hf,
+            horizontal_scale=HORIZONTAL_SCALE,
+            vertical_scale=VERTICAL_SCALE,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.4, 0.8, 0.4),
+        ),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(radius=SPHERE_RADIUS),
+        surface=gs.surfaces.Default(
+            color=(0.95, 0.2, 0.2),
+        ),
+        visualize_contact=True,
+    )
+
+    scene.build()
+
+    sphere.set_pos(torch.tensor([0.0, 0.0, 0.25]))
+
+    for _ in range(80):
+        scene.step()
+        print(tensor_to_array(sphere.get_dofs_velocity()))
+
+    # Sphere is at rest at the apex of the pit. Equilibrium height is set by the four-wall solid angle: contacts on the
+    # opposing pyramid walls push the sphere upward, so it sits above the apex vertex but well below the rim.
+    pos_final = tensor_to_array(sphere.get_pos())
+    assert_allclose(pos_final[:2], 0.0, tol=2.0 * HORIZONTAL_SCALE)
+    assert SPHERE_RADIUS < pos_final[2] < APEX_IDX * VERTICAL_SCALE + SPHERE_RADIUS
+
+    vel_final = tensor_to_array(sphere.get_dofs_velocity())
+    assert_allclose(vel_final, 0.0, tol=1e-5)
+
+
 @pytest.mark.parametrize(
     "backend",
     [

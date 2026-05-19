@@ -374,7 +374,6 @@ def func_contact_mpr_terrain(
 
     multi_contact = (
         qd.static(static_rigid_sim_config.enable_multi_contact)
-        and qd.static(not static_rigid_sim_config.enable_mujoco_compatibility)
         and geoms_info.type[i_ga] != gs.GEOM_TYPE.SPHERE
         and geoms_info.type[i_ga] != gs.GEOM_TYPE.ELLIPSOID
     )
@@ -435,8 +434,8 @@ def func_contact_mpr_terrain(
 
             # Multi-contact perturbation state. The initial detection (i_detection == 0) finds the first face-vs-face
             # contact; subsequent passes rotate geom A by a small angle about an axis orthogonal to that contact's
-            # normal, which tips the box face onto a different corner. After undoing the rotation each perturbed
-            # contact lands at a different corner of the contact patch, stabilizing a flat box on a triangulated cell.
+            # normal, which tips the box face onto a different corner. After undoing the rotation each perturbed contact
+            # lands at a different corner of the contact patch, stabilizing a flat box on a triangulated cell.
             # Perturbation is only applied when the initial contact is face-vs-face (snap fired) - cliff-edge contacts
             # are kept as a single MPR contact.
             is_col_0 = False
@@ -510,33 +509,32 @@ def func_contact_mpr_terrain(
                                     if is_col:
                                         snap_fired = False
                                         face_face = False
-                                        if qd.static(not static_rigid_sim_config.enable_mujoco_compatibility):
-                                            # Snap normal to the prism's top face normal when MPR's reported normal is
-                                            # already close to it. Cell boundaries on a SMOOTH heightfield are
-                                            # discretization artefacts, not physical edges, and MPR's polytope-edge
-                                            # radial normal there picks up a small position-dependent bias relative to
-                                            # the exact face normal. Only snap when the bias is small (dot > 0.95) so
-                                            # that contacts on real cliff edges - where MPR's normal is genuinely far
-                                            # from any single cell's top face normal - keep MPR's result.
-                                            e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
-                                            e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
-                                            top_face_normal = e1.cross(e2).normalized()
-                                            if top_face_normal[2] < 0.0:
-                                                top_face_normal = -top_face_normal
-                                            if top_face_normal.dot(normal) > 0.95:
-                                                normal = top_face_normal
-                                                snap_fired = True
-                                                # Cell is essentially horizontal in the terrain's local frame
-                                                # (within ~8 deg). Independent of the terrain's world orientation.
-                                                face_face = top_face_normal[2] > 0.99
+                                        # Snap normal to the prism's top face normal when MPR's reported normal is
+                                        # already close to it. Cell boundaries on a SMOOTH heightfield are
+                                        # discretization artefacts, not physical edges, and MPR's polytope-edge radial
+                                        # normal there picks up a small position-dependent bias relative to the exact
+                                        # face normal. Only snap when the bias is small (dot > 0.95) so that contacts on
+                                        # real cliff edges - where MPR's normal is genuinely far from any single cell's
+                                        # top face normal - keep MPR's result.
+                                        e1 = collider_state.prism[4, i_b] - collider_state.prism[3, i_b]
+                                        e2 = collider_state.prism[5, i_b] - collider_state.prism[3, i_b]
+                                        top_face_normal = e1.cross(e2).normalized()
+                                        if top_face_normal[2] < 0.0:
+                                            top_face_normal = -top_face_normal
+                                        if top_face_normal.dot(normal) > 0.95:
+                                            normal = top_face_normal
+                                            snap_fired = True
+                                            # Cell is essentially horizontal in the terrain's local frame (within ~8
+                                            # deg). Independent of the terrain's world orientation.
+                                            face_face = top_face_normal[2] > 0.99
 
                                         normal = gu.qd_transform_by_quat(normal, gb_quat)
                                         contact_pos = gu.qd_transform_by_quat(contact_pos, gb_quat)
                                         contact_pos = contact_pos + gb_pos
 
                                         # No perturbation correction: the perturbation magnitude (mc_perturbation,
-                                        # default 1e-2 rad) is so small that the perturbed contact_pos sits within
-                                        # a millimeter of the unperturbed contact patch. The deduplication tolerance
+                                        # default 1e-2 rad) is so small that the perturbed contact_pos sits within a
+                                        # millimeter of the unperturbed contact patch. The deduplication tolerance
                                         # downstream picks the unique corner contacts and the constraint solver
                                         # tolerates the residual offset.
 
@@ -589,11 +587,11 @@ def func_contact_mpr_terrain(
                                             n_con = n_con + 1
                                             if i_detection == 0 and not is_col_0:
                                                 is_col_0 = True
-                                                # Perturbation only applies on essentially-horizontal cell faces
-                                                # (in the terrain's local frame, within ~8 deg of the heightfield
-                                                # +z): on steeper slopes the corner contacts generated by
-                                                # perturbation map to different parts of neighbouring cells and
-                                                # create constraint-solver oscillation.
+                                                # Perturbation only applies on essentially-horizontal cell faces (in the
+                                                # terrain's local frame, within ~8 deg of the heightfield +z): on
+                                                # steeper slopes the corner contacts generated by perturbation map to
+                                                # different parts of neighbouring cells and create constraint-solver
+                                                # oscillation.
                                                 face_face_0 = face_face
                                                 contact_pos_0 = contact_pos
                                                 normal_0 = normal
