@@ -25,6 +25,10 @@ env:
   PY_COLORS: 1
   MADRONA_DISABLE_CUDA_HEAP_SIZE: "1"
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -exo pipefail {0}
+
 jobs:
   unit-tests:
     name: production-unit_tests-${{ matrix.GS_ENABLE_NDARRAY == '0' && 'field' || 'ndarray' }}
@@ -47,8 +51,6 @@ jobs:
       - name: Spawn Slurm job
         if: github.event_name == 'pull_request'
         run: |
-          set -e
-
           SLURM_JOB_NAME="$(uuidgen)_$(date +%Y%m%d_%H%M%S)"
           CONTAINER_NAME="${SLURM_JOB_NAME}"
           SRUN_CONTAINER_OPTS="\
@@ -89,7 +91,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           srun ${SRUN_COMMON} bash -s <<'EOF'
-            set -e
+            set -ex
             source /venv/bin/activate
 
             # sudo apt update
@@ -147,7 +149,7 @@ jobs:
                --no-container-mount-home \
                --container-workdir=/root/workspace"
           SLURM_ENV_VARS="NVIDIA_DRIVER_CAPABILITIES=all,BASH_ENV=/root/.bashrc,HF_TOKEN,GS_ENABLE_NDARRAY=${GS_ENABLE_NDARRAY}"
-          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/Genesis' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
+          if [[ "${{ github.repository }}" == 'Genesis-Embodied-AI/genesis-world' && "${{ github.ref }}" == 'refs/heads/main' ]] ; then
             SLURM_ENV_VARS="${SLURM_ENV_VARS},WANDB_API_KEY"
           fi
 
@@ -174,14 +176,15 @@ jobs:
       - name: Run benchmarks
         run: |
           srun ${SRUN_COMMON} bash -s <<'EOF'
-            set -e
+            set -ex
             source /venv/bin/activate
 
             pytest --mem-monitoring-filepath "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
                    --print -m "benchmarks" ./tests
 
             cat speed_test*.txt > "/mnt/data/artifacts/speed_test_${SLURM_JOB_NAME}.txt"
-            if [ -n "${WANDB_API_KEY}" ] ; then {
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ] ; then (
+              ls -lh /mnt/data/artifacts/*.txt
               python tests/upload_benchmarks_table_to_wandb.py \
                   --in-file "/mnt/data/artifacts/mem_test_${SLURM_JOB_NAME}.txt" \
                   --project genesis-benchmarks-2 \
@@ -192,7 +195,9 @@ jobs:
                   --project genesis-benchmarks-2 \
                   --metrics compile_time runtime_fps realtime_factor \
                   --run-prefix speed
-            } fi
+            ) else (
+              echo "Not on main branch => skipping wandb uploads"
+            ) fi
           EOF
       - name: Kill Slurm job
         if: always()
