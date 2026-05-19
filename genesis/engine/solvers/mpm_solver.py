@@ -633,7 +633,7 @@ class MPMSolver(Solver):
                 grid_dirty_count = qd_to_torch(self.grid_dirty_count, copy=False)
                 grid_dirty_count.zero_()
             else:
-                self.reset_dirty_count()
+                self.grid_dirty_count[0] = 0
 
         # FIXME: Use existing errno mechanism for this.
         # Rate-limit the NaN check. _is_state_valid triggers a GPU->CPU sync on its return value, so calling it every
@@ -703,11 +703,6 @@ class MPMSolver(Solver):
                 self.grid[f, i, j, k, i_b].vel_out = qd.Vector.zero(gs.qd_float, 3)
                 if i_b == 0:
                     self.grid_dirty_flag[i, j, k] = gs.qd_int(0)
-
-    @qd.kernel
-    def reset_dirty_count(self):
-        # Fallback path for backends where the zero-copy torch view onto grid_dirty_count is unavailable.
-        self.grid_dirty_count[0] = gs.qd_int(0)
 
     @qd.kernel
     def reset_grad_till_frame(self, f: qd.i32):
