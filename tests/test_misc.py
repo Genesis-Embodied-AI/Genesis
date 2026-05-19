@@ -257,3 +257,62 @@ def test_gs_mesh_sample_point_cloud_wrapper():
     _, dist, _ = mesh.nearest.on_surface(points)
     assert dist.max() < 1e-5
     assert_allclose(np.linalg.norm(normals, axis=1), 1.0, tol=1e-5)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize("raise_before_build", [True, False])
+def test_destroy_after_failed_camera_build(monkeypatch, raise_before_build):
+    from genesis.engine.sensors.camera import RasterizerCameraSensor
+
+    scene = gs.Scene(show_viewer=False)
+    camera = scene.add_sensor(gs.sensors.RasterizerCameraOptions(res=(64, 64)))
+
+    # Capture the shared metadata reference now; SensorManager.destroy() drops its dict entry,
+    # but the dataclass instance itself stays alive through our local reference so we can
+    # inspect its fields after teardown.
+    shared_metadata = camera._shared_metadata
+
+    # Inject a bug either at build entry (no metadata population) or after the original build
+    # has populated renderer / context / sensors / image_cache.
+    original_build = RasterizerCameraSensor.build
+
+    def buggy_build(self):
+        if not raise_before_build:
+            original_build(self)
+        raise RuntimeError("injected camera build failure")
+
+    monkeypatch.setattr(RasterizerCameraSensor, "build", buggy_build)
+
+    with pytest.raises(RuntimeError, match="injected camera build failure"):
+        scene.build()
+
+    if raise_before_build:
+        assert shared_metadata.renderer is None
+    else:
+        assert shared_metadata.renderer is not None
+        assert shared_metadata.context is not None
+        assert shared_metadata.sensors is not None
+        assert shared_metadata.image_cache is not None
+
+    # Track shared_metadata.destroy() invocations via instance-level shadow. Assigning to the
+    # instance __dict__ takes precedence over class-level lookup for this instance only, so
+    # neither the class nor any other metadata instance is affected. The `del` reverts the
+    # instance to plain class-level lookup before any finalizer can fire.
+    original_destroy = shared_metadata.destroy
+    destroy_call_count = [0]
+
+    def tracked_destroy():
+        destroy_call_count[0] += 1
+        original_destroy()
+
+    shared_metadata.destroy = tracked_destroy
+    try:
+        scene.destroy()
+    finally:
+        del shared_metadata.destroy
+
+    assert destroy_call_count[0] == 1
+    assert shared_metadata.renderer is None
+    assert shared_metadata.context is None
+    assert shared_metadata.sensors is None
+    assert shared_metadata.image_cache is None

@@ -46,8 +46,8 @@ def get_triangle_vertices(
 
 @qd.func
 def bvh_ray_cast(
-    ray_start,  # : gs.qd_vec3,
-    ray_dir,  # : gs.qd_vec3,
+    ray_start: qd.types.vector(3),
+    ray_dir: qd.types.vector(3),
     max_range: float,
     i_b: int,
     bvh_nodes: qd.template(),
@@ -124,11 +124,11 @@ def bvh_ray_cast(
 
 @qd.func
 def ray_triangle_intersection(
-    ray_start,  # : gs.qd_vec3,
-    ray_dir,  # : gs.qd_vec3,
-    v0,  # : gs.qd_vec3,
-    v1,  # : gs.qd_vec3,
-    v2,  # : gs.qd_vec3,
+    ray_start: qd.types.vector(3),
+    ray_dir: qd.types.vector(3),
+    v0: qd.types.vector(3),
+    v1: qd.types.vector(3),
+    v2: qd.types.vector(3),
     eps: float,
 ):
     """
@@ -193,10 +193,10 @@ def ray_triangle_intersection(
 
 @qd.func
 def ray_aabb_intersection(
-    ray_start,  # : gs.qd_vec3,
-    ray_dir,  # : gs.qd_vec3,
-    aabb_min,  # : gs.qd_vec3,
-    aabb_max,  # : gs.qd_vec3,
+    ray_start: qd.types.vector(3),
+    ray_dir: qd.types.vector(3),
+    aabb_min: qd.types.vector(3),
+    aabb_max: qd.types.vector(3),
     eps: float,
 ):
     """

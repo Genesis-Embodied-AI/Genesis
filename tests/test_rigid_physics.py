@@ -365,14 +365,19 @@ def hinge_slide():
     return mjcf
 
 
-@pytest.fixture(scope="session")
-def ellipsoid():
+def _ellipsoid_mjcf(semi_axes, body_name="obj", joint_name="root"):
+    a, b, c = semi_axes
     mjcf = ET.Element("mujoco", model="ellipsoid")
     worldbody = ET.SubElement(mjcf, "worldbody")
-    body = ET.SubElement(worldbody, "body", name="obj", pos="0 0 0.0")
-    ET.SubElement(body, "joint", name="root", type="free")
-    ET.SubElement(body, "geom", type="ellipsoid", size="0.05 0.05 0.02")
+    body = ET.SubElement(worldbody, "body", name=body_name, pos="0 0 0.0")
+    ET.SubElement(body, "joint", name=joint_name, type="free")
+    ET.SubElement(body, "geom", type="ellipsoid", size=f"{a} {b} {c}")
     return mjcf
+
+
+@pytest.fixture(scope="session")
+def ellipsoid():
+    return _ellipsoid_mjcf((0.05, 0.05, 0.02))
 
 
 @pytest.fixture(scope="session")
@@ -1067,6 +1072,282 @@ def test_box_box_dynamics(gs_sim):
 
         qpos = gs_robot.get_dofs_position()
         assert_allclose(qpos[8], 0.6, atol=2e-3)
+
+
+def _capsule_mjcf_path(tmp_path, radius, length, name="capsule"):
+    mjcf = ET.Element("mujoco", model=name)
+    body = ET.SubElement(ET.SubElement(mjcf, "worldbody"), "body")
+    ET.SubElement(body, "geom", type="capsule", size=f"{radius} {0.5 * length}")
+    ET.SubElement(body, "joint", type="free")
+    path = tmp_path / f"{name}.xml"
+    ET.ElementTree(mjcf).write(path)
+    return str(path)
+
+
+def _ellipsoid_mjcf_path(tmp_path, semi_axes):
+    path = tmp_path / "ellipsoid.xml"
+    ET.ElementTree(_ellipsoid_mjcf(semi_axes)).write(path)
+    return str(path)
+
+
+@pytest.mark.required
+@pytest.mark.parametrize(
+    "smooth_kind, pair_kind",
+    [
+        ("sphere", "prim-prim"),
+        ("sphere", "prim-mesh"),
+        ("sphere", "prim-terrain"),
+        ("sphere", "mesh-mesh"),
+        ("capsule", "prim-prim"),
+        ("capsule", "prim-mesh"),
+        ("cylinder", "prim-prim"),
+        ("cylinder", "prim-mesh"),
+        ("ellipsoid", "prim-prim"),
+        ("ellipsoid", "prim-mesh"),
+    ],
+)
+@pytest.mark.parametrize("gjk_collision", [False, True])
+def test_smooth_box_no_drift(gjk_collision, smooth_kind, pair_kind, show_viewer, tmp_path):
+    WORLD_TILT_ANGLE = 50.0
+    HEIGHT = 0.02
+    # The smooth-primitive characteristic length must be small enough to amplify the bias and make drift evident
+    SMOOTH_RADIUS = 0.0025
+    CYLINDER_HEIGHT = 0.005
+    # Smallest semi-axis along body z so the ellipsoid rests on its narrowest cross-section
+    ELLIPSOID_SEMI_AXES = (0.0035, 0.0030, SMOOTH_RADIUS)
+    BOX_HALF_EXTENT = 0.1
+    N_ENVS = 16
+    SPHERE_TESSELLATION_SUBDIVISIONS = 3
+
+    # The box and the gravity vector are rotated by the same tilt, which is physically equivalent to the untilted setup.
+    tilt_axis = np.array([1.0, 1.0, 0.0]) / math.sqrt(2.0)
+    tilt_quat = gu.rotvec_to_quat(math.radians(WORLD_TILT_ANGLE) * tilt_axis)
+    R = gu.quat_to_R(tilt_quat)
+    terrain_pos_world = R @ np.array([-BOX_HALF_EXTENT, -BOX_HALF_EXTENT, HEIGHT])
+    box_pos_world = R @ np.array([0.0, 0.0, 0.5 * HEIGHT])
+    gravity_world = R @ np.array([0.0, 0.0, -9.81])
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.004,
+            gravity=gravity_world,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            use_gjk_collision=gjk_collision,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(0.25, 0.25, 0.2),
+            camera_lookat=(0.0, 0.0, 0.5 * HEIGHT),
+            camera_fov=30.0,
+        ),
+        show_viewer=show_viewer,
+    )
+    if pair_kind == "prim-mesh":
+        box_mesh = trimesh.creation.box(extents=(2.0 * BOX_HALF_EXTENT, 2.0 * BOX_HALF_EXTENT, HEIGHT))
+        scene.add_entity(
+            morph=gs.morphs.MeshSet(
+                files=(box_mesh,),
+                pos=box_pos_world,
+                quat=tilt_quat,
+                fixed=True,
+            ),
+            surface=gs.surfaces.Default(
+                smooth=False,
+            ),
+        )
+    elif pair_kind == "prim-terrain":
+        flat_hf = np.zeros((2, 2), dtype=np.float32)
+        scene.add_entity(
+            morph=gs.morphs.Terrain(
+                horizontal_scale=2.0 * BOX_HALF_EXTENT,
+                vertical_scale=2.0 * BOX_HALF_EXTENT,
+                height_field=flat_hf,
+                pos=terrain_pos_world,
+                quat=tilt_quat,
+            ),
+        )
+    else:
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=box_pos_world,
+                quat=tilt_quat,
+                size=(2.0 * BOX_HALF_EXTENT, 2.0 * BOX_HALF_EXTENT, HEIGHT),
+                fixed=True,
+            ),
+        )
+
+    if smooth_kind == "sphere":
+        if smooth_kind == "sphere" and pair_kind == "mesh-mesh":
+            sphere_mesh = trimesh.creation.icosphere(
+                radius=SMOOTH_RADIUS, subdivisions=SPHERE_TESSELLATION_SUBDIVISIONS
+            )
+            # Rotate the icosphere so that one face plane is perpendicular to the body -z axis. With the sphere oriented
+            # to match the box tilt, this puts that face squarely against the box's top, eliminating the discretization
+            # xy shift the sphere would otherwise pick up while rocking onto its nearest supporting feature. We align
+            # the face's OUTWARD NORMAL with -z; aligning the centroid direction instead leaves the face plane slightly
+            # tilted because for subdivided icosphere faces the centroid is not exactly along the face normal.
+            bottom_dir = sphere_mesh.face_normals[int(np.argmin(sphere_mesh.face_normals[:, 2]))]
+            cross_axis = np.cross(bottom_dir, np.array([0.0, 0.0, -1.0]))
+            sin_t = float(np.linalg.norm(cross_axis))
+            if sin_t > 1e-12:
+                cross_axis = cross_axis / sin_t
+                angle = np.arctan2(sin_t, float(np.dot(bottom_dir, np.array([0.0, 0.0, -1.0]))))
+                sphere_mesh.apply_transform(trimesh.transformations.rotation_matrix(angle, cross_axis))
+            entity = scene.add_entity(
+                morph=gs.morphs.MeshSet(
+                    files=(sphere_mesh,),
+                    decimate=False,
+                ),
+                vis_mode="collision",
+                # visualize_contact=True,
+            )
+        else:
+            entity = scene.add_entity(
+                morph=gs.morphs.Sphere(
+                    radius=SMOOTH_RADIUS,
+                ),
+            )
+    elif smooth_kind == "cylinder":
+        entity = scene.add_entity(
+            morph=gs.morphs.Cylinder(
+                radius=SMOOTH_RADIUS,
+                height=CYLINDER_HEIGHT,
+            ),
+        )
+    elif smooth_kind == "capsule":
+        # Two capsule lengths exist as separate entities: the zero-length capsule (sphere-like, used by "vertical-axis"
+        # envs because a full-length capsule standing on its cap is a tippy-pencil configuration that is numerically
+        # unstable regardless of the bias fix) and the full-length capsule (used by "horizontal-axis" envs, barrel
+        # contact). MuJoCo rejects an exact zero length so we use a tiny positive value.
+        entity = scene.add_entity(
+            morph=(
+                gs.morphs.MJCF(
+                    file=_capsule_mjcf_path(tmp_path, SMOOTH_RADIUS, gs.EPS, name="capsule_v"),
+                ),
+                gs.morphs.MJCF(
+                    file=_capsule_mjcf_path(tmp_path, SMOOTH_RADIUS, CYLINDER_HEIGHT, name="capsule_h"),
+                ),
+            )
+        )
+    else:  # if smooth_kind == "ellipsoid":
+        entity = scene.add_entity(
+            morph=gs.morphs.MJCF(
+                file=_ellipsoid_mjcf_path(tmp_path, ELLIPSOID_SEMI_AXES),
+            ),
+        )
+    scene.build(n_envs=N_ENVS)
+
+    # Randomly sample position in local frame.
+    # Add small vertical offset to ensure contact at init; otherwise the primitive will sink before bouncing up.
+    sphere_offsets = np.random.uniform(
+        low=-(BOX_HALF_EXTENT - 2.0 * SMOOTH_RADIUS),
+        high=BOX_HALF_EXTENT - 2.0 * SMOOTH_RADIUS,
+        size=(N_ENVS, 2),
+    )
+    smooth_pos_local = np.concatenate([sphere_offsets, np.full((N_ENVS, 1), HEIGHT + SMOOTH_RADIUS - 1e-4)], axis=-1)
+
+    # Randomly sample orientation in local frame.
+    # Special handling for capsule to ensure stable barrel contact if needed.
+    smooth_quat_local = np.random.uniform(low=-1.0, high=1.0, size=(N_ENVS, 4))
+    if smooth_kind in "cylinder":
+        singular_mask = np.ones((N_ENVS,), dtype=np.bool_)
+        angle_pitch = 0.5 * np.pi
+    elif smooth_kind in "ellipsoid":
+        singular_mask = np.ones((N_ENVS,), dtype=np.bool_)
+        angle_pitch = 0.0
+    elif smooth_kind == "capsule":
+        singular_mask = np.arange(N_ENVS) >= N_ENVS // 2
+        angle_pitch = 0.5 * np.pi
+    else:
+        singular_mask = np.zeros((N_ENVS,), dtype=np.bool_)
+        angle_pitch = 0.0
+    n_singulars = np.sum(singular_mask)
+    angle_yaw = np.random.uniform(low=-np.pi, high=np.pi, size=(n_singulars, 1))
+    smooth_quat_local[singular_mask] = gu.xyz_to_quat(
+        np.concatenate([np.zeros((n_singulars, 1)), np.full((n_singulars, 1), angle_pitch), angle_yaw], axis=-1),
+        rpy=True,
+    )
+
+    # Convert pose from local to world frame
+    smooth_pos_world = smooth_pos_local @ R.T
+    smooth_quat_world = gu.transform_quat_by_quat(smooth_quat_local, np.tile(tilt_quat, (N_ENVS, 1)))
+
+    entity.set_pos(smooth_pos_world)
+    entity.set_quat(smooth_quat_world)
+    if show_viewer:
+        scene.visualizer.update()
+
+    for _ in range(300):
+        scene.step()
+
+    pos_local = tensor_to_array(entity.get_pos()) @ R
+    # The tolerance must be large enough to accomate small numerical error for mesh-mesh.
+    assert_allclose(pos_local[..., :2], sphere_offsets, atol=1e-3)
+
+
+@pytest.mark.required
+@pytest.mark.xfail(reason="De-duplication of repeated contact points is currently too naive for this test to pass...")
+@pytest.mark.parametrize("surface_kind", ["primitive_box", "primitive_plane", "vertex_box", "flat_terrain"])
+def test_contact_dedup(surface_kind, show_viewer):
+    SPHERE_RADIUS = 0.05
+    GROUND_SIZE = 1.0
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+        ),
+        show_viewer=show_viewer,
+    )
+    if surface_kind == "primitive_box":
+        scene.add_entity(
+            morph=gs.morphs.Box(
+                pos=(0.0, 0.0, -0.05),
+                size=(GROUND_SIZE, GROUND_SIZE, 0.1),
+                fixed=True,
+            ),
+        )
+    elif surface_kind == "primitive_plane":
+        scene.add_entity(
+            morph=gs.morphs.Plane(
+                pos=(0.0, 0.0, 0.0),
+            ),
+        )
+    elif surface_kind == "vertex_box":
+        box_mesh = trimesh.creation.box(extents=(GROUND_SIZE, GROUND_SIZE, 0.1))
+        scene.add_entity(
+            morph=gs.morphs.MeshSet(
+                files=(box_mesh,),
+                pos=(0.0, 0.0, -0.05),
+                fixed=True,
+            ),
+        )
+    elif surface_kind == "flat_terrain":
+        flat_hf = np.zeros((16, 16), dtype=np.float32)
+        scene.add_entity(
+            morph=gs.morphs.Terrain(
+                horizontal_scale=0.1,
+                vertical_scale=1.0,
+                height_field=flat_hf,
+                pos=(-0.8, -0.8, 0.0),
+            ),
+        )
+    sphere = scene.add_entity(
+        morph=gs.morphs.MeshSet(
+            files=(trimesh.creation.icosphere(radius=SPHERE_RADIUS, subdivisions=3),),
+            pos=(0.0, 0.0, SPHERE_RADIUS - 1e-4),
+            decimate=False,
+        ),
+        vis_mode="collision",
+        visualize_contact=True,
+    )
+    scene.build()
+
+    for i in range(80):
+        scene.step()
+        if i == 20:
+            sphere.set_dofs_velocity(0.2, dofs_idx_local=sphere.dof_start)
+        n_contacts = scene.rigid_solver.collider._collider_state.n_contacts.to_numpy()
+        assert np.all(n_contacts == 1), f"Expected 1 contact after dedup, got {n_contacts}"
 
 
 @pytest.mark.slow  # ~200s

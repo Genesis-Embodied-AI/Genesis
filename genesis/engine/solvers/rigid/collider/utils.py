@@ -86,7 +86,7 @@ def func_point_in_geom_aabb(
     geoms_state: array_class.GeomsState,
     i_g: int,
     i_b: int,
-    point,  # : gs.qd_vec3,
+    point: qd.types.vector(3),
     expansion: float = 0.0,
 ):
     aabb_min = geoms_state.aabb_min[i_g, i_b] - expansion

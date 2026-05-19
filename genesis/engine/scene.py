@@ -287,6 +287,13 @@ class Scene(RBC):
             )
 
     def destroy(self):
+        # Stop tracking this scene right away
+        try:
+            gs._scene_registry.remove(weakref.ref(self))
+        except ValueError:
+            # This scene may have been destroyed previously
+            pass
+
         if getattr(self, "_recorder_manager", None) is not None:
             if self._recorder_manager.is_recording:
                 self._recorder_manager.stop()
@@ -299,13 +306,6 @@ class Scene(RBC):
         if getattr(self, "_sim", None) is not None:
             self._sim.destroy()
             self._sim = None
-
-        # Stop tracking this scene
-        try:
-            gs._scene_registry.remove(weakref.ref(self))
-        except ValueError:
-            # This scene may have been destroyed previously
-            pass
 
     @overload
     def add_entity(
@@ -874,6 +874,16 @@ class Scene(RBC):
             warn_once("`compile_kernels` is deprecated and will be removed in future release.")
             compile_kernels = True
 
+        # Start tracking the scene right away, so that destroy is called even if some error fires during build
+        def _destroy_callback(scene_ref: weakref.ReferenceType["Scene"]):
+            scene = scene_ref()
+            for i, scene_ref_i in enumerate(gs._scene_registry):
+                if scene is scene_ref_i():
+                    del gs._scene_registry[i]
+                    break
+
+        gs._scene_registry.append(weakref.ref(self, _destroy_callback))
+
         with gs.logger.timer(f"Building scene ~~~<{self._uid}>~~~..."):
             self._parallelize(n_envs, env_spacing, n_envs_per_row, center_envs_at_origin)
 
@@ -898,16 +908,6 @@ class Scene(RBC):
 
         # recorders
         self._recorder_manager.build()
-
-        # Update global scene registry
-        def _destroy_callback(scene_ref: weakref.ReferenceType["Scene"]):
-            scene = scene_ref()
-            for i, scene_ref_i in enumerate(gs._scene_registry):
-                if scene is scene_ref_i():
-                    del gs._scene_registry[i]
-                    break
-
-        gs._scene_registry.append(weakref.ref(self, _destroy_callback))
 
     def _parallelize(
         self,
