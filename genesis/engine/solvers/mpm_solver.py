@@ -630,7 +630,8 @@ class MPMSolver(Solver):
         if not self._sim.requires_grad:
             self.reset_dirty_cells(f)
             if gs.use_zerocopy:
-                qd_to_torch(self.grid_dirty_count, copy=False).zero_()
+                grid_dirty_count = qd_to_torch(self.grid_dirty_count, copy=False)
+                grid_dirty_count.zero_()
             else:
                 self.reset_dirty_count()
 
