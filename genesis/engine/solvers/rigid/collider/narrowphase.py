@@ -776,6 +776,7 @@ def func_convex_convex_contact(
                                 )
 
                     ### GJK, MJ_GJK
+                    # TODO: Add support of smooth refinement to differentiable contact.
                     if qd.static(collider_static_config.ccd_algorithm != CCD_ALGORITHM_CODE.MJ_MPR):
                         if prefer_gjk:
                             if qd.static(static_rigid_sim_config.requires_grad):
@@ -844,25 +845,11 @@ def func_convex_convex_contact(
                                             collider_state,
                                             collider_info,
                                         )
-                                        # FIXME: Is it the correct way to apply refinement for auto-diff?
-                                        contact_pos = func_apply_smooth_refinement(
-                                            i_ga,
-                                            i_gb,
-                                            gjk_state.normal[i_b, i_c],
-                                            gjk_state.diff_penetration[i_b, i_c],
-                                            gjk_state.contact_pos[i_b, i_c],
-                                            ga_pos_current,
-                                            ga_quat_current,
-                                            gb_pos_current,
-                                            gb_quat_current,
-                                            geoms_info,
-                                            static_rigid_sim_config,
-                                        )
                                         func_add_contact(
                                             i_ga,
                                             i_gb,
                                             gjk_state.normal[i_b, i_c],
-                                            contact_pos,
+                                            gjk_state.contact_pos[i_b, i_c],
                                             gjk_state.diff_penetration[i_b, i_c],
                                             i_b,
                                             i_pair,
@@ -882,8 +869,6 @@ def func_convex_convex_contact(
                                             if i_c < qd.static(collider_static_config.n_contacts_per_pair):
                                                 contact_pos = gjk_state.contact_pos[i_b, i_c]
                                                 normal = gjk_state.normal[i_b, i_c]
-                                                if qd.static(static_rigid_sim_config.requires_grad):
-                                                    penetration = gjk_state.diff_penetration[i_b, i_c]
                                                 contact_pos = func_apply_smooth_refinement(
                                                     i_ga,
                                                     i_gb,
@@ -2273,20 +2258,6 @@ def func_narrow_phase_diff_convex_vs_convex(
                 )
                 collider_state.diff_contact_input.ref_penetration[i_b, i_c] = penetration
 
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    contact_normal,
-                    penetration,
-                    contact_pos,
-                    geoms_state.pos[i_ga, i_b],
-                    geoms_state.quat[i_ga, i_b],
-                    geoms_state.pos[i_gb, i_b],
-                    geoms_state.quat[i_gb, i_b],
-                    geoms_info,
-                    static_rigid_sim_config,
-                )
-
                 func_set_contact(
                     i_ga,
                     i_gb,
@@ -2314,20 +2285,6 @@ def func_narrow_phase_diff_convex_vs_convex(
                 ref_penetration = collider_state.diff_contact_input.ref_penetration[i_b, ref_id]
                 contact_pos, contact_normal, penetration, weight = diff_gjk.func_differentiable_contact(
                     geoms_state, diff_contact_input, gjk_info, i_ga, i_gb, i_b, i_c, ref_penetration
-                )
-
-                contact_pos = func_apply_smooth_refinement(
-                    i_ga,
-                    i_gb,
-                    contact_normal,
-                    penetration,
-                    contact_pos,
-                    geoms_state.pos[i_ga, i_b],
-                    geoms_state.quat[i_ga, i_b],
-                    geoms_state.pos[i_gb, i_b],
-                    geoms_state.quat[i_gb, i_b],
-                    geoms_info,
-                    static_rigid_sim_config,
                 )
 
                 func_set_contact(
