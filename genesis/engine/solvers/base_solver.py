@@ -178,8 +178,7 @@ class Solver(RBC):
 @qd.kernel
 def _kernel_set_gravity(tensor: qd.types.ndarray(), envs_idx: qd.types.ndarray(), gravity: qd.Tensor):
     # qd.Tensor annotation accepts qd.Tensor wrappers, raw qd.field(), and raw qd.ndarray(). Subclass solvers store
-    # _gravity as raw qd.field(); base_solver stores it as qd.Tensor. See test_set_gravity_accepts_field_and_tensor
-    # in tests/test_backend_switching.py.
+    # _gravity as raw qd.field(); base_solver stores it as qd.Tensor.
     for i_b_ in range(envs_idx.shape[0]):
         for j in qd.static(range(3)):
             gravity[envs_idx[i_b_]][j] = tensor[i_b_, j]
