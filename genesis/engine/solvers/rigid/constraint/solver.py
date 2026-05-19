@@ -695,9 +695,7 @@ def _add_collision_constraint_single(
     if qd.static(static_rigid_sim_config.sparse_solve):
         constraint_state.jac_n_relevant_dofs[n_con, i_b] = con_n_relevant_dofs
         _sort_relevant_dofs_descending(constraint_state, n_con, con_n_relevant_dofs, i_b)
-    imp, aref = gu.imp_aref(
-        contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration
-    )
+    imp, aref = gu.imp_aref(contact_data_sol_params, -contact_data_penetration, jac_qvel, -contact_data_penetration)
 
     diag = invweight + contact_data_friction * contact_data_friction * invweight
     diag *= 2 * contact_data_friction * contact_data_friction * (1 - imp) / imp
