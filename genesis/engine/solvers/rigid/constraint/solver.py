@@ -3340,15 +3340,26 @@ def _initialize_Jaref_parallel(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone."""
+    """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone.
+
+    The ndrange order is dispatched on ``constraint_layout_transposed``: under the flipped jac layout
+    (_B, n_dofs, n_constraints), adjacent lanes should vary i_c (innermost in flipped) so the inner
+    jac[i_c, i_d, i_b] reads coalesce. Under canonical layout, adjacent lanes should vary i_b (innermost
+    in canonical)."""
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
     len_constraints = constraint_state.Jaref.shape[0]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_c, i_b in qd.ndrange(len_constraints, _B):
-        if i_c < constraint_state.n_constraints[i_b]:
-            _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b, i_c in qd.ndrange(_B, len_constraints):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
+    else:
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_c, i_b in qd.ndrange(len_constraints, _B):
+            if i_c < constraint_state.n_constraints[i_b]:
+                _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
