@@ -323,6 +323,12 @@ def get_constraint_state(constraint_solver, solver):
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
     # See perso_hugh/doc/linesearch/linesearch_p0_opt.md.
     jac_layout = (2, 1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
+    # DOF-vec family flip: canonical (n_dofs_, _B) -> physical (_B, n_dofs_) via layout=(1, 0). Adjacent-lane reads
+    # striding i_d in cooperative kernels (p0 Phase 1, refine_and_apply Phase 4, update_constraint_cost_coop,
+    # cholesky_and_solve_fused_tiled) become stride-1; the regression on 1T/(i_d, i_b) writers is patched on a
+    # per-consumer basis under the same constraint_layout_transposed flag.
+    # See perso_hugh/doc/linesearch/dof-vec-flip.md.
+    dof_vec_layout = (1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
@@ -364,20 +370,20 @@ def get_constraint_state(constraint_solver, solver):
         ls_alpha_newton=V(dtype=gs.qd_float, shape=(_B,)),
         ls_gtol=V(dtype=gs.qd_float, shape=(_B,)),
         eq_sum=V(dtype=gs.qd_float, shape=(3, _B)),
-        Ma=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
+        Ma=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        Ma_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         MinvJT=V(dtype=gs.qd_float, shape=maybe_shape(jac_shape, solver._options.noslip_iterations > 0)),
-        search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        qacc_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        qacc_prev=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        mv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
-        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B)),
+        search=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        qfrc_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        qacc_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        qacc_prev=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        mv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        cg_prev_grad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        cg_prev_Mgrad=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
+        nt_vec=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), layout=dof_vec_layout),
         nt_H=V(dtype=gs.qd_float, shape=(_B, solver.n_dofs_, solver.n_dofs_)),
         incr_changed_idx=V(dtype=gs.qd_int, shape=(len_constraints_, _B)),
         incr_n_changed=V(dtype=gs.qd_int, shape=(_B,)),
