@@ -3277,17 +3277,16 @@ def _func_update_constraint_iter_qfrc_coop(
     for i_flat in range(_B * _K):
         tid = i_flat % _K
         i_b = i_flat // _K
-        if constraint_state.n_constraints[i_b] > 0:
-            n_con = constraint_state.n_constraints[i_b]
-            for i_d in range(n_dofs):
-                qfrc_lane = gs.qd_float(0.0)
-                i_c = tid
-                while i_c < n_con:
-                    qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
-                    i_c = i_c + _K
-                qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
-                if tid == 0:
-                    constraint_state.qfrc_constraint[i_d, i_b] = qfrc_total
+        n_con = constraint_state.n_constraints[i_b]
+        for i_d in range(n_dofs):
+            qfrc_lane = gs.qd_float(0.0)
+            i_c = tid
+            while i_c < n_con:
+                qfrc_lane = qfrc_lane + constraint_state.jac[i_c, i_d, i_b] * constraint_state.efc_force[i_c, i_b]
+                i_c = i_c + _K
+            qfrc_total = qd.simt.subgroup.reduce_all_add_tiled(qfrc_lane, 5)
+            if tid == 0:
+                constraint_state.qfrc_constraint[i_d, i_b] = qfrc_total
 
 
 @qd.func
