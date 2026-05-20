@@ -3357,10 +3357,13 @@ def func_update_constraint(
 ):
     """Compute active / efc_force / qfrc_constraint / gauss / cost.
 
-    Under ``constraint_layout_transposed=True`` we run three coop kernels (forces, qfrc, cost) so per-
-    constraint reads/writes coalesce against the flipped jac and Tier-1 constraint-state tensors. Under
-    canonical we keep the original 1-thread-per-env loop (bit-identical to the previous code path)."""
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+    Under ``constraint_layout_transposed=True`` *and* dense solve we run three coop kernels (forces,
+    qfrc, cost) so per-constraint reads/writes coalesce against the flipped jac and Tier-1 constraint-
+    state tensors. Sparse solve falls back to the legacy 1-thread-per-env loop because the coop qfrc
+    kernel always does a dense ``J^T @ f`` and would lose ``jac_relevant_dofs`` sparsity exploitation.
+    Under canonical we keep the original 1-thread-per-env loop (bit-identical to the previous code
+    path)."""
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.sparse_solve):
         _func_update_constraint_iter_forces(constraint_state, static_rigid_sim_config)
         _func_update_constraint_iter_qfrc_coop(constraint_state, static_rigid_sim_config)
         _func_update_constraint_iter_cost_coop(
