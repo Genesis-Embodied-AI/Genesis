@@ -710,9 +710,9 @@ def _add_collision_constraints_per_friction(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction
-    slot ``i_col * 4 + i`` so within a warp adjacent threads write adjacent n_con values. Under the
-    flipped jac layout (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce."""
+    """Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot
+    ``i_col * 4 + i`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac layout
+    (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce."""
     _B = dofs_state.ctrl_mode.shape[1]
     max_contact_pairs = collider_state.contact_data.link_a.shape[0]
 
@@ -3202,10 +3202,10 @@ def _func_update_constraint_iter_forces_body(
 ):
     """Per-(i_c, i_b) forces body: compute ``active`` / ``prev_active`` and write ``efc_force``.
 
-    Same semantics as the per-constraint loop in ``func_update_constraint_batch`` (lines computing
-    ``active``, ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here;
-    it's recomputed in the coop cost kernel together with the quadratic term to avoid an extra atomic
-    or shared-memory exchange between the two coop kernels."""
+    Same semantics as the per-constraint loop in ``func_update_constraint_batch`` (lines computing ``active``,
+    ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here; it's recomputed in the coop
+    cost kernel together with the quadratic term to avoid an extra atomic or shared-memory exchange between coop
+    kernels."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
 
@@ -3235,9 +3235,9 @@ def _func_update_constraint_iter_forces(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 1: compute ``active`` and ``efc_force`` for every (i_c, i_b). Iteration order picks the
-    coalesced ndrange under each layout: under transposed jac/Jaref/efc_force, lanes vary i_c so
-    adjacent reads of the flipped per-constraint tensors stride 1; under canonical, lanes vary i_b."""
+    """Phase 1: compute ``active`` and ``efc_force`` for every (i_c, i_b). Iteration order picks the coalesced ndrange
+    under each layout: under transposed jac/Jaref/efc_force, lanes vary i_c so adjacent reads of the flipped per-
+    constraint tensors stride 1; under canonical, lanes vary i_b."""
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
@@ -3262,9 +3262,9 @@ def _func_update_constraint_iter_qfrc_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 2 (coop): qfrc_constraint = J^T @ efc_force, warp-per-env. 32 lanes stride i_c so adjacent
-    reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped jac and Tier-1
-    flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce."""
+    """Phase 2 (coop): qfrc_constraint = J^T @ efc_force, warp-per-env. 32 lanes stride i_c so adjacent reads of
+    jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped jac and Tier-1 flipped efc_force layouts.
+    Outer loop is over i_d; each i_d does one warp-reduce."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
@@ -3294,10 +3294,10 @@ def _func_update_constraint_iter_cost_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 3+4 (coop): gauss + cost reduction, warp-per-env. Phase 3 lanes stride i_d (DOF-vec
-    family is canonical (n_dofs, _B) so reads here are *not* coalesced under the flipped layout, but
-    the working set is small enough to live in cache). Phase 4 lanes stride i_c → coalesced under
-    flipped Jaref/efc_D/active. One reduce_all_add_tiled per scalar at the end."""
+    """Phase 3+4 (coop): gauss + cost reduction, warp-per-env. Phase 3 lanes stride i_d (DOF-vec family is canonical
+    (n_dofs, _B) so reads here are *not* coalesced under the flipped layout, but the working set is small enough to
+    live in cache). Phase 4 lanes stride i_c → coalesced under flipped Jaref/efc_D/active. One reduce_all_add_tiled
+    per scalar at the end."""
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
 
@@ -3357,12 +3357,11 @@ def func_update_constraint(
 ):
     """Compute active / efc_force / qfrc_constraint / gauss / cost.
 
-    Under ``constraint_layout_transposed=True`` *and* dense solve we run three coop kernels (forces,
-    qfrc, cost) so per-constraint reads/writes coalesce against the flipped jac and Tier-1 constraint-
-    state tensors. Sparse solve falls back to the legacy 1-thread-per-env loop because the coop qfrc
-    kernel always does a dense ``J^T @ f`` and would lose ``jac_relevant_dofs`` sparsity exploitation.
-    Under canonical we keep the original 1-thread-per-env loop (bit-identical to the previous code
-    path)."""
+    Under ``constraint_layout_transposed=True`` *and* dense solve we run three coop kernels (forces, qfrc, cost) so
+    per-constraint reads/writes coalesce against the flipped jac and Tier-1 constraint-state tensors. Sparse solve
+    falls back to the legacy 1-thread-per-env loop because the coop qfrc kernel always does a dense ``J^T @ f`` and
+    would lose ``jac_relevant_dofs`` sparsity exploitation. Under canonical we keep the original 1-thread-per-env loop
+    (bit-identical to the previous code path)."""
     if qd.static(static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.sparse_solve):
         _func_update_constraint_iter_forces(constraint_state, static_rigid_sim_config)
         _func_update_constraint_iter_qfrc_coop(constraint_state, static_rigid_sim_config)
@@ -3618,10 +3617,9 @@ def _initialize_Jaref_parallel(
 ):
     """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone.
 
-    The ndrange order is dispatched on ``constraint_layout_transposed``: under the flipped jac layout
-    (_B, n_dofs, n_constraints), adjacent lanes should vary i_c (innermost in flipped) so the inner
-    jac[i_c, i_d, i_b] reads coalesce. Under canonical layout, adjacent lanes should vary i_b (innermost
-    in canonical)."""
+    The ndrange order is dispatched on ``constraint_layout_transposed``: under the flipped jac layout (_B, n_dofs,
+    n_constraints), adjacent lanes should vary i_c (innermost in flipped) so the inner jac[i_c, i_d, i_b] reads
+    coalesce. Under canonical layout, adjacent lanes should vary i_b (innermost in canonical)."""
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
     len_constraints = constraint_state.Jaref.shape[0]
