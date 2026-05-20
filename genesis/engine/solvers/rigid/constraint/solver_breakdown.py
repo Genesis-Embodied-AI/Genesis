@@ -577,7 +577,7 @@ def _func_update_qfrc_constraint_per_dof(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env)."""
+    """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env), each summing serially over i_c."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 

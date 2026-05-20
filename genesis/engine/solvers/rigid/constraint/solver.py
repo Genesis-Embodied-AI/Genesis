@@ -614,7 +614,7 @@ def _add_friction_constraint(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Process one friction-basis constraint at (i_b, i_col, i): write one row of jac, one set of scalars."""
+    """Add one friction-basis row to the constraint Jacobian and write its matching diag/aref/efc_D scalars."""
     EPS = rigid_global_info.EPS[None]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
@@ -710,9 +710,12 @@ def _add_collision_constraints_per_friction(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot ``i_col * 4
-    + i`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac layout (_B, n_dofs,
-    n_constraints), n_con is stride-1, so jac writes coalesce."""
+    """Build all collision-contact constraints with one GPU thread per friction-basis constraint.
+
+    Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot
+    ``i_col * 4 + i_friction`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac
+    layout (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce.
+    """
     _B = dofs_state.ctrl_mode.shape[1]
     max_contact_pairs = collider_state.contact_data.link_a.shape[0]
 
@@ -747,6 +750,7 @@ def _add_collision_constraints_per_contact(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
+    """Build all collision-contact constraints with one GPU thread per contact."""
     EPS = rigid_global_info.EPS[None]
     _B = dofs_state.ctrl_mode.shape[1]
     n_dofs = dofs_state.ctrl_mode.shape[0]
@@ -3200,11 +3204,13 @@ def _func_update_efc_force_body(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Per-(i_c, i_b) forces body: compute ``active`` / ``prev_active`` and write ``efc_force``.
+    """Compute active and write efc_force for one (constraint, env) pair.
 
     Same semantics as the per-constraint loop in ``func_update_constraint_batch`` (lines computing ``active``,
-    ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here; it's recomputed in the coop
-    cost kernel together with the quadratic term to avoid an extra atomic or shared-memory exchange between kernels."""
+    ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here; it's recomputed in
+    ``_func_update_cost_coop`` together with the quadratic term to avoid an extra atomic or shared-memory exchange
+    between kernels.
+    """
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
 
@@ -3234,9 +3240,11 @@ def _func_update_efc_force(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 1: compute ``active`` and ``efc_force`` for every (i_c, i_b). Iteration order picks the coalesced ndrange
-    under each layout: under transposed jac/Jaref/efc_force, lanes vary i_c so adjacent reads of the flipped per-
-    constraint tensors stride 1; under canonical, lanes vary i_b."""
+    """Compute active and efc_force for every (constraint, env) with one thread per pair (qd.ndrange-parallel).
+
+    Iteration order picks the coalesced ndrange under each layout: under transposed jac/Jaref/efc_force, lanes vary
+    i_c so adjacent reads of the flipped per-constraint tensors stride 1; under canonical, lanes vary i_b.
+    """
     len_constraints = constraint_state.active.shape[0]
     _B = constraint_state.grad.shape[1]
 
@@ -3261,9 +3269,11 @@ def _func_update_qfrc_constraint_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 2 (coop): qfrc_constraint = J^T @ efc_force, warp-per-env. 32 lanes stride i_c so adjacent reads of
-    jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped jac and Tier-1 flipped efc_force layouts.
-    Outer loop is over i_d; each i_d does one warp-reduce."""
+    """Compute qfrc_constraint = J^T @ efc_force using one cooperating warp per env.
+
+    32 lanes stride i_c so adjacent reads of jac[i_c, i_d, i_b] and efc_force[i_c, i_b] are stride-1 under the flipped
+    jac and Tier-1 flipped efc_force layouts. Outer loop is over i_d; each i_d does one warp-reduce.
+    """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
@@ -3293,10 +3303,13 @@ def _func_update_cost_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Phase 3+4 (coop): gauss + cost reduction, warp-per-env. Phase 3 lanes stride i_d (DOF-vec family is canonical
-    (n_dofs, _B) so reads here are *not* coalesced under the flipped layout, but the working set is small enough to
-    live in cache). Phase 4 lanes stride i_c -> coalesced under flipped Jaref/efc_D/active. One reduce_all_add_tiled
-    per scalar at the end."""
+    """Compute the linesearch cost (M-norm Gauss + quadratic constraint terms) using one cooperating warp per env.
+
+    Inner loop over dofs (lanes stride i_d): DOF-vec family is canonical (n_dofs, _B) so reads here are *not*
+    coalesced under the flipped layout, but the working set is small enough to live in cache. Inner loop over
+    constraints (lanes stride i_c): coalesced under flipped Jaref/efc_D/active. One reduce_all_add_tiled per scalar at
+    the end.
+    """
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
 
@@ -3356,10 +3369,12 @@ def func_update_constraint(
 ):
     """Compute active / efc_force / qfrc_constraint / gauss / cost.
 
-    Under ``constraint_layout_transposed=True`` we run three coop kernels (forces, qfrc, cost) so per-constraint
-    reads/writes coalesce against the flipped jac and Tier-1 constraint-state tensors. Under canonical we keep the
-    original 1-thread-per-env loop (bit-identical to the previous code path). The transpose heuristic disables the flip
-    entirely under sparse_solve, so sparse runs always take the canonical path here."""
+    Under ``constraint_layout_transposed=True`` we run three sub-kernels (``_func_update_efc_force``,
+    ``_func_update_qfrc_constraint_coop``, ``_func_update_cost_coop``) so per-constraint reads/writes coalesce against
+    the flipped jac and Tier-1 constraint-state tensors. Under canonical we keep the original 1-thread-per-env loop
+    (bit-identical to the previous code path). The transpose heuristic disables the flip entirely under sparse_solve,
+    so sparse runs always take the canonical path here.
+    """
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         _func_update_efc_force(constraint_state, static_rigid_sim_config)
         _func_update_qfrc_constraint_coop(constraint_state, static_rigid_sim_config)
