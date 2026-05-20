@@ -616,11 +616,9 @@ def _add_collision_constraint_single_friction(
 ):
     """Process one friction-basis constraint at (i_b, i_col, i): write one row of jac, one set of scalars.
 
-    Factored out so both threading variants of ``add_collision_constraints`` can share the body. The
-    legacy variant calls this 4x per (i_col, i_b) in an inner ``for i in range(4)`` loop (each thread
-    handles all 4 frictions sequentially). The transposed variant calls it once per thread (lanes split
-    across the friction basis so adjacent lanes in the warp write adjacent n_con values, coalesced under
-    the flipped jac layout)."""
+    Called once per thread by ``_add_collision_constraints_per_friction``: lanes split across the
+    friction basis so adjacent lanes in the warp write adjacent n_con values, coalesced under the
+    flipped jac layout."""
     EPS = rigid_global_info.EPS[None]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
