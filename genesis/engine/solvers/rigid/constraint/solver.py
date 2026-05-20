@@ -3628,15 +3628,11 @@ def _initialize_Jaref_parallel(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Initialize Jaref = J @ qacc for every (constraint, env) with one thread per pair (qd.ndrange-parallel).
+    """Initialize Jaref = J @ qacc, parallelised over (constraint, env).
 
-    Used when the GPU is not saturated by the env axis alone (e.g. small _B). The ndrange argument order is swapped on
-    ``constraint_layout_transposed`` to keep warp-wide jac loads coalesced. With ``qd.ndrange(A, B)`` the second
-    argument is the innermost axis, so adjacent flat iterations -- and therefore adjacent threads inside a warp --
-    advance the innermost index while the outer one is held fixed. We therefore put ``i_c`` innermost
-    (``qd.ndrange(_B, len_constraints)``) under the flipped jac ``[i_c, i_d, i_b]`` (stride-1 in ``i_c``), and put
-    ``i_b`` innermost (``qd.ndrange(len_constraints, _B)``) under canonical jac ``[i_c, i_d, i_b]`` with stride-1 in
-    ``i_b``. In both cases the stride-1 axis of jac is also the stride-1 axis of warp-lane id, giving coalesced loads.
+    In ``qd.ndrange(A, B)`` the second axis is innermost, so adjacent warp lanes step that axis. We pick the order to
+    match jac's stride-1 axis: ``i_c`` innermost under flipped jac, ``i_b`` innermost under canonical, so jac loads
+    coalesce in both layouts.
     """
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
