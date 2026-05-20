@@ -775,9 +775,12 @@ class Collider:
             )
         if self._collider_static_config.has_terrain:
             func_narrow_phase_any_vs_terrain(
+                self._solver.links_state,
+                self._solver.links_info,
                 self._solver.geoms_state,
                 self._solver.geoms_info,
                 self._solver.geoms_init_AABB,
+                self._solver._rigid_global_info,
                 self._solver._static_rigid_sim_config,
                 self._collider_state,
                 self._collider_info,

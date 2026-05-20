@@ -1771,18 +1771,6 @@ class ElastomerTaxelSensor(
             solver.collider._sdf._sdf_info,
             shared_metadata.probe_depth_buf,
         )
-        _elastomer_taxel_grid_fft_dilate(
-            shared_metadata.fft_grid_meta,
-            shared_metadata.fft_grid_kernels_stacked,
-            shared_metadata.probe_depth_buf,
-            shared_metadata.fft_depth_buffer,
-            shared_metadata.dilate_scale,
-            shared_metadata.grid_normal,
-            shared_metadata.grid_tangent_u,
-            shared_metadata.grid_tangent_v,
-            shared_metadata.grid_dilate_out_buffer,
-            current_ground_truth_data_T,
-        )
         _kernel_elastomer_dilate_accumulate(
             shared_metadata.use_grid_fft,
             shared_metadata.probe_positions,
@@ -1794,6 +1782,20 @@ class ElastomerTaxelSensor(
             shared_metadata.lambda_d,
             shared_metadata.dilate_scale,
             shared_metadata.probe_depth_buf,
+            current_ground_truth_data_T,
+        )
+        # FFT runs after the qd dilate kernel: on Metal, write-only kernel outputs zero unwritten slots on copy-back,
+        # which would erase the grid range the FFT just wrote.
+        _elastomer_taxel_grid_fft_dilate(
+            shared_metadata.fft_grid_meta,
+            shared_metadata.fft_grid_kernels_stacked,
+            shared_metadata.probe_depth_buf,
+            shared_metadata.fft_depth_buffer,
+            shared_metadata.dilate_scale,
+            shared_metadata.grid_normal,
+            shared_metadata.grid_tangent_u,
+            shared_metadata.grid_tangent_v,
+            shared_metadata.grid_dilate_out_buffer,
             current_ground_truth_data_T,
         )
         if shared_metadata.any_shear:
