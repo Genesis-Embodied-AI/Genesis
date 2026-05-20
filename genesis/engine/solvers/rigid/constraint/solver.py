@@ -4030,28 +4030,18 @@ def func_update_qacc(
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
 
-    # Under the DOF-vec flip (constraint_state.{qacc, qfrc_constraint, qacc_ws} env-leading), 7 of 11
-    # in-loop ops are flipped DOF-vec and only 4 are canonical dofs_state — swap the ndrange so adjacent
-    # lanes vary i_d and the flipped reads/writes coalesce. Canonical keeps i_b innermost so dofs_state
-    # writes coalesce, matching the pre-flip layout.
-    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_b, i_d in qd.ndrange(_B, n_dofs):
-            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
-                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
-    else:
-        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
-            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
-                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
+    # NB: ndrange-swap attempted (Exp 2) but empirically regresses the kernel further (+6.2 vs +4.5 ms
+    # vs main). Despite the access count (7 flipped + 4 canonical), the 4 dofs_state writes appear to
+    # benefit from contiguous write-combining that outweighs the partial wins on flipped reads/writes,
+    # so the canonical ndrange is kept under both layouts.
+    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+        if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
+            errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
