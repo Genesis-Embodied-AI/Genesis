@@ -25,6 +25,11 @@ from .misc import (
     func_add_safe_backward,
 )
 
+# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
+# constraint_layout_transposed=True (and not use_hibernation). One warp per (entity, env);
+# lanes stride i_d_ within the entity dof block to coalesce the flipped mass_mat writes.
+_MASS_MAT_BLOCK = 32
+
 
 @qd.kernel
 def update_qacc_from_qvel_delta(
@@ -375,40 +380,86 @@ def func_compute_mass_matrix(
                         dofs_state.cdof_ang[i_d, i_b],
                     )
 
-    qd.loop_config(
-        name="mass_mat_assemble", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    )
-    for i_0, i_b in (
-        qd.ndrange(1, links_state.pos.shape[1])
-        if qd.static(static_rigid_sim_config.use_hibernation)
-        else qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1])
+    if qd.static(
+        static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.use_hibernation
     ):
-        for i_1 in (
-            range(rigid_global_info.n_awake_entities[i_b])
+        # Cooperative warp-per-(entity, env) writer: lanes stride i_d_ within the entity's dof block,
+        # which becomes the stride-1 axis of the flipped mass_mat (layout=(2,1,0)). Phase 1 writes the
+        # full (i_d, j_d) square (mass_parent_mask zeroes out the upper-tri pairs whose links are not
+        # ancestors); Phase 2 mirrors lower-tri to upper-tri to enforce symmetry. Block sync between.
+        _T = qd.static(_MASS_MAT_BLOCK)
+        n_entities = entities_info.n_links.shape[0]
+        _B_assemble = links_state.pos.shape[1]
+        qd.loop_config(name="mass_mat_assemble", block_dim=_T)
+        for i_flat in range(n_entities * _B_assemble * _T):
+            tid = i_flat % _T
+            i_eb = i_flat // _T
+            i_e = i_eb % n_entities
+            i_b = i_eb // n_entities
+
+            d_s = entities_info.dof_start[i_e]
+            d_e = entities_info.dof_end[i_e]
+            n_e_e = d_e - d_s
+            n_sq = n_e_e * n_e_e
+
+            i_pair = tid
+            while i_pair < n_sq:
+                i_d_ = i_pair % n_e_e
+                j_d_ = i_pair // n_e_e
+                i_d = d_s + i_d_
+                j_d = d_s + j_d_
+                rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                    dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
+                    + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
+                ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+                i_pair += _T
+
+            qd.simt.block.sync()
+
+            i_pair = tid
+            while i_pair < n_sq:
+                i_d_ = i_pair % n_e_e
+                j_d_ = i_pair // n_e_e
+                if i_d_ < j_d_:
+                    i_d = d_s + i_d_
+                    j_d = d_s + j_d_
+                    rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+                i_pair += _T
+    else:
+        qd.loop_config(
+            name="mass_mat_assemble", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        )
+        for i_0, i_b in (
+            qd.ndrange(1, links_state.pos.shape[1])
             if qd.static(static_rigid_sim_config.use_hibernation)
-            else qd.static(range(1))
+            else qd.ndrange(entities_info.n_links.shape[0], links_state.pos.shape[1])
         ):
-            if func_check_index_range(
-                i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
+            for i_1 in (
+                range(rigid_global_info.n_awake_entities[i_b])
+                if qd.static(static_rigid_sim_config.use_hibernation)
+                else qd.static(range(1))
             ):
-                i_e = (
-                    rigid_global_info.awake_entities[i_1, i_b]
-                    if qd.static(static_rigid_sim_config.use_hibernation)
-                    else i_0
-                )
-
-                for i_d, j_d in qd.ndrange(
-                    (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
-                    (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                if func_check_index_range(
+                    i_1, 0, rigid_global_info.n_awake_entities[i_b], static_rigid_sim_config.use_hibernation
                 ):
-                    rigid_global_info.mass_mat[i_d, j_d, i_b] = (
-                        dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
-                        + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
-                    ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+                    i_e = (
+                        rigid_global_info.awake_entities[i_1, i_b]
+                        if qd.static(static_rigid_sim_config.use_hibernation)
+                        else i_0
+                    )
 
-                for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-                    for j_d in range(i_d + 1, entities_info.dof_end[i_e]):
-                        rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+                    for i_d, j_d in qd.ndrange(
+                        (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                        (entities_info.dof_start[i_e], entities_info.dof_end[i_e]),
+                    ):
+                        rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                            dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
+                            + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
+                        ) * rigid_global_info.mass_parent_mask[i_d, j_d]
+
+                    for i_d in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                        for j_d in range(i_d + 1, entities_info.dof_end[i_e]):
+                            rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
 
     # Take into account motor armature
     qd.loop_config(name="armature", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
