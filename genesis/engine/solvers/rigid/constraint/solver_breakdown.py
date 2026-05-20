@@ -577,11 +577,7 @@ def _func_update_constraint_qfrc(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env).
-
-    NOTE: under ``constraint_layout_transposed=True`` this kernel pays a coalescing cost on jac reads (adjacent
-    threads vary i_b but jac is no longer _B-rightmost). See doc/linesearch/linesearch_p0_opt.md for the
-    cooperative rewrite plan."""
+    """Compute qfrc_constraint = J^T @ efc_force, parallelized over (dof, env)."""
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
 

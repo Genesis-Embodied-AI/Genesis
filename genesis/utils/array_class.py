@@ -396,8 +396,6 @@ def get_constraint_state(constraint_solver, solver):
         efc_D=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jv=V(dtype=gs.qd_float, shape=(len_constraints_, _B), layout=con_layout),
         jac=V(dtype=gs.qd_float, shape=jac_shape, layout=jac_layout),
-        # jac_relevant_dofs shares jac's (n_constraints, n_dofs, _B) canonical layout when sparse_solve is on; flip
-        # it alongside jac so cooperative reads of the sparse-column-index list stay coalesced.
         jac_relevant_dofs=V(
             dtype=gs.qd_int,
             shape=jac_relevant_dofs_shape,
