@@ -710,9 +710,9 @@ def _add_collision_constraints_per_friction(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot
-    ``i_col * 4 + i`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac layout
-    (_B, n_dofs, n_constraints), n_con is stride-1, so jac writes coalesce."""
+    """Per-friction threading: 4x more threads than the legacy path; adjacent lanes vary the friction slot ``i_col * 4
+    + i`` so within a warp adjacent threads write adjacent n_con values. Under the flipped jac layout (_B, n_dofs,
+    n_constraints), n_con is stride-1, so jac writes coalesce."""
     _B = dofs_state.ctrl_mode.shape[1]
     max_contact_pairs = collider_state.contact_data.link_a.shape[0]
 
@@ -3204,8 +3204,7 @@ def _func_update_constraint_iter_forces_body(
 
     Same semantics as the per-constraint loop in ``func_update_constraint_batch`` (lines computing ``active``,
     ``floss_force``, ``efc_force``). Friction cost contribution is *not* accumulated here; it's recomputed in the coop
-    cost kernel together with the quadratic term to avoid an extra atomic or shared-memory exchange between coop
-    kernels."""
+    cost kernel together with the quadratic term to avoid an extra atomic or shared-memory exchange between kernels."""
     ne = constraint_state.n_constraints_equality[i_b]
     nef = ne + constraint_state.n_constraints_frictionloss[i_b]
 
@@ -3617,8 +3616,8 @@ def _initialize_Jaref_parallel(
     """Parallelizes over (constraints, envs) — better when GPU is not saturated by envs alone.
 
     The ndrange order is dispatched on ``constraint_layout_transposed``: under the flipped jac layout (_B, n_dofs,
-    n_constraints), adjacent lanes should vary i_c (innermost in flipped) so the inner jac[i_c, i_d, i_b] reads
-    coalesce. Under canonical layout, adjacent lanes should vary i_b (innermost in canonical)."""
+    n_constraints), adjacent lanes should vary i_c (innermost in flipped) so jac[i_c, i_d, i_b] reads coalesce. Under
+    canonical layout, adjacent lanes should vary i_b (innermost in canonical)."""
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
     len_constraints = constraint_state.Jaref.shape[0]
