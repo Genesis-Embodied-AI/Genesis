@@ -602,7 +602,7 @@ def constraint_solver_kernel_masked_clear(
 
 
 @qd.func
-def _add_collision_constraint_single(
+def _add_collision_constraint_single_friction(
     i_b,
     i_col,
     i,
@@ -729,7 +729,7 @@ def _add_collision_constraints_per_friction(
         i_col = slot // 4
         i = slot % 4
         if i_col < collider_state.n_contacts[i_b]:
-            _add_collision_constraint_single(
+            _add_collision_constraint_single_friction(
                 i_b,
                 i_col,
                 i,
