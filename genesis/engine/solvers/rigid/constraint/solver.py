@@ -3445,11 +3445,20 @@ def func_update_gradient_tiled(
     n_dofs = constraint_state.jac.shape[1]
 
     # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
-    qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
-        constraint_state.grad[i_d, i_b] = (
-            constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
-        )
+    # Under the DOF-vec flip, 3 of 4 in-loop accesses (grad, Ma, qfrc_constraint) are flipped and one
+    # (dofs_state.force) is canonical — swap the ndrange so adjacent lanes vary i_d.
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
+    else:
+        qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            constraint_state.grad[i_d, i_b] = (
+                constraint_state.Ma[i_d, i_b] - dofs_state.force[i_d, i_b] - constraint_state.qfrc_constraint[i_d, i_b]
+            )
 
     if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
         qd.loop_config(
@@ -3743,12 +3752,23 @@ def func_solve_init(
                 constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
     else:
         # Always initialize from warmstart
-        qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
-            if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
-                constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
-            else:
-                constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+        # Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap to put adjacent lanes on i_d
+        # so those writes/reads coalesce. The dofs_state.acc_smooth read remains canonical (small per-env
+        # working set, dominated by the qacc write).
+        if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+            qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_b, i_d in qd.ndrange(_B, n_dofs):
+                if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
+                    constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+                else:
+                    constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
+        else:
+            qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+            for i_d, i_b in qd.ndrange(n_dofs, _B):
+                if constraint_state.n_constraints[i_b] > 0 and constraint_state.is_warmstart[i_b]:
+                    constraint_state.qacc[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
+                else:
+                    constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
 
         initialize_Ma(
             Ma=constraint_state.Ma,
@@ -3796,9 +3816,14 @@ def func_solve_init(
         static_rigid_sim_config=static_rigid_sim_config,
     )
 
-    qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
-        constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
+    else:
+        qd.loop_config(name="assign_search", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            constraint_state.search[i_d, i_b] = -constraint_state.Mgrad[i_d, i_b]
 
 
 @qd.func
@@ -4005,14 +4030,28 @@ def func_update_qacc(
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
 
-    qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
-    for i_d, i_b in qd.ndrange(n_dofs, _B):
-        dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
-        dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
-        constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
-        if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
-            errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
+    # Under the DOF-vec flip (constraint_state.{qacc, qfrc_constraint, qacc_ws} env-leading), 7 of 11
+    # in-loop ops are flipped DOF-vec and only 4 are canonical dofs_state — swap the ndrange so adjacent
+    # lanes vary i_d and the flipped reads/writes coalesce. Canonical keeps i_b innermost so dofs_state
+    # writes coalesce, matching the pre-flip layout.
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_b, i_d in qd.ndrange(_B, n_dofs):
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
+    else:
+        qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        for i_d, i_b in qd.ndrange(n_dofs, _B):
+            dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            dofs_state.qf_constraint[i_d, i_b] = constraint_state.qfrc_constraint[i_d, i_b]
+            dofs_state.force[i_d, i_b] = dofs_state.qf_smooth[i_d, i_b] + constraint_state.qfrc_constraint[i_d, i_b]
+            constraint_state.qacc_ws[i_d, i_b] = constraint_state.qacc[i_d, i_b]
+            if qd.math.isnan(constraint_state.qacc[i_d, i_b]):
+                errno[i_b] = errno[i_b] | array_class.ErrorCode.INVALID_FORCE_NAN
 
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_b in range(_B):
