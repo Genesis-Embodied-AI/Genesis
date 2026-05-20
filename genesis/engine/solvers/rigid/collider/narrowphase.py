@@ -108,13 +108,24 @@ def func_contact_vertex_sdf(
                 penetration = new_penetration
 
     if is_col:
-        # Compute contact normal only once, and only in case of contact, then shift contact_pos to the midpoint
-        # between A's surface (the iterated vertex) and B's surface.
+        # Sample B's SDF gradient at A's geometric center when A is a convex geom (primitive or convexified mesh). For
+        # any convex shape the centroid of its vertices is by construction inside its hull, so the sampling point sits
+        # deep inside A's surface and several SDF cells away from B's zero-isosurface in this post-penetration
+        # configuration; the tri-linear interpolation of B's gradient there is dominated by the smooth interior and not
+        # by the cell-aligned noise that contaminates the gradient evaluated at the deepest iterated vertex. Without
+        # this override the contact normal acquires a tangential component that flips frame to frame as the deepest
+        # vertex migrates between neighbouring tessellated points, driving spheres at rest into a ~m/s vertical jitter
+        # and a slow lateral drift. We use `geoms_info.center` - already populated and used by MPR for the same
+        # purpose - rather than A's frame origin so the property generalises beyond primitives whose modeller happened
+        # to centre the pivot.
+        center_a = gu.qd_transform_by_trans_quat(geoms_info.center[i_ga], ga_pos, ga_quat)
+        normal_sample = center_a if geoms_info.is_convex[i_ga] else contact_pos
         normal = sdf.sdf_func_normal_world_local(
-            geoms_info, rigid_global_info, collider_static_config, sdf_info, contact_pos, i_gb, gb_pos, gb_quat
+            geoms_info, rigid_global_info, collider_static_config, sdf_info, normal_sample, i_gb, gb_pos, gb_quat
         )
 
-        # The contact point must be offsetted by half the penetration depth
+        # Shift contact_pos from the deepest vertex (interior side) by half the penetration along the outward normal
+        # so it lands at the midpoint between A's surface and B's surface.
         contact_pos = contact_pos + 0.5 * penetration * normal
 
     return is_col, normal, penetration, contact_pos
@@ -144,7 +155,10 @@ def func_contact_edge_sdf(
     normal = qd.Vector.zero(gs.qd_float, 3)
     contact_pos = qd.Vector.zero(gs.qd_float, 3)
 
-    ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
+    # Use the smallest per-axis cell size as the edge-length threshold so we still subdivide edges that are short
+    # relative to the finest grid resolution available.
+    ga_sdf_cell_size_vec = sdf_info.geoms_info.sdf_cell_size[i_ga]
+    ga_sdf_cell_size = qd.min(qd.min(ga_sdf_cell_size_vec[0], ga_sdf_cell_size_vec[1]), ga_sdf_cell_size_vec[2])
 
     for i_e in range(geoms_info.edge_start[i_ga], geoms_info.edge_end[i_ga]):
         cur_length = edges_info.length[i_e]
@@ -309,7 +323,10 @@ def func_contact_convex_convex_sdf(
                 # check if closest point is between the two points
                 if sdf_grad_0_b.dot(vec_01) < 0 and sdf_grad_1_b.dot(vec_01) > 0:
                     cur_length = (p_1 - p_0).norm()
-                    ga_sdf_cell_size = sdf_info.geoms_info.sdf_cell_size[i_ga]
+                    ga_sdf_cell_size_vec = sdf_info.geoms_info.sdf_cell_size[i_ga]
+                    ga_sdf_cell_size = qd.min(
+                        qd.min(ga_sdf_cell_size_vec[0], ga_sdf_cell_size_vec[1]), ga_sdf_cell_size_vec[2]
+                    )
                     while cur_length > ga_sdf_cell_size:
                         p_mid = 0.5 * (p_0 + p_1)
                         side = sdf.sdf_func_grad_world(
@@ -2535,10 +2552,18 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                     not (geoms_info.is_convex[i_ga] and geoms_info.is_convex[i_gb])
                     and geoms_info.type[i_gb] != gs.GEOM_TYPE.TERRAIN
                 ):
+                    # Canonical ordering: ascending type so smooth primitives sit on the A side. The smooth-contact
+                    # refinement helper assumes this; without the swap, refinement on the mesh-as-A pair side would
+                    # feed sphere data through the type_b branch with -normal, silently inverting the position
+                    # correction. Mirrors the swap done at the head of the convex-vs-convex narrowphase.
+                    if geoms_info.type[i_ga] > geoms_info.type[i_gb]:
+                        i_ga, i_gb = i_gb, i_ga
+
                     is_col = False
                     tolerance = func_compute_tolerance(
                         i_ga, i_gb, i_b, collider_info.mc_tolerance[None], geoms_info, geoms_init_AABB
                     )
+
                     for i in range(2):
                         if i == 1:
                             i_ga, i_gb = i_gb, i_ga
@@ -2595,9 +2620,10 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                     collider_info,
                                     errno,
                                 )
+                                is_col = True
 
                         if qd.static(static_rigid_sim_config.enable_multi_contact):
-                            if not is_col and is_col_i:
+                            if is_col_i:
                                 ga_pos_original, ga_quat_original = (
                                     geoms_state.pos[i_ga, i_b],
                                     geoms_state.quat[i_ga, i_b],
@@ -2636,7 +2662,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         gb_pos_original, gb_quat_original, contact_pos_i, gu.qd_inv_quat(qrot)
                                     )
 
-                                    is_col, normal, penetration, contact_pos = func_contact_vertex_sdf(
+                                    is_col_mc, normal, penetration, contact_pos = func_contact_vertex_sdf(
                                         i_ga,
                                         i_gb,
                                         i_b,
@@ -2652,7 +2678,7 @@ def func_narrow_phase_nonconvex_vs_nonterrain(
                                         sdf_info,
                                     )
 
-                                    if is_col:
+                                    if is_col_mc:
                                         contact_pos = func_apply_smooth_refinement(
                                             i_ga,
                                             i_gb,

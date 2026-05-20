@@ -25,7 +25,10 @@ class SDF:
                 geoms_sdf_val=np.concatenate([geom.sdf_val_flattened for geom in geoms], dtype=gs.np_float),
                 geoms_sdf_grad=np.concatenate([geom.sdf_grad_flattened for geom in geoms], dtype=gs.np_float),
                 geoms_sdf_max=np.array([geom.sdf_max for geom in geoms], dtype=gs.np_float),
-                geoms_sdf_cell_size=np.array([geom.sdf_cell_size for geom in geoms], dtype=gs.np_float),
+                geoms_sdf_cell_size=np.array(
+                    [np.broadcast_to(np.asarray(geom.sdf_cell_size, dtype=gs.np_float), (3,)) for geom in geoms],
+                    dtype=gs.np_float,
+                ),
                 geoms_sdf_closest_vert=np.concatenate(
                     [geom.sdf_closest_vert_flattened for geom in geoms], dtype=gs.np_int
                 ),
@@ -66,7 +69,8 @@ def sdf_kernel_init_geom_fields(
 
         sdf_info.geoms_info.sdf_cell_start[i] = geoms_sdf_cell_start[i]
         sdf_info.geoms_info.sdf_max[i] = geoms_sdf_max[i]
-        sdf_info.geoms_info.sdf_cell_size[i] = geoms_sdf_cell_size[i]
+        for j in qd.static(range(3)):
+            sdf_info.geoms_info.sdf_cell_size[i][j] = geoms_sdf_cell_size[i, j]
 
     for i in range(n_cells):
         sdf_info.geoms_sdf_val[i] = geoms_sdf_val[i]
@@ -156,11 +160,17 @@ def sdf_func_is_outside_sdf_grid(sdf_info: array_class.SDFInfo, pos_sdf, geom_id
 @qd.func
 def sdf_func_proxy_sdf(sdf_info: array_class.SDFInfo, pos_sdf, geom_idx):
     """
-    Use distance to center as a proxy sdf, strictly greater than any point inside the cube to ensure value comparison is valid. Only considers region outside of cube.
+    Use distance to center as a proxy sdf, strictly greater than any point inside the cube to ensure value comparison
+    is valid.
+
+    Only considers region outside of cube. For anisotropic SDF grids the per-axis cell sizes are applied before taking
+    the norm so the result remains a world distance.
     """
     center = (sdf_info.geoms_info.sdf_res[geom_idx] - 1) / 2.0
-    sd = (pos_sdf - center).norm() / sdf_info.geoms_info.sdf_cell_size[geom_idx]
-    return sd + sdf_info.geoms_info.sdf_max[geom_idx]
+    delta = pos_sdf - center
+    cs = sdf_info.geoms_info.sdf_cell_size[geom_idx]
+    scaled = qd.Vector([delta[0] * cs[0], delta[1] * cs[1], delta[2] * cs[2]], dt=gs.qd_float)
+    return scaled.norm() + sdf_info.geoms_info.sdf_max[geom_idx]
 
 
 @qd.func
@@ -230,6 +240,7 @@ def sdf_func_grad(
 ):
     """
     sdf grad at sdf frame coordinate.
+
     Note that the stored sdf magnitude is already w.r.t world/mesh frame.
     """
     grad_sdf = qd.Vector.zero(gs.qd_float, 3)
@@ -245,11 +256,19 @@ def sdf_func_proxy_grad(
     rigid_global_info: array_class.RigidGlobalInfo, sdf_info: array_class.SDFInfo, pos_sdf, geom_idx
 ):
     """
-    Use direction to sdf center to approximate gradient direction.
-    Only considers region outside of cube.
+    Use direction from sdf center, scaled per-axis by the anisotropic cell size, to approximate the gradient
+    direction outside the cube.
+
+    The matching :func:`sdf_func_proxy_sdf` distance is `||(pos_sdf - center) * cs||` in world units, whose gradient
+    direction (after the chain rule for the diagonal SDF<->mesh transform) is the per-axis-scaled delta. Using the raw
+    `pos_sdf - center` would skew outside-grid normals toward fine-resolution axes on anisotropic grids and yield
+    directionally wrong contact normals for points falling back on this proxy.
     """
     center = (sdf_info.geoms_info.sdf_res[geom_idx] - 1) / 2.0
-    proxy_sdf_grad = gu.qd_normalize(pos_sdf - center, rigid_global_info.EPS[None])
+    delta = pos_sdf - center
+    cs = sdf_info.geoms_info.sdf_cell_size[geom_idx]
+    scaled = qd.Vector([delta[0] * cs[0], delta[1] * cs[1], delta[2] * cs[2]], dt=gs.qd_float)
+    proxy_sdf_grad = gu.qd_normalize(scaled, rigid_global_info.EPS[None])
     return proxy_sdf_grad
 
 

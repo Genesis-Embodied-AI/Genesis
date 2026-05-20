@@ -1316,7 +1316,7 @@ def get_sdf_geom_info(n_geoms):
         T_mesh_to_sdf=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_res=V_VEC(3, dtype=gs.qd_int, shape=(n_geoms,)),
         sdf_max=V(dtype=gs.qd_float, shape=(n_geoms,)),
-        sdf_cell_size=V(dtype=gs.qd_float, shape=(n_geoms,)),
+        sdf_cell_size=V_VEC(3, dtype=gs.qd_float, shape=(n_geoms,)),
         sdf_cell_start=V(dtype=gs.qd_int, shape=(n_geoms,)),
     )
 

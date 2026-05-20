@@ -122,7 +122,10 @@ def get_asset_path(file):
 
 
 def get_gsd_path(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res):
-    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res)
+    # Schema tag bumped when the on-disk SDF layout changes (e.g. scalar -> per-axis cell size).
+    # Forces a cache miss on stale entries written by older code without manually clearing the cache.
+    schema = "v2-anisotropic-cells"
+    hashkey = get_hashkey(verts, faces, sdf_cell_size, sdf_min_res, sdf_max_res, schema)
     return os.path.join(get_gsd_cache_dir(), f"{hashkey}.gsd")
 
 
