@@ -3040,6 +3040,128 @@ def test_nan_reset(gs_sim, mode):
     assert not torch.isnan(qvel).any()
 
 
+@pytest.mark.required
+def test_box_on_terrain_no_spurious_spin(show_viewer):
+    BOX_SIZE = (0.12, 0.06, 0.025)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.005,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            box_box_detection=False,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(3.5, -3.5, 2.0),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=30,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Terrain(
+            pos=(-1.5, -1.5, 0.0),
+            height_field=np.zeros((4, 4), dtype=np.float32),
+            horizontal_scale=1.0,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.4, 0.8, 0.4),
+        ),
+    )
+    box = scene.add_entity(
+        morph=(
+            gs.morphs.Box(size=BOX_SIZE),
+            gs.morphs.MeshSet(
+                files=(trimesh.creation.box(extents=BOX_SIZE),),
+                decimate=False,
+            ),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.95, 0.2, 0.2),
+        ),
+    )
+
+    # 4x4 grid spread across the 3 m x 3 m terrain.
+    grid = np.linspace(-1.2, 1.2, 4)
+    xy = np.stack(np.meshgrid(grid, grid, indexing="ij"), axis=-1).reshape(-1, 2)
+    n_envs = xy.shape[0]
+    scene.build(n_envs=n_envs)
+
+    z = BOX_SIZE[2] / 2
+    pos = np.concatenate([xy, np.full((n_envs, 1), z)], axis=-1).astype(np.float32)
+    box.set_pos(torch.from_numpy(pos))
+    box.set_dofs_velocity(torch.zeros((n_envs, 6)))
+    quat_initial = tensor_to_array(box.get_quat())
+
+    for _ in range(500):
+        scene.step()
+
+    quat_delta = gu.transform_quat_by_quat(tensor_to_array(box.get_quat()), gu.inv_quat(quat_initial))
+    assert_allclose(gu.quat_to_rotvec(quat_delta), 0.0, tol=0.02)
+
+
+@pytest.mark.required
+def test_multicontact_sphere_vs_terrain(show_viewer, tol):
+    GRID_N = 13
+    APEX_IDX = GRID_N // 2
+    VERTICAL_SCALE = 0.04
+    HORIZONTAL_SCALE = 0.05
+    SPHERE_RADIUS = 0.1
+
+    ii, jj = np.meshgrid(np.arange(GRID_N), np.arange(GRID_N), indexing="ij")
+    hf = (np.abs(ii - APEX_IDX) + np.abs(jj - APEX_IDX)).astype(np.int16)
+    terrain_pos = (-APEX_IDX * HORIZONTAL_SCALE, -APEX_IDX * HORIZONTAL_SCALE, 0.0)
+
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.01,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(1.0, -1.0, 0.8),
+            camera_lookat=(0.0, 0.0, 0.0),
+            camera_fov=30,
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    scene.add_entity(
+        morph=gs.morphs.Terrain(
+            pos=terrain_pos,
+            height_field=hf,
+            horizontal_scale=HORIZONTAL_SCALE,
+            vertical_scale=VERTICAL_SCALE,
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.4, 0.8, 0.4),
+        ),
+    )
+    sphere = scene.add_entity(
+        morph=gs.morphs.Sphere(radius=SPHERE_RADIUS),
+        surface=gs.surfaces.Default(
+            color=(0.95, 0.2, 0.2),
+        ),
+        visualize_contact=True,
+    )
+
+    scene.build()
+
+    sphere.set_pos(torch.tensor([0.0, 0.0, 0.25]))
+
+    for _ in range(80):
+        scene.step()
+        print(tensor_to_array(sphere.get_dofs_velocity()))
+
+    # Sphere is at rest at the apex of the pit. Equilibrium height is set by the four-wall solid angle: contacts on the
+    # opposing pyramid walls push the sphere upward, so it sits above the apex vertex but well below the rim.
+    pos_final = tensor_to_array(sphere.get_pos())
+    assert_allclose(pos_final[:2], 0.0, tol=2.0 * HORIZONTAL_SCALE)
+    assert SPHERE_RADIUS < pos_final[2] < APEX_IDX * VERTICAL_SCALE + SPHERE_RADIUS
+
+    vel_final = tensor_to_array(sphere.get_dofs_velocity())
+    assert_allclose(vel_final, 0.0, tol=1e-5)
+
+
 @pytest.mark.parametrize(
     "backend",
     [
