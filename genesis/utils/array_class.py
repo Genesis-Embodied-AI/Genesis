@@ -144,13 +144,21 @@ def get_rigid_global_info(solver, kinematic_only):
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
 
-    # Flip mass_mat / mass_mat_L from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical
-    # (_B, n_dofs(i_d1), n_dofs(i_d2)) via layout=(2, 1, 0). Coalesces the cooperative-warp-per-env
-    # M-init step in func_hessian_direct_tiled (lanes vary i_d2 within tile) and the func_factor_mass
-    # tiled reader (lanes vary j_d via i_pair). _func_decomp_linesearch_p0 Phase 0a (lanes stride i_d1,
-    # inner serial i_d2) becomes 200B stride between adjacent lanes instead of 800 KB — not stride-1
-    # but a large L2-reuse improvement. See perso_hugh/doc/linesearch/linesearch_p0_opt.md ranked
-    # candidate #2 and perso_hugh/doc/linesearch/mass_mat_flip_2026may.md.
+    # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical
+    # (_B, n_dofs(i_d2), n_dofs(i_d1)) via layout=(2, 1, 0): physical axes are (axis 2, axis 1, axis 0)
+    # so axis 0 (i_d1) becomes innermost / stride-1. This coalesces _func_decomp_linesearch_p0 Phase 0a
+    # (lanes stride i_d1, inner serial i_d2) and the func_solve_init init_ma kernel (lanes stride i_d1
+    # too once cooperatively rewritten). Cost is regression on writer-side kernels — func_compute_mass_matrix
+    # mass_mat_assemble and (uncoop) initialize_Ma — that need cooperative rewrites to recover.
+    #
+    # mass_mat_L is NOT flipped: its big consumer in the dex_hand baseline is func_solve_mass which does a
+    # serial Cholesky-style back-substitution per (i_e, i_b). With lanes varying i_b (the canonical inner
+    # stride-1 axis), the canonical layout is already optimal there. Flipping L to (2, 1, 0) regressed
+    # solve_mass by +88% / +31 ms (Exp 1 audit) for only a +8% / -7 ms win on the tiled factor_mass
+    # writer — net ~+24 ms loss. So mass_mat_L stays canonical.
+    #
+    # See perso_hugh/doc/linesearch/linesearch_p0_opt.md ranked candidate #2 and
+    # perso_hugh/doc/linesearch/mass_mat_flip_2026may.md.
     mass_mat_layout = (
         (2, 1, 0) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
     )
@@ -208,7 +216,7 @@ def get_rigid_global_info(solver, kinematic_only):
         links_T=V_MAT(n=4, m=4, dtype=gs.qd_float, shape=(solver.n_links_,)),
         geoms_init_AABB=V_VEC(3, dtype=gs.qd_float, shape=(solver.n_geoms_, 8)),
         mass_mat=V(dtype=gs.qd_float, shape=mass_mat_shape, layout=mass_mat_layout, needs_grad=requires_grad),
-        mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, layout=mass_mat_layout, needs_grad=requires_grad),
+        mass_mat_L=V(dtype=gs.qd_float, shape=mass_mat_shape, needs_grad=requires_grad),
         mass_mat_L_bw=V(dtype=gs.qd_float, shape=mass_mat_shape_bw, needs_grad=requires_grad),
         mass_mat_D_inv=V(dtype=gs.qd_float, shape=(solver.n_dofs_, _B), needs_grad=requires_grad),
         mass_mat_mask=V(dtype=gs.qd_bool, shape=(solver.n_entities_, _B)),
