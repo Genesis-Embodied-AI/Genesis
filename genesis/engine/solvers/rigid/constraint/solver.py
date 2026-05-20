@@ -3295,7 +3295,7 @@ def _func_update_cost_coop(
 ):
     """Phase 3+4 (coop): gauss + cost reduction, warp-per-env. Phase 3 lanes stride i_d (DOF-vec family is canonical
     (n_dofs, _B) so reads here are *not* coalesced under the flipped layout, but the working set is small enough to
-    live in cache). Phase 4 lanes stride i_c → coalesced under flipped Jaref/efc_D/active. One reduce_all_add_tiled
+    live in cache). Phase 4 lanes stride i_c -> coalesced under flipped Jaref/efc_D/active. One reduce_all_add_tiled
     per scalar at the end."""
     _B = constraint_state.grad.shape[1]
     _K = qd.static(32)
