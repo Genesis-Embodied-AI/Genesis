@@ -614,11 +614,7 @@ def _add_collision_constraint_single_friction(
     rigid_global_info: array_class.RigidGlobalInfo,
     static_rigid_sim_config: qd.template(),
 ):
-    """Process one friction-basis constraint at (i_b, i_col, i): write one row of jac, one set of scalars.
-
-    Called once per thread by ``_add_collision_constraints_per_friction``: lanes split across the
-    friction basis so adjacent lanes in the warp write adjacent n_con values, coalesced under the
-    flipped jac layout."""
+    """Process one friction-basis constraint at (i_b, i_col, i): write one row of jac, one set of scalars."""
     EPS = rigid_global_info.EPS[None]
     n_dofs = dofs_state.ctrl_mode.shape[0]
 
