@@ -602,7 +602,7 @@ def constraint_solver_kernel_masked_clear(
 
 
 @qd.func
-def _add_collision_constraint_single_friction(
+def _add_friction_constraint(
     i_b,
     i_col,
     i,
@@ -723,7 +723,7 @@ def _add_collision_constraints_per_friction(
         i_col = slot // 4
         i = slot % 4
         if i_col < collider_state.n_contacts[i_b]:
-            _add_collision_constraint_single_friction(
+            _add_friction_constraint(
                 i_b,
                 i_col,
                 i,
@@ -3194,7 +3194,7 @@ def func_update_constraint_batch(
 
 
 @qd.func
-def _func_update_constraint_iter_forces_body(
+def _func_update_efc_force_body(
     i_c,
     i_b,
     constraint_state: array_class.ConstraintState,
@@ -3230,7 +3230,7 @@ def _func_update_constraint_iter_forces_body(
 
 
 @qd.func
-def _func_update_constraint_iter_forces(
+def _func_update_efc_force(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3246,18 +3246,18 @@ def _func_update_constraint_iter_forces(
         )
         for i_b, i_c in qd.ndrange(_B, len_constraints):
             if i_c < constraint_state.n_constraints[i_b]:
-                _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+                _func_update_efc_force_body(i_c, i_b, constraint_state, static_rigid_sim_config)
     else:
         qd.loop_config(
             name="update_constraint_forces", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL
         )
         for i_c, i_b in qd.ndrange(len_constraints, _B):
             if i_c < constraint_state.n_constraints[i_b]:
-                _func_update_constraint_iter_forces_body(i_c, i_b, constraint_state, static_rigid_sim_config)
+                _func_update_efc_force_body(i_c, i_b, constraint_state, static_rigid_sim_config)
 
 
 @qd.func
-def _func_update_constraint_iter_qfrc_coop(
+def _func_update_qfrc_constraint_coop(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -3285,7 +3285,7 @@ def _func_update_constraint_iter_qfrc_coop(
 
 
 @qd.func
-def _func_update_constraint_iter_cost_coop(
+def _func_update_cost_coop(
     qacc: qd.template(),
     Ma: qd.template(),
     cost: qd.template(),
@@ -3361,9 +3361,9 @@ def func_update_constraint(
     original 1-thread-per-env loop (bit-identical to the previous code path). The transpose heuristic disables the flip
     entirely under sparse_solve, so sparse runs always take the canonical path here."""
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        _func_update_constraint_iter_forces(constraint_state, static_rigid_sim_config)
-        _func_update_constraint_iter_qfrc_coop(constraint_state, static_rigid_sim_config)
-        _func_update_constraint_iter_cost_coop(
+        _func_update_efc_force(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_coop(constraint_state, static_rigid_sim_config)
+        _func_update_cost_coop(
             qacc=qacc,
             Ma=Ma,
             cost=cost,

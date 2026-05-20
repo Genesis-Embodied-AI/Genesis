@@ -420,7 +420,7 @@ class RigidSolver(KinematicSolver):
             return False
         # Sparse solve relies on jac_relevant_dofs / jac_n_relevant_dofs to skip irrelevant dofs in the constraint
         # update. The cooperative qfrc kernel that pairs with the flipped layout is dense-only, and several other
-        # kernels that read jac under the flipped layout (e.g. the refinement-phase _func_update_constraint_qfrc)
+        # kernels that read jac under the flipped layout (e.g. the refinement-phase _func_update_qfrc_constraint_per_dof)
         # would also need sparse-aware rewrites.
         if self._options.sparse_solve:
             return False

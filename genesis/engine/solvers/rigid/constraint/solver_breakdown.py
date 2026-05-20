@@ -573,7 +573,7 @@ def _func_update_constraint_forces(
 
 
 @qd.func
-def _func_update_constraint_qfrc(
+def _func_update_qfrc_constraint_per_dof(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
@@ -981,7 +981,7 @@ def _kernel_solve_graph(
         if qd.static(static_rigid_sim_config.solver_type == gs.constraint_solver.CG):
             _func_cg_only_save_prev_grad(constraint_state, static_rigid_sim_config)
         _func_update_constraint_forces(constraint_state, static_rigid_sim_config)
-        _func_update_constraint_qfrc(constraint_state, static_rigid_sim_config)
+        _func_update_qfrc_constraint_per_dof(constraint_state, static_rigid_sim_config)
         _func_update_constraint_cost(dofs_state, constraint_state, static_rigid_sim_config)
         if qd.static(
             static_rigid_sim_config.solver_type == gs.constraint_solver.Newton
