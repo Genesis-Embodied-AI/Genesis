@@ -605,7 +605,7 @@ def constraint_solver_kernel_masked_clear(
 def _add_friction_constraint(
     i_b,
     i_col,
-    i,
+    i_friction,
     links_info: array_class.LinksInfo,
     links_state: array_class.LinksState,
     dofs_state: array_class.DofsState,
@@ -640,10 +640,10 @@ def _add_friction_constraint(
     if link_b > -1:
         invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-    d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+    d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
     n = d * contact_data_friction - contact_data_normal
 
-    n_con = collision_con_start + i_col * 4 + i
+    n_con = collision_con_start + i_col * 4 + i_friction
     if qd.static(static_rigid_sim_config.sparse_solve):
         for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
             i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
@@ -721,12 +721,12 @@ def _add_collision_constraints_per_friction(
         slot = flat_idx % (max_contact_pairs * 4)
         i_b = flat_idx // (max_contact_pairs * 4)
         i_col = slot // 4
-        i = slot % 4
+        i_friction = slot % 4
         if i_col < collider_state.n_contacts[i_b]:
             _add_friction_constraint(
                 i_b,
                 i_col,
-                i,
+                i_friction,
                 links_info=links_info,
                 links_state=links_state,
                 dofs_state=dofs_state,
@@ -779,11 +779,11 @@ def _add_collision_constraints_per_contact(
             if link_b > -1:
                 invweight = invweight + links_info.invweight[link_b_maybe_batch][0]
 
-            for i in range(4):
-                d = (2 * (i % 2) - 1) * (d1 if i < 2 else d2)
+            for i_friction in range(4):
+                d = (2 * (i_friction % 2) - 1) * (d1 if i_friction < 2 else d2)
                 n = d * contact_data_friction - contact_data_normal
 
-                n_con = collision_con_start + i_col * 4 + i
+                n_con = collision_con_start + i_col * 4 + i_friction
                 if qd.static(static_rigid_sim_config.sparse_solve):
                     for i_d_ in range(constraint_state.jac_n_relevant_dofs[n_con, i_b]):
                         i_d = constraint_state.jac_relevant_dofs[n_con, i_d_, i_b]
