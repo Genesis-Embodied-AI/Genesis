@@ -3628,23 +3628,20 @@ def _initialize_Jaref_parallel(
     constraint_state: array_class.ConstraintState,
     static_rigid_sim_config: qd.template(),
 ):
-    """Initialize Jaref = J @ qacc, parallelised over (constraint, env).
-
-    In ``qd.ndrange(A, B)`` the second axis is innermost, so adjacent warp lanes step that axis. We pick the order to
-    match jac's stride-1 axis: ``i_c`` innermost under flipped jac, ``i_b`` innermost under canonical, so jac loads
-    coalesce in both layouts.
-    """
+    """Initialize Jaref = J @ qacc, parallelised over (constraint, env)."""
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
     len_constraints = constraint_state.Jaref.shape[0]
 
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        # i_c innermost: matches stride-1 axis of flipped jac, jac loads coalesce.
         for i_b, i_c in qd.ndrange(_B, len_constraints):
             if i_c < constraint_state.n_constraints[i_b]:
                 _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
     else:
         qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
+        # i_b innermost: matches stride-1 axis of canonical jac, jac loads coalesce.
         for i_c, i_b in qd.ndrange(len_constraints, _B):
             if i_c < constraint_state.n_constraints[i_b]:
                 _initialize_Jaref_body(i_c, i_b, n_dofs, qacc, constraint_state, static_rigid_sim_config)
