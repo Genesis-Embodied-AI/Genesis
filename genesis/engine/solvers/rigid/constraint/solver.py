@@ -4043,10 +4043,6 @@ def func_update_qacc(
     n_dofs = dofs_state.acc.shape[0]
     _B = dofs_state.acc.shape[1]
 
-    # NB: ndrange-swap attempted (Exp 2) but empirically regresses the kernel further (+6.2 vs +4.5 ms
-    # vs main). Despite the access count (7 flipped + 4 canonical), the 4 dofs_state writes appear to
-    # benefit from contiguous write-combining that outweighs the partial wins on flipped reads/writes,
-    # so the canonical ndrange is kept under both layouts.
     qd.loop_config(serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
     for i_d, i_b in qd.ndrange(n_dofs, _B):
         dofs_state.acc[i_d, i_b] = constraint_state.qacc[i_d, i_b]
