@@ -383,11 +383,24 @@ def func_compute_mass_matrix(
     if qd.static(
         static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.use_hibernation
     ):
-        # Cooperative warp-per-(entity, env) writer: lanes stride i_d_ within the entity's dof block,
-        # which becomes the stride-1 axis of the flipped mass_mat (layout=(2,1,0)). Phase 1 writes the
-        # full (i_d, j_d) square (mass_parent_mask zeroes out the upper-tri pairs whose links are not
-        # ancestors); Phase 2 mirrors lower-tri to upper-tri to enforce symmetry. Warp sync between
-        # phases (block_dim=_T=32 = 1 warp per block, so block-sync would be overkill).
+        # Cooperative warp-per-(entity, env) writer, single-pass lower-tri-inclusive variant
+        # (Exp 5 / candidate A). Iterates over the n_e * (n_e + 1) / 2 cells of the lower triangle
+        # (inclusive of diagonal) using the sqrt-formula compressed pair index, computes the
+        # symmetric value once per cell, and writes both `[i_d, j_d, i_b]` and `[j_d, i_d, i_b]`
+        # inline. Saves the n_e * (n_e - 1) / 2 wasted dot products that the previous two-pass
+        # path computed for the upper-tri (where mass_parent_mask = 0 → val = 0) and overwrote
+        # via the Phase 2 mirror. Also removes the Phase 2 read-write of the mirror, halving total
+        # memory traffic on this kernel.
+        #
+        # Coalescing nuance under flipped mass_mat layout (i_d stride-1): the `[i_d, j_d, i_b]`
+        # write is coalesced when adjacent lanes have varying i_d_; the inline mirror write
+        # `[j_d, i_d, i_b]` puts the varying axis in the second arg → strided. The coalesced
+        # primary write + dot-product savings dominate; the strided mirror write replaces the
+        # previous Phase 2 strided read at similar memory cost (writes are cheaper than reads).
+        #
+        # Correctness: bit-identical to the two-pass version because the per-cell value is the
+        # same and the final symmetric tensor matches. The diagonal write is unconditional;
+        # off-diagonal cells are mirrored once.
         _T = qd.static(_MASS_MAT_BLOCK)
         n_entities = entities_info.n_links.shape[0]
         _B_assemble = links_state.pos.shape[1]
@@ -401,30 +414,23 @@ def func_compute_mass_matrix(
             d_s = entities_info.dof_start[i_e]
             d_e = entities_info.dof_end[i_e]
             n_e_e = d_e - d_s
-            n_sq = n_e_e * n_e_e
+            n_lower_tri = n_e_e * (n_e_e + 1) // 2
 
             i_pair = tid
-            while i_pair < n_sq:
-                i_d_ = i_pair % n_e_e
-                j_d_ = i_pair // n_e_e
+            while i_pair < n_lower_tri:
+                # Compressed lower-tri-inclusive index (matches tiled func_factor_mass).
+                # i_pair = i_d_ * (i_d_ + 1) / 2 + j_d_, with j_d_ in [0, i_d_].
+                i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
+                j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
                 i_d = d_s + i_d_
                 j_d = d_s + j_d_
-                rigid_global_info.mass_mat[i_d, j_d, i_b] = (
+                val = (
                     dofs_state.f_ang[i_d, i_b].dot(dofs_state.cdof_ang[j_d, i_b])
                     + dofs_state.f_vel[i_d, i_b].dot(dofs_state.cdof_vel[j_d, i_b])
                 ) * rigid_global_info.mass_parent_mask[i_d, j_d]
-                i_pair += _T
-
-            qd.simt.subgroup.sync()
-
-            i_pair = tid
-            while i_pair < n_sq:
-                i_d_ = i_pair % n_e_e
-                j_d_ = i_pair // n_e_e
-                if i_d_ < j_d_:
-                    i_d = d_s + i_d_
-                    j_d = d_s + j_d_
-                    rigid_global_info.mass_mat[i_d, j_d, i_b] = rigid_global_info.mass_mat[j_d, i_d, i_b]
+                rigid_global_info.mass_mat[i_d, j_d, i_b] = val
+                if i_d_ != j_d_:
+                    rigid_global_info.mass_mat[j_d, i_d, i_b] = val
                 i_pair += _T
     else:
         qd.loop_config(
