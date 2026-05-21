@@ -3764,10 +3764,9 @@ def func_solve_init(
             else:
                 constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
     else:
-        # Always initialize from warmstart
-        # Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap to put adjacent lanes on i_d
-        # so those writes/reads coalesce. The dofs_state.acc_smooth read remains canonical (small per-env
-        # working set, dominated by the qacc write).
+        # Always initialize from warmstart. Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap the
+        # ndrange so adjacent lanes vary i_d to coalesce those writes/reads. The dofs_state.acc_smooth read remains
+        # canonical (small per-env working set, dominated by the qacc write).
         if qd.static(static_rigid_sim_config.constraint_layout_transposed):
             qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_b, i_d in qd.ndrange(_B, n_dofs):
