@@ -34,6 +34,14 @@ from typing import Any, NoReturn
 
 import quadrants as qd
 
+# Import the upstream OuterProduct / VecSliceProxy classes so that `qd.outer(...)` and 2D/3D vector
+# slices coming from kernel code (which use the upstream classes) are correctly recognized by our
+# local _augassign / _resolve_vec_proxy below. (Mixing the local copies would silently break
+# `tile -= qd.outer(v, v)` because the isinstance check would fail.)
+from quadrants.lang.simt._tile16 import _OuterProduct as _UpstreamOuterProduct
+from quadrants.lang.simt._tile16 import _VecSliceProxy as _UpstreamVecSliceProxy
+from quadrants.lang.simt._tile16 import _tile16_cache as _upstream_tile16_cache
+
 if _TYPE_CHECKING:
 
     class _Tile16x16Proto:  # noqa: E303
@@ -464,21 +472,24 @@ def _make_tile16x16_class(dtype):
                 v = arr[batch, row_start + local, col]
             return v
 
-        def _resolve_vec_proxy(self, proxy: _VecSliceProxy) -> Any:
+        def _resolve_vec_proxy(self, proxy: Any) -> Any:
             if proxy.batch_idx is not None:
                 return self._resolve_vec3d(proxy.arr, proxy.batch_idx, proxy.row_start, proxy.row_stop, proxy.col)
             return self._resolve_vec2d(proxy.arr, proxy.row_start, proxy.row_stop, proxy.col)
 
         def _augassign(self, other: Any, op: str) -> None:
-            if isinstance(other, _OuterProduct):
+            # Accept both the local and upstream OuterProduct / VecSliceProxy classes so that this tile
+            # works transparently with `qd.outer(...)` (which constructs the upstream OuterProduct).
+            if isinstance(other, (_OuterProduct, _UpstreamOuterProduct)):
                 if op == "Sub":
                     a_orig = other.a
                     b_orig = other.b
-                    a = self._resolve_vec_proxy(a_orig) if isinstance(a_orig, _VecSliceProxy) else a_orig
+                    vec_proxy_types = (_VecSliceProxy, _UpstreamVecSliceProxy)
+                    a = self._resolve_vec_proxy(a_orig) if isinstance(a_orig, vec_proxy_types) else a_orig
                     b = (
                         a
                         if (b_orig is a_orig)
-                        else (self._resolve_vec_proxy(b_orig) if isinstance(b_orig, _VecSliceProxy) else b_orig)
+                        else (self._resolve_vec_proxy(b_orig) if isinstance(b_orig, vec_proxy_types) else b_orig)
                     )
                     self._ger_sub(a, b)
                 else:
@@ -498,6 +509,14 @@ def _make_tile16x16_class(dtype):
         return t
 
     result.eye = _eye  # type: ignore[reportAttributeAccessIssue]
+
+    # Register the pack-2 class into quadrants' upstream `_tile16_cache` so that the slice-dispatch
+    # in `quadrants/lang/simt/tile_slicing.py` recognizes `tile[:]` as a tile-ref and
+    # `arr[batch, r:r2, c:c2]` as a tile-slice. The cache is iterated as `.values()` for isinstance
+    # checks, so we just need any unique key that doesn't collide with upstream's dtype-keyed
+    # entries. Using `("pack2", dtype)` keeps both this and the upstream `Tile16x16[dtype]` alive
+    # in the same kernel (the upstream tile uses `dtype` as key).
+    _upstream_tile16_cache[("pack2", dtype)] = result
     return result
 
 
