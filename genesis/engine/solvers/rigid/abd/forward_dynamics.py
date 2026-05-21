@@ -386,7 +386,8 @@ def func_compute_mass_matrix(
         # Cooperative warp-per-(entity, env) writer: lanes stride i_d_ within the entity's dof block,
         # which becomes the stride-1 axis of the flipped mass_mat (layout=(2,1,0)). Phase 1 writes the
         # full (i_d, j_d) square (mass_parent_mask zeroes out the upper-tri pairs whose links are not
-        # ancestors); Phase 2 mirrors lower-tri to upper-tri to enforce symmetry. Block sync between.
+        # ancestors); Phase 2 mirrors lower-tri to upper-tri to enforce symmetry. Warp sync between
+        # phases (block_dim=_T=32 = 1 warp per block, so block-sync would be overkill).
         _T = qd.static(_MASS_MAT_BLOCK)
         n_entities = entities_info.n_links.shape[0]
         _B_assemble = links_state.pos.shape[1]
@@ -414,7 +415,7 @@ def func_compute_mass_matrix(
                 ) * rigid_global_info.mass_parent_mask[i_d, j_d]
                 i_pair += _T
 
-            qd.simt.block.sync()
+            qd.simt.subgroup.sync()
 
             i_pair = tid
             while i_pair < n_sq:
