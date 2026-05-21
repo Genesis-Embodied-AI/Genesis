@@ -1961,6 +1961,18 @@ def func_cholesky_factor_direct_tiled(
                 L_kk._store3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
 
+# Shared-memory budget threshold below which the pack-2 fused kernel (2 envs/warp) is used.
+# Pack-2 doubles shared memory per warp:
+#   L_sh: 2 * MAX_DOFS * (MAX_DOFS + 1) * sizeof(float)
+#   v_sh: 2 * MAX_DOFS * sizeof(float)
+# At MAX_DOFS=48 (fp32), this is ~18.8 KB — well under the 48 KB default shmem budget and the
+# 99 KB Blackwell opt-in limit. Above this threshold we fall back to the original single-env-per-warp
+# kernel which uses half the shmem and is the only path that can handle the
+# `test_cholesky_tiling_large_shared_memory` scenario (MAX_DOFS ~ 102 dofs requires opt-in shmem
+# even in the single-env layout; pack-2 would need ~150 KB which exceeds per-block limits).
+_CHOLESKY_FUSED_PACK2_MAX_DOFS = 48
+
+
 @qd.func
 def func_cholesky_and_solve_fused_tiled(
     constraint_state: array_class.ConstraintState,
@@ -1969,9 +1981,154 @@ def func_cholesky_and_solve_fused_tiled(
 ):
     """Fused Cholesky factorization and triangular solve, keeping L in shared memory.
 
-    Factorizes H = L L^T using register-resident 16x16 tiles, storing completed L tiles in shared memory. Then solves
-    L L^T x = g (forward + backward substitution) in-place and writes the result to Mgrad, without ever writing L to
-    global memory.
+    Dispatches at compile time (`qd.static`) between the pack-2 implementation (2 envs per warp,
+    used when MAX_DOFS <= _CHOLESKY_FUSED_PACK2_MAX_DOFS) and the single-env implementation
+    (1 env per warp, fallback for larger MAX_DOFS where pack-2 shmem would exceed GPU limits).
+    """
+    if qd.static(static_rigid_sim_config.tiled_n_dofs <= _CHOLESKY_FUSED_PACK2_MAX_DOFS):
+        _func_cholesky_and_solve_fused_tiled_pack2(
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+    else:
+        _func_cholesky_and_solve_fused_tiled_single(
+            constraint_state=constraint_state,
+            rigid_global_info=rigid_global_info,
+            static_rigid_sim_config=static_rigid_sim_config,
+        )
+
+
+@qd.func
+def _func_cholesky_and_solve_fused_tiled_single(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Single-env-per-warp fused Cholesky+solve. Used when MAX_DOFS is too large for the pack-2
+    variant's doubled shared memory. Identical to the original upstream implementation.
+    """
+    EPS = rigid_global_info.EPS[None]
+    MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
+
+    _B = constraint_state.grad.shape[1]
+    n_dofs = constraint_state.nt_H.shape[1]
+    N_BLOCKS = (n_dofs + 16 - 1) // 16
+
+    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=16)
+    for i in range(_B * 16):
+        tid = i % 16
+        i_b = i // 16
+        if i_b >= _B:
+            continue
+        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+            continue
+
+        # +1 padding avoids shared memory bank conflicts on column-wise access (backward substitution, factorization)
+        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+
+        # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
+        # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
+        # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
+        # are processed sequentially (they only depend on the diagonal, but each tile uses all threads).
+        for kb in range(N_BLOCKS):
+            k0 = kb * 16
+            k1 = qd.min(k0 + 16, n_dofs)
+
+            # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
+            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
+            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+
+            # Subtract prior-column contributions from shared memory
+            for jb in range(kb):
+                j0 = jb * 16
+                for t in range(16):
+                    v = L_sh[k0:k1, j0 + t]
+                    L_kk -= qd.outer(v, v)
+
+            # Factor diagonal tile in-place
+            L_kk.cholesky_(EPS)
+
+            # Solve off-diagonal tiles and store in shared memory (not global)
+            for ib in range(kb + 1, N_BLOCKS):
+                i0 = ib * 16
+                i1 = qd.min(i0 + 16, n_dofs)
+
+                # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
+                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
+                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+
+                # Subtract prior-column contributions from shared memory
+                for jb in range(kb):
+                    j0 = jb * 16
+                    for t in range(16):
+                        v_own = L_sh[i0:i1, j0 + t]
+                        v_diag = L_sh[k0:k1, j0 + t]
+                        L_ik -= qd.outer(v_own, v_diag)
+
+                # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
+                L_kk.solve_triangular_(L_ik)
+
+                # Write L[i,k] to shared memory
+                L_sh[i0:i1, k0:k1] = L_ik
+
+            # Write L[k,k] to shared memory
+            L_sh[k0:k1, k0:k1] = L_kk
+
+        # --- Scalar triangular solve using L from shared memory ---
+        # 16 threads parallelize each row's dot product by striping across columns, then subgroup-reduce
+        # within the warp. Thread 0 writes each solved element.
+
+        # Load gradient into v_sh
+        k = tid
+        while k < n_dofs:
+            v_sh[k] = constraint_state.grad[k, i_b]
+            k = k + 16
+        qd.simt.block.sync()
+
+        # Forward substitution: solve L @ y = grad
+        for i_d in range(n_dofs):
+            dot = gs.qd_float(0.0)
+            j = tid
+            while j < i_d:
+                dot = dot + L_sh[i_d, j] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        # Backward substitution: solve L^T @ x = y
+        for i_d_ in range(n_dofs):
+            i_d = n_dofs - 1 - i_d_
+            dot = gs.qd_float(0.0)
+            j = i_d + 1 + tid
+            while j < n_dofs:
+                dot = dot + L_sh[j, i_d] * v_sh[j]
+                j = j + 16
+            dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
+            if tid == 0:
+                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            qd.simt.block.sync()
+
+        # Write Mgrad to global memory
+        k = tid
+        while k < n_dofs:
+            constraint_state.Mgrad[k, i_b] = v_sh[k]
+            k = k + 16
+
+
+@qd.func
+def _func_cholesky_and_solve_fused_tiled_pack2(
+    constraint_state: array_class.ConstraintState,
+    rigid_global_info: array_class.RigidGlobalInfo,
+    static_rigid_sim_config: qd.template(),
+):
+    """Pack-2 fused Cholesky+solve: 2 envs per 32-lane warp. Shared memory shape is
+    (2, MAX_DOFS, MAX_DOFS+1) for L and (2, MAX_DOFS) for v, with env_in_warp = tid >> 4
+    selecting which env each lane operates on. ~1.4x faster than the single-env variant on
+    workloads where MAX_DOFS fits the doubled shmem budget (see perso_hugh T18/T20).
     """
     EPS = rigid_global_info.EPS[None]
     MAX_DOFS = qd.static(static_rigid_sim_config.tiled_n_dofs)
