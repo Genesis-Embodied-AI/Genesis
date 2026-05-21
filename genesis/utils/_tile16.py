@@ -403,18 +403,17 @@ def _make_tile16x16_class(dtype):
             sqrt(max(value, eps)) for numerical stability.
             """
             # `k` and `j` are wrapped in qd.static so the `if k > j` predicates fold at
-            # compile time and `_get_col(k)` collapses to a single register access
-            # rather than a 16-deep register-indexing cascade.
+            # compile time and `_get_col(k)` collapses to a single register access rather
+            # than a 16-deep register-indexing cascade. In addition, the per-lane row-norm
+            # used for the diagonal update is carried in `my_norm_sq`: each iteration adds
+            # exactly one `new_val * new_val` instead of recomputing the sum-of-squares
+            # over the entire row from scratch, turning O(n^2) work into O(n).
             tid = qd.i32(qd.simt.subgroup.invocation_id())
+            my_norm_sq = qd.cast(0.0, dtype)
             for k in qd.static(range(16)):
                 diag_val = qd.cast(0.0, dtype)
                 if tid == k:
-                    s = qd.cast(0.0, dtype)
-                    for j in qd.static(range(16)):
-                        if k > j:
-                            c = self._get_col(j)
-                            s += c * c
-                    diag_val = qd.sqrt(qd.max(self._get_col(k) - s, eps))
+                    diag_val = qd.sqrt(qd.max(self._get_col(k) - my_norm_sq, eps))
                     self._set_col(k, diag_val)
 
                 diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(k))
@@ -426,9 +425,14 @@ def _make_tile16x16_class(dtype):
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(k))
                         dot += Lkj * my_col  # type: ignore[reportOperatorIssue]
 
+                new_val = qd.cast(0.0, dtype)
                 if tid > k:  # type: ignore[reportOperatorIssue]
                     new_val = (self._get_col(k) - dot) / diag_k  # type: ignore[reportOperatorIssue]
                     self._set_col(k, new_val)
+                # Carry the running per-lane sum-of-squares so the next diagonal
+                # iteration computes `s` in O(1) rather than O(k).
+                if tid > k:  # type: ignore[reportOperatorIssue]
+                    my_norm_sq += new_val * new_val
 
         @qd.func
         def _trsm(self, L):
