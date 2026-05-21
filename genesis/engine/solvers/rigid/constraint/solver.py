@@ -1980,18 +1980,47 @@ def func_cholesky_and_solve_fused_tiled(
     n_dofs = constraint_state.nt_H.shape[1]
     N_BLOCKS = (n_dofs + 16 - 1) // 16
 
-    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=16)
-    for i in range(_B * 16):
-        tid = i % 16
-        i_b = i // 16
-        if i_b >= _B:
-            continue
-        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
+    # Pack-2 layout: each 32-lane CUDA warp processes 2 envs (lanes 0-15 = env_a, lanes 16-31 = env_b).
+    # Shared memory holds L and v for BOTH envs in the pair (leading dim 2). For odd _B the last warp's
+    # env_b is OOB and gated via the per-half-warp `my_active` predicate at all store sites.
+    _B_pairs = (_B + 1) // 2
+
+    qd.loop_config(name="cholesky_and_solve_fused_tiled", block_dim=32)
+    for i in range(_B_pairs * 32):
+        tid = i % 32
+        # local = tid within a 16-lane half-warp; env_in_warp = which half (0 = env_a, 1 = env_b).
+        local = tid & 15
+        env_in_warp = tid >> 4
+
+        # Warp-uniform: skip the whole warp only if BOTH envs in the pair are inactive. Per-half-warp skip
+        # would diverge the warp and break the in-tile shuffles inside Tile16x16Pack2._ger_sub / cholesky_.
+        env_pair = i // 32
+        env_a = env_pair * 2
+        env_b = env_pair * 2 + 1
+        env_a_active = env_a < _B and constraint_state.n_constraints[env_a] > 0 and constraint_state.improved[env_a]
+        env_b_active = env_b < _B and constraint_state.n_constraints[env_b] > 0 and constraint_state.improved[env_b]
+        if not env_a_active and not env_b_active:
             continue
 
-        # +1 padding avoids shared memory bank conflicts on column-wise access (backward substitution, factorization)
-        L_sh = qd.simt.block.SharedArray((MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
-        v_sh = qd.simt.block.SharedArray((MAX_DOFS,), gs.qd_float)
+        # Per-half-warp env: i // 16 gives env_a for lanes 0-15 and env_b for lanes 16-31.
+        # Clamp for safe reads when env_b is OOB; stores to global are gated by `my_active`.
+        i_b = i // 16
+        i_b_safe = qd.min(i_b, _B - 1)
+        my_active = (
+            i_b < _B
+            and constraint_state.n_constraints[i_b_safe] > 0
+            and constraint_state.improved[i_b_safe]
+        )
+
+        # +1 padding on the last axis avoids shared memory bank conflicts on column-wise access. Leading
+        # dim 2 reserves one full L (and one v) per env in the pair; lanes 0-15 access [0,...] and
+        # lanes 16-31 access [1,...]. Total shmem doubles vs the single-env kernel — make sure
+        # MAX_DOFS is chosen so 2 * (MAX_DOFS * (MAX_DOFS+1) + MAX_DOFS) * sizeof(float) fits the GPU
+        # opt-in shmem budget. (For MAX_DOFS=32 this is ~8 KB. For MAX_DOFS=96 it is ~75 KB, requiring
+        # opt-in shared memory beyond the default 48 KB — same condition as the single-env path
+        # already checked by `test_cholesky_tiling_large_shared_memory`.)
+        L_sh = qd.simt.block.SharedArray((2, MAX_DOFS, MAX_DOFS + 1), gs.qd_float)
+        v_sh = qd.simt.block.SharedArray((2, MAX_DOFS), gs.qd_float)
 
         # --- Blocked Cholesky factorization (same algorithm as func_cholesky_factor_direct_tiled) ---
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
@@ -2002,14 +2031,14 @@ def func_cholesky_and_solve_fused_tiled(
             k1 = qd.min(k0 + 16, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
-            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
-            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+            L_kk = Tile16x16Pack2.eye(dtype=gs.qd_float)
+            L_kk[:] = constraint_state.nt_H[i_b_safe, k0:k1, k0:k1]
 
-            # Subtract prior-column contributions from shared memory
+            # Subtract prior-column contributions from shared memory (per-env via env_in_warp)
             for jb in range(kb):
                 j0 = jb * 16
                 for t in range(16):
-                    v = L_sh[k0:k1, j0 + t]
+                    v = L_sh[env_in_warp, k0:k1, j0 + t]
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
@@ -2021,68 +2050,80 @@ def func_cholesky_and_solve_fused_tiled(
                 i1 = qd.min(i0 + 16, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
-                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+                L_ik = Tile16x16Pack2.zeros(dtype=gs.qd_float)
+                L_ik[:] = constraint_state.nt_H[i_b_safe, i0:i1, k0:k1]
 
                 # Subtract prior-column contributions from shared memory
                 for jb in range(kb):
                     j0 = jb * 16
                     for t in range(16):
-                        v_own = L_sh[i0:i1, j0 + t]
-                        v_diag = L_sh[k0:k1, j0 + t]
+                        v_own = L_sh[env_in_warp, i0:i1, j0 + t]
+                        v_diag = L_sh[env_in_warp, k0:k1, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
                 L_kk.solve_triangular_(L_ik)
 
-                # Write L[i,k] to shared memory
-                L_sh[i0:i1, k0:k1] = L_ik
+                # Write L[i,k] to shared memory (per-env). `_store3d` has no subgroup shuffles, so wrapping
+                # in `if my_active` only skips the actual writes for the inactive half-warp; the rest of
+                # the warp remains lockstep for the next iteration's shuffles. We always write something
+                # for active halves; converged-env halves and OOB-env_b halves silently skip.
+                if my_active:
+                    L_ik._store3d(L_sh, env_in_warp, i0, i1, k0, k1)
 
             # Write L[k,k] to shared memory
-            L_sh[k0:k1, k0:k1] = L_kk
+            if my_active:
+                L_kk._store3d(L_sh, env_in_warp, k0, k1, k0, k1)
 
         # --- Scalar triangular solve using L from shared memory ---
-        # No longer using 16x16 tiles; the 16 threads parallelize each row's
-        # dot product by striping across columns, then subgroup-reduce to
-        # sum the partial products. Thread 0 writes each solved element.
+        # 16 threads per env parallelize each row's dot product by striping across columns, then
+        # subgroup-reduce within the 16-lane half-warp to sum the partial products. Lane 0 of each
+        # half-warp writes its env's solved element. The full warp barrier (`block.sync()`) is still
+        # needed to publish each step's L_sh / v_sh write to all lanes of both halves before the next
+        # row's dot product reads it.
 
-        # Load gradient into v_sh
-        k = tid
+        # Load gradient into v_sh (per-env). Predicate prevents the OOB env_b half from writing nonsense,
+        # but does NOT need to guard converged-env half-warps: their v_sh slot is dead anyway because
+        # their Mgrad write at the end is gated by `my_active`.
+        k = local
         while k < n_dofs:
-            v_sh[k] = constraint_state.grad[k, i_b]
+            if my_active:
+                v_sh[env_in_warp, k] = constraint_state.grad[k, i_b_safe]
             k = k + 16
         qd.simt.block.sync()
 
-        # Forward substitution: solve L @ y = grad (parallel dot with 16 threads)
+        # Forward substitution: solve L @ y = grad. `reduce_all_add_tiled(dot, 4)` reduces within each
+        # 16-lane half-warp independently (2^4 = 16), so the two envs' dots stay separate.
         for i_d in range(n_dofs):
             dot = gs.qd_float(0.0)
-            j = tid
+            j = local
             while j < i_d:
-                dot = dot + L_sh[i_d, j] * v_sh[j]
+                dot = dot + L_sh[env_in_warp, i_d, j] * v_sh[env_in_warp, j]
                 j = j + 16
             dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
-            if tid == 0:
-                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            if local == 0:
+                v_sh[env_in_warp, i_d] = (v_sh[env_in_warp, i_d] - dot) / L_sh[env_in_warp, i_d, i_d]
             qd.simt.block.sync()
 
-        # Backward substitution: solve L^T @ x = y (parallel dot with 16 threads)
+        # Backward substitution: solve L^T @ x = y
         for i_d_ in range(n_dofs):
             i_d = n_dofs - 1 - i_d_
             dot = gs.qd_float(0.0)
-            j = i_d + 1 + tid
+            j = i_d + 1 + local
             while j < n_dofs:
-                dot = dot + L_sh[j, i_d] * v_sh[j]
+                dot = dot + L_sh[env_in_warp, j, i_d] * v_sh[env_in_warp, j]
                 j = j + 16
             dot = qd.simt.subgroup.reduce_all_add_tiled(dot, 4)
-            if tid == 0:
-                v_sh[i_d] = (v_sh[i_d] - dot) / L_sh[i_d, i_d]
+            if local == 0:
+                v_sh[env_in_warp, i_d] = (v_sh[env_in_warp, i_d] - dot) / L_sh[env_in_warp, i_d, i_d]
             qd.simt.block.sync()
 
-        # Write Mgrad to global memory
-        k = tid
-        while k < n_dofs:
-            constraint_state.Mgrad[k, i_b] = v_sh[k]
-            k = k + 16
+        # Write Mgrad to global memory (per-env, only for active half-warps)
+        if my_active:
+            k = local
+            while k < n_dofs:
+                constraint_state.Mgrad[k, i_b] = v_sh[env_in_warp, k]
+                k = k + 16
 
 
 @qd.func
