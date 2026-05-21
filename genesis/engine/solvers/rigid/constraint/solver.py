@@ -3668,14 +3668,27 @@ def initialize_Ma(
     _B = rigid_global_info.mass_mat.shape[2]
     n_dofs = qacc.shape[0]
 
-    qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
-    for i_d1, i_b in qd.ndrange(n_dofs, _B):
-        I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
-        i_e = dofs_info.entity_idx[I_d1]
-        Ma_ = gs.qd_float(0.0)
-        for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
-            Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
-        Ma[i_d1, i_b] = Ma_
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed):
+        # Flipped mass_mat layout=(2,1,0): physical (_B, n_dofs, n_dofs) with i_d1 stride-1.
+        # Make i_d1 the innermost ndrange axis so adjacent lanes vary i_d1 -> coalesced reads of
+        # mass_mat[i_d1, i_d2, i_b]. qacc[i_d2, i_b] is constant within the warp -> broadcast load.
+        qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_b, i_d1 in qd.ndrange(_B, n_dofs):
+            I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
+            i_e = dofs_info.entity_idx[I_d1]
+            Ma_ = gs.qd_float(0.0)
+            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+            Ma[i_d1, i_b] = Ma_
+    else:
+        qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
+        for i_d1, i_b in qd.ndrange(n_dofs, _B):
+            I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
+            i_e = dofs_info.entity_idx[I_d1]
+            Ma_ = gs.qd_float(0.0)
+            for i_d2 in range(entities_info.dof_start[i_e], entities_info.dof_end[i_e]):
+                Ma_ = Ma_ + rigid_global_info.mass_mat[i_d1, i_d2, i_b] * qacc[i_d2, i_b]
+            Ma[i_d1, i_b] = Ma_
 
 
 # ======================================================= Core ========================================================
