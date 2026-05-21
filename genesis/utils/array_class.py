@@ -332,22 +332,26 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
+    # All three constraint-state layout flips (con / jac / dof_vec) gate on the same
+    # `constraint_layout_transposed` static-config flag. See `_should_transpose_constraint_layout` in
+    # rigid_solver.py for the heuristic, and the per-flip docs below.
+    transposed = solver._static_rigid_sim_config.constraint_layout_transposed
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
     # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
     # See perso_hugh/doc/linesearch_shuffle.md.
-    con_layout = (1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
+    con_layout = (1, 0) if transposed else None
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
     # See perso_hugh/doc/linesearch/linesearch_p0_opt.md.
-    jac_layout = (2, 1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
+    jac_layout = (2, 1, 0) if transposed else None
     # DOF-vec family flip: canonical (n_dofs_, _B) -> physical (_B, n_dofs_) via layout=(1, 0). Adjacent-lane reads
     # striding i_d in cooperative kernels (p0 Phase 1, refine_and_apply Phase 4, update_constraint_cost_coop,
     # cholesky_and_solve_fused_tiled) become stride-1; the regression on 1T/(i_d, i_b) writers is patched on a
     # per-consumer basis under the same constraint_layout_transposed flag.
     # See perso_hugh/doc/linesearch/dof-vec-flip.md.
-    dof_vec_layout = (1, 0) if solver._static_rigid_sim_config.constraint_layout_transposed else None
+    dof_vec_layout = (1, 0) if transposed else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
     efc_AR_shape = maybe_shape((len_constraints_, len_constraints_, _B), solver._options.noslip_iterations > 0)
