@@ -144,21 +144,14 @@ def get_rigid_global_info(solver, kinematic_only):
             f"Mass matrix buffer shape (2, n_dofs={solver.n_dofs_}, n_dofs={solver.n_dofs_}, n_envs={_B}) is too large."
         )
 
-    # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical
-    # (_B, n_dofs(i_d2), n_dofs(i_d1)) via layout=(2, 1, 0): physical axes are (axis 2, axis 1, axis 0)
-    # so axis 0 (i_d1) becomes innermost / stride-1. This coalesces _func_decomp_linesearch_p0 Phase 0a
-    # (lanes stride i_d1, inner serial i_d2) and the func_solve_init init_ma kernel (lanes stride i_d1
-    # too once cooperatively rewritten). Cost is regression on writer-side kernels — func_compute_mass_matrix
-    # mass_mat_assemble and (uncoop) initialize_Ma — that need cooperative rewrites to recover.
+    # Flip mass_mat from canonical (n_dofs(i_d1), n_dofs(i_d2), _B) -> physical (_B, n_dofs(i_d2), n_dofs(i_d1)) via
+    # layout=(2, 1, 0): i_d1 becomes innermost / stride-1, which coalesces consumer kernels whose lanes stride i_d1
+    # with a serial inner i_d2 loop. The trade-off is regression on writer-side kernels that pair with cooperative
+    # rewrites to recover under the same constraint_layout_transposed flag.
     #
-    # mass_mat_L is NOT flipped: its big consumer in the dex_hand baseline is func_solve_mass which does a
-    # serial Cholesky-style back-substitution per (i_e, i_b). With lanes varying i_b (the canonical inner
-    # stride-1 axis), the canonical layout is already optimal there. Flipping L to (2, 1, 0) regressed
-    # solve_mass by +88% / +31 ms (Exp 1 audit) for only a +8% / -7 ms win on the tiled factor_mass
-    # writer — net ~+24 ms loss. So mass_mat_L stays canonical.
-    #
-    # See perso_hugh/doc/linesearch/linesearch_p0_opt.md ranked candidate #2 and
-    # perso_hugh/doc/linesearch/mass_mat_flip_2026may.md.
+    # mass_mat_L stays canonical. Its dominant consumer is a serial Cholesky-style back-substitution that is already
+    # coalesced under (n_dofs, n_dofs, _B) with lanes varying i_b, so flipping L would regress that path more than
+    # the corresponding writer-side win on the tiled factor_mass.
     mass_mat_layout = (
         (2, 1, 0) if not kinematic_only and solver._static_rigid_sim_config.constraint_layout_transposed else None
     )
@@ -339,18 +332,14 @@ def get_constraint_state(constraint_solver, solver):
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.
     # Cooperative kernels read the same flag at compile time to switch between serial and warp-cooperative reductions.
-    # See perso_hugh/doc/linesearch_shuffle.md.
     con_layout = (1, 0) if transposed else None
     # The 3D Jacobian and its sparse-column-index sibling extend the flip: canonical (len_constraints_, n_dofs_, _B) ->
     # physical (_B, n_dofs_, len_constraints_) via layout=(2, 1, 0). This makes cooperative-warp-per-env access (lanes
     # stride i_c) coalesced for the hot p0 J@search, hessian_direct_tiled, and patch_hessian_delta kernels.
-    # See perso_hugh/doc/linesearch/linesearch_p0_opt.md.
     jac_layout = (2, 1, 0) if transposed else None
     # DOF-vec family flip: canonical (n_dofs_, _B) -> physical (_B, n_dofs_) via layout=(1, 0). Adjacent-lane reads
-    # striding i_d in cooperative kernels (p0 Phase 1, refine_and_apply Phase 4, update_constraint_cost_coop,
-    # cholesky_and_solve_fused_tiled) become stride-1; the regression on 1T/(i_d, i_b) writers is patched on a
-    # per-consumer basis under the same constraint_layout_transposed flag.
-    # See perso_hugh/doc/linesearch/dof-vec-flip.md.
+    # striding i_d in cooperative kernels become stride-1; the regression on 1T-per-(i_d, i_b) writers is patched on
+    # a per-consumer basis under the same constraint_layout_transposed flag.
     dof_vec_layout = (1, 0) if transposed else None
 
     jac_shape = (len_constraints_, solver.n_dofs_, _B)
