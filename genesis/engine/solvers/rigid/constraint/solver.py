@@ -10,6 +10,7 @@ import genesis as gs
 import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
+from genesis.utils._tile16 import Tile16x16Cholesky
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
 
 from ..collider.contact_island import ContactIsland
@@ -1898,15 +1899,15 @@ def func_cholesky_factor_direct_tiled(
             k1 = qd.min(k0 + 16, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
-            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
-            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+            L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
             for jb in range(kb):
                 j0 = jb * 16
                 for t in range(16):
-                    v = constraint_state.nt_H[i_b, k0:k1, j0 + t]
-                    L_kk -= qd.outer(v, v)
+                    v = L_kk._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
+                    L_kk._ger_sub(v, v)
 
             # Factor diagonal tile in-place
             L_kk.cholesky_(EPS)
@@ -1917,25 +1918,25 @@ def func_cholesky_factor_direct_tiled(
                 i1 = qd.min(i0 + 16, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
-                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+                L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
                 for jb in range(kb):
                     j0 = jb * 16
                     for t in range(16):
-                        v_own = constraint_state.nt_H[i_b, i0:i1, j0 + t]
-                        v_diag = constraint_state.nt_H[i_b, k0:k1, j0 + t]
-                        L_ik -= qd.outer(v_own, v_diag)
+                        v_own = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, i0, i1, j0 + t)
+                        v_diag = L_ik._resolve_vec3d(constraint_state.nt_H, i_b, k0, k1, j0 + t)
+                        L_ik._ger_sub(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
                 L_kk.solve_triangular_(L_ik)
 
                 # Write L[i,k] back to global memory
-                constraint_state.nt_H[i_b, i0:i1, k0:k1] = L_ik
+                L_ik._store3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
             # Write L[k,k] back to global memory
-            constraint_state.nt_H[i_b, k0:k1, k0:k1] = L_kk
+            L_kk._store3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
 
 @qd.func
@@ -1979,15 +1980,15 @@ def func_cholesky_and_solve_fused_tiled(
             k1 = qd.min(k0 + 16, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
-            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
-            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+            L_kk = Tile16x16Cholesky.eye(dtype=gs.qd_float)
+            L_kk._load3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
             # Subtract prior-column contributions from shared memory
             for jb in range(kb):
                 j0 = jb * 16
                 for t in range(16):
-                    v = L_sh[k0:k1, j0 + t]
-                    L_kk -= qd.outer(v, v)
+                    v = L_kk._resolve_vec2d(L_sh, k0, k1, j0 + t)
+                    L_kk._ger_sub(v, v)
 
             # Factor diagonal tile in-place
             L_kk.cholesky_(EPS)
@@ -1998,25 +1999,25 @@ def func_cholesky_and_solve_fused_tiled(
                 i1 = qd.min(i0 + 16, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
-                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+                L_ik = Tile16x16Cholesky.zeros(dtype=gs.qd_float)
+                L_ik._load3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
                 # Subtract prior-column contributions from shared memory
                 for jb in range(kb):
                     j0 = jb * 16
                     for t in range(16):
-                        v_own = L_sh[i0:i1, j0 + t]
-                        v_diag = L_sh[k0:k1, j0 + t]
-                        L_ik -= qd.outer(v_own, v_diag)
+                        v_own = L_ik._resolve_vec2d(L_sh, i0, i1, j0 + t)
+                        v_diag = L_ik._resolve_vec2d(L_sh, k0, k1, j0 + t)
+                        L_ik._ger_sub(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
                 L_kk.solve_triangular_(L_ik)
 
                 # Write L[i,k] to shared memory
-                L_sh[i0:i1, k0:k1] = L_ik
+                L_ik._store(L_sh, i0, i1, k0, k1)
 
             # Write L[k,k] to shared memory
-            L_sh[k0:k1, k0:k1] = L_kk
+            L_kk._store(L_sh, k0, k1, k0, k1)
 
         # --- Scalar triangular solve using L from shared memory ---
         # No longer using 16x16 tiles; the 16 threads parallelize each row's
