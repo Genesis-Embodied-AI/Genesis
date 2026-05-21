@@ -11,6 +11,7 @@ import genesis.utils.array_class as array_class
 import genesis.utils.geom as gu
 from genesis.engine.solvers.rigid.abd import func_solve_mass_batch
 from genesis.utils.misc import qd_to_torch, indices_to_mask, assign_indexed_tensor
+from genesis.utils.tile16_pack2 import Tile16x16Pack2
 
 from ..collider.contact_island import ContactIsland
 from . import backward as backward_constraint_solver
@@ -1882,13 +1883,32 @@ def func_cholesky_factor_direct_tiled(
     n_dofs = constraint_state.nt_H.shape[1]
     N_BLOCKS = (n_dofs + 16 - 1) // 16
 
-    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=16)
-    for i in range(_B * 16):
+    # Pack-2 layout: each 32-lane CUDA warp processes 2 envs (lanes 0-15 = env_a, lanes 16-31 = env_b).
+    # Loop iterates one thread per warp-lane; each warp covers one (env_a, env_b) pair. For odd _B the
+    # last warp's env_b is OOB and gated via the per-half-warp `my_active` predicate.
+    _B_pairs = (_B + 1) // 2
+
+    qd.loop_config(name="cholesky_factor_direct_tiled", block_dim=32)
+    for i in range(_B_pairs * 32):
+        # Warp-uniform: skip the whole warp only if BOTH envs in the pair are inactive.
+        # Per-half-warp skip would diverge the warp and break the in-tile shuffles.
+        env_pair = i // 32
+        env_a = env_pair * 2
+        env_b = env_pair * 2 + 1
+        env_a_active = env_a < _B and constraint_state.n_constraints[env_a] > 0 and constraint_state.improved[env_a]
+        env_b_active = env_b < _B and constraint_state.n_constraints[env_b] > 0 and constraint_state.improved[env_b]
+        if not env_a_active and not env_b_active:
+            continue
+
+        # Per-half-warp env: i // 16 gives env_a for lanes 0-15 and env_b for lanes 16-31.
+        # Clamp for safe reads when env_b is OOB; stores are gated by `my_active`.
         i_b = i // 16
-        if i_b >= _B:
-            continue
-        if constraint_state.n_constraints[i_b] == 0 or not constraint_state.improved[i_b]:
-            continue
+        i_b_safe = qd.min(i_b, _B - 1)
+        my_active = (
+            i_b < _B
+            and constraint_state.n_constraints[i_b_safe] > 0
+            and constraint_state.improved[i_b_safe]
+        )
 
         # Loop over column blocks sequentially: each column block depends on all prior columns (inherent to
         # left-looking Cholesky). Within each column, the diagonal is factored first, then off-diagonal rows
@@ -1898,14 +1918,14 @@ def func_cholesky_factor_direct_tiled(
             k1 = qd.min(k0 + 16, n_dofs)
 
             # Load diagonal tile H[k,k] (rows beyond n_dofs stay as identity from the .eye() init)
-            L_kk = qd.simt.Tile16x16.eye(dtype=gs.qd_float)
-            L_kk[:] = constraint_state.nt_H[i_b, k0:k1, k0:k1]
+            L_kk = Tile16x16Pack2.eye(dtype=gs.qd_float)
+            L_kk[:] = constraint_state.nt_H[i_b_safe, k0:k1, k0:k1]
 
             # Subtract prior-column contributions: L_kk -= sum_j L[k,j] @ L[k,j]^T
             for jb in range(kb):
                 j0 = jb * 16
                 for t in range(16):
-                    v = constraint_state.nt_H[i_b, k0:k1, j0 + t]
+                    v = constraint_state.nt_H[i_b_safe, k0:k1, j0 + t]
                     L_kk -= qd.outer(v, v)
 
             # Factor diagonal tile in-place
@@ -1917,25 +1937,28 @@ def func_cholesky_factor_direct_tiled(
                 i1 = qd.min(i0 + 16, n_dofs)
 
                 # Load off-diagonal tile H[i,k] (rows beyond n_dofs stay as zero from the .zeros() init)
-                L_ik = qd.simt.Tile16x16.zeros(dtype=gs.qd_float)
-                L_ik[:] = constraint_state.nt_H[i_b, i0:i1, k0:k1]
+                L_ik = Tile16x16Pack2.zeros(dtype=gs.qd_float)
+                L_ik[:] = constraint_state.nt_H[i_b_safe, i0:i1, k0:k1]
 
                 # Subtract prior-column contributions: L_ik -= sum_j L[i,j] @ L[k,j]^T
                 for jb in range(kb):
                     j0 = jb * 16
                     for t in range(16):
-                        v_own = constraint_state.nt_H[i_b, i0:i1, j0 + t]
-                        v_diag = constraint_state.nt_H[i_b, k0:k1, j0 + t]
+                        v_own = constraint_state.nt_H[i_b_safe, i0:i1, j0 + t]
+                        v_diag = constraint_state.nt_H[i_b_safe, k0:k1, j0 + t]
                         L_ik -= qd.outer(v_own, v_diag)
 
                 # Triangular solve: L[i,k] = L_ik @ inv(L[k,k]^T)
                 L_kk.solve_triangular_(L_ik)
 
-                # Write L[i,k] back to global memory
-                constraint_state.nt_H[i_b, i0:i1, k0:k1] = L_ik
+                # Per-half-warp predicated store (avoids corrupting converged envs in mixed pairs and OOB env_b).
+                # `_store3d` has no subgroup shuffles, so wrapping in a per-half-warp `if` is safe.
+                if my_active:
+                    L_ik._store3d(constraint_state.nt_H, i_b, i0, i1, k0, k1)
 
-            # Write L[k,k] back to global memory
-            constraint_state.nt_H[i_b, k0:k1, k0:k1] = L_kk
+            # Per-half-warp predicated store
+            if my_active:
+                L_kk._store3d(constraint_state.nt_H, i_b, k0, k1, k0, k1)
 
 
 @qd.func
