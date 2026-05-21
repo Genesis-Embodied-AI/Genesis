@@ -557,6 +557,7 @@ class FileMorph(Morph):
     decimate: StrictBool = True
     decimate_face_num: PositiveInt = 500
     decimate_aggressiveness: StrictInt = Field(default=2, ge=0, le=8)
+    watertighten: StrictInt | None = Field(default=7, ge=0, le=8)
     convexify: StrictBool | None = None
     decompose_object_error_threshold: float = Field(default=0.15, ge=0, allow_inf_nan=True)
     decompose_robot_error_threshold: float = Field(default=float("inf"), ge=0, allow_inf_nan=True)

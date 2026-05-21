@@ -107,6 +107,25 @@ class Mesh(RBC):
             self._metadata["convexified"] = True
         self.clear_visuals()
 
+    def watertighten(self, aggressiveness=7):
+        """Replace `self._mesh` with a closed manifold wrap of the current geometry.
+
+        `aggressiveness` is the integer 0..8 controlling the wrap's quadric-error decimation cost cutoff; see
+        `genesis.utils.watertighten.watertighten_mesh` for the full pipeline.
+        """
+        if self._mesh.vertices.shape[0] <= 3:
+            return
+        from genesis.utils.watertighten import watertighten_mesh
+
+        v, f = watertighten_mesh(
+            np.asarray(self._mesh.vertices),
+            np.asarray(self._mesh.faces, dtype=np.int32),
+            aggressiveness=aggressiveness,
+        )
+        self._mesh = trimesh.Trimesh(vertices=v, faces=f, process=False)
+        self._metadata["watertightened"] = True
+        self.clear_visuals()
+
     def decimate(self, decimate_face_num, decimate_aggressiveness):
         """
         Decimate the mesh.

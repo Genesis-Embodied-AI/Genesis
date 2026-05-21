@@ -2743,6 +2743,7 @@ def test_nonconvex_collision(show_viewer):
             euler=(90, 0, 0),
             convexify=False,
         ),
+        # vis_mode="collision",
     )
     ball = scene.add_entity(
         gs.morphs.Sphere(
@@ -2764,6 +2765,58 @@ def test_nonconvex_collision(show_viewer):
         if i > 1700:
             qvel = scene.sim.rigid_solver.dofs_state.vel.to_numpy()[:, 0]
             assert_allclose(qvel, 0, atol=0.65)
+
+
+# Force CPU because it would be too slow otherwise
+@pytest.mark.parametrize("backend", [gs.cpu])
+def test_nonconvex_nonwatertight_collision(show_viewer):
+    scene = gs.Scene(
+        sim_options=gs.options.SimOptions(
+            dt=0.002,
+        ),
+        rigid_options=gs.options.RigidOptions(
+            max_collision_pairs=20,
+        ),
+        viewer_options=gs.options.ViewerOptions(
+            camera_pos=(2.0, 15.0, 3.0),
+            camera_lookat=(2.0, 0.0, -2.0),
+        ),
+        show_viewer=show_viewer,
+        show_FPS=False,
+    )
+    asset_path = get_hf_dataset(pattern="spacecraft.obj")
+    scene.add_entity(
+        gs.morphs.Mesh(
+            file=f"{asset_path}/spacecraft.obj",
+            pos=(-0.4, 0.0, -4.0),
+            euler=(90.0, 0.0, 0.0),
+            scale=3.0,
+            convexify=False,
+            fixed=True,
+        ),
+        # vis_mode="collision",
+    )
+    obj = scene.add_entity(
+        gs.morphs.Box(
+            size=(0.1, 0.1, 0.1),
+        ),
+        surface=gs.surfaces.Default(
+            color=(0.5, 0.7, 0.9, 1.0),
+        ),
+    )
+    scene.build(n_envs=64)
+
+    obj.set_pos(
+        torch.cartesian_prod(
+            torch.linspace(-5.5, 9.0, 8),
+            torch.linspace(-5.2, 5.5, 8),
+            torch.tensor((0.37,)),
+        )
+    )
+    for _ in range(700):
+        scene.step()
+
+    assert_allclose(obj.get_dofs_velocity(), 0.0, tol=0.05)
 
 
 @pytest.mark.required

@@ -950,6 +950,7 @@ class KinematicEntity(Entity):
                 morph.convexify,
                 decompose_error_threshold,
                 morph.coacd_options,
+                morph.watertighten,
             )
 
         # Randomize collision mesh colors. This is especially useful to check convex decomposition.

@@ -29,6 +29,7 @@ from .misc import (
     get_src_dir,
     get_tet_cache_dir,
     get_usd_cache_dir,
+    get_wt_cache_dir,
 )
 
 MESH_REPAIR_ERROR_THRESHOLD = 0.01
@@ -152,6 +153,11 @@ def get_tet_path(verts, faces, tet_cfg):
 def get_remesh_path(verts, faces, edge_len_abs, edge_len_ratio, fix):
     hashkey = get_hashkey(verts, faces, edge_len_abs, edge_len_ratio, fix)
     return os.path.join(get_remesh_cache_dir(), f"{hashkey}.rm")
+
+
+def get_wt_path(verts, faces, aggressiveness):
+    hashkey = get_hashkey(verts, faces, aggressiveness)
+    return os.path.join(get_wt_cache_dir(), f"{hashkey}.wt")
 
 
 def get_exr_path(file_path):
@@ -319,7 +325,14 @@ def convex_decompose(mesh, coacd_options):
 
 
 def postprocess_collision_geoms(
-    g_infos, decimate, decimate_face_num, decimate_aggressiveness, convexify, decompose_error_threshold, coacd_options
+    g_infos,
+    decimate,
+    decimate_face_num,
+    decimate_aggressiveness,
+    convexify,
+    decompose_error_threshold,
+    coacd_options,
+    watertighten,
 ):
     # Early return if there is no geometry to process
     if not g_infos:
@@ -349,6 +362,69 @@ def postprocess_collision_geoms(
                 tmesh.update_faces(tmesh.unique_faces())
                 tmesh._cache.clear()
                 tmesh.visual._cache.clear()
+
+    # Watertighten non-convex meshes that are not already closed. The convex path skips this: the convex hull /
+    # decomposition replaces the surface anyway, so an alpha-wrap of the input would be wasted work. Each unique
+    # (vertex, face) pair is wrapped at most once - one entity can hold many sub-meshes that share buffers
+    # (repeated wheels, bolts, panel decorations from URDF parts) and re-running the wrap on each one would be
+    # pure duplicated effort.
+    if not convexify and watertighten is not None:
+        from .watertighten import watertighten_mesh
+
+        # Fuse every non-watertight MESH-type g_info into one combined triangle soup, run the SDF wrap once on
+        # the union, and replace the first of those g_infos with the wrap output (dropping the rest). Wrapping
+        # each sub-piece independently would produce overlapping closed surfaces - one per piece - which the
+        # downstream SDF / contact generator would then read as nested layers; a single fused wrap is one
+        # closed surface for the whole entity and also runs in one SDF pass instead of N.
+        mesh_idx: list[int] = []
+        verts_chunks: list[np.ndarray] = []
+        faces_chunks: list[np.ndarray] = []
+        v_offset = 0
+        for i, g_info in enumerate(g_infos):
+            tmesh = g_info["mesh"].trimesh
+            if g_info["type"] != gs.GEOM_TYPE.MESH or tmesh.is_watertight:
+                continue
+            mesh_idx.append(i)
+            verts_chunks.append(np.asarray(tmesh.vertices, dtype=np.float64))
+            faces_chunks.append(np.asarray(tmesh.faces, dtype=np.int32) + v_offset)
+            v_offset += len(tmesh.vertices)
+        if mesh_idx:
+            verts_in = np.concatenate(verts_chunks, axis=0)
+            faces_in = np.concatenate(faces_chunks, axis=0).astype(np.int32, copy=False)
+            # On-disk cache keyed by (vertices, faces, aggressiveness): a repeated run on the same entity is a
+            # file read instead of a multi-second SDF + DC + QEM rebuild. The reader tolerates corruption
+            # (partial writes, stale pickles, missing modules) by falling back to a fresh compute, matching
+            # the pattern used by `get_cvx_path` above.
+            cache_path = get_wt_path(verts_in, faces_in, watertighten)
+            from_cache = False
+            v_out = f_out = None
+            if os.path.exists(cache_path):
+                try:
+                    with open(cache_path, "rb") as fp:
+                        v_out, f_out = pkl.load(fp)
+                    from_cache = True
+                except (EOFError, ModuleNotFoundError, pkl.UnpicklingError, TypeError, MemoryError):
+                    gs.logger.info("Ignoring corrupted watertighten cache.")
+            if not from_cache:
+                v_out, f_out = watertighten_mesh(verts_in, faces_in, aggressiveness=watertighten)
+                os.makedirs(get_wt_cache_dir(), exist_ok=True)
+                with open(cache_path, "wb") as fp:
+                    pkl.dump((v_out, f_out), fp, protocol=pkl.HIGHEST_PROTOCOL)
+            fused = trimesh.Trimesh(vertices=v_out, faces=f_out, process=False)
+            metadata = g_infos[mesh_idx[0]]["mesh"].metadata.copy()
+            metadata["watertightened"] = True
+            g_infos[mesh_idx[0]]["mesh"] = gs.Mesh.from_trimesh(
+                mesh=fused,
+                surface=gs.surfaces.Collision(),
+                metadata=metadata,
+            )
+            for i in reversed(mesh_idx[1:]):
+                del g_infos[i]
+            gs.logger.info(
+                f"Watertightened {len(mesh_idx)} non-watertight collision sub-mesh(es) into one fused wrap "
+                f"({'cache hit' if from_cache else 'fresh compute'}): "
+                f"{len(verts_in)} -> {len(v_out)} vertices, {len(faces_in)} -> {len(f_out)} faces."
+            )
 
     # Check if all the geometries can be convexified without decomposition
     must_decompose = False
@@ -448,6 +524,7 @@ def postprocess_collision_geoms(
                 convexify,
                 decompose_error_threshold,
                 coacd_options,
+                watertighten,
             )
 
     if must_decompose:
@@ -504,8 +581,12 @@ def postprocess_collision_geoms(
                 "`decimate_face_num` should be greater than 100 to ensure sufficient geometry details are preserved."
             )
 
-        must_decimate = num_faces > decimate_face_num or tmesh.is_watertight
-        if not must_decimate:
+        # Watertightening already runs its own feature-preserving QEM, so re-decimating with `fast_simplification`
+        # on the wrap output barely helps (the wrap's residual non-manifold edges block most collapses) and risks
+        # destroying the careful feature preservation.
+        already_decimated = mesh.metadata.get("watertightened", False)
+        must_decimate = (num_faces > decimate_face_num or tmesh.is_watertight) and not already_decimated
+        if not must_decimate and not already_decimated:
             gs.logger.debug(
                 "Collision mesh is not watertight. Decimate would be unreliable. Skipping as mesh is already low-poly."
             )
