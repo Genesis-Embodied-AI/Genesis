@@ -25,9 +25,9 @@ from .misc import (
     func_add_safe_backward,
 )
 
-# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when
-# constraint_layout_transposed=True (and not use_hibernation). One warp per (entity, env);
-# lanes stride i_d_ within the entity dof block to coalesce the flipped mass_mat writes.
+# Block size (warp width) for the cooperative mass_mat_assemble path. Used only when constraint_layout_transposed=True
+# (and not use_hibernation). One warp per (entity, env); lanes stride i_d_ within the entity dof block to coalesce the
+# flipped mass_mat writes.
 _MASS_MAT_BLOCK = 32
 
 
@@ -404,8 +404,8 @@ def func_compute_mass_matrix(
 
             i_pair = tid
             while i_pair < n_lower_tri:
-                # Compressed lower-tri-inclusive index (matches tiled func_factor_mass).
-                # i_pair = i_d_ * (i_d_ + 1) / 2 + j_d_, with j_d_ in [0, i_d_].
+                # Compressed lower-tri-inclusive index (matches tiled func_factor_mass): i_pair = i_d_ * (i_d_ + 1) / 2
+                # + j_d_, with j_d_ in [0, i_d_].
                 i_d_ = qd.cast((qd.sqrt(8 * i_pair + 1) - 1) // 2, qd.i32)
                 j_d_ = i_pair - i_d_ * (i_d_ + 1) // 2
                 i_d = d_s + i_d_

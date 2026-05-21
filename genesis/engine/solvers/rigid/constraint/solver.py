@@ -3444,9 +3444,9 @@ def func_update_gradient_tiled(
     _B = constraint_state.jac.shape[2]
     n_dofs = constraint_state.jac.shape[1]
 
-    # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const
-    # Under the DOF-vec flip, 3 of 4 in-loop accesses (grad, Ma, qfrc_constraint) are flipped and one
-    # (dofs_state.force) is canonical — swap the ndrange so adjacent lanes vary i_d.
+    # Compute Mgrad = H^{-1} @ grad, s.t. grad = M @ acc - q_force_ext - q_force_const.
+    # Under the DOF-vec flip, 3 of 4 in-loop accesses (grad, Ma, qfrc_constraint) are flipped and one (dofs_state.force)
+    # is canonical — swap the ndrange so adjacent lanes vary i_d.
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
         qd.loop_config(name="update_gradient_tiled", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
         for i_b, i_d in qd.ndrange(_B, n_dofs):
@@ -3669,9 +3669,9 @@ def initialize_Ma(
     n_dofs = qacc.shape[0]
 
     if qd.static(static_rigid_sim_config.constraint_layout_transposed):
-        # Flipped mass_mat layout=(2,1,0): physical (_B, n_dofs, n_dofs) with i_d1 stride-1.
-        # Make i_d1 the innermost ndrange axis so adjacent lanes vary i_d1 -> coalesced reads of
-        # mass_mat[i_d1, i_d2, i_b]. qacc[i_d2, i_b] is constant within the warp -> broadcast load.
+        # Flipped mass_mat layout=(2,1,0): physical (_B, n_dofs, n_dofs) with i_d1 stride-1. Make i_d1 the innermost
+        # ndrange axis so adjacent lanes vary i_d1 -> coalesced reads of mass_mat[i_d1, i_d2, i_b]. qacc[i_d2, i_b] is
+        # constant within the warp -> broadcast load.
         qd.loop_config(name="init_ma", serialize=qd.static(static_rigid_sim_config.para_level < gs.PARA_LEVEL.PARTIAL))
         for i_b, i_d1 in qd.ndrange(_B, n_dofs):
             I_d1 = [i_d1, i_b] if qd.static(static_rigid_sim_config.batch_dofs_info) else i_d1
@@ -3764,9 +3764,10 @@ def func_solve_init(
             else:
                 constraint_state.qacc[i_d, i_b] = dofs_state.acc_smooth[i_d, i_b]
     else:
-        # Always initialize from warmstart. Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap the
-        # ndrange so adjacent lanes vary i_d to coalesce those writes/reads. The dofs_state.acc_smooth read remains
-        # canonical (small per-env working set, dominated by the qacc write).
+        # Always initialize from warmstart.
+        # Under the DOF-vec flip, both qacc and qacc_ws are env-leading; swap the ndrange so adjacent lanes vary i_d
+        # to coalesce those writes/reads. The dofs_state.acc_smooth read remains canonical (small per-env working
+        # set, dominated by the qacc write).
         if qd.static(static_rigid_sim_config.constraint_layout_transposed):
             qd.loop_config(name="from_warmstart", serialize=static_rigid_sim_config.para_level < gs.PARA_LEVEL.ALL)
             for i_b, i_d in qd.ndrange(_B, n_dofs):

@@ -325,9 +325,9 @@ def get_constraint_state(constraint_solver, solver):
     _B = solver._B
     len_constraints_ = constraint_solver.len_constraints_
 
-    # All three constraint-state layout flips (con / jac / dof_vec) gate on the same
-    # `constraint_layout_transposed` static-config flag. See `_should_transpose_constraint_layout` in
-    # rigid_solver.py for the heuristic, and the per-flip docs below.
+    # All three constraint-state layout flips (con / jac / dof_vec) gate on the same `constraint_layout_transposed`
+    # static-config flag. See `_should_transpose_constraint_layout` in rigid_solver.py for the heuristic, and the
+    # per-flip docs below.
     transposed = solver._static_rigid_sim_config.constraint_layout_transposed
     # Layout-flippable constraint-state tensors (Jaref, jv, efc_D, efc_frictionloss, diag, active) keep their
     # canonical (len_constraints_, _B) shape; the static config flag picks the physical layout via ``layout=(1, 0)``.

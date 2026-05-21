@@ -579,9 +579,9 @@ def _func_update_qfrc_constraint_per_dof(
 ):
     """Compute qfrc_constraint = J^T @ efc_force with one thread per (dof, env), each summing serially over i_c.
 
-    Under ``constraint_layout_transposed`` the outer ndrange is swapped so adjacent lanes vary i_d:
-    the qfrc_constraint write coalesces under the flipped DOF-vec layout. (jac and efc_force are both
-    in the Tier-1 / jac-flip set, so the inner serial reads see the same stride pattern either way.)
+    Under ``constraint_layout_transposed`` the outer ndrange is swapped so adjacent lanes vary i_d: the qfrc_constraint
+    write coalesces under the flipped DOF-vec layout. (jac and efc_force are both in the Tier-1 / jac-flip set, so the
+    inner serial reads see the same stride pattern either way.)
     """
     n_dofs = constraint_state.qfrc_constraint.shape[0]
     _B = constraint_state.grad.shape[1]
@@ -906,8 +906,8 @@ def _func_update_gradient_no_solve(
 ):
     """Compute gradient only (no Cholesky solve) — used with fused Cholesky+Solve.
 
-    Under ``constraint_layout_transposed`` ndrange swapped so adjacent lanes vary i_d — 3 of 4 in-loop
-    accesses (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
+    Under ``constraint_layout_transposed`` the ndrange is swapped so adjacent lanes vary i_d — 3 of 4 in-loop accesses
+    (grad, Ma, qfrc_constraint) are flipped DOF-vec; only dofs_state.force stays canonical.
     """
     _B = constraint_state.grad.shape[1]
     n_dofs = constraint_state.grad.shape[0]
