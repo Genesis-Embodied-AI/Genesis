@@ -546,3 +546,18 @@ class _Tile16x16Proxy:
 
 
 Tile16x16Pack2 = _Tile16x16Proxy()
+
+
+# Eagerly register pack-2 tile classes for the standard float dtypes into the upstream tile cache so
+# that quadrants' slice-dispatch (try_tile_slice in quadrants/lang/simt/tile_slicing.py) recognizes
+# `tile[:]` and `arr[batch, r:r2, c:c2]` as tile operations even on the *very first* statement of the
+# first tiled kernel to compile. Without this, the dispatch can briefly see an empty upstream cache
+# (the cache is only populated on the first `Tile16x16Pack2.zeros/.eye(dtype=...)` call, which races
+# the subscript build inside the same statement / kernel).
+for _dt in (qd.f32, qd.f64):
+    try:
+        _make_tile16x16(_dt)
+    except Exception:  # pylint: disable=broad-except
+        # Some quadrants builds may restrict dataclass construction outside an active runtime; skip
+        # silently and rely on the lazy path. Any failure here just reverts to the lazy registration.
+        pass
