@@ -380,9 +380,7 @@ def func_compute_mass_matrix(
                         dofs_state.cdof_ang[i_d, i_b],
                     )
 
-    if qd.static(
-        static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.use_hibernation
-    ):
+    if qd.static(static_rigid_sim_config.constraint_layout_transposed and not static_rigid_sim_config.use_hibernation):
         # Cooperative warp-per-(entity, env) writer, single-pass lower-tri-inclusive variant
         # (Exp 5 / candidate A). Iterates over the n_e * (n_e + 1) / 2 cells of the lower triangle
         # (inclusive of diagonal) using the sqrt-formula compressed pair index, computes the
