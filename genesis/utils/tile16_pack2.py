@@ -398,11 +398,14 @@ def _make_tile16x16_class(dtype):
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             tile_base = (tid >> qd.i32(4)) << qd.i32(4)
             local = tid - tile_base
-            for k in range(_TILE):
+            # Literal 16 (not _TILE) to satisfy genesis's pure-kernel policy, which forbids module-level
+            # name lookups inside @qd.func bodies. Upstream Tile16x16 uses the same pattern; both must
+            # match the static tile size.
+            for k in range(16):
                 diag_val = qd.cast(0.0, dtype)
                 if local == k:
                     s = qd.cast(0.0, dtype)
-                    for j in range(_TILE):
+                    for j in range(16):
                         if k > j:
                             c = self._get_col(j)
                             s += c * c
@@ -412,7 +415,7 @@ def _make_tile16x16_class(dtype):
                 diag_k = qd.simt.subgroup.shuffle(diag_val, qd.u32(tile_base + qd.i32(k)))
 
                 dot = qd.cast(0.0, dtype)
-                for j in range(_TILE):
+                for j in range(16):
                     if k > j:
                         my_col = self._get_col(j)
                         Lkj = qd.simt.subgroup.shuffle(my_col, qd.u32(tile_base + qd.i32(k)))
@@ -427,9 +430,9 @@ def _make_tile16x16_class(dtype):
             """In-place triangular solve: self solves L @ X^T = B (per half-warp)."""
             tid = qd.i32(qd.simt.subgroup.invocation_id())
             tile_base = (tid >> qd.i32(4)) << qd.i32(4)
-            for c in range(_TILE):
+            for c in range(16):  # literal 16 — see cholesky_ for rationale
                 dot = qd.cast(0.0, dtype)
-                for j in range(_TILE):
+                for j in range(16):
                     if c > j:
                         Lkj = qd.simt.subgroup.shuffle(L._get_col(j), qd.u32(tile_base + qd.i32(c)))
                         dot += self._get_col(j) * Lkj  # type: ignore[reportOperatorIssue]
